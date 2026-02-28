@@ -1,0 +1,1207 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alert_framework_alerttemplate {
+  id                             BigInt                           @id @default(autoincrement())
+  name                           String                           @unique @db.VarChar(255)
+  title                          String                           @db.VarChar(255)
+  text                           String
+  variables                      Json
+  active                         Boolean
+  created_at                     DateTime                         @db.Timestamptz(6)
+  updated_at                     DateTime                         @db.Timestamptz(6)
+  shock_type_id                  BigInt?
+  detector_type                  String                           @db.VarChar(255)
+  footer                         String                           @db.VarChar(500)
+  alerts_shocktype               alerts_shocktype?                @relation(fields: [shock_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_aler_shock_type_id_b076bce1_fk_alerts_sh")
+  alert_framework_publishedalert alert_framework_publishedalert[]
+
+  @@index([active, shock_type_id], map: "alert_frame_active_85e637_idx")
+  @@index([detector_type], map: "alert_frame_detecto_1ee189_idx")
+  @@index([name], map: "alert_frame_name_942ea5_idx")
+  @@index([shock_type_id, active], map: "alert_frame_shock_t_e802e2_idx")
+  @@index([name], map: "alert_framework_alerttemplate_name_2053666b_like")
+  @@index([shock_type_id], map: "alert_framework_alerttemplate_shock_type_id_b076bce1")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alert_framework_detection {
+  id                                                                       BigInt                                @id @default(autoincrement())
+  detection_timestamp                                                      DateTime                              @db.Timestamptz(6)
+  confidence_score                                                         Float?
+  detection_data                                                           Json
+  status                                                                   String                                @db.VarChar(20)
+  created_at                                                               DateTime                              @db.Timestamptz(6)
+  processed_at                                                             DateTime?                             @db.Timestamptz(6)
+  alert_id                                                                 BigInt?
+  duplicate_of_id                                                          BigInt?
+  shock_type_id                                                            BigInt?
+  detector_id                                                              BigInt
+  title                                                                    String                                @db.VarChar(255)
+  source_variabledata_id                                                   BigInt?
+  alert_framework_detector                                                 alert_framework_detector              @relation(fields: [detector_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_detector_id_163660b9_fk_alert_fra")
+  alert_framework_detection                                                alert_framework_detection?            @relation("alert_framework_detectionToalert_framework_detection", fields: [duplicate_of_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_duplicate_of_id_0310e85b_fk_alert_fra")
+  other_alert_framework_detection                                          alert_framework_detection[]           @relation("alert_framework_detectionToalert_framework_detection")
+  alerts_shocktype                                                         alerts_shocktype?                     @relation(fields: [shock_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_shock_type_id_428980ab_fk_alerts_sh")
+  data_pipeline_variabledata                                               data_pipeline_variabledata?           @relation(fields: [source_variabledata_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_source_variabledata__3d5ea251_fk_data_pipe")
+  alerts_alert_alert_framework_detection_alert_idToalerts_alert            alerts_alert?                         @relation("alert_framework_detection_alert_idToalerts_alert", fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_detection_alert_id_ab957e38_fk_alerts_alert_id")
+  alert_framework_detection_locations                                      alert_framework_detection_locations[]
+  alert_framework_publishedalert                                           alert_framework_publishedalert[]
+  alerts_alert_alerts_alert_source_detection_idToalert_framework_detection alerts_alert[]                        @relation("alerts_alert_source_detection_idToalert_framework_detection")
+
+  @@unique([detector_id, detection_timestamp, title], map: "unique_detector_timestamp_title_alert_framework", where: raw("(duplicate_of_id IS NULL)"))
+  @@index([confidence_score], map: "alert_frame_confide_f8ba2b_idx")
+  @@index([detection_timestamp], map: "alert_frame_detecti_d3dfdb_idx")
+  @@index([detector_id, status, created_at], map: "alert_frame_detecto_227bcd_idx")
+  @@index([detector_id, detection_timestamp], map: "alert_frame_detecto_cdab00_idx")
+  @@index([duplicate_of_id], map: "alert_frame_duplica_8d1d08_idx")
+  @@index([processed_at], map: "alert_frame_process_fcb531_idx")
+  @@index([shock_type_id], map: "alert_frame_shock_t_652b38_idx")
+  @@index([source_variabledata_id], map: "alert_frame_source__b93c84_idx")
+  @@index([status, created_at], map: "alert_frame_status_6ee8e5_idx")
+  @@index([status, detection_timestamp], map: "alert_frame_status_d14756_idx")
+  @@index([title], map: "alert_frame_title_af39df_idx")
+  @@index([alert_id], map: "alert_framework_detection_alert_id_ab957e38")
+  @@index([detector_id], map: "alert_framework_detection_detector_id_163660b9")
+  @@index([duplicate_of_id], map: "alert_framework_detection_duplicate_of_id_0310e85b")
+  @@index([shock_type_id], map: "alert_framework_detection_shock_type_id_428980ab")
+  @@index([source_variabledata_id], map: "alert_framework_detection_source_variabledata_id_3d5ea251")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alert_framework_detection_locations {
+  id                        BigInt                    @id @default(autoincrement())
+  detection_id              BigInt
+  location_id               BigInt
+  alert_framework_detection alert_framework_detection @relation(fields: [detection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_detection_id_fc3de953_fk_alert_fra")
+  location_location         location_location         @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_location_id_ba2f0274_fk_location_")
+
+  @@unique([detection_id, location_id], map: "alert_framework_detectio_detection_id_location_id_fa28c454_uniq")
+  @@index([detection_id], map: "alert_framework_detection_locations_detection_id_fc3de953")
+  @@index([location_id], map: "alert_framework_detection_locations_location_id_ba2f0274")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alert_framework_detector {
+  id                              BigInt                           @id @default(autoincrement())
+  name                            String                           @unique @db.VarChar(255)
+  description                     String
+  class_name                      String                           @db.VarChar(255)
+  active                          Boolean
+  configuration                   Json
+  last_run                        DateTime?                        @db.Timestamptz(6)
+  run_count                       Int
+  detection_count                 Int
+  created_at                      DateTime                         @db.Timestamptz(6)
+  updated_at                      DateTime                         @db.Timestamptz(6)
+  schedule_id                     Int?
+  alert_framework_detection       alert_framework_detection[]
+  django_celery_beat_periodictask django_celery_beat_periodictask? @relation(fields: [schedule_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_dete_schedule_id_2b8ec13c_fk_django_ce")
+
+  @@index([active, last_run], map: "alert_frame_active_47d132_idx")
+  @@index([active, name], map: "alert_frame_active_bfec12_idx")
+  @@index([class_name], map: "alert_frame_class_n_6975fe_idx")
+  @@index([last_run], map: "alert_frame_last_ru_f64e71_idx")
+  @@index([name], map: "alert_frame_name_985425_idx")
+  @@index([name], map: "alert_framework_detector_name_7d1512b0_like")
+  @@index([schedule_id], map: "alert_framework_detector_schedule_id_2b8ec13c")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alert_framework_publishedalert {
+  id                            BigInt                        @id @default(autoincrement())
+  api_name                      String                        @db.VarChar(100)
+  external_id                   String                        @db.VarChar(255)
+  language                      String                        @db.VarChar(10)
+  status                        String                        @db.VarChar(20)
+  published_at                  DateTime?                     @db.Timestamptz(6)
+  last_updated                  DateTime?                     @db.Timestamptz(6)
+  cancelled_at                  DateTime?                     @db.Timestamptz(6)
+  cancellation_reason           String
+  publication_metadata          Json
+  error_message                 String
+  retry_count                   Int
+  created_at                    DateTime                      @db.Timestamptz(6)
+  updated_at                    DateTime                      @db.Timestamptz(6)
+  detection_id                  BigInt
+  template_id                   BigInt
+  alert_framework_detection     alert_framework_detection     @relation(fields: [detection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_publ_detection_id_3609a887_fk_alert_fra")
+  alert_framework_alerttemplate alert_framework_alerttemplate @relation(fields: [template_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alert_framework_publ_template_id_07e88b9b_fk_alert_fra")
+
+  @@unique([detection_id, api_name, language], map: "alert_framework_publishe_detection_id_api_name_la_0d8a37e3_uniq")
+  @@index([api_name, status], map: "alert_frame_api_nam_3dee13_idx")
+  @@index([detection_id, api_name], map: "alert_frame_detecti_dea4a3_idx")
+  @@index([external_id], map: "alert_frame_externa_d3bba7_idx")
+  @@index([retry_count], map: "alert_frame_retry_c_8eb172_idx")
+  @@index([status, created_at], map: "alert_frame_status_4162ae_idx")
+  @@index([status, published_at], map: "alert_frame_status_865ee2_idx")
+  @@index([detection_id], map: "alert_framework_publishedalert_detection_id_3609a887")
+  @@index([template_id], map: "alert_framework_publishedalert_template_id_07e88b9b")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_alert {
+  id                                                                                    BigInt                               @id @default(autoincrement())
+  title                                                                                 String                               @db.VarChar(255)
+  title_en                                                                              String?                              @db.VarChar(255)
+  title_ar                                                                              String?                              @db.VarChar(255)
+  text                                                                                  String
+  text_en                                                                               String?
+  text_ar                                                                               String?
+  shock_date                                                                            DateTime                             @db.Date
+  go_no_go                                                                              Boolean
+  go_no_go_date                                                                         DateTime?                            @db.Timestamptz(6)
+  valid_from                                                                            DateTime                             @db.Timestamptz(6)
+  valid_until                                                                           DateTime                             @db.Timestamptz(6)
+  severity                                                                              Int
+  created_at                                                                            DateTime                             @db.Timestamptz(6)
+  updated_at                                                                            DateTime                             @db.Timestamptz(6)
+  data_source_id                                                                        BigInt
+  shock_type_id                                                                         BigInt
+  event_descriptions                                                                    Json
+  source_detection_id                                                                   BigInt?
+  source_variabledata_id                                                                BigInt?
+  alert_framework_detection_alert_framework_detection_alert_idToalerts_alert            alert_framework_detection[]          @relation("alert_framework_detection_alert_idToalerts_alert")
+  data_pipeline_source                                                                  data_pipeline_source                 @relation(fields: [data_source_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_data_source_id_1e751e6f_fk_data_pipeline_source_id")
+  alerts_shocktype                                                                      alerts_shocktype                     @relation(fields: [shock_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_shock_type_id_93852cdc_fk_alerts_shocktype_id")
+  alert_framework_detection_alerts_alert_source_detection_idToalert_framework_detection alert_framework_detection?           @relation("alerts_alert_source_detection_idToalert_framework_detection", fields: [source_detection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_source_detection_id_9d5a3e9f_fk_alert_fra")
+  data_pipeline_variabledata                                                            data_pipeline_variabledata?          @relation(fields: [source_variabledata_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_source_variabledata__7e4c5785_fk_data_pipe")
+  alerts_alert_locations                                                                alerts_alert_locations[]
+  alerts_alertembedding                                                                 alerts_alertembedding?
+  alerts_alertsimilarity_alerts_alertsimilarity_alert_a_idToalerts_alert                alerts_alertsimilarity[]             @relation("alerts_alertsimilarity_alert_a_idToalerts_alert")
+  alerts_alertsimilarity_alerts_alertsimilarity_alert_b_idToalerts_alert                alerts_alertsimilarity[]             @relation("alerts_alertsimilarity_alert_b_idToalerts_alert")
+  alerts_useralert                                                                      alerts_useralert[]
+  notifications_internalnotification                                                    notifications_internalnotification[]
+
+  @@index([created_at, go_no_go], map: "alerts_aler_created_e71838_idx")
+  @@index([go_no_go, valid_from, valid_until], map: "alerts_aler_go_no_g_3f5c75_idx")
+  @@index([go_no_go, shock_date, created_at], map: "alerts_aler_go_no_g_5302df_idx")
+  @@index([go_no_go, severity], map: "alerts_aler_go_no_g_dd4066_idx")
+  @@index([shock_date, go_no_go], map: "alerts_aler_shock_d_6c3e4c_idx")
+  @@index([shock_type_id, severity], map: "alerts_aler_shock_t_29cf6f_idx")
+  @@index([shock_type_id, go_no_go, severity], map: "alerts_aler_shock_t_cb55c6_idx")
+  @@index([source_variabledata_id], map: "alerts_aler_source__6ffc15_idx")
+  @@index([source_detection_id], map: "alerts_aler_source__d8dd1c_idx")
+  @@index([valid_from, valid_until], map: "alerts_aler_valid_f_0473c3_idx")
+  @@index([data_source_id], map: "alerts_alert_data_source_id_1e751e6f")
+  @@index([shock_type_id], map: "alerts_alert_shock_type_id_93852cdc")
+  @@index([source_detection_id], map: "alerts_alert_source_detection_id_9d5a3e9f")
+  @@index([source_variabledata_id], map: "alerts_alert_source_variabledata_id_7e4c5785")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_alert_locations {
+  id                BigInt            @id @default(autoincrement())
+  alert_id          BigInt
+  location_id       BigInt
+  location_location location_location @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_locatio_location_id_02e9cf44_fk_location_")
+  alerts_alert      alerts_alert      @relation(fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alert_locations_alert_id_0106e742_fk_alerts_alert_id")
+
+  @@unique([alert_id, location_id], map: "alerts_alert_locations_alert_id_location_id_b00491e1_uniq")
+  @@index([alert_id], map: "alerts_alert_locations_alert_id_0106e742")
+  @@index([location_id], map: "alerts_alert_locations_location_id_02e9cf44")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_alertembedding {
+  id              BigInt       @id @default(autoincrement())
+  embedding       Json
+  similarity_text String
+  model_name      String       @db.VarChar(100)
+  created_at      DateTime     @db.Timestamptz(6)
+  alert_id        BigInt       @unique
+  alerts_alert    alerts_alert @relation(fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alertembedding_alert_id_09406786_fk_alerts_alert_id")
+
+  @@index([model_name], map: "alerts_aler_model_n_170805_idx")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_alertsimilarity {
+  id                                                           BigInt       @id @default(autoincrement())
+  semantic_score                                               Float
+  created_at                                                   DateTime     @db.Timestamptz(6)
+  alert_a_id                                                   BigInt
+  alert_b_id                                                   BigInt
+  alerts_alert_alerts_alertsimilarity_alert_a_idToalerts_alert alerts_alert @relation("alerts_alertsimilarity_alert_a_idToalerts_alert", fields: [alert_a_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alertsimilarity_alert_a_id_30aabc7a_fk_alerts_alert_id")
+  alerts_alert_alerts_alertsimilarity_alert_b_idToalerts_alert alerts_alert @relation("alerts_alertsimilarity_alert_b_idToalerts_alert", fields: [alert_b_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alertsimilarity_alert_b_id_2bb86724_fk_alerts_alert_id")
+
+  @@unique([alert_a_id, alert_b_id], map: "alerts_alertsimilarity_alert_a_id_alert_b_id_64f7f2e1_uniq")
+  @@index([alert_a_id, semantic_score(sort: Desc)], map: "alerts_aler_alert_a_22b3f0_idx")
+  @@index([alert_b_id, semantic_score(sort: Desc)], map: "alerts_aler_alert_b_65a801_idx")
+  @@index([alert_a_id], map: "alerts_alertsimilarity_alert_a_id_30aabc7a")
+  @@index([alert_b_id], map: "alerts_alertsimilarity_alert_b_id_2bb86724")
+}
+
+model alerts_emailtemplate {
+  id              BigInt   @id @default(autoincrement())
+  name            String   @unique @db.VarChar(50)
+  description     String
+  subject         String   @db.VarChar(255)
+  subject_en      String?  @db.VarChar(255)
+  subject_ar      String?  @db.VarChar(255)
+  html_header     String
+  html_header_en  String?
+  html_header_ar  String?
+  html_footer     String
+  html_footer_en  String?
+  html_footer_ar  String?
+  html_wrapper    String
+  html_wrapper_en String?
+  html_wrapper_ar String?
+  text_header     String
+  text_header_en  String?
+  text_header_ar  String?
+  text_footer     String
+  text_footer_en  String?
+  text_footer_ar  String?
+  text_wrapper    String
+  text_wrapper_en String?
+  text_wrapper_ar String?
+  active          Boolean
+  created_at      DateTime @db.Timestamptz(6)
+  updated_at      DateTime @db.Timestamptz(6)
+
+  @@index([name], map: "alerts_emailtemplate_name_165d595b_like")
+}
+
+model alerts_shocktype {
+  id                              BigInt                            @id @default(autoincrement())
+  name                            String                            @unique @db.VarChar(100)
+  name_en                         String?                           @unique @db.VarChar(100)
+  name_ar                         String?                           @unique @db.VarChar(100)
+  created_at                      DateTime                          @db.Timestamptz(6)
+  updated_at                      DateTime                          @db.Timestamptz(6)
+  color                           String                            @db.VarChar(7)
+  css_class                       String                            @db.VarChar(50)
+  icon                            String                            @db.VarChar(10)
+  alert_framework_alerttemplate   alert_framework_alerttemplate[]
+  alert_framework_detection       alert_framework_detection[]
+  alerts_alert                    alerts_alert[]
+  alerts_subscription_shock_types alerts_subscription_shock_types[]
+  dashboard_theme_shock_types     dashboard_theme_shock_types[]
+
+  @@index([name], map: "alerts_shoc_name_467a5b_idx")
+  @@index([name], map: "alerts_shocktype_name_17eac0b7_like")
+  @@index([name_ar], map: "alerts_shocktype_name_ar_967b40a3_like")
+  @@index([name_en], map: "alerts_shocktype_name_en_b71e9f4c_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_subscription {
+  id                              BigInt                            @id @default(autoincrement())
+  active                          Boolean
+  method                          String                            @db.VarChar(20)
+  frequency                       String                            @db.VarChar(20)
+  created_at                      DateTime                          @db.Timestamptz(6)
+  updated_at                      DateTime                          @db.Timestamptz(6)
+  user_id                         Int
+  auth_user                       auth_user                         @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_subscription_user_id_38b321ac_fk_auth_user_id")
+  alerts_subscription_locations   alerts_subscription_locations[]
+  alerts_subscription_shock_types alerts_subscription_shock_types[]
+
+  @@index([active, frequency], map: "alerts_subs_active_2911a4_idx")
+  @@index([user_id, active], map: "alerts_subs_user_id_a11961_idx")
+  @@index([user_id], map: "alerts_subscription_user_id_38b321ac")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_subscription_locations {
+  id                  BigInt              @id @default(autoincrement())
+  subscription_id     BigInt
+  location_id         BigInt
+  location_location   location_location   @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_subscription__location_id_47f2a5b5_fk_location_")
+  alerts_subscription alerts_subscription @relation(fields: [subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_subscription__subscription_id_2e0b7a09_fk_alerts_su")
+
+  @@unique([subscription_id, location_id], map: "alerts_subscription_loca_subscription_id_location_fceb0fec_uniq")
+  @@index([location_id], map: "alerts_subscription_locations_location_id_47f2a5b5")
+  @@index([subscription_id], map: "alerts_subscription_locations_subscription_id_2e0b7a09")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_subscription_shock_types {
+  id                  BigInt              @id @default(autoincrement())
+  subscription_id     BigInt
+  shocktype_id        BigInt
+  alerts_shocktype    alerts_shocktype    @relation(fields: [shocktype_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_subscription__shocktype_id_88eda0eb_fk_alerts_sh")
+  alerts_subscription alerts_subscription @relation(fields: [subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_subscription__subscription_id_77d1b30a_fk_alerts_su")
+
+  @@unique([subscription_id, shocktype_id], map: "alerts_subscription_shoc_subscription_id_shocktyp_5a9b5a13_uniq")
+  @@index([shocktype_id], map: "alerts_subscription_shock_types_shocktype_id_88eda0eb")
+  @@index([subscription_id], map: "alerts_subscription_shock_types_subscription_id_77d1b30a")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model alerts_useralert {
+  id                   BigInt       @id @default(autoincrement())
+  received_at          DateTime?    @db.Timestamptz(6)
+  read_at              DateTime?    @db.Timestamptz(6)
+  flag_false           Boolean
+  flag_incomplete      Boolean
+  comment              String
+  bookmarked           Boolean
+  created_at           DateTime     @db.Timestamptz(6)
+  updated_at           DateTime     @db.Timestamptz(6)
+  alert_id             BigInt
+  user_id              Int
+  rating_accuracy      Int?
+  rating_accuracy_at   DateTime?    @db.Timestamptz(6)
+  rating_relevance     Int?
+  rating_relevance_at  DateTime?    @db.Timestamptz(6)
+  rating_timeliness    Int?
+  rating_timeliness_at DateTime?    @db.Timestamptz(6)
+  alerts_alert         alerts_alert @relation(fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_useralert_alert_id_6166682c_fk_alerts_alert_id")
+  auth_user            auth_user    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_useralert_user_id_9af6e1b9_fk_auth_user_id")
+
+  @@unique([user_id, alert_id], map: "alerts_useralert_user_id_alert_id_b968a87a_uniq")
+  @@index([alert_id, rating_timeliness], map: "alerts_user_alert_i_172ca2_idx")
+  @@index([alert_id, rating_accuracy], map: "alerts_user_alert_i_78051a_idx")
+  @@index([alert_id, rating_relevance], map: "alerts_user_alert_i_98e622_idx")
+  @@index([flag_false, flag_incomplete], map: "alerts_user_flag_fa_e4e834_idx")
+  @@index([rating_relevance, created_at], map: "alerts_user_rating__3bccf7_idx")
+  @@index([user_id, alert_id, bookmarked], map: "alerts_user_user_id_0eb48b_idx")
+  @@index([user_id, bookmarked], map: "alerts_user_user_id_254826_idx")
+  @@index([user_id, rating_timeliness, rating_timeliness_at], map: "alerts_user_user_id_347684_idx")
+  @@index([user_id, rating_relevance, rating_relevance_at], map: "alerts_user_user_id_5e1c3e_idx")
+  @@index([user_id, read_at], map: "alerts_user_user_id_b2a95f_idx")
+  @@index([user_id, rating_accuracy, rating_accuracy_at], map: "alerts_user_user_id_bf98e8_idx")
+  @@index([alert_id], map: "alerts_useralert_alert_id_6166682c")
+  @@index([user_id], map: "alerts_useralert_user_id_9af6e1b9")
+}
+
+model auth_group {
+  id                     Int                      @id @default(autoincrement())
+  name                   String                   @unique @db.VarChar(150)
+  auth_group_permissions auth_group_permissions[]
+  auth_user_groups       auth_user_groups[]
+
+  @@index([name], map: "auth_group_name_a6ea08ec_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model auth_group_permissions {
+  id              BigInt          @id @default(autoincrement())
+  group_id        Int
+  permission_id   Int
+  auth_permission auth_permission @relation(fields: [permission_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_group_permissio_permission_id_84c5c92e_fk_auth_perm")
+  auth_group      auth_group      @relation(fields: [group_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_group_permissions_group_id_b120cbf9_fk_auth_group_id")
+
+  @@unique([group_id, permission_id], map: "auth_group_permissions_group_id_permission_id_0cd325b0_uniq")
+  @@index([group_id], map: "auth_group_permissions_group_id_b120cbf9")
+  @@index([permission_id], map: "auth_group_permissions_permission_id_84c5c92e")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model auth_permission {
+  id                         Int                          @id @default(autoincrement())
+  name                       String                       @db.VarChar(255)
+  content_type_id            Int
+  codename                   String                       @db.VarChar(100)
+  auth_group_permissions     auth_group_permissions[]
+  django_content_type        django_content_type          @relation(fields: [content_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_permission_content_type_id_2f476e4b_fk_django_co")
+  auth_user_user_permissions auth_user_user_permissions[]
+
+  @@unique([content_type_id, codename], map: "auth_permission_content_type_id_codename_01ab375a_uniq")
+  @@index([content_type_id], map: "auth_permission_content_type_id_2f476e4b")
+}
+
+model auth_user {
+  id                                   Int                                   @id @default(autoincrement())
+  password                             String                                @db.VarChar(128)
+  last_login                           DateTime?                             @db.Timestamptz(6)
+  is_superuser                         Boolean
+  username                             String                                @unique @db.VarChar(150)
+  first_name                           String                                @db.VarChar(150)
+  last_name                            String                                @db.VarChar(150)
+  email                                String                                @db.VarChar(254)
+  is_staff                             Boolean
+  is_active                            Boolean
+  date_joined                          DateTime                              @db.Timestamptz(6)
+  alerts_subscription                  alerts_subscription[]
+  alerts_useralert                     alerts_useralert[]
+  auth_user_groups                     auth_user_groups[]
+  auth_user_user_permissions           auth_user_user_permissions[]
+  django_admin_log                     django_admin_log[]
+  llm_service_querylog                 llm_service_querylog[]
+  location_unmatchedlocation           location_unmatchedlocation[]
+  notifications_internalnotification   notifications_internalnotification[]
+  notifications_notificationpreference notifications_notificationpreference?
+  users_userprofile                    users_userprofile?
+
+  @@index([username], map: "auth_user_username_6821ab7c_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model auth_user_groups {
+  id         BigInt     @id @default(autoincrement())
+  user_id    Int
+  group_id   Int
+  auth_group auth_group @relation(fields: [group_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_groups_group_id_97559544_fk_auth_group_id")
+  auth_user  auth_user  @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_groups_user_id_6a12ed8b_fk_auth_user_id")
+
+  @@unique([user_id, group_id], map: "auth_user_groups_user_id_group_id_94350c0c_uniq")
+  @@index([group_id], map: "auth_user_groups_group_id_97559544")
+  @@index([user_id], map: "auth_user_groups_user_id_6a12ed8b")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model auth_user_user_permissions {
+  id              BigInt          @id @default(autoincrement())
+  user_id         Int
+  permission_id   Int
+  auth_permission auth_permission @relation(fields: [permission_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_user_permi_permission_id_1fbb5f2c_fk_auth_perm")
+  auth_user       auth_user       @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_user_permissions_user_id_a95ead1b_fk_auth_user_id")
+
+  @@unique([user_id, permission_id], map: "auth_user_user_permissions_user_id_permission_id_14a6b632_uniq")
+  @@index([permission_id], map: "auth_user_user_permissions_permission_id_1fbb5f2c")
+  @@index([user_id], map: "auth_user_user_permissions_user_id_a95ead1b")
+}
+
+model dashboard_colormap {
+  id              BigInt            @id @default(autoincrement())
+  name            String            @unique @db.VarChar(100)
+  description     String
+  named_colormap  String?           @db.VarChar(50)
+  color_start     String?           @db.VarChar(7)
+  color_end       String?           @db.VarChar(7)
+  is_active       Boolean
+  created_at      DateTime          @db.Timestamptz(6)
+  updated_at      DateTime          @db.Timestamptz(6)
+  colorbar_image  String?           @db.VarChar(100)
+  dashboard_layer dashboard_layer[]
+  dashboard_theme dashboard_theme[]
+
+  @@index([name], map: "dashboard_colormap_name_76e2608b_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model dashboard_layer {
+  id                   BigInt                 @id @default(autoincrement())
+  name                 String                 @db.VarChar(255)
+  code                 String                 @unique @db.VarChar(100)
+  description          String
+  layer_type           String                 @db.VarChar(20)
+  url                  String?                @db.VarChar(500)
+  wms_layers           String?                @db.VarChar(255)
+  vector_style         Json?
+  opacity              Float
+  is_active            Boolean
+  order                Int
+  created_at           DateTime               @db.Timestamptz(6)
+  updated_at           DateTime               @db.Timestamptz(6)
+  cog_colormap_id      BigInt?
+  retrieval_date       DateTime?              @db.Date
+  source               String                 @db.VarChar(255)
+  dashboard_colormap   dashboard_colormap?    @relation(fields: [cog_colormap_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_layer_cog_colormap_id_19cc42f0_fk_dashboard")
+  dashboard_themelayer dashboard_themelayer[]
+
+  @@index([code], map: "dashboard_layer_code_1478e5b4_like")
+  @@index([cog_colormap_id], map: "dashboard_layer_cog_colormap_id_19cc42f0")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model dashboard_theme {
+  id                          BigInt                        @id @default(autoincrement())
+  code                        String                        @unique @db.VarChar(100)
+  name                        String                        @db.VarChar(255)
+  description                 String
+  icon                        String                        @db.VarChar(50)
+  is_active                   Boolean
+  is_combined                 Boolean
+  order                       Int
+  created_at                  DateTime                      @db.Timestamptz(6)
+  updated_at                  DateTime                      @db.Timestamptz(6)
+  colormap_id                 BigInt
+  dashboard_colormap          dashboard_colormap            @relation(fields: [colormap_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_theme_colormap_id_e77843e1_fk_dashboard_colormap_id")
+  dashboard_theme_shock_types dashboard_theme_shock_types[]
+  dashboard_themelayer        dashboard_themelayer[]
+  dashboard_themevariable     dashboard_themevariable[]
+
+  @@index([code], map: "dashboard_theme_code_91e70964_like")
+  @@index([colormap_id], map: "dashboard_theme_colormap_id_e77843e1")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model dashboard_theme_shock_types {
+  id               BigInt           @id @default(autoincrement())
+  theme_id         BigInt
+  shocktype_id     BigInt
+  alerts_shocktype alerts_shocktype @relation(fields: [shocktype_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_theme_shoc_shocktype_id_de70192a_fk_alerts_sh")
+  dashboard_theme  dashboard_theme  @relation(fields: [theme_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_theme_shoc_theme_id_560934f5_fk_dashboard")
+
+  @@unique([theme_id, shocktype_id], map: "dashboard_theme_shock_types_theme_id_shocktype_id_f4fd35af_uniq")
+  @@index([shocktype_id], map: "dashboard_theme_shock_types_shocktype_id_de70192a")
+  @@index([theme_id], map: "dashboard_theme_shock_types_theme_id_560934f5")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model dashboard_themelayer {
+  id                    BigInt          @id @default(autoincrement())
+  order                 Int
+  is_visible_by_default Boolean
+  min_value             Float?
+  max_value             Float?
+  layer_id              BigInt
+  theme_id              BigInt
+  dashboard_layer       dashboard_layer @relation(fields: [layer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_themelayer_layer_id_36db88ca_fk_dashboard_layer_id")
+  dashboard_theme       dashboard_theme @relation(fields: [theme_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_themelayer_theme_id_fd693035_fk_dashboard_theme_id")
+
+  @@unique([theme_id, layer_id], map: "dashboard_themelayer_theme_id_layer_id_5e860b7d_uniq")
+  @@index([layer_id], map: "dashboard_themelayer_layer_id_36db88ca")
+  @@index([theme_id], map: "dashboard_themelayer_theme_id_fd693035")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model dashboard_themevariable {
+  id                     BigInt                 @id @default(autoincrement())
+  order                  Int
+  min_value              Float?
+  max_value              Float?
+  opacity                Float
+  theme_id               BigInt
+  variable_id            BigInt
+  data_pipeline_variable data_pipeline_variable @relation(fields: [variable_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_themevaria_variable_id_64205790_fk_data_pipe")
+  dashboard_theme        dashboard_theme        @relation(fields: [theme_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "dashboard_themevariable_theme_id_60d266b3_fk_dashboard_theme_id")
+
+  @@unique([theme_id, variable_id], map: "dashboard_themevariable_theme_id_variable_id_c36a71f2_uniq")
+  @@index([theme_id], map: "dashboard_themevariable_theme_id_60d266b3")
+  @@index([variable_id], map: "dashboard_themevariable_variable_id_64205790")
+}
+
+model data_pipeline_source {
+  id                            BigInt                          @id @default(autoincrement())
+  name                          String                          @db.VarChar(255)
+  name_en                       String?                         @db.VarChar(255)
+  name_ar                       String?                         @db.VarChar(255)
+  description                   String
+  description_en                String?
+  description_ar                String?
+  type                          String                          @db.VarChar(20)
+  info_url                      String                          @db.VarChar(200)
+  base_url                      String                          @db.VarChar(200)
+  class_name                    String                          @db.VarChar(255)
+  comment                       String
+  comment_en                    String?
+  comment_ar                    String?
+  created_at                    DateTime?                       @db.Timestamptz(6)
+  updated_at                    DateTime?                       @db.Timestamptz(6)
+  is_active                     Boolean
+  data_frequency                String                          @db.VarChar(20)
+  alerts_alert                  alerts_alert[]
+  data_pipeline_sourceauthtoken data_pipeline_sourceauthtoken?
+  data_pipeline_variable        data_pipeline_variable[]
+  task_monitoring_taskexecution task_monitoring_taskexecution[]
+
+  @@index([name], map: "data_pipeli_name_907609_idx")
+  @@index([type], map: "data_pipeli_type_6fea6b_idx")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model data_pipeline_sourceauthtoken {
+  id                   BigInt               @id @default(autoincrement())
+  access_token         String
+  refresh_token        String
+  token_type           String               @db.VarChar(50)
+  expires_at           DateTime?            @db.Timestamptz(6)
+  refresh_expires_at   DateTime?            @db.Timestamptz(6)
+  metadata             Json
+  created_at           DateTime             @db.Timestamptz(6)
+  updated_at           DateTime             @db.Timestamptz(6)
+  source_id            BigInt               @unique
+  data_pipeline_source data_pipeline_source @relation(fields: [source_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_source_source_id_4f19be73_fk_data_pipe")
+
+  @@index([source_id, expires_at], map: "data_pipeli_source__82391c_idx")
+}
+
+model data_pipeline_taskstatistics {
+  id                   BigInt   @id @default(autoincrement())
+  date                 DateTime @unique @db.Date
+  check_updates_count  Int
+  download_data_count  Int
+  process_data_count   Int
+  full_pipeline_count  Int
+  reprocess_data_count Int
+  success_count        Int
+  failure_count        Int
+  retry_count          Int
+  avg_duration_seconds Float?
+  max_duration_seconds Float?
+  created_at           DateTime @db.Timestamptz(6)
+  updated_at           DateTime @db.Timestamptz(6)
+
+  @@index([date], map: "data_pipeli_date_84ee66_idx")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model data_pipeline_variable {
+  id                            BigInt                          @id @default(autoincrement())
+  name                          String                          @db.VarChar(255)
+  name_en                       String?                         @db.VarChar(255)
+  name_ar                       String?                         @db.VarChar(255)
+  code                          String                          @db.VarChar(100)
+  period                        String                          @db.VarChar(20)
+  adm_level                     Int
+  type                          String                          @db.VarChar(20)
+  text                          String
+  text_en                       String?
+  text_ar                       String?
+  created_at                    DateTime?                       @db.Timestamptz(6)
+  updated_at                    DateTime?                       @db.Timestamptz(6)
+  source_id                     BigInt
+  unit                          String                          @db.VarChar(50)
+  retrieval_date                DateTime?                       @db.Date
+  dashboard_themevariable       dashboard_themevariable[]
+  data_pipeline_source          data_pipeline_source            @relation(fields: [source_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_source_id_903e6993_fk_data_pipe")
+  data_pipeline_variabledata    data_pipeline_variabledata[]
+  task_monitoring_taskexecution task_monitoring_taskexecution[]
+
+  @@unique([source_id, code], map: "data_pipeline_variable_source_id_code_a1ba78c6_uniq")
+  @@index([period, adm_level], map: "data_pipeli_period_3475f2_idx")
+  @@index([source_id, code], map: "data_pipeli_source__32461b_idx")
+  @@index([type], map: "data_pipeli_type_df82e7_idx")
+  @@index([source_id], map: "data_pipeline_variable_source_id_903e6993")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model data_pipeline_variabledata {
+  id                               BigInt                       @id @default(autoincrement())
+  start_date                       DateTime                     @db.Date
+  end_date                         DateTime                     @db.Date
+  period                           String                       @db.VarChar(20)
+  value                            Float?
+  text                             String
+  created_at                       DateTime                     @db.Timestamptz(6)
+  updated_at                       DateTime                     @db.Timestamptz(6)
+  adm_level_id                     BigInt
+  gid_id                           BigInt?
+  variable_id                      BigInt
+  original_location_text           String
+  parent_id                        BigInt?
+  unmatched_location_id            BigInt?
+  raw_data                         Json?
+  source_record_id                 String?                      @db.VarChar(255)
+  alert_framework_detection        alert_framework_detection[]
+  alerts_alert                     alerts_alert[]
+  location_admlevel                location_admlevel            @relation(fields: [adm_level_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_adm_level_id_67b64f71_fk_location_")
+  location_location                location_location?           @relation(fields: [gid_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_gid_id_db3c5e6f_fk_location_")
+  data_pipeline_variabledata       data_pipeline_variabledata?  @relation("data_pipeline_variabledataTodata_pipeline_variabledata", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_parent_id_33b7259a_fk_data_pipe")
+  other_data_pipeline_variabledata data_pipeline_variabledata[] @relation("data_pipeline_variabledataTodata_pipeline_variabledata")
+  location_unmatchedlocation       location_unmatchedlocation?  @relation(fields: [unmatched_location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_unmatched_location_i_7435db0c_fk_location_")
+  data_pipeline_variable           data_pipeline_variable       @relation(fields: [variable_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_variab_variable_id_41a27bf5_fk_data_pipe")
+
+  @@unique([variable_id, start_date, end_date, gid_id], map: "data_pipeline_variableda_variable_id_start_date_e_501d6c00_uniq")
+  @@index([adm_level_id, period], map: "data_pipeli_adm_lev_310bce_idx")
+  @@index([end_date], map: "data_pipeli_end_dat_d47fbd_idx")
+  @@index([gid_id, variable_id], map: "data_pipeli_gid_id_14af07_idx")
+  @@index([parent_id], map: "data_pipeli_parent__c36565_idx")
+  @@index([variable_id, start_date, end_date], map: "data_pipeli_variabl_a821b0_idx")
+  @@index([adm_level_id], map: "data_pipeline_variabledata_adm_level_id_67b64f71")
+  @@index([gid_id], map: "data_pipeline_variabledata_gid_id_db3c5e6f")
+  @@index([parent_id], map: "data_pipeline_variabledata_parent_id_33b7259a")
+  @@index([source_record_id], map: "data_pipeline_variabledata_source_record_id_ac805590")
+  @@index([source_record_id], map: "data_pipeline_variabledata_source_record_id_ac805590_like")
+  @@index([unmatched_location_id], map: "data_pipeline_variabledata_unmatched_location_id_7435db0c")
+  @@index([variable_id], map: "data_pipeline_variabledata_variable_id_41a27bf5")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model django_admin_log {
+  id                  Int                  @id @default(autoincrement())
+  action_time         DateTime             @db.Timestamptz(6)
+  object_id           String?
+  object_repr         String               @db.VarChar(200)
+  action_flag         Int                  @db.SmallInt
+  change_message      String
+  content_type_id     Int?
+  user_id             Int
+  django_content_type django_content_type? @relation(fields: [content_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_admin_log_content_type_id_c4bce8eb_fk_django_co")
+  auth_user           auth_user            @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_admin_log_user_id_c564eba6_fk_auth_user_id")
+
+  @@index([content_type_id], map: "django_admin_log_content_type_id_c4bce8eb")
+  @@index([user_id], map: "django_admin_log_user_id_c564eba6")
+}
+
+model django_celery_beat_clockedschedule {
+  id                              Int                               @id @default(autoincrement())
+  clocked_time                    DateTime                          @db.Timestamptz(6)
+  django_celery_beat_periodictask django_celery_beat_periodictask[]
+}
+
+model django_celery_beat_crontabschedule {
+  id                              Int                               @id @default(autoincrement())
+  minute                          String                            @db.VarChar(240)
+  hour                            String                            @db.VarChar(96)
+  day_of_week                     String                            @db.VarChar(64)
+  day_of_month                    String                            @db.VarChar(124)
+  month_of_year                   String                            @db.VarChar(64)
+  timezone                        String                            @db.VarChar(63)
+  django_celery_beat_periodictask django_celery_beat_periodictask[]
+}
+
+model django_celery_beat_intervalschedule {
+  id                              Int                               @id @default(autoincrement())
+  every                           Int
+  period                          String                            @db.VarChar(24)
+  django_celery_beat_periodictask django_celery_beat_periodictask[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model django_celery_beat_periodictask {
+  id                                  Int                                  @id @default(autoincrement())
+  name                                String                               @unique @db.VarChar(200)
+  task                                String                               @db.VarChar(200)
+  args                                String
+  kwargs                              String
+  queue                               String?                              @db.VarChar(200)
+  exchange                            String?                              @db.VarChar(200)
+  routing_key                         String?                              @db.VarChar(200)
+  expires                             DateTime?                            @db.Timestamptz(6)
+  enabled                             Boolean
+  last_run_at                         DateTime?                            @db.Timestamptz(6)
+  total_run_count                     Int
+  date_changed                        DateTime                             @db.Timestamptz(6)
+  description                         String
+  crontab_id                          Int?
+  interval_id                         Int?
+  solar_id                            Int?
+  one_off                             Boolean
+  start_time                          DateTime?                            @db.Timestamptz(6)
+  priority                            Int?
+  headers                             String
+  clocked_id                          Int?
+  expire_seconds                      Int?
+  alert_framework_detector            alert_framework_detector[]
+  django_celery_beat_clockedschedule  django_celery_beat_clockedschedule?  @relation(fields: [clocked_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_celery_beat_p_clocked_id_47a69f82_fk_django_ce")
+  django_celery_beat_crontabschedule  django_celery_beat_crontabschedule?  @relation(fields: [crontab_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_celery_beat_p_crontab_id_d3cba168_fk_django_ce")
+  django_celery_beat_intervalschedule django_celery_beat_intervalschedule? @relation(fields: [interval_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_celery_beat_p_interval_id_a8ca27da_fk_django_ce")
+  django_celery_beat_solarschedule    django_celery_beat_solarschedule?    @relation(fields: [solar_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_celery_beat_p_solar_id_a87ce72c_fk_django_ce")
+
+  @@index([clocked_id], map: "django_celery_beat_periodictask_clocked_id_47a69f82")
+  @@index([crontab_id], map: "django_celery_beat_periodictask_crontab_id_d3cba168")
+  @@index([interval_id], map: "django_celery_beat_periodictask_interval_id_a8ca27da")
+  @@index([name], map: "django_celery_beat_periodictask_name_265a36b7_like")
+  @@index([solar_id], map: "django_celery_beat_periodictask_solar_id_a87ce72c")
+}
+
+model django_celery_beat_periodictasks {
+  ident       Int      @id @db.SmallInt
+  last_update DateTime @db.Timestamptz(6)
+}
+
+model django_celery_beat_solarschedule {
+  id                              Int                               @id @default(autoincrement())
+  event                           String                            @db.VarChar(24)
+  latitude                        Decimal                           @db.Decimal(9, 6)
+  longitude                       Decimal                           @db.Decimal(9, 6)
+  django_celery_beat_periodictask django_celery_beat_periodictask[]
+
+  @@unique([event, latitude, longitude], map: "django_celery_beat_solar_event_latitude_longitude_ba64999a_uniq")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model django_celery_results_chordcounter {
+  id        Int    @id @default(autoincrement())
+  group_id  String @unique @db.VarChar(255)
+  sub_tasks String
+  count     Int
+
+  @@index([group_id], map: "django_celery_results_chordcounter_group_id_1f70858c_like")
+}
+
+model django_celery_results_groupresult {
+  id               Int      @id @default(autoincrement())
+  group_id         String   @unique @db.VarChar(255)
+  date_created     DateTime @db.Timestamptz(6)
+  date_done        DateTime @db.Timestamptz(6)
+  content_type     String   @db.VarChar(128)
+  content_encoding String   @db.VarChar(64)
+  result           String?
+
+  @@index([date_created], map: "django_cele_date_cr_bd6c1d_idx")
+  @@index([date_done], map: "django_cele_date_do_caae0e_idx")
+  @@index([group_id], map: "django_celery_results_groupresult_group_id_a085f1a9_like")
+}
+
+model django_celery_results_taskresult {
+  id                 Int       @id @default(autoincrement())
+  task_id            String    @unique @db.VarChar(255)
+  status             String    @db.VarChar(50)
+  content_type       String    @db.VarChar(128)
+  content_encoding   String    @db.VarChar(64)
+  result             String?
+  date_done          DateTime  @db.Timestamptz(6)
+  traceback          String?
+  meta               String?
+  task_args          String?
+  task_kwargs        String?
+  task_name          String?   @db.VarChar(255)
+  worker             String?   @db.VarChar(100)
+  date_created       DateTime  @db.Timestamptz(6)
+  periodic_task_name String?   @db.VarChar(255)
+  date_started       DateTime? @db.Timestamptz(6)
+
+  @@index([date_created], map: "django_cele_date_cr_f04a50_idx")
+  @@index([date_done], map: "django_cele_date_do_f59aad_idx")
+  @@index([periodic_task_name], map: "django_cele_periodi_1993cf_idx")
+  @@index([status], map: "django_cele_status_9b6201_idx")
+  @@index([task_name], map: "django_cele_task_na_08aec9_idx")
+  @@index([worker], map: "django_cele_worker_d54dd8_idx")
+  @@index([task_id], map: "django_celery_results_taskresult_task_id_de0d95bf_like")
+}
+
+model django_content_type {
+  id               Int                @id @default(autoincrement())
+  app_label        String             @db.VarChar(100)
+  model            String             @db.VarChar(100)
+  auth_permission  auth_permission[]
+  django_admin_log django_admin_log[]
+
+  @@unique([app_label, model], map: "django_content_type_app_label_model_76bd3d3b_uniq")
+}
+
+model django_migrations {
+  id      BigInt   @id @default(autoincrement())
+  app     String   @db.VarChar(255)
+  name    String   @db.VarChar(255)
+  applied DateTime @db.Timestamptz(6)
+}
+
+model django_session {
+  session_key  String   @id @db.VarChar(40)
+  session_data String
+  expire_date  DateTime @db.Timestamptz(6)
+
+  @@index([expire_date], map: "django_session_expire_date_a5c62663")
+  @@index([session_key], map: "django_session_session_key_c0390e0f_like")
+}
+
+model llm_service_cachedresponse {
+  id                BigInt   @id @default(autoincrement())
+  cache_key         String   @unique @db.VarChar(64)
+  provider          String   @db.VarChar(50)
+  model             String   @db.VarChar(100)
+  response_text     String
+  response_metadata Json
+  created_at        DateTime @db.Timestamptz(6)
+  expires_at        DateTime @db.Timestamptz(6)
+  hit_count         Int
+  last_accessed     DateTime @db.Timestamptz(6)
+
+  @@index([cache_key], map: "llm_service_cachedresponse_cache_key_f0f68110_like")
+  @@index([expires_at], map: "llm_service_cachedresponse_expires_at_51450af2")
+  @@index([provider, model, created_at], map: "llm_service_provide_dc8e46_idx")
+}
+
+model llm_service_providerconfig {
+  id            BigInt   @id @default(autoincrement())
+  provider_name String   @unique @db.VarChar(50)
+  is_active     Boolean
+  priority      Int
+  config        Json
+  rate_limit    Int?
+  token_limit   Int?
+  created_at    DateTime @db.Timestamptz(6)
+  updated_at    DateTime @db.Timestamptz(6)
+
+  @@index([provider_name], map: "llm_service_providerconfig_provider_name_be553903_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model llm_service_querylog {
+  id               BigInt     @id @default(autoincrement())
+  provider         String     @db.VarChar(50)
+  model            String     @db.VarChar(100)
+  prompt_hash      String     @db.VarChar(64)
+  prompt_text      String?
+  response_text    String?
+  tokens_input     Int
+  tokens_output    Int
+  total_tokens     Int
+  response_time_ms Int
+  success          Boolean
+  error_message    String?
+  cost_estimate    Decimal?   @db.Decimal(10, 6)
+  application      String     @db.VarChar(100)
+  metadata         Json
+  created_at       DateTime   @db.Timestamptz(6)
+  user_id          Int?
+  auth_user        auth_user? @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "llm_service_querylog_user_id_b4874da2_fk_auth_user_id")
+
+  @@index([application, created_at], map: "llm_service_applica_095561_idx")
+  @@index([provider, created_at], map: "llm_service_provide_084a13_idx")
+  @@index([application], map: "llm_service_querylog_application_80a29da2")
+  @@index([application], map: "llm_service_querylog_application_80a29da2_like")
+  @@index([created_at], map: "llm_service_querylog_created_at_aae2dd3e")
+  @@index([prompt_hash], map: "llm_service_querylog_prompt_hash_c74e61fa")
+  @@index([prompt_hash], map: "llm_service_querylog_prompt_hash_c74e61fa_like")
+  @@index([provider], map: "llm_service_querylog_provider_164c2552")
+  @@index([provider], map: "llm_service_querylog_provider_164c2552_like")
+  @@index([user_id], map: "llm_service_querylog_user_id_b4874da2")
+}
+
+model location_admlevel {
+  id                         BigInt                       @id @default(autoincrement())
+  code                       String                       @unique @db.VarChar(10)
+  name                       String                       @db.VarChar(100)
+  name_en                    String?                      @db.VarChar(100)
+  name_ar                    String?                      @db.VarChar(100)
+  data_pipeline_variabledata data_pipeline_variabledata[]
+  location_location          location_location[]
+
+  @@index([code], map: "location_admlevel_code_5fea79d5_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model location_gazetteer {
+  id                BigInt            @id @default(autoincrement())
+  source            String            @db.VarChar(100)
+  code              String            @db.VarChar(50)
+  name              String            @db.VarChar(255)
+  created_at        DateTime?         @db.Timestamptz(6)
+  updated_at        DateTime?         @db.Timestamptz(6)
+  location_id       BigInt
+  location_location location_location @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "location_gazetteer_location_id_83ac793c_fk_location_location_id")
+
+  @@unique([location_id, source, code], map: "location_gazetteer_location_id_source_code_4eea9bfc_uniq")
+  @@unique([location_id, source, name], map: "location_gazetteer_location_id_source_name_92c21936_uniq")
+  @@index([code], map: "location_ga_code_3ea8ed_idx")
+  @@index([name], map: "location_ga_name_57efa3_idx")
+  @@index([source], map: "location_ga_source_79ef4d_idx")
+  @@index([location_id], map: "location_gazetteer_location_id_83ac793c")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model location_location {
+  id                                  BigInt                                @id @default(autoincrement())
+  geo_id                              String                                @unique @db.VarChar(50)
+  name                                String                                @db.VarChar(255)
+  name_en                             String?                               @db.VarChar(255)
+  name_ar                             String?                               @db.VarChar(255)
+  boundary                            Unsupported("geometry")?
+  point                               Unsupported("geometry")?
+  comment                             String?
+  comment_en                          String?
+  comment_ar                          String?
+  created_at                          DateTime?                             @db.Timestamptz(6)
+  updated_at                          DateTime?                             @db.Timestamptz(6)
+  admin_level_id                      BigInt
+  parent_id                           BigInt?
+  point_type                          String?                               @db.VarChar(10)
+  alert_framework_detection_locations alert_framework_detection_locations[]
+  alerts_alert_locations              alerts_alert_locations[]
+  alerts_subscription_locations       alerts_subscription_locations[]
+  data_pipeline_variabledata          data_pipeline_variabledata[]
+  location_gazetteer                  location_gazetteer[]
+  location_admlevel                   location_admlevel                     @relation(fields: [admin_level_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "location_location_admin_level_id_a284d68e_fk_location_")
+  location_location                   location_location?                    @relation("location_locationTolocation_location", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "location_location_parent_id_47fe0a9a_fk_location_location_id")
+  other_location_location             location_location[]                   @relation("location_locationTolocation_location")
+  location_unmatchedlocation          location_unmatchedlocation[]
+
+  @@index([admin_level_id], map: "location_lo_admin_l_bd4483_idx")
+  @@index([geo_id], map: "location_lo_geo_id_ebfb0f_idx")
+  @@index([parent_id], map: "location_lo_parent__a571f7_idx")
+  @@index([admin_level_id], map: "location_location_admin_level_id_a284d68e")
+  @@index([boundary], map: "location_location_boundary_4e277753_id", type: Gist)
+  @@index([geo_id], map: "location_location_geo_id_1074dc65_like")
+  @@index([parent_id], map: "location_location_parent_id_47fe0a9a")
+  @@index([point], map: "location_location_point_9c4c6db5_id", type: Gist)
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model location_unmatchedlocation {
+  id                            BigInt                       @id @default(autoincrement())
+  name                          String                       @db.VarChar(255)
+  code                          String                       @db.VarChar(50)
+  admin_level                   String                       @db.VarChar(50)
+  source                        String                       @db.VarChar(100)
+  context                       String
+  occurrence_count              Int
+  first_seen                    DateTime                     @db.Timestamptz(6)
+  last_seen                     DateTime                     @db.Timestamptz(6)
+  status                        String                       @db.VarChar(20)
+  matched_at                    DateTime?                    @db.Timestamptz(6)
+  is_matched                    Boolean
+  potential_matches             Json
+  potential_matches_computed_at DateTime?                    @db.Timestamptz(6)
+  notes                         String
+  matched_by_id                 Int?
+  resolved_location_id          BigInt?
+  data_pipeline_variabledata    data_pipeline_variabledata[]
+  auth_user                     auth_user?                   @relation(fields: [matched_by_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "location_unmatchedlo_matched_by_id_28d9898c_fk_auth_user")
+  location_location             location_location?           @relation(fields: [resolved_location_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "location_unmatchedlo_resolved_location_id_f2624b22_fk_location_")
+
+  @@unique([name, source], map: "location_unmatchedlocation_name_source_87f9dc79_uniq")
+  @@index([last_seen(sort: Desc)], map: "location_un_last_se_255913_idx")
+  @@index([occurrence_count(sort: Desc)], map: "location_un_occurre_8f24c0_idx")
+  @@index([source], map: "location_un_source_ddf515_idx")
+  @@index([status], map: "location_un_status_5adfb6_idx")
+  @@index([matched_by_id], map: "location_unmatchedlocation_matched_by_id_28d9898c")
+  @@index([resolved_location_id], map: "location_unmatchedlocation_resolved_location_id_f2624b22")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model notifications_internalnotification {
+  id           BigInt        @id @default(autoincrement())
+  type         String        @db.VarChar(20)
+  priority     String        @db.VarChar(10)
+  title        String        @db.VarChar(255)
+  message      String
+  read         Boolean
+  read_at      DateTime?     @db.Timestamptz(6)
+  action_url   String        @db.VarChar(500)
+  action_text  String        @db.VarChar(100)
+  created_at   DateTime      @db.Timestamptz(6)
+  expires_at   DateTime?     @db.Timestamptz(6)
+  alert_id     BigInt?
+  user_id      Int
+  alerts_alert alerts_alert? @relation(fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_intern_alert_id_594d9ecb_fk_alerts_al")
+  auth_user    auth_user     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_intern_user_id_0bf4236f_fk_auth_user")
+
+  @@index([type, priority], map: "notificatio_type_288904_idx")
+  @@index([user_id, created_at], map: "notificatio_user_id_7307ab_idx")
+  @@index([user_id, read], map: "notificatio_user_id_fe4948_idx")
+  @@index([alert_id], map: "notifications_internalnotification_alert_id_594d9ecb")
+  @@index([user_id], map: "notifications_internalnotification_user_id_0bf4236f")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model notifications_notificationpreference {
+  id                         BigInt    @id @default(autoincrement())
+  internal_enabled           Boolean
+  alert_notifications        Boolean
+  system_notifications       Boolean
+  update_notifications       Boolean
+  feedback_notifications     Boolean
+  show_desktop_notifications Boolean
+  play_sound                 Boolean
+  quiet_hours_enabled        Boolean
+  quiet_hours_start          DateTime? @db.Time(6)
+  quiet_hours_end            DateTime? @db.Time(6)
+  created_at                 DateTime  @db.Timestamptz(6)
+  updated_at                 DateTime  @db.Timestamptz(6)
+  user_id                    Int       @unique
+  auth_user                  auth_user @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_notifi_user_id_7cfb3d3a_fk_auth_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model spatial_ref_sys {
+  srid      Int     @id
+  auth_name String? @db.VarChar(256)
+  auth_srid Int?
+  srtext    String? @db.VarChar(2048)
+  proj4text String? @db.VarChar(2048)
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model task_monitoring_taskexecution {
+  id                       BigInt                   @id @default(autoincrement())
+  task_id                  String                   @unique @db.VarChar(255)
+  status                   String                   @db.VarChar(20)
+  started_at               DateTime?                @db.Timestamptz(6)
+  completed_at             DateTime?                @db.Timestamptz(6)
+  result                   Json?
+  error_message            String
+  retry_count              Int
+  max_retries              Int
+  arg1                     BigInt?
+  created_at               DateTime                 @db.Timestamptz(6)
+  updated_at               DateTime                 @db.Timestamptz(6)
+  source_id                BigInt?
+  variable_id              BigInt?
+  task_type_id             BigInt
+  data_pipeline_source     data_pipeline_source?    @relation(fields: [source_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "task_monitoring_task_source_id_9cdbdc2f_fk_data_pipe")
+  task_monitoring_tasktype task_monitoring_tasktype @relation(fields: [task_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "task_monitoring_task_task_type_id_d8e158a7_fk_task_moni")
+  data_pipeline_variable   data_pipeline_variable?  @relation(fields: [variable_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "task_monitoring_task_variable_id_1c8e4528_fk_data_pipe")
+
+  @@index([source_id, task_type_id], map: "task_monito_source__f32c5b_idx")
+  @@index([status, created_at], map: "task_monito_status_b85dfe_idx")
+  @@index([task_id], map: "task_monito_task_id_e555a5_idx")
+  @@index([task_type_id, status], map: "task_monito_task_ty_56d1d5_idx")
+  @@index([variable_id, task_type_id], map: "task_monito_variabl_10134b_idx")
+  @@index([source_id], map: "task_monitoring_taskexecution_source_id_9cdbdc2f")
+  @@index([task_id], map: "task_monitoring_taskexecution_task_id_c3964738_like")
+  @@index([task_type_id], map: "task_monitoring_taskexecution_task_type_id_d8e158a7")
+  @@index([variable_id], map: "task_monitoring_taskexecution_variable_id_1c8e4528")
+}
+
+model task_monitoring_tasklog {
+  id            BigInt   @id @default(autoincrement())
+  task_id       String   @db.VarChar(255)
+  level         Int
+  level_name    String   @db.VarChar(10)
+  message       String
+  module        String   @db.VarChar(255)
+  function_name String   @db.VarChar(255)
+  line_number   Int?
+  thread        String   @db.VarChar(100)
+  process       String   @db.VarChar(100)
+  extra_data    Json?
+  timestamp     DateTime @db.Timestamptz(6)
+
+  @@index([level, timestamp], map: "task_monito_level_42e0e0_idx")
+  @@index([task_id, level], map: "task_monito_task_id_04e42f_idx")
+  @@index([task_id, timestamp], map: "task_monito_task_id_f39410_idx")
+  @@index([timestamp], map: "task_monito_timesta_22c8b7_idx")
+  @@index([task_id], map: "task_monitoring_tasklog_task_id_9970e41c")
+  @@index([task_id], map: "task_monitoring_tasklog_task_id_9970e41c_like")
+  @@index([timestamp], map: "task_monitoring_tasklog_timestamp_f77a811c")
+}
+
+model task_monitoring_tasktype {
+  id                            BigInt                          @id @default(autoincrement())
+  name                          String                          @unique @db.VarChar(255)
+  name_en                       String?                         @unique @db.VarChar(255)
+  name_ar                       String?                         @unique @db.VarChar(255)
+  created_at                    DateTime?                       @db.Timestamptz(6)
+  updated_at                    DateTime?                       @db.Timestamptz(6)
+  task_monitoring_taskexecution task_monitoring_taskexecution[]
+
+  @@index([name_ar], map: "task_monitoring_tasktype_name_ar_40e16bdb_like")
+  @@index([name_en], map: "task_monitoring_tasktype_name_en_911388f8_like")
+  @@index([name], map: "task_monitoring_tasktype_name_f0747f74_like")
+}
+
+model translation_translationstring {
+  id             BigInt   @id @default(autoincrement())
+  label          String   @unique @db.VarChar(100)
+  value          String
+  value_en       String?
+  value_ar       String?
+  description    String   @db.VarChar(200)
+  description_en String?  @db.VarChar(200)
+  description_ar String?  @db.VarChar(200)
+  is_active      Boolean
+  created_at     DateTime @db.Timestamptz(6)
+  updated_at     DateTime @db.Timestamptz(6)
+
+  @@index([label], map: "translation_translationstring_label_4743026f_like")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model users_userprofile {
+  id                          BigInt    @id @default(autoincrement())
+  email_notifications_enabled Boolean
+  email_verified              Boolean
+  email_verification_token    String    @db.VarChar(100)
+  email_verification_sent_at  DateTime? @db.Timestamptz(6)
+  preferred_language          String    @db.VarChar(5)
+  timezone                    String    @db.VarChar(50)
+  last_login_ip               String?   @db.Inet
+  created_at                  DateTime  @db.Timestamptz(6)
+  updated_at                  DateTime  @db.Timestamptz(6)
+  user_id                     Int       @unique
+  mobile_number               String    @db.VarChar(20)
+  sms_notifications_enabled   Boolean
+  auth_user                   auth_user @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "users_userprofile_user_id_87251ef1_fk_auth_user_id")
+}
