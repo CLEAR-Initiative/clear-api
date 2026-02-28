@@ -1,5 +1,7 @@
 # Agent Instructions
 
+> **Important**: Read `CLAUDE.md` for full project context, especially the **Database Architecture** section before making any database or Prisma changes.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference
