@@ -6,7 +6,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  schemas  = ["public", "graphql"]
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -31,7 +30,6 @@ model alert_framework_alerttemplate {
   @@index([shock_type_id, active], map: "alert_frame_shock_t_e802e2_idx")
   @@index([name], map: "alert_framework_alerttemplate_name_2053666b_like")
   @@index([shock_type_id], map: "alert_framework_alerttemplate_shock_type_id_b076bce1")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -76,7 +74,6 @@ model alert_framework_detection {
   @@index([duplicate_of_id], map: "alert_framework_detection_duplicate_of_id_0310e85b")
   @@index([shock_type_id], map: "alert_framework_detection_shock_type_id_428980ab")
   @@index([source_variabledata_id], map: "alert_framework_detection_source_variabledata_id_3d5ea251")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -90,7 +87,6 @@ model alert_framework_detection_locations {
   @@unique([detection_id, location_id], map: "alert_framework_detectio_detection_id_location_id_fa28c454_uniq")
   @@index([detection_id], map: "alert_framework_detection_locations_detection_id_fc3de953")
   @@index([location_id], map: "alert_framework_detection_locations_location_id_ba2f0274")
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -118,7 +114,6 @@ model alert_framework_detector {
   @@index([name], map: "alert_frame_name_985425_idx")
   @@index([name], map: "alert_framework_detector_name_7d1512b0_like")
   @@index([schedule_id], map: "alert_framework_detector_schedule_id_2b8ec13c")
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -152,7 +147,6 @@ model alert_framework_publishedalert {
   @@index([status, published_at], map: "alert_frame_status_865ee2_idx")
   @@index([detection_id], map: "alert_framework_publishedalert_detection_id_3609a887")
   @@index([template_id], map: "alert_framework_publishedalert_template_id_07e88b9b")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -203,7 +197,6 @@ model alerts_alert {
   @@index([shock_type_id], map: "alerts_alert_shock_type_id_93852cdc")
   @@index([source_detection_id], map: "alerts_alert_source_detection_id_9d5a3e9f")
   @@index([source_variabledata_id], map: "alerts_alert_source_variabledata_id_7e4c5785")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -217,7 +210,6 @@ model alerts_alert_locations {
   @@unique([alert_id, location_id], map: "alerts_alert_locations_alert_id_location_id_b00491e1_uniq")
   @@index([alert_id], map: "alerts_alert_locations_alert_id_0106e742")
   @@index([location_id], map: "alerts_alert_locations_location_id_02e9cf44")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -231,7 +223,6 @@ model alerts_alertembedding {
   alerts_alert    alerts_alert @relation(fields: [alert_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "alerts_alertembedding_alert_id_09406786_fk_alerts_alert_id")
 
   @@index([model_name], map: "alerts_aler_model_n_170805_idx")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -249,7 +240,6 @@ model alerts_alertsimilarity {
   @@index([alert_b_id, semantic_score(sort: Desc)], map: "alerts_aler_alert_b_65a801_idx")
   @@index([alert_a_id], map: "alerts_alertsimilarity_alert_a_id_30aabc7a")
   @@index([alert_b_id], map: "alerts_alertsimilarity_alert_b_id_2bb86724")
-  @@schema("public")
 }
 
 model alerts_emailtemplate {
@@ -282,7 +272,6 @@ model alerts_emailtemplate {
   updated_at      DateTime @db.Timestamptz(6)
 
   @@index([name], map: "alerts_emailtemplate_name_165d595b_like")
-  @@schema("public")
 }
 
 model alerts_shocktype {
@@ -305,7 +294,6 @@ model alerts_shocktype {
   @@index([name], map: "alerts_shocktype_name_17eac0b7_like")
   @@index([name_ar], map: "alerts_shocktype_name_ar_967b40a3_like")
   @@index([name_en], map: "alerts_shocktype_name_en_b71e9f4c_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -324,7 +312,6 @@ model alerts_subscription {
   @@index([active, frequency], map: "alerts_subs_active_2911a4_idx")
   @@index([user_id, active], map: "alerts_subs_user_id_a11961_idx")
   @@index([user_id], map: "alerts_subscription_user_id_38b321ac")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -338,7 +325,6 @@ model alerts_subscription_locations {
   @@unique([subscription_id, location_id], map: "alerts_subscription_loca_subscription_id_location_fceb0fec_uniq")
   @@index([location_id], map: "alerts_subscription_locations_location_id_47f2a5b5")
   @@index([subscription_id], map: "alerts_subscription_locations_subscription_id_2e0b7a09")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -352,7 +338,6 @@ model alerts_subscription_shock_types {
   @@unique([subscription_id, shocktype_id], map: "alerts_subscription_shoc_subscription_id_shocktyp_5a9b5a13_uniq")
   @@index([shocktype_id], map: "alerts_subscription_shock_types_shocktype_id_88eda0eb")
   @@index([subscription_id], map: "alerts_subscription_shock_types_subscription_id_77d1b30a")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -391,7 +376,6 @@ model alerts_useralert {
   @@index([user_id, rating_accuracy, rating_accuracy_at], map: "alerts_user_user_id_bf98e8_idx")
   @@index([alert_id], map: "alerts_useralert_alert_id_6166682c")
   @@index([user_id], map: "alerts_useralert_user_id_9af6e1b9")
-  @@schema("public")
 }
 
 model auth_group {
@@ -401,7 +385,6 @@ model auth_group {
   auth_user_groups       auth_user_groups[]
 
   @@index([name], map: "auth_group_name_a6ea08ec_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -415,7 +398,6 @@ model auth_group_permissions {
   @@unique([group_id, permission_id], map: "auth_group_permissions_group_id_permission_id_0cd325b0_uniq")
   @@index([group_id], map: "auth_group_permissions_group_id_b120cbf9")
   @@index([permission_id], map: "auth_group_permissions_permission_id_84c5c92e")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -430,7 +412,6 @@ model auth_permission {
 
   @@unique([content_type_id, codename], map: "auth_permission_content_type_id_codename_01ab375a_uniq")
   @@index([content_type_id], map: "auth_permission_content_type_id_2f476e4b")
-  @@schema("public")
 }
 
 model auth_user {
@@ -457,7 +438,6 @@ model auth_user {
   users_userprofile                    users_userprofile?
 
   @@index([username], map: "auth_user_username_6821ab7c_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -471,7 +451,6 @@ model auth_user_groups {
   @@unique([user_id, group_id], map: "auth_user_groups_user_id_group_id_94350c0c_uniq")
   @@index([group_id], map: "auth_user_groups_group_id_97559544")
   @@index([user_id], map: "auth_user_groups_user_id_6a12ed8b")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -485,7 +464,6 @@ model auth_user_user_permissions {
   @@unique([user_id, permission_id], map: "auth_user_user_permissions_user_id_permission_id_14a6b632_uniq")
   @@index([permission_id], map: "auth_user_user_permissions_permission_id_1fbb5f2c")
   @@index([user_id], map: "auth_user_user_permissions_user_id_a95ead1b")
-  @@schema("public")
 }
 
 model dashboard_colormap {
@@ -503,7 +481,6 @@ model dashboard_colormap {
   dashboard_theme dashboard_theme[]
 
   @@index([name], map: "dashboard_colormap_name_76e2608b_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -529,7 +506,6 @@ model dashboard_layer {
 
   @@index([code], map: "dashboard_layer_code_1478e5b4_like")
   @@index([cog_colormap_id], map: "dashboard_layer_cog_colormap_id_19cc42f0")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -552,7 +528,6 @@ model dashboard_theme {
 
   @@index([code], map: "dashboard_theme_code_91e70964_like")
   @@index([colormap_id], map: "dashboard_theme_colormap_id_e77843e1")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -566,7 +541,6 @@ model dashboard_theme_shock_types {
   @@unique([theme_id, shocktype_id], map: "dashboard_theme_shock_types_theme_id_shocktype_id_f4fd35af_uniq")
   @@index([shocktype_id], map: "dashboard_theme_shock_types_shocktype_id_de70192a")
   @@index([theme_id], map: "dashboard_theme_shock_types_theme_id_560934f5")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -584,7 +558,6 @@ model dashboard_themelayer {
   @@unique([theme_id, layer_id], map: "dashboard_themelayer_theme_id_layer_id_5e860b7d_uniq")
   @@index([layer_id], map: "dashboard_themelayer_layer_id_36db88ca")
   @@index([theme_id], map: "dashboard_themelayer_theme_id_fd693035")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -602,7 +575,6 @@ model dashboard_themevariable {
   @@unique([theme_id, variable_id], map: "dashboard_themevariable_theme_id_variable_id_c36a71f2_uniq")
   @@index([theme_id], map: "dashboard_themevariable_theme_id_60d266b3")
   @@index([variable_id], map: "dashboard_themevariable_variable_id_64205790")
-  @@schema("public")
 }
 
 model data_pipeline_source {
@@ -631,7 +603,6 @@ model data_pipeline_source {
 
   @@index([name], map: "data_pipeli_name_907609_idx")
   @@index([type], map: "data_pipeli_type_6fea6b_idx")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -649,7 +620,6 @@ model data_pipeline_sourceauthtoken {
   data_pipeline_source data_pipeline_source @relation(fields: [source_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "data_pipeline_source_source_id_4f19be73_fk_data_pipe")
 
   @@index([source_id, expires_at], map: "data_pipeli_source__82391c_idx")
-  @@schema("public")
 }
 
 model data_pipeline_taskstatistics {
@@ -669,7 +639,6 @@ model data_pipeline_taskstatistics {
   updated_at           DateTime @db.Timestamptz(6)
 
   @@index([date], map: "data_pipeli_date_84ee66_idx")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -700,7 +669,6 @@ model data_pipeline_variable {
   @@index([source_id, code], map: "data_pipeli_source__32461b_idx")
   @@index([type], map: "data_pipeli_type_df82e7_idx")
   @@index([source_id], map: "data_pipeline_variable_source_id_903e6993")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -743,7 +711,6 @@ model data_pipeline_variabledata {
   @@index([source_record_id], map: "data_pipeline_variabledata_source_record_id_ac805590_like")
   @@index([unmatched_location_id], map: "data_pipeline_variabledata_unmatched_location_id_7435db0c")
   @@index([variable_id], map: "data_pipeline_variabledata_variable_id_41a27bf5")
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -762,14 +729,12 @@ model django_admin_log {
 
   @@index([content_type_id], map: "django_admin_log_content_type_id_c4bce8eb")
   @@index([user_id], map: "django_admin_log_user_id_c564eba6")
-  @@schema("public")
 }
 
 model django_celery_beat_clockedschedule {
   id                              Int                               @id @default(autoincrement())
   clocked_time                    DateTime                          @db.Timestamptz(6)
   django_celery_beat_periodictask django_celery_beat_periodictask[]
-  @@schema("public")
 }
 
 model django_celery_beat_crontabschedule {
@@ -781,7 +746,6 @@ model django_celery_beat_crontabschedule {
   month_of_year                   String                            @db.VarChar(64)
   timezone                        String                            @db.VarChar(63)
   django_celery_beat_periodictask django_celery_beat_periodictask[]
-  @@schema("public")
 }
 
 model django_celery_beat_intervalschedule {
@@ -789,7 +753,6 @@ model django_celery_beat_intervalschedule {
   every                           Int
   period                          String                            @db.VarChar(24)
   django_celery_beat_periodictask django_celery_beat_periodictask[]
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -829,13 +792,11 @@ model django_celery_beat_periodictask {
   @@index([interval_id], map: "django_celery_beat_periodictask_interval_id_a8ca27da")
   @@index([name], map: "django_celery_beat_periodictask_name_265a36b7_like")
   @@index([solar_id], map: "django_celery_beat_periodictask_solar_id_a87ce72c")
-  @@schema("public")
 }
 
 model django_celery_beat_periodictasks {
   ident       Int      @id @db.SmallInt
   last_update DateTime @db.Timestamptz(6)
-  @@schema("public")
 }
 
 model django_celery_beat_solarschedule {
@@ -846,7 +807,6 @@ model django_celery_beat_solarschedule {
   django_celery_beat_periodictask django_celery_beat_periodictask[]
 
   @@unique([event, latitude, longitude], map: "django_celery_beat_solar_event_latitude_longitude_ba64999a_uniq")
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -857,7 +817,6 @@ model django_celery_results_chordcounter {
   count     Int
 
   @@index([group_id], map: "django_celery_results_chordcounter_group_id_1f70858c_like")
-  @@schema("public")
 }
 
 model django_celery_results_groupresult {
@@ -872,7 +831,6 @@ model django_celery_results_groupresult {
   @@index([date_created], map: "django_cele_date_cr_bd6c1d_idx")
   @@index([date_done], map: "django_cele_date_do_caae0e_idx")
   @@index([group_id], map: "django_celery_results_groupresult_group_id_a085f1a9_like")
-  @@schema("public")
 }
 
 model django_celery_results_taskresult {
@@ -900,7 +858,6 @@ model django_celery_results_taskresult {
   @@index([task_name], map: "django_cele_task_na_08aec9_idx")
   @@index([worker], map: "django_cele_worker_d54dd8_idx")
   @@index([task_id], map: "django_celery_results_taskresult_task_id_de0d95bf_like")
-  @@schema("public")
 }
 
 model django_content_type {
@@ -911,7 +868,6 @@ model django_content_type {
   django_admin_log django_admin_log[]
 
   @@unique([app_label, model], map: "django_content_type_app_label_model_76bd3d3b_uniq")
-  @@schema("public")
 }
 
 model django_migrations {
@@ -919,7 +875,6 @@ model django_migrations {
   app     String   @db.VarChar(255)
   name    String   @db.VarChar(255)
   applied DateTime @db.Timestamptz(6)
-  @@schema("public")
 }
 
 model django_session {
@@ -929,7 +884,15 @@ model django_session {
 
   @@index([expire_date], map: "django_session_expire_date_a5c62663")
   @@index([session_key], map: "django_session_session_key_c0390e0f_like")
-  @@schema("public")
+}
+
+model feature_flags {
+  id         BigInt   @id @default(autoincrement())
+  key        String   @unique @db.VarChar(100)
+  enabled    Boolean
+  updated_at DateTime @db.Timestamptz(6)
+
+  @@index([key], map: "feature_flags_key_d2c6e697_like")
 }
 
 model llm_service_cachedresponse {
@@ -947,7 +910,6 @@ model llm_service_cachedresponse {
   @@index([cache_key], map: "llm_service_cachedresponse_cache_key_f0f68110_like")
   @@index([expires_at], map: "llm_service_cachedresponse_expires_at_51450af2")
   @@index([provider, model, created_at], map: "llm_service_provide_dc8e46_idx")
-  @@schema("public")
 }
 
 model llm_service_providerconfig {
@@ -962,7 +924,6 @@ model llm_service_providerconfig {
   updated_at    DateTime @db.Timestamptz(6)
 
   @@index([provider_name], map: "llm_service_providerconfig_provider_name_be553903_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -996,7 +957,6 @@ model llm_service_querylog {
   @@index([provider], map: "llm_service_querylog_provider_164c2552")
   @@index([provider], map: "llm_service_querylog_provider_164c2552_like")
   @@index([user_id], map: "llm_service_querylog_user_id_b4874da2")
-  @@schema("public")
 }
 
 model location_admlevel {
@@ -1009,7 +969,6 @@ model location_admlevel {
   location_location          location_location[]
 
   @@index([code], map: "location_admlevel_code_5fea79d5_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1029,7 +988,6 @@ model location_gazetteer {
   @@index([name], map: "location_ga_name_57efa3_idx")
   @@index([source], map: "location_ga_source_79ef4d_idx")
   @@index([location_id], map: "location_gazetteer_location_id_83ac793c")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1067,7 +1025,6 @@ model location_location {
   @@index([geo_id], map: "location_location_geo_id_1074dc65_like")
   @@index([parent_id], map: "location_location_parent_id_47fe0a9a")
   @@index([point], map: "location_location_point_9c4c6db5_id", type: Gist)
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1100,7 +1057,6 @@ model location_unmatchedlocation {
   @@index([status], map: "location_un_status_5adfb6_idx")
   @@index([matched_by_id], map: "location_unmatchedlocation_matched_by_id_28d9898c")
   @@index([resolved_location_id], map: "location_unmatchedlocation_resolved_location_id_f2624b22")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1126,7 +1082,6 @@ model notifications_internalnotification {
   @@index([user_id, read], map: "notificatio_user_id_fe4948_idx")
   @@index([alert_id], map: "notifications_internalnotification_alert_id_594d9ecb")
   @@index([user_id], map: "notifications_internalnotification_user_id_0bf4236f")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1146,7 +1101,6 @@ model notifications_notificationpreference {
   updated_at                 DateTime  @db.Timestamptz(6)
   user_id                    Int       @unique
   auth_user                  auth_user @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_notifi_user_id_7cfb3d3a_fk_auth_user")
-  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -1156,7 +1110,6 @@ model spatial_ref_sys {
   auth_srid Int?
   srtext    String? @db.VarChar(2048)
   proj4text String? @db.VarChar(2048)
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1189,7 +1142,6 @@ model task_monitoring_taskexecution {
   @@index([task_id], map: "task_monitoring_taskexecution_task_id_c3964738_like")
   @@index([task_type_id], map: "task_monitoring_taskexecution_task_type_id_d8e158a7")
   @@index([variable_id], map: "task_monitoring_taskexecution_variable_id_1c8e4528")
-  @@schema("public")
 }
 
 model task_monitoring_tasklog {
@@ -1213,7 +1165,6 @@ model task_monitoring_tasklog {
   @@index([task_id], map: "task_monitoring_tasklog_task_id_9970e41c")
   @@index([task_id], map: "task_monitoring_tasklog_task_id_9970e41c_like")
   @@index([timestamp], map: "task_monitoring_tasklog_timestamp_f77a811c")
-  @@schema("public")
 }
 
 model task_monitoring_tasktype {
@@ -1228,7 +1179,6 @@ model task_monitoring_tasktype {
   @@index([name_ar], map: "task_monitoring_tasktype_name_ar_40e16bdb_like")
   @@index([name_en], map: "task_monitoring_tasktype_name_en_911388f8_like")
   @@index([name], map: "task_monitoring_tasktype_name_f0747f74_like")
-  @@schema("public")
 }
 
 model translation_translationstring {
@@ -1245,7 +1195,6 @@ model translation_translationstring {
   updated_at     DateTime @db.Timestamptz(6)
 
   @@index([label], map: "translation_translationstring_label_4743026f_like")
-  @@schema("public")
 }
 
 /// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
@@ -1264,5 +1213,4 @@ model users_userprofile {
   mobile_number               String    @db.VarChar(20)
   sms_notifications_enabled   Boolean
   auth_user                   auth_user @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "users_userprofile_user_id_87251ef1_fk_auth_user_id")
-  @@schema("public")
 }
