@@ -24,7 +24,12 @@
       "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-up/email -H 'Content-Type: application/json' -d '{\"\"name\"\":\"\"Test User\"\",\"\"email\"\":\"\"test@example.com\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/ba_cookies.txt)",
       "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -b /tmp/ba_cookies.txt -d '{\"\"query\"\":\"\"{ me { id email name role isActive } }\"\"}')",
       "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -d '{\"\"query\"\":\"\"{ me { id } }\"\"}')",
-      "Bash(ls /Users/james/code/clear-apollo/README*)"
+      "Bash(ls /Users/james/code/clear-apollo/README*)",
+      "Bash(bun run seed)",
+      "Bash(bun dev)",
+      "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -d '{\"\"query\"\":\"\"{ users { id name email role } locations\\(level: 0\\) { name children { name children { name } } } alerts { title severity status source { name } locations { location { name } } feedback { user { name } rating comment } } detections { title confidence status source { name } } featureFlags { key enabled } }\"\"}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-in/email -H 'Content-Type: application/json' -d '{\"\"email\"\":\"\"admin@clear.dev\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/cookies.txt)"
     ]
   }
 }
