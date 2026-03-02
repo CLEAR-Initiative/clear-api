@@ -4,7 +4,7 @@ Project context for AI coding assistants (Claude Code, Cursor, etc).
 
 ## Project Overview
 
-Apollo Server (GraphQL) with TypeScript, running on Bun. Uses Prisma ORM with PostgreSQL.
+Apollo Server (GraphQL) with TypeScript, running on Bun. Uses Prisma ORM with PostgreSQL. Authentication via Better Auth with cookie-based sessions.
 
 ## Tech Stack
 
@@ -27,7 +27,7 @@ bun run lint         # ESLint
 bun run typecheck    # TypeScript type checking
 ```
 
-## Database Architecture
+## Database
 
 Prisma owns the database schema and all migrations.
 
@@ -53,44 +53,53 @@ bunx prisma generate                            # Regenerate typed client
 Generated to `src/generated/prisma` (gitignored). After cloning:
 
 ```bash
-bunx prisma generate   # Generate the typed client
+bunx prisma migrate dev   # Create tables + generate client
 ```
 
 ### Querying Tables
 
-Models use camelCase TypeScript naming:
-
 ```typescript
-// Reading alerts
+// Auth users (Better Auth — string IDs)
+const user = await prisma.user.findUnique({ where: { id: "abc123" } });
+
+// App models (integer IDs)
 const alerts = await prisma.alert.findMany({
   include: { source: true, locations: true }
 });
-
-// Reading users
-const user = await prisma.user.findUnique({
-  where: { id: 1 }
-});
-
-// Feature flags
-const flag = await prisma.featureFlag.findUnique({
-  where: { key: "dark_mode" }
-});
+const flag = await prisma.featureFlag.findUnique({ where: { key: "dark_mode" } });
 ```
 
 ### Data Models
 
-- **Auth (Better Auth)**: user, session, account, verification
-- **Core**: Alert, UserAlert
+- **Auth (Better Auth)**: user, session, account, verification (string IDs)
+- **Core**: Alert, UserAlert (integer IDs)
 - **Data Mining**: DataSource, Detection
 - **Geography**: Location (hierarchical), AlertLocation, DetectionLocation
 - **Config**: FeatureFlag
+
+## Authentication
+
+Better Auth handles auth via REST endpoints at `/api/auth/*`. Session cookies are set automatically.
+
+- **Config**: `src/lib/auth.ts`
+- **REST endpoints**: `/api/auth/sign-up/email`, `/api/auth/sign-in/email`, `/api/auth/sign-out`, `/api/auth/session`
+- **GraphQL**: `me` query returns the authenticated user (or null)
+- **Guards**: Use `requireAuth(context)` and `requireRole(context, ["admin"])` from `src/utils/auth-guard.ts`
+- **Custom user fields**: `role` (default: "viewer") and `isActive` (default: true) — set via `additionalFields` in auth config, not editable by users at signup
+
+### Auth architecture
+
+- Auth operations (signup/signin/signout) use Better Auth REST endpoints, **not** GraphQL mutations
+- Better Auth handles cookie setting automatically via its REST handler
+- The GraphQL context resolves the session from request cookies on every request
+- The `me` query is the GraphQL entry point for the authenticated user
 
 ## Project Structure
 
 ```
 src/
-  index.ts              # Apollo Server + Express setup
-  context.ts            # GraphQL context (includes Prisma client)
+  index.ts              # Apollo Server + Express setup, Better Auth handler
+  context.ts            # GraphQL context (Prisma client + auth session/user)
   lib/
     prisma.ts           # Prisma client singleton
     auth.ts             # Better Auth configuration
@@ -103,10 +112,12 @@ src/
       types/            # Domain type definitions (user, alert, detection, etc.)
   resolvers/            # GraphQL resolvers (one per domain entity)
   plugins/              # Apollo plugins
-  utils/                # Utilities (env validation via Zod)
+  utils/
+    env.ts              # Environment validation (Zod)
+    auth-guard.ts       # requireAuth / requireRole helpers
 prisma/
-  schema.prisma         # Prisma schema (manually authored)
-prisma.config.ts        # Prisma configuration (loads DATABASE_URL from .env)
+  schema.prisma         # Prisma schema (source of truth)
+  migrations/           # Prisma migrations
 ```
 
 ## Environment Variables
@@ -115,17 +126,7 @@ Defined in `.env` (see `.env.example`):
 
 - `NODE_ENV` — `development` | `staging` | `production`
 - `PORT` — Server port (default: 4000)
-- `CORS_ORIGIN` — Allowed CORS origin
+- `CORS_ORIGIN` — Allowed CORS origin (must be specific URL, not `*`, for cookie auth)
 - `DATABASE_URL` — PostgreSQL connection string
-- `BETTER_AUTH_SECRET` — Auth encryption secret (32+ chars)
+- `BETTER_AUTH_SECRET` — Auth encryption secret (32+ chars, generate with `openssl rand -base64 32`)
 - `BETTER_AUTH_URL` — Server base URL (e.g., `http://localhost:4000`)
-
-## Authentication
-
-Better Auth handles auth via REST endpoints at `/api/auth/*`. Session cookies are set automatically.
-
-- **Config**: `src/lib/auth.ts`
-- **Auth endpoints**: `/api/auth/sign-up/email`, `/api/auth/sign-in/email`, `/api/auth/sign-out`, `/api/auth/session`
-- **GraphQL**: `me` query returns the authenticated user (or null)
-- **Guards**: Use `requireAuth(context)` and `requireRole(context, ["admin"])` from `src/utils/auth-guard.ts` in resolvers
-- **User fields**: `role` (default: "viewer") and `isActive` (default: true) are additional fields on the Better Auth user model
