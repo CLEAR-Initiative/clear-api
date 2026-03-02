@@ -22,7 +22,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/generated ./src/generated
-COPY package.json prisma ./
+COPY package.json prisma.config.ts ./
+COPY prisma ./prisma/
 
 EXPOSE 4000
 CMD ["sh", "-c", "bunx prisma migrate deploy && bun run dist/index.js"]

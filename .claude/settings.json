@@ -10,7 +10,9 @@
       "Bash(railway status)",
       "Bash(railway list)",
       "Bash(railway projects)",
-      "Bash(ls -la /Users/james/code/clear-apollo/bun.lock*)"
+      "Bash(ls -la /Users/james/code/clear-apollo/bun.lock*)",
+      "Bash(railway logs)",
+      "Bash(bunx prisma --version)"
     ]
   }
 }
