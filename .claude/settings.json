@@ -4,7 +4,13 @@
       "WebFetch(domain:www.answeroverflow.com)",
       "WebFetch(domain:github.com)",
       "Bash(bun add @prisma/pg-adapter)",
-      "Bash(bun add @prisma/adapter-pg)"
+      "Bash(bun add @prisma/adapter-pg)",
+      "WebFetch(domain:better-auth.com)",
+      "Bash(railway whoami)",
+      "Bash(railway status)",
+      "Bash(railway list)",
+      "Bash(railway projects)",
+      "Bash(ls -la /Users/james/code/clear-apollo/bun.lock*)"
     ]
   }
 }

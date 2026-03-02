@@ -4,13 +4,14 @@ WORKDIR /app
 
 # ---- Dependencies ----
 FROM base AS deps
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production=false
 
 # ---- Build ----
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN bunx prisma generate
 RUN bun run build
 
 # ---- Production ----
@@ -20,7 +21,8 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json ./
+COPY --from=build /app/src/generated ./src/generated
+COPY package.json prisma ./
 
 EXPOSE 4000
-CMD ["bun", "run", "dist/index.js"]
+CMD ["sh", "-c", "bunx prisma migrate deploy && bun run dist/index.js"]
