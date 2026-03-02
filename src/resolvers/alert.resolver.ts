@@ -17,7 +17,7 @@ export const alertResolvers = {
       if (!parent.sourceId) return null;
       return prisma.dataSource.findUnique({ where: { id: parent.sourceId } });
     },
-    createdBy: (parent: { createdById: number | null }, _args: unknown, { prisma }: Context) => {
+    createdBy: (parent: { createdById: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.createdById) return null;
       return prisma.user.findUnique({ where: { id: parent.createdById } });
     },
@@ -40,7 +40,7 @@ export const alertResolvers = {
     },
   },
   UserAlert: {
-    user: (parent: { userId: number }, _args: unknown, { prisma }: Context) => {
+    user: (parent: { userId: string }, _args: unknown, { prisma }: Context) => {
       return prisma.user.findUnique({ where: { id: parent.userId } });
     },
     alert: (parent: { alertId: number }, _args: unknown, { prisma }: Context) => {
