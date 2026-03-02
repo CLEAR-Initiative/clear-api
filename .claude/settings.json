@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:www.answeroverflow.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(bun add @prisma/pg-adapter)",
+      "Bash(bun add @prisma/adapter-pg)"
     ]
   }
 }

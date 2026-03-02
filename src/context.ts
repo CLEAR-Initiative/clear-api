@@ -1,12 +1,13 @@
 import type { ExpressContextFunctionArgument } from "@as-integrations/express5";
+import type { PrismaClient } from "./generated/prisma/client.js";
+import { prisma } from "./lib/prisma.js";
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface Context {
-  // Add auth tokens, data sources, etc.
+  prisma: PrismaClient;
 }
 
 export async function createContext(
   _args: ExpressContextFunctionArgument,
 ): Promise<Context> {
-  return {};
+  return { prisma };
 }
