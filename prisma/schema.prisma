@@ -18,12 +18,6 @@ datasource db {
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
-enum UserRole {
-  admin
-  analyst
-  viewer
-}
-
 enum AlertStatus {
   draft
   published
@@ -36,56 +30,64 @@ enum DetectionStatus {
   ignored
 }
 
-// ─── Auth ────────────────────────────────────────────────────────────────────
+// ─── Auth (Better Auth) ────────────────────────────────────────────────────
 
-model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
-  name         String?
-  passwordHash String?
-  role         UserRole @default(viewer)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model user {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          String    @default("viewer")
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now())
 
-  accounts Account[]
-  sessions Session[]
+  sessions session[]
+  accounts account[]
 
   createdAlerts Alert[]     @relation("AlertCreatedBy")
   feedback      UserAlert[]
-
-  @@index([role])
-  @@index([isActive])
 }
 
-model Account {
-  id                Int       @id @default(autoincrement())
-  userId            Int
-  provider          String
-  providerAccountId String
-  accessToken       String?
-  refreshToken      String?
-  expiresAt         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@index([userId])
-}
-
-model Session {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  tokenHash String   @unique
+model session {
+  id        String   @id
+  userId    String
+  token     String   @unique
   expiresAt DateTime
+  ipAddress String?
+  userAgent String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
 
-  @@index([userId])
-  @@index([expiresAt])
+model account {
+  id                    String    @id
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now())
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────
@@ -165,8 +167,8 @@ model Alert {
   sourceId    Int?
   source      DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
 
-  createdById Int?
-  createdBy   User? @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  createdBy   user?  @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   primaryDetectionId Int?
   primaryDetection   Detection? @relation("PrimaryDetection", fields: [primaryDetectionId], references: [id], onDelete: SetNull)
@@ -218,7 +220,7 @@ model DetectionLocation {
 
 model UserAlert {
   id      Int @id @default(autoincrement())
-  userId  Int
+  userId  String
   alertId Int
 
   readAt  DateTime?
@@ -228,7 +230,7 @@ model UserAlert {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  user  @relation(fields: [userId], references: [id], onDelete: Cascade)
   alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
 
   @@unique([userId, alertId])

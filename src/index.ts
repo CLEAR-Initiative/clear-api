@@ -1,13 +1,16 @@
+import "dotenv/config";
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@as-integrations/express5";
 import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
 import express from "express";
 import http from "node:http";
 import cors from "cors";
+import { toNodeHandler } from "better-auth/node";
 import { typeDefs } from "./schema/index.js";
 import { resolvers } from "./resolvers/index.js";
 import { createContext, type Context } from "./context.js";
 import { prisma } from "./lib/prisma.js";
+import { auth } from "./lib/auth.js";
 import { env } from "./utils/env.js";
 
 const app = express();
@@ -22,21 +25,29 @@ const server = new ApolloServer<Context>({
 
 await server.start();
 
+// CORS — global, with credentials for cookie-based sessions
+app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+
+// Better Auth handler — MUST be before express.json()
+app.all("/api/auth/*splat", toNodeHandler(auth));
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+// GraphQL — express.json() scoped to this route only
 app.use(
   "/graphql",
-  cors<cors.CorsRequest>({ origin: env.CORS_ORIGIN }),
   express.json(),
   expressMiddleware(server, {
     context: createContext,
   }),
 );
 
-app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
-});
-
 httpServer.listen(env.PORT, () => {
   console.log(`Server ready at http://localhost:${env.PORT}/graphql`);
+  console.log(`Auth API at http://localhost:${env.PORT}/api/auth`);
 });
 
 const shutdown = async () => {

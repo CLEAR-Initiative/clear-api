@@ -2,9 +2,12 @@ import { gql } from "graphql-tag";
 
 export const queryTypeDef = gql`
   type Query {
+    # Auth
+    me: User
+
     # Users
     users: [User!]!
-    user(id: Int!): User
+    user(id: String!): User
 
     # Alerts
     alerts(status: AlertStatus): [Alert!]!
