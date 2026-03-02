@@ -23,7 +23,8 @@
       "Bash(curl -s http://localhost:4000/api/auth/ok)",
       "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-up/email -H 'Content-Type: application/json' -d '{\"\"name\"\":\"\"Test User\"\",\"\"email\"\":\"\"test@example.com\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/ba_cookies.txt)",
       "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -b /tmp/ba_cookies.txt -d '{\"\"query\"\":\"\"{ me { id email name role isActive } }\"\"}')",
-      "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -d '{\"\"query\"\":\"\"{ me { id } }\"\"}')"
+      "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -d '{\"\"query\"\":\"\"{ me { id } }\"\"}')",
+      "Bash(ls /Users/james/code/clear-apollo/README*)"
     ]
   }
 }
