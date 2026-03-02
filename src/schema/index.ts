@@ -1,5 +1,21 @@
+import { scalarTypeDef } from "./typeDefs/scalars.js";
 import { queryTypeDef } from "./typeDefs/query.js";
 import { mutationTypeDef } from "./typeDefs/mutation.js";
-import { exampleTypeDef } from "./typeDefs/types/example.js";
+import { userTypeDef } from "./typeDefs/types/user.js";
+import { alertTypeDef } from "./typeDefs/types/alert.js";
+import { detectionTypeDef } from "./typeDefs/types/detection.js";
+import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
+import { locationTypeDef } from "./typeDefs/types/location.js";
+import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 
-export const typeDefs = [queryTypeDef, mutationTypeDef, exampleTypeDef];
+export const typeDefs = [
+  scalarTypeDef,
+  queryTypeDef,
+  mutationTypeDef,
+  userTypeDef,
+  alertTypeDef,
+  detectionTypeDef,
+  dataSourceTypeDef,
+  locationTypeDef,
+  featureFlagTypeDef,
+];
