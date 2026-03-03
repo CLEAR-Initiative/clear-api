@@ -29,7 +29,10 @@
       "Bash(bun dev)",
       "Bash(curl -s http://localhost:4000/graphql -H 'Content-Type: application/json' -d '{\"\"query\"\":\"\"{ users { id name email role } locations\\(level: 0\\) { name children { name children { name } } } alerts { title severity status source { name } locations { location { name } } feedback { user { name } rating comment } } detections { title confidence status source { name } } featureFlags { key enabled } }\"\"}')",
       "Bash(python3 -m json.tool)",
-      "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-in/email -H 'Content-Type: application/json' -d '{\"\"email\"\":\"\"admin@clear.dev\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/cookies.txt)"
+      "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-in/email -H 'Content-Type: application/json' -d '{\"\"email\"\":\"\"admin@clear.dev\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/cookies.txt)",
+      "Read(//Users/james/code/clear-mvp/**)",
+      "Bash(ls -la /Users/james/code/clear-apollo/.env*)",
+      "Bash(npx vercel ls)"
     ]
   }
 }

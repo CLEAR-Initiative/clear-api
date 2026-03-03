@@ -29,7 +29,7 @@ variable "deploy_branch" {
   default     = "main"
 }
 
-variable "cors_origin" {
+variable "cors_origins" {
   description = "Allowed CORS origin"
   type        = string
 }

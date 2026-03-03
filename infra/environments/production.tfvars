@@ -1,4 +1,4 @@
 project_name  = "apollo-server-production"
 environment   = "production"
 deploy_branch = "main"
-cors_origin   = "https://yourapp.com"
+cors_origins   = "https://yourapp.com"
