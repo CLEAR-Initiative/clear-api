@@ -16,7 +16,7 @@ module "api" {
   environment_variables = {
     NODE_ENV    = var.environment
     PORT        = "4000"
-    CORS_ORIGIN = var.cors_origin
+    CORS_ORIGINS = var.cors_origins
   }
 
   healthcheck_path = "/health"

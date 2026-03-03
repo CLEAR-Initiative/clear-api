@@ -91,7 +91,7 @@ query {
 |----------|-------------|---------|
 | `NODE_ENV` | Environment | `development` |
 | `PORT` | Server port | `4000` |
-| `CORS_ORIGIN` | Allowed origin for CORS | `http://localhost:3000` |
+| `CORS_ORIGINS` | Comma-separated allowed CORS origins | `http://localhost:3000` |
 | `DATABASE_URL` | PostgreSQL connection string | *(required)* |
 | `BETTER_AUTH_SECRET` | Auth encryption secret (32+ chars) | *(required)* |
 | `BETTER_AUTH_URL` | Server base URL | *(required)* |

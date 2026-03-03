@@ -126,7 +126,7 @@ Defined in `.env` (see `.env.example`):
 
 - `NODE_ENV` — `development` | `staging` | `production`
 - `PORT` — Server port (default: 4000)
-- `CORS_ORIGIN` — Allowed CORS origin (must be specific URL, not `*`, for cookie auth)
+- `CORS_ORIGINS` — Comma-separated allowed CORS origins (e.g., `https://app.example.com,https://staging.example.com`)
 - `DATABASE_URL` — PostgreSQL connection string
 - `BETTER_AUTH_SECRET` — Auth encryption secret (32+ chars, generate with `openssl rand -base64 32`)
 - `BETTER_AUTH_URL` — Server base URL (e.g., `http://localhost:4000`)
