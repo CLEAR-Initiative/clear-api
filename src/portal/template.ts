@@ -486,7 +486,12 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- Sign Out ---
     async function signOut() {
       try {
-        await fetch('/api/auth/sign-out', { method: 'POST', credentials: 'include' });
+        await fetch('/api/auth/sign-out', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
       } catch (e) {}
       window.location.href = '/portal';
     }
