@@ -522,31 +522,60 @@ export function renderLoginPage(): string {
     button:hover { background: #4f52d4; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
+    .toggle { text-align: center; font-size: 0.8rem; color: #8892a4; margin-top: 1.25rem; }
+    .toggle a { color: #6366f1; text-decoration: none; }
+    .toggle a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Developer Portal</h1>
-    <p>Sign in to manage your API keys and view documentation.</p>
-    <label for="email">Email</label>
-    <input type="email" id="email" autocomplete="email" placeholder="you@example.com">
-    <label for="password">Password</label>
-    <input type="password" id="password" autocomplete="current-password" placeholder="Your password">
-    <button id="signin-btn" onclick="signIn()">Sign In</button>
-    <div class="error" id="error"></div>
+    <!-- Sign In Form -->
+    <div id="signin-form">
+      <h1>Developer Portal</h1>
+      <p>Sign in to manage your API keys and view documentation.</p>
+      <label for="signin-email">Email</label>
+      <input type="email" id="signin-email" autocomplete="email" placeholder="you@example.com">
+      <label for="signin-password">Password</label>
+      <input type="password" id="signin-password" autocomplete="current-password" placeholder="Your password">
+      <button id="signin-btn" onclick="signIn()">Sign In</button>
+      <div class="error" id="signin-error"></div>
+      <div class="toggle">Don't have an account? <a href="#" onclick="showForm('register'); return false;">Create one</a></div>
+    </div>
+
+    <!-- Register Form -->
+    <div id="register-form" style="display:none">
+      <h1>Create Account</h1>
+      <p>Sign up to get started with the API.</p>
+      <label for="register-name">Name</label>
+      <input type="text" id="register-name" autocomplete="name" placeholder="Your name">
+      <label for="register-email">Email</label>
+      <input type="email" id="register-email" autocomplete="email" placeholder="you@example.com">
+      <label for="register-password">Password</label>
+      <input type="password" id="register-password" autocomplete="new-password" placeholder="Min. 8 characters">
+      <button id="register-btn" onclick="register()">Create Account</button>
+      <div class="error" id="register-error"></div>
+      <div class="toggle">Already have an account? <a href="#" onclick="showForm('signin'); return false;">Sign in</a></div>
+    </div>
   </div>
   <script>
+    function showForm(name) {
+      document.getElementById('signin-form').style.display = name === 'signin' ? 'block' : 'none';
+      document.getElementById('register-form').style.display = name === 'register' ? 'block' : 'none';
+      document.getElementById('signin-error').textContent = '';
+      document.getElementById('register-error').textContent = '';
+    }
+
     async function signIn() {
-      var email = document.getElementById('email').value.trim();
-      var password = document.getElementById('password').value;
+      var email = document.getElementById('signin-email').value.trim();
+      var password = document.getElementById('signin-password').value;
       if (!email || !password) {
-        document.getElementById('error').textContent = 'Email and password are required.';
+        document.getElementById('signin-error').textContent = 'Email and password are required.';
         return;
       }
       var btn = document.getElementById('signin-btn');
       btn.disabled = true;
       btn.textContent = 'Signing in...';
-      document.getElementById('error').textContent = '';
+      document.getElementById('signin-error').textContent = '';
       try {
         var res = await fetch('/api/auth/sign-in/email', {
           method: 'POST',
@@ -559,20 +588,62 @@ export function renderLoginPage(): string {
         } else {
           var err = {};
           try { err = await res.json(); } catch(e) {}
-          document.getElementById('error').textContent = err.message || 'Invalid email or password.';
+          document.getElementById('signin-error').textContent = err.message || 'Invalid email or password.';
         }
       } catch (e) {
-        document.getElementById('error').textContent = 'Network error. Please try again.';
+        document.getElementById('signin-error').textContent = 'Network error. Please try again.';
       } finally {
         btn.disabled = false;
         btn.textContent = 'Sign In';
       }
     }
-    document.getElementById('password').addEventListener('keydown', function(e) {
+
+    async function register() {
+      var name = document.getElementById('register-name').value.trim();
+      var email = document.getElementById('register-email').value.trim();
+      var password = document.getElementById('register-password').value;
+      if (!name || !email || !password) {
+        document.getElementById('register-error').textContent = 'All fields are required.';
+        return;
+      }
+      if (password.length < 8) {
+        document.getElementById('register-error').textContent = 'Password must be at least 8 characters.';
+        return;
+      }
+      var btn = document.getElementById('register-btn');
+      btn.disabled = true;
+      btn.textContent = 'Creating account...';
+      document.getElementById('register-error').textContent = '';
+      try {
+        var res = await fetch('/api/auth/sign-up/email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ name: name, email: email, password: password }),
+        });
+        if (res.ok) {
+          window.location.href = '/portal';
+        } else {
+          var err = {};
+          try { err = await res.json(); } catch(e) {}
+          document.getElementById('register-error').textContent = err.message || 'Registration failed. Email may already be in use.';
+        }
+      } catch (e) {
+        document.getElementById('register-error').textContent = 'Network error. Please try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
+      }
+    }
+
+    document.getElementById('signin-password').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') signIn();
     });
-    document.getElementById('email').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') document.getElementById('password').focus();
+    document.getElementById('signin-email').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') document.getElementById('signin-password').focus();
+    });
+    document.getElementById('register-password').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') register();
     });
   </script>
 </body>
