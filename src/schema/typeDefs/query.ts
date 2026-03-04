@@ -28,5 +28,8 @@ export const queryTypeDef = gql`
     # Feature Flags
     featureFlags: [FeatureFlag!]!
     featureFlag(key: String!): FeatureFlag
+
+    # API Keys
+    myApiKeys: [ApiKey!]!
   }
 `;

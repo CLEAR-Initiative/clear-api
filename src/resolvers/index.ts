@@ -6,6 +6,7 @@ import { detectionResolvers } from "./detection.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
 import { locationResolvers } from "./location.resolver.js";
 import { featureFlagResolvers } from "./featureFlag.resolver.js";
+import { apiKeyResolvers } from "./apiKey.resolver.js";
 
 export const resolvers = [
   scalarResolvers,
@@ -16,4 +17,5 @@ export const resolvers = [
   dataSourceResolvers,
   locationResolvers,
   featureFlagResolvers,
+  apiKeyResolvers,
 ];

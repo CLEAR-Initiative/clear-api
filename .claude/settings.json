@@ -39,7 +39,15 @@
       "Bash(railway variables --json)",
       "Bash(railway variables --set \"CORS_ORIGINS=https://clear-mvp.vercel.app,https://staging.clearinitiative.io,https://clearinitiative.io,https://www.clearinitiative.io\")",
       "Bash(railway variables --delete CORS_ORIGIN)",
-      "Bash(railway variables --help)"
+      "Bash(railway variables --help)",
+      "Bash(railway --version)",
+      "Bash(railway logs --tail)",
+      "Bash(railway logs --help)",
+      "Bash(railway logs -n 100)",
+      "Bash(railway logs -n 200 --json)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS: %{http_code}\\\\n\" -X POST https://api.clearinitiative.io/api/auth/sign-in/email -H \"Content-Type: application/json\" -d '{\"\"email\"\":\"\"test@test.com\"\",\"\"password\"\":\"\"testpassword123\"\"}')",
+      "Bash(ls -la /Users/james/code/clear-apollo/node_modules/better-auth/dist/crypto*)",
+      "Bash(gtimeout 8 bun dev)"
     ]
   }
 }
