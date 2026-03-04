@@ -7,6 +7,7 @@ import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
 import { locationTypeDef } from "./typeDefs/types/location.js";
 import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
+import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -18,4 +19,5 @@ export const typeDefs = [
   dataSourceTypeDef,
   locationTypeDef,
   featureFlagTypeDef,
+  apiKeyTypeDef,
 ];
