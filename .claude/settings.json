@@ -32,7 +32,14 @@
       "Bash(curl -s -X POST http://localhost:4000/api/auth/sign-in/email -H 'Content-Type: application/json' -d '{\"\"email\"\":\"\"admin@clear.dev\"\",\"\"password\"\":\"\"password123\"\"}' -c /tmp/cookies.txt)",
       "Read(//Users/james/code/clear-mvp/**)",
       "Bash(ls -la /Users/james/code/clear-apollo/.env*)",
-      "Bash(npx vercel ls)"
+      "Bash(npx vercel ls)",
+      "Bash(railway logs --limit 20)",
+      "Bash(railway redeploy)",
+      "Bash(railway variables)",
+      "Bash(railway variables --json)",
+      "Bash(railway variables --set \"CORS_ORIGINS=https://clear-mvp.vercel.app,https://staging.clearinitiative.io,https://clearinitiative.io,https://www.clearinitiative.io\")",
+      "Bash(railway variables --delete CORS_ORIGIN)",
+      "Bash(railway variables --help)"
     ]
   }
 }
