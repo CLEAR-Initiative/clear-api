@@ -12,6 +12,7 @@ import { createContext, type Context } from "./context.js";
 import { prisma } from "./lib/prisma.js";
 import { auth } from "./lib/auth.js";
 import { env } from "./utils/env.js";
+import { portalRouter } from "./portal/index.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -30,6 +31,9 @@ app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
 
 // Better Auth handler — MUST be before express.json()
 app.all("/api/auth/*splat", toNodeHandler(auth));
+
+// Developer portal
+app.use("/portal", portalRouter);
 
 // Health check
 app.get("/health", (_req, res) => {
