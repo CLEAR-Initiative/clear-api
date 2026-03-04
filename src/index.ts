@@ -25,21 +25,20 @@ const server = new ApolloServer<Context>({
 
 await server.start();
 
-// CORS — scoped to non-auth routes (Better Auth handles its own CORS via trustedOrigins)
-const corsMiddleware = cors({ origin: env.CORS_ORIGINS, credentials: true });
+// CORS — global, with credentials for cookie-based sessions
+app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
 
 // Better Auth handler — MUST be before express.json()
 app.all("/api/auth/*splat", toNodeHandler(auth));
 
 // Health check
-app.get("/health", corsMiddleware, (_req, res) => {
+app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
 // GraphQL — express.json() scoped to this route only
 app.use(
   "/graphql",
-  corsMiddleware,
   express.json(),
   expressMiddleware(server, {
     context: createContext,
