@@ -8,16 +8,16 @@ export const alertTypeDef = gql`
   }
 
   type Alert {
-    id: Int!
+    id: String!
     title: String!
     description: String!
     severity: Int!
     status: AlertStatus!
     source: DataSource
     createdBy: User
-    primaryDetection: Detection
+    primaryEvent: Event
     metadata: JSON
-    detections: [Detection!]!
+    events: [Event!]!
     locations: [AlertLocation!]!
     feedback: [UserAlert!]!
     createdAt: DateTime!
@@ -25,7 +25,7 @@ export const alertTypeDef = gql`
   }
 
   type UserAlert {
-    id: Int!
+    id: String!
     user: User!
     alert: Alert!
     readAt: DateTime

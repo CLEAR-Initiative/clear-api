@@ -2,7 +2,7 @@ import { gql } from "graphql-tag";
 
 export const dataSourceTypeDef = gql`
   type DataSource {
-    id: Int!
+    id: String!
     name: String!
     type: String!
     isActive: Boolean!
