@@ -51,7 +51,7 @@ export const apiKeyResolvers = {
 
     revokeApiKey: async (
       _parent: unknown,
-      args: { id: number },
+      args: { id: string },
       context: Context,
     ) => {
       const user = requireAuth(context);
