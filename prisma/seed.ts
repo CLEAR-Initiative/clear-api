@@ -7,10 +7,14 @@ async function seed() {
 
   // ─── Clear existing data (dependency-safe order) ───────────────────────────
   await prisma.userAlert.deleteMany();
+  await prisma.notifications.deleteMany();
+  await prisma.apiKey.deleteMany();
   await prisma.alertLocation.deleteMany();
+  await prisma.alert.deleteMany();
+  await prisma.event.deleteMany();
+  await prisma.signal.deleteMany();
   await prisma.detectionLocation.deleteMany();
   await prisma.detection.deleteMany();
-  await prisma.alert.deleteMany();
   await prisma.featureFlag.deleteMany();
   await prisma.dataSource.deleteMany();
   await prisma.location.deleteMany();
@@ -184,6 +188,46 @@ async function seed() {
 
   console.log("Created 6 detections with location links");
 
+  // ─── Signals (1:1 with processed detections) ─────────────────────────────
+  const [sig1, sig2, sig3, sig5] = await Promise.all([
+    prisma.signal.create({ data: { detectionId: det1.id } }),
+    prisma.signal.create({ data: { detectionId: det2.id } }),
+    prisma.signal.create({ data: { detectionId: det3.id } }),
+    prisma.signal.create({ data: { detectionId: det5.id } }),
+  ]);
+
+  console.log("Created 4 signals from processed detections");
+
+  // ─── Events (group related signals) ──────────────────────────────────────
+  const [evt1, evt2, evt3, evt4] = await Promise.all([
+    prisma.event.create({
+      data: {
+        primarySignalId: sig1.id,
+        signals: { connect: [{ id: sig1.id }] },
+      },
+    }),
+    prisma.event.create({
+      data: {
+        primarySignalId: sig2.id,
+        signals: { connect: [{ id: sig2.id }] },
+      },
+    }),
+    prisma.event.create({
+      data: {
+        primarySignalId: sig3.id,
+        signals: { connect: [{ id: sig3.id }] },
+      },
+    }),
+    prisma.event.create({
+      data: {
+        primarySignalId: sig5.id,
+        signals: { connect: [{ id: sig5.id }] },
+      },
+    }),
+  ]);
+
+  console.log("Created 4 events");
+
   // ─── Alerts ────────────────────────────────────────────────────────────────
   const [alert1, alert2, alert3, alert4] = await Promise.all([
     prisma.alert.create({
@@ -195,7 +239,8 @@ async function seed() {
         status: "published",
         sourceId: twitter.id,
         createdById: admin.id,
-        primaryDetectionId: det1.id,
+        primaryEventId: evt1.id,
+        events: { connect: [{ id: evt1.id }] },
         metadata: { category: "seismic", affectedPopulation: "10M+" },
       },
     }),
@@ -208,7 +253,8 @@ async function seed() {
         status: "published",
         sourceId: twitter.id,
         createdById: analyst.id,
-        primaryDetectionId: det2.id,
+        primaryEventId: evt2.id,
+        events: { connect: [{ id: evt2.id }] },
         metadata: { category: "wildfire", aqi: "unhealthy" },
       },
     }),
@@ -221,7 +267,8 @@ async function seed() {
         status: "draft",
         sourceId: newsApi.id,
         createdById: admin.id,
-        primaryDetectionId: det3.id,
+        primaryEventId: evt3.id,
+        events: { connect: [{ id: evt3.id }] },
         metadata: { category: "flood", nwsWarningId: "TX-2026-0845" },
       },
     }),
@@ -234,18 +281,11 @@ async function seed() {
         status: "archived",
         sourceId: govRss.id,
         createdById: analyst.id,
-        primaryDetectionId: det5.id,
+        primaryEventId: evt4.id,
+        events: { connect: [{ id: evt4.id }] },
         metadata: { category: "erosion", reportRef: "NOAA-2026-0312" },
       },
     }),
-  ]);
-
-  // Link detections to alerts
-  await Promise.all([
-    prisma.detection.update({ where: { id: det1.id }, data: { alertId: alert1.id } }),
-    prisma.detection.update({ where: { id: det2.id }, data: { alertId: alert2.id } }),
-    prisma.detection.update({ where: { id: det3.id }, data: { alertId: alert3.id } }),
-    prisma.detection.update({ where: { id: det5.id }, data: { alertId: alert4.id } }),
   ]);
 
   // Link alerts to locations
@@ -260,7 +300,7 @@ async function seed() {
     prisma.alertLocation.create({ data: { alertId: alert4.id, locationId: newYork.id } }),
   ]);
 
-  console.log("Created 4 alerts with detection and location links");
+  console.log("Created 4 alerts with event and location links");
 
   // ─── User Feedback (UserAlert) ─────────────────────────────────────────────
   await Promise.all([
@@ -312,6 +352,40 @@ async function seed() {
   ]);
 
   console.log("Created 5 user feedback entries");
+
+  // ─── Notifications ────────────────────────────────────────────────────────
+  await Promise.all([
+    prisma.notifications.create({
+      data: {
+        userId: analyst.id,
+        message: "New earthquake alert published for Los Angeles area",
+        notificationType: "alert",
+        actionUrl: `/alerts/${alert1.id}`,
+        actionText: "View Alert",
+        status: "READ",
+      },
+    }),
+    prisma.notifications.create({
+      data: {
+        userId: viewer.id,
+        message: "Flash flood warning drafted for Houston Metro",
+        notificationType: "alert",
+        actionUrl: `/alerts/${alert3.id}`,
+        actionText: "View Alert",
+        status: "DELIVERED",
+      },
+    }),
+    prisma.notifications.create({
+      data: {
+        userId: admin.id,
+        message: "Weekly system report is ready",
+        notificationType: "system",
+        status: "PENDING",
+      },
+    }),
+  ]);
+
+  console.log("Created 3 notifications");
 
   // ─── Feature Flags ─────────────────────────────────────────────────────────
   await Promise.all([
