@@ -1,21 +1,28 @@
+import type { IResolvers } from "@graphql-tools/utils";
 import { scalarResolvers } from "./scalars.resolver.js";
 import { authResolvers } from "./auth.resolver.js";
 import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
 import { detectionResolvers } from "./detection.resolver.js";
+import { signalResolvers } from "./signal.resolver.js";
+import { eventResolvers } from "./event.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
 import { locationResolvers } from "./location.resolver.js";
+import { notificationResolvers } from "./notification.resolver.js";
 import { featureFlagResolvers } from "./featureFlag.resolver.js";
 import { apiKeyResolvers } from "./apiKey.resolver.js";
 
-export const resolvers = [
+export const resolvers: IResolvers[] = [
   scalarResolvers,
   authResolvers,
   userResolvers,
   alertResolvers,
   detectionResolvers,
+  signalResolvers,
+  eventResolvers,
   dataSourceResolvers,
   locationResolvers,
+  notificationResolvers,
   featureFlagResolvers,
   apiKeyResolvers,
 ];

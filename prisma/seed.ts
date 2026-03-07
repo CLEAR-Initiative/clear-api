@@ -48,67 +48,140 @@ async function seed() {
 
   console.log(`Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`);
 
-  // ─── Locations (3-level hierarchy) ─────────────────────────────────────────
-  const us = await prisma.location.create({
-    data: { geoId: "US", name: "United States", level: 0 },
+  // ─── Locations (Sudan hierarchy: Country → State → Locality) ─────────────
+  // Level 0: Country
+  const sudan = await prisma.location.create({
+    data: { geoId: "SD", name: "Sudan", level: 0 },
   });
 
-  const [california, texas, newYork] = await Promise.all([
+  // Level 1: States
+  const [khartoum, northDarfur, southDarfur, northKordofan] = await Promise.all([
     prisma.location.create({
-      data: { geoId: "US-CA", name: "California", level: 1, parentId: us.id },
+      data: { geoId: "SD_001", name: "Khartoum", level: 1, parentId: sudan.id, pointType: "CENTROID" },
     }),
     prisma.location.create({
-      data: { geoId: "US-TX", name: "Texas", level: 1, parentId: us.id },
+      data: { geoId: "SD_002", name: "North Darfur", level: 1, parentId: sudan.id, pointType: "CENTROID" },
     }),
     prisma.location.create({
-      data: { geoId: "US-NY", name: "New York", level: 1, parentId: us.id },
-    }),
-  ]);
-
-  const [losAngeles, sanFrancisco, houston, nyc] = await Promise.all([
-    prisma.location.create({
-      data: { geoId: "US-CA-LA", name: "Los Angeles", level: 2, parentId: california.id },
+      data: { geoId: "SD_003", name: "South Darfur", level: 1, parentId: sudan.id, pointType: "CENTROID" },
     }),
     prisma.location.create({
-      data: { geoId: "US-CA-SF", name: "San Francisco", level: 2, parentId: california.id },
-    }),
-    prisma.location.create({
-      data: { geoId: "US-TX-HOU", name: "Houston", level: 2, parentId: texas.id },
-    }),
-    prisma.location.create({
-      data: { geoId: "US-NY-NYC", name: "New York City", level: 2, parentId: newYork.id },
+      data: { geoId: "SD_004", name: "North Kordofan", level: 1, parentId: sudan.id, pointType: "CENTROID" },
     }),
   ]);
 
-  console.log("Created 8 locations (1 country, 3 states, 4 cities)");
+  // Level 2: Localities
+  const [khartoumCity, omdurman, elFasher, kutum, nyala, elDaein] = await Promise.all([
+    prisma.location.create({
+      data: { geoId: "SD_001_001", name: "Khartoum City", level: 2, parentId: khartoum.id, pointType: "CENTROID" },
+    }),
+    prisma.location.create({
+      data: { geoId: "SD_001_002", name: "Omdurman", level: 2, parentId: khartoum.id, pointType: "CENTROID" },
+    }),
+    prisma.location.create({
+      data: { geoId: "SD_002_001", name: "El Fasher", level: 2, parentId: northDarfur.id, pointType: "CENTROID" },
+    }),
+    prisma.location.create({
+      data: { geoId: "SD_002_002", name: "Kutum", level: 2, parentId: northDarfur.id, pointType: "CENTROID" },
+    }),
+    prisma.location.create({
+      data: { geoId: "SD_003_001", name: "Nyala", level: 2, parentId: southDarfur.id, pointType: "CENTROID" },
+    }),
+    prisma.location.create({
+      data: { geoId: "SD_003_002", name: "Ed Daein", level: 2, parentId: southDarfur.id, pointType: "CENTROID" },
+    }),
+  ]);
+
+  // Set geographic data using raw SQL (Unsupported types can't be set via Prisma client)
+  // Points (centroids) and simplified boundary polygons for states
+  const geoUpdates = [
+    // Sudan country centroid
+    { id: sudan.id, lon: 30.0, lat: 15.5, boundary: null },
+    // Khartoum state: centroid + simplified boundary
+    {
+      id: khartoum.id,
+      lon: 32.53,
+      lat: 15.55,
+      boundary: `MULTIPOLYGON(((31.7 15.19, 34.38 15.19, 34.38 16.63, 31.7 16.63, 31.7 15.19)))`,
+    },
+    // North Darfur state: centroid + simplified boundary
+    {
+      id: northDarfur.id,
+      lon: 25.09,
+      lat: 15.45,
+      boundary: `MULTIPOLYGON(((23.0 13.0, 27.5 13.0, 27.5 20.0, 23.0 20.0, 23.0 13.0)))`,
+    },
+    // South Darfur state: centroid + simplified boundary
+    {
+      id: southDarfur.id,
+      lon: 25.0,
+      lat: 11.5,
+      boundary: `MULTIPOLYGON(((23.5 8.65, 27.5 8.65, 27.5 13.12, 23.5 13.12, 23.5 8.65)))`,
+    },
+    // North Kordofan state: centroid + simplified boundary
+    {
+      id: northKordofan.id,
+      lon: 30.0,
+      lat: 13.5,
+      boundary: `MULTIPOLYGON(((27.5 12.0, 32.5 12.0, 32.5 16.0, 27.5 16.0, 27.5 12.0)))`,
+    },
+    // Localities (points only)
+    { id: khartoumCity.id, lon: 32.56, lat: 15.59, boundary: null },
+    { id: omdurman.id, lon: 32.48, lat: 15.64, boundary: null },
+    { id: elFasher.id, lon: 25.35, lat: 13.63, boundary: null },
+    { id: kutum.id, lon: 24.67, lat: 14.20, boundary: null },
+    { id: nyala.id, lon: 24.88, lat: 12.05, boundary: null },
+    { id: elDaein.id, lon: 26.13, lat: 11.46, boundary: null },
+  ];
+
+  for (const geo of geoUpdates) {
+    // Set point (geography)
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Location" SET "point" = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE "id" = $3`,
+      geo.lon,
+      geo.lat,
+      geo.id,
+    );
+
+    // Set boundary (geometry) if provided
+    if (geo.boundary) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Location" SET "boundary" = ST_GeomFromText($1, 4326) WHERE "id" = $2`,
+        geo.boundary,
+        geo.id,
+      );
+    }
+  }
+
+  console.log("Created 11 locations (1 country, 4 states, 6 localities) with geographic data");
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
-  const [twitter, newsApi, govRss] = await Promise.all([
+  const [socialMedia, newsApi, govReports] = await Promise.all([
     prisma.dataSource.create({
       data: {
-        name: "Twitter/X",
+        name: "Social Media Monitor",
         type: "social_media",
         isActive: true,
-        baseUrl: "https://api.twitter.com/2",
-        infoUrl: "https://developer.twitter.com",
+        baseUrl: "https://api.social-monitor.org/v2",
+        infoUrl: "https://social-monitor.org",
       },
     }),
     prisma.dataSource.create({
       data: {
-        name: "NewsAPI",
-        type: "news_aggregator",
+        name: "ACLED Conflict Data",
+        type: "conflict_tracker",
         isActive: true,
-        baseUrl: "https://newsapi.org/v2",
-        infoUrl: "https://newsapi.org",
+        baseUrl: "https://acleddata.com/api/v3",
+        infoUrl: "https://acleddata.com",
       },
     }),
     prisma.dataSource.create({
       data: {
-        name: "Government RSS",
-        type: "rss_feed",
-        isActive: false,
-        baseUrl: "https://www.govinfo.gov/rss",
-        infoUrl: "https://www.govinfo.gov",
+        name: "FEWS NET",
+        type: "food_security",
+        isActive: true,
+        baseUrl: "https://fews.net/api",
+        infoUrl: "https://fews.net",
       },
     }),
   ]);
@@ -119,71 +192,71 @@ async function seed() {
   const [det1, det2, det3, det4, det5, det6] = await Promise.all([
     prisma.detection.create({
       data: {
-        title: "Unusual seismic activity reported near LA",
-        confidence: 0.87,
-        status: "processed",
-        sourceId: twitter.id,
-        rawData: { tweets: 142, sentiment: "negative", hashtags: ["#earthquake", "#LA"] },
-      },
-    }),
-    prisma.detection.create({
-      data: {
-        title: "Wildfire smoke detected in satellite imagery",
-        confidence: 0.95,
-        status: "processed",
-        sourceId: twitter.id,
-        rawData: { tweets: 89, sentiment: "alarmed", hashtags: ["#wildfire", "#CalFire"] },
-      },
-    }),
-    prisma.detection.create({
-      data: {
-        title: "Flash flood warnings issued for Houston area",
-        confidence: 0.92,
+        title: "Armed clashes reported near El Fasher",
+        confidence: 0.91,
         status: "processed",
         sourceId: newsApi.id,
-        rawData: { articles: 23, sources: ["AP", "Reuters", "local news"] },
+        rawData: { events: 12, fatalities: "unknown", source: "ACLED" },
       },
     }),
     prisma.detection.create({
       data: {
-        title: "Minor tremor registered in upstate New York",
-        confidence: 0.45,
+        title: "Displacement surge detected in South Darfur",
+        confidence: 0.88,
+        status: "processed",
+        sourceId: socialMedia.id,
+        rawData: { posts: 234, sentiment: "distress", hashtags: ["#Darfur", "#displacement"] },
+      },
+    }),
+    prisma.detection.create({
+      data: {
+        title: "Flood warnings along the Nile in Khartoum",
+        confidence: 0.94,
+        status: "processed",
+        sourceId: socialMedia.id,
+        rawData: { posts: 187, sentiment: "alarmed", hashtags: ["#KhartoumFloods", "#Nile"] },
+      },
+    }),
+    prisma.detection.create({
+      data: {
+        title: "Minor locust sighting in North Kordofan",
+        confidence: 0.42,
         status: "raw",
-        sourceId: newsApi.id,
-        rawData: { articles: 3, sources: ["local news"] },
+        sourceId: govReports.id,
+        rawData: { report_id: "FAO-2026-SD-047", agency: "FAO" },
       },
     }),
     prisma.detection.create({
       data: {
-        title: "Coastal erosion report from NOAA",
-        confidence: 0.78,
+        title: "Food insecurity escalation in Kutum locality",
+        confidence: 0.85,
         status: "processed",
-        sourceId: govRss.id,
-        rawData: { report_id: "NOAA-2026-0312", agency: "NOAA" },
+        sourceId: govReports.id,
+        rawData: { ipc_phase: 4, report_id: "FEWSNET-2026-03", population_affected: "120K" },
       },
     }),
     prisma.detection.create({
       data: {
-        title: "Duplicate weather station reading",
-        confidence: 0.3,
+        title: "Duplicate weather station reading - Omdurman",
+        confidence: 0.25,
         status: "ignored",
-        sourceId: govRss.id,
-        rawData: { station: "WX-4421", note: "sensor malfunction confirmed" },
+        sourceId: socialMedia.id,
+        rawData: { station: "SD-WX-0012", note: "sensor malfunction confirmed" },
       },
     }),
   ]);
 
   // Link detections to locations
   await Promise.all([
-    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: losAngeles.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: california.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det2.id, locationId: sanFrancisco.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det2.id, locationId: california.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: houston.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: texas.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det4.id, locationId: newYork.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: nyc.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: newYork.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: elFasher.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: northDarfur.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det2.id, locationId: nyala.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det2.id, locationId: southDarfur.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: khartoumCity.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: khartoum.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det4.id, locationId: northKordofan.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: kutum.id } }),
+    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: northDarfur.id } }),
   ]);
 
   console.log("Created 6 detections with location links");
@@ -232,72 +305,72 @@ async function seed() {
   const [alert1, alert2, alert3, alert4] = await Promise.all([
     prisma.alert.create({
       data: {
-        title: "Earthquake Risk Alert - Los Angeles",
+        title: "Armed Conflict Escalation - El Fasher, North Darfur",
         description:
-          "Multiple social media reports and seismic data indicate increased earthquake risk in the greater Los Angeles area. Residents should review emergency preparedness plans.",
-        severity: 4,
+          "ACLED conflict data confirms intensified armed clashes in and around El Fasher. Civilian displacement ongoing. Humanitarian access severely constrained.",
+        severity: 5,
         status: "published",
-        sourceId: twitter.id,
+        sourceId: newsApi.id,
         createdById: admin.id,
         primaryEventId: evt1.id,
         events: { connect: [{ id: evt1.id }] },
-        metadata: { category: "seismic", affectedPopulation: "10M+" },
+        metadata: { category: "conflict", affectedPopulation: "500K+", ipcPhase: 4 },
       },
     }),
     prisma.alert.create({
       data: {
-        title: "Wildfire Smoke Advisory - Northern California",
+        title: "Mass Displacement Alert - South Darfur",
         description:
-          "Satellite imagery confirms active wildfire producing significant smoke. Air quality index may exceed safe levels in the Bay Area over the next 48 hours.",
-        severity: 3,
+          "Social media monitoring and ground reports indicate a significant surge in internal displacement in Nyala and surrounding areas. Emergency shelter and food assistance urgently needed.",
+        severity: 4,
         status: "published",
-        sourceId: twitter.id,
+        sourceId: socialMedia.id,
         createdById: analyst.id,
         primaryEventId: evt2.id,
         events: { connect: [{ id: evt2.id }] },
-        metadata: { category: "wildfire", aqi: "unhealthy" },
+        metadata: { category: "displacement", estimatedIDPs: "75K" },
       },
     }),
     prisma.alert.create({
       data: {
-        title: "Flash Flood Warning - Houston Metro",
+        title: "Nile Flood Warning - Khartoum State",
         description:
-          "National Weather Service has issued flash flood warnings for the Houston metropolitan area. Multiple news sources confirm rising water levels.",
-        severity: 5,
+          "Rising Nile water levels threaten low-lying areas of Khartoum and Omdurman. Social media reports confirm water entering residential neighborhoods. Emergency flood response recommended.",
+        severity: 4,
         status: "draft",
-        sourceId: newsApi.id,
+        sourceId: socialMedia.id,
         createdById: admin.id,
         primaryEventId: evt3.id,
         events: { connect: [{ id: evt3.id }] },
-        metadata: { category: "flood", nwsWarningId: "TX-2026-0845" },
+        metadata: { category: "flood", nileLevel: "17.5m", threshold: "17.0m" },
       },
     }),
     prisma.alert.create({
       data: {
-        title: "Coastal Erosion Update - NYC Waterfront",
+        title: "Food Insecurity Crisis - Kutum, North Darfur",
         description:
-          "NOAA report indicates accelerated coastal erosion along NYC waterfront areas. Infrastructure assessments recommended.",
-        severity: 2,
+          "FEWS NET reports IPC Phase 4 (Emergency) food insecurity in Kutum locality. Approximately 120,000 people affected. Market prices for staple foods have doubled since last quarter.",
+        severity: 3,
         status: "archived",
-        sourceId: govRss.id,
+        sourceId: govReports.id,
         createdById: analyst.id,
         primaryEventId: evt4.id,
         events: { connect: [{ id: evt4.id }] },
-        metadata: { category: "erosion", reportRef: "NOAA-2026-0312" },
+        metadata: { category: "food_security", ipcPhase: 4, reportRef: "FEWSNET-2026-03" },
       },
     }),
   ]);
 
   // Link alerts to locations
   await Promise.all([
-    prisma.alertLocation.create({ data: { alertId: alert1.id, locationId: losAngeles.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert1.id, locationId: california.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert2.id, locationId: sanFrancisco.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert2.id, locationId: california.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert3.id, locationId: houston.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert3.id, locationId: texas.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert4.id, locationId: nyc.id } }),
-    prisma.alertLocation.create({ data: { alertId: alert4.id, locationId: newYork.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert1.id, locationId: elFasher.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert1.id, locationId: northDarfur.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert2.id, locationId: nyala.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert2.id, locationId: southDarfur.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert3.id, locationId: khartoumCity.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert3.id, locationId: khartoum.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert4.id, locationId: kutum.id } }),
+    prisma.alertLocation.create({ data: { alertId: alert4.id, locationId: northDarfur.id } }),
   ]);
 
   console.log("Created 4 alerts with event and location links");
@@ -310,7 +383,7 @@ async function seed() {
         alertId: alert1.id,
         readAt: new Date(),
         rating: 5,
-        comment: "High confidence alert. Seismic data corroborates social media signals.",
+        comment: "Critical alert. ACLED data matches ground reports from our field team.",
       },
     }),
     prisma.userAlert.create({
@@ -319,7 +392,7 @@ async function seed() {
         alertId: alert1.id,
         readAt: new Date(),
         rating: 4,
-        comment: "Useful alert, shared with our local emergency team.",
+        comment: "Shared with our humanitarian coordination team in North Darfur.",
       },
     }),
     prisma.userAlert.create({
@@ -328,7 +401,7 @@ async function seed() {
         alertId: alert2.id,
         readAt: new Date(),
         rating: 4,
-        comment: "Good catch from satellite data. AQI prediction was accurate.",
+        comment: "Displacement figures align with UNHCR preliminary estimates.",
       },
     }),
     prisma.userAlert.create({
@@ -337,7 +410,7 @@ async function seed() {
         alertId: alert2.id,
         readAt: new Date(),
         rating: 3,
-        comment: "Alert was helpful but arrived a bit late.",
+        comment: "Useful but would benefit from more granular location data.",
       },
     }),
     prisma.userAlert.create({
@@ -346,7 +419,7 @@ async function seed() {
         alertId: alert4.id,
         readAt: new Date(),
         rating: 3,
-        comment: "Informational but low urgency. Good to have in the archive.",
+        comment: "Good baseline data for food security monitoring. Archived for trend analysis.",
       },
     }),
   ]);
@@ -358,7 +431,7 @@ async function seed() {
     prisma.notifications.create({
       data: {
         userId: analyst.id,
-        message: "New earthquake alert published for Los Angeles area",
+        message: "New conflict alert published for El Fasher, North Darfur",
         notificationType: "alert",
         actionUrl: `/alerts/${alert1.id}`,
         actionText: "View Alert",
@@ -368,7 +441,7 @@ async function seed() {
     prisma.notifications.create({
       data: {
         userId: viewer.id,
-        message: "Flash flood warning drafted for Houston Metro",
+        message: "Flood warning drafted for Khartoum State",
         notificationType: "alert",
         actionUrl: `/alerts/${alert3.id}`,
         actionText: "View Alert",

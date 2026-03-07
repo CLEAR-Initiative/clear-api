@@ -2,7 +2,7 @@ import { gql } from "graphql-tag";
 
 export const locationTypeDef = gql`
   type Location {
-    id: Int!
+    id: String!
     geoId: String!
     name: String!
     level: Int!
@@ -13,14 +13,14 @@ export const locationTypeDef = gql`
   }
 
   type AlertLocation {
-    id: Int!
+    id: String!
     alert: Alert!
     location: Location!
     createdAt: DateTime!
   }
 
   type DetectionLocation {
-    id: Int!
+    id: String!
     detection: Detection!
     location: Location!
     createdAt: DateTime!
