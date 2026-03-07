@@ -4,8 +4,11 @@ import { mutationTypeDef } from "./typeDefs/mutation.js";
 import { userTypeDef } from "./typeDefs/types/user.js";
 import { alertTypeDef } from "./typeDefs/types/alert.js";
 import { detectionTypeDef } from "./typeDefs/types/detection.js";
+import { signalTypeDef } from "./typeDefs/types/signal.js";
+import { eventTypeDef } from "./typeDefs/types/event.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
 import { locationTypeDef } from "./typeDefs/types/location.js";
+import { notificationTypeDef } from "./typeDefs/types/notification.js";
 import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
 
@@ -16,8 +19,11 @@ export const typeDefs = [
   userTypeDef,
   alertTypeDef,
   detectionTypeDef,
+  signalTypeDef,
+  eventTypeDef,
   dataSourceTypeDef,
   locationTypeDef,
+  notificationTypeDef,
   featureFlagTypeDef,
   apiKeyTypeDef,
 ];

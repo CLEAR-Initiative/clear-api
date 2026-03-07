@@ -8,14 +8,14 @@ export const detectionTypeDef = gql`
   }
 
   type Detection {
-    id: Int!
+    id: String!
     title: String!
     confidence: Float
     status: DetectionStatus!
     detectedAt: DateTime!
     rawData: JSON
     source: DataSource
-    alert: Alert
+    signal: Signal
     locations: [DetectionLocation!]!
     createdAt: DateTime!
     updatedAt: DateTime!

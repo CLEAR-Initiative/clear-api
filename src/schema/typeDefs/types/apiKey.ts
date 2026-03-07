@@ -2,7 +2,7 @@ import { gql } from "graphql-tag";
 
 export const apiKeyTypeDef = gql`
   type ApiKey {
-    id: Int!
+    id: String!
     name: String!
     prefix: String!
     expiresAt: DateTime
