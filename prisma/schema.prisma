@@ -1,12 +1,3 @@
-// prisma/schema.prisma
-// CLEAR v2 schema (clean restart)
-// - Auth: User, Session, Account
-// - Core product: Alert, UserAlert
-// - Data miner: DataSource, Detection
-// - Geography: Location (hierarchy)
-// - Multi-location support via join tables: AlertLocation, DetectionLocation
-// - Feature flags
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -30,29 +21,48 @@ enum DetectionStatus {
   ignored
 }
 
+enum PointType {
+  CENTROID
+  GPS
+}
+
+enum NotificationStatus {
+  PENDING
+  DELIVERED
+  FAILED
+  READ
+}
+
 // ─── Auth (Better Auth) ────────────────────────────────────────────────────
 
 model user {
-  id            String    @id
+  id            String  @id @default(cuid())
   name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  email         String  @unique
+  emailVerified Boolean @default(false)
+  phoneNumber   String?
   image         String?
-  role          String    @default("viewer")
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @default(now())
+  role          String  @default("viewer")
+  isActive      Boolean @default(true)
+
+  enableInAppNotification Boolean @default(false)
+  enableEmailNotification Boolean @default(false)
+  enableSMSNotification   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
 
   sessions session[]
   accounts account[]
 
-  createdAlerts Alert[]     @relation("AlertCreatedBy")
+  createdAlerts Alert[]         @relation("AlertCreatedBy")
   feedback      UserAlert[]
   apiKeys       ApiKey[]
+  notifications Notifications[]
 }
 
 model session {
-  id        String   @id
+  id        String   @id @default(cuid())
   userId    String
   token     String   @unique
   expiresAt DateTime
@@ -65,7 +75,7 @@ model session {
 }
 
 model account {
-  id                    String    @id
+  id                    String    @id @default(cuid())
   userId                String
   accountId             String
   providerId            String
@@ -83,7 +93,7 @@ model account {
 }
 
 model verification {
-  id         String    @id
+  id         String    @id @default(cuid())
   identifier String
   value      String
   expiresAt  DateTime
@@ -94,11 +104,14 @@ model verification {
 // ─── Geography ───────────────────────────────────────────────────────────────
 
 model Location {
-  id       Int     @id @default(autoincrement())
-  geoId    String  @unique
-  name     String
-  level    Int
-  parentId Int?
+  id        String                                      @id @default(cuid())
+  geoId     String                                      @unique
+  point     Unsupported("geography(Point,4326)")?
+  boundary  Unsupported("geometry(MultiPolygon,4326)")?
+  pointType PointType?
+  name      String
+  level     Int
+  parentId  String?
 
   parent   Location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
   children Location[] @relation("LocationHierarchy")
@@ -113,7 +126,7 @@ model Location {
 // ─── Data Mining ─────────────────────────────────────────────────────────────
 
 model DataSource {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(cuid())
   name      String
   type      String
   isActive  Boolean  @default(true)
@@ -130,54 +143,69 @@ model DataSource {
 }
 
 model Detection {
-  id         Int             @id @default(autoincrement())
+  id         String          @id @default(cuid())
   title      String
   confidence Float?
   status     DetectionStatus @default(raw)
   detectedAt DateTime        @default(now())
   rawData    Json?
 
-  sourceId Int?
+  sourceId String?
   source   DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
 
-  alertId Int?
-  alert   Alert? @relation("DetectionAlerts", fields: [alertId], references: [id], onDelete: SetNull)
-
-  // Reverse side of Alert.primaryDetection
-  primaryOf Alert[] @relation("PrimaryDetection")
-
   locations DetectionLocation[]
+  signal    Signal?             @relation("SignalDetection")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, detectedAt])
   @@index([sourceId, detectedAt])
-  @@index([alertId])
 }
 
 // ─── Core Product ────────────────────────────────────────────────────────────
 
+model Signal {
+  id          String    @id @default(cuid())
+  detectionId String    @unique
+  detection   Detection @relation("SignalDetection", fields: [detectionId], references: [id])
+
+  // Reverse side of Event.signals (many-to-many via implicit join)
+  events    Event[] @relation("EventSignals")
+  // Reverse side of Event.primarySignal
+  primaryOf Event[] @relation("PrimarySignal")
+}
+
+model Event {
+  id              String   @id @default(cuid())
+  signals         Signal[] @relation("EventSignals")
+  primarySignalId String?
+  primarySignal   Signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
+
+  // Reverse sides for Alert relations
+  primaryOf Alert[] @relation("PrimaryEvent")
+  alerts    Alert[] @relation("AlertEvents")
+}
+
 model Alert {
-  id          Int         @id @default(autoincrement())
+  id          String      @id @default(cuid())
   title       String
   description String
   severity    Int
   status      AlertStatus @default(draft)
 
-  sourceId    Int?
-  source      DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourceId String?
+  source   DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
 
   createdById String?
-  createdBy   user?  @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   user?   @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  primaryDetectionId Int?
-  primaryDetection   Detection? @relation("PrimaryDetection", fields: [primaryDetectionId], references: [id], onDelete: SetNull)
+  primaryEventId String?
+  primaryEvent   Event?  @relation("PrimaryEvent", fields: [primaryEventId], references: [id], onDelete: SetNull)
 
   metadata Json?
 
-  // Reverse side of Detection.alert
-  detections Detection[] @relation("DetectionAlerts")
+  events Event[] @relation("AlertEvents")
 
   locations AlertLocation[]
   feedback  UserAlert[]
@@ -194,9 +222,9 @@ model Alert {
 // ─── Join Tables ─────────────────────────────────────────────────────────────
 
 model AlertLocation {
-  id         Int      @id @default(autoincrement())
-  alertId    Int
-  locationId Int
+  id         String   @id @default(cuid())
+  alertId    String
+  locationId String
   createdAt  DateTime @default(now())
 
   alert    Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
@@ -207,9 +235,9 @@ model AlertLocation {
 }
 
 model DetectionLocation {
-  id          Int      @id @default(autoincrement())
-  detectionId Int
-  locationId  Int
+  id          String   @id @default(cuid())
+  detectionId String
+  locationId  String
   createdAt   DateTime @default(now())
 
   detection Detection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
@@ -220,9 +248,9 @@ model DetectionLocation {
 }
 
 model UserAlert {
-  id      Int @id @default(autoincrement())
+  id      String @id @default(cuid())
   userId  String
-  alertId Int
+  alertId String
 
   readAt  DateTime?
   rating  Int?
@@ -242,7 +270,7 @@ model UserAlert {
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 
 model ApiKey {
-  id         Int       @id @default(autoincrement())
+  id         String    @id @default(cuid())
   userId     String
   name       String
   prefix     String
@@ -262,8 +290,29 @@ model ApiKey {
 // ─── Feature Flags ───────────────────────────────────────────────────────────
 
 model FeatureFlag {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(cuid())
   key       String   @unique
   enabled   Boolean  @default(false)
   updatedAt DateTime @updatedAt
+}
+
+// ─── Notifications ———————————————————————————————————————————————————————————
+
+model Notifications {
+  id               String @id @default(cuid())
+  userId           String
+  message          String
+  notificationType String
+
+  actionUrl  String?
+  actionText String?
+
+  status                  NotificationStatus  @default(PENDING)
+  emailNotificationStatus NotificationStatus?
+  smsNotificationStatus   NotificationStatus?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
