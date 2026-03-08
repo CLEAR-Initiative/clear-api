@@ -6,6 +6,11 @@ export const locationTypeDef = gql`
     geoId: String!
     name: String!
     level: Int!
+    latitude: Float
+    longitude: Float
+    pointType: String
+    point: GeoJSON
+    boundary: GeoJSON
     parent: Location
     children: [Location!]!
     alertLinks: [AlertLocation!]!

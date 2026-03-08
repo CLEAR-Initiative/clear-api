@@ -107,7 +107,6 @@ export const mutationTypeDef = gql`
     description: String!
     severity: Int!
     status: AlertStatus
-    sourceId: String
     primaryEventId: String
     eventIds: [String!]
     locationIds: [String!]
@@ -119,7 +118,6 @@ export const mutationTypeDef = gql`
     description: String
     severity: Int
     status: AlertStatus
-    sourceId: String
     primaryEventId: String
     eventIds: [String!]
     locationIds: [String!]
@@ -177,6 +175,8 @@ export const mutationTypeDef = gql`
     level: Int!
     pointType: String
     parentId: String
+    latitude: Float
+    longitude: Float
   }
 
   input UpdateLocationInput {
@@ -185,6 +185,8 @@ export const mutationTypeDef = gql`
     level: Int
     pointType: String
     parentId: String
+    latitude: Float
+    longitude: Float
   }
 
   input CreateNotificationInput {
