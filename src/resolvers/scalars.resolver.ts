@@ -18,6 +18,20 @@ export const scalarResolvers = {
       throw new Error("DateTime must be a string");
     },
   }),
+  GeoJSON: new GraphQLScalarType({
+    name: "GeoJSON",
+    description: "GeoJSON object (RFC 7946)",
+    serialize(value: unknown): unknown {
+      return value;
+    },
+    parseValue(value: unknown): unknown {
+      return value;
+    },
+    parseLiteral(ast): unknown {
+      if (ast.kind === Kind.STRING) return JSON.parse(ast.value);
+      return null;
+    },
+  }),
   JSON: new GraphQLScalarType({
     name: "JSON",
     description: "Arbitrary JSON value",

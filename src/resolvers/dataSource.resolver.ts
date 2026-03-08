@@ -98,8 +98,5 @@ export const dataSourceResolvers = {
     detections: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.detection.findMany({ where: { sourceId: parent.id } });
     },
-    alerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alert.findMany({ where: { sourceId: parent.id } });
-    },
   },
 };

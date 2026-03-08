@@ -136,7 +136,6 @@ model DataSource {
   updatedAt DateTime @updatedAt
 
   detections Detection[]
-  alerts     Alert[]
 
   @@index([type])
   @@index([isActive])
@@ -194,9 +193,6 @@ model Alert {
   severity    Int
   status      AlertStatus @default(draft)
 
-  sourceId String?
-  source   DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-
   createdById String?
   createdBy   user?   @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -215,7 +211,6 @@ model Alert {
 
   @@index([status, createdAt])
   @@index([severity])
-  @@index([sourceId])
   @@index([createdById])
 }
 

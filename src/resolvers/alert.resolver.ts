@@ -9,7 +9,6 @@ interface CreateAlertInput {
   description: string;
   severity: number;
   status?: AlertStatus;
-  sourceId?: string;
   primaryEventId?: string;
   eventIds?: string[];
   locationIds?: string[];
@@ -21,7 +20,6 @@ interface UpdateAlertInput {
   description?: string;
   severity?: number;
   status?: AlertStatus;
-  sourceId?: string;
   primaryEventId?: string;
   eventIds?: string[];
   locationIds?: string[];
@@ -54,7 +52,6 @@ export const alertResolvers = {
           description: input.description,
           severity: input.severity,
           status: input.status ?? "draft",
-          sourceId: input.sourceId,
           primaryEventId: input.primaryEventId,
           createdById: user.id,
           metadata: input.metadata ? (input.metadata as InputJsonValue) : undefined,
@@ -117,7 +114,6 @@ export const alertResolvers = {
           description: input.description ?? undefined,
           severity: input.severity ?? undefined,
           status: input.status ?? undefined,
-          sourceId: input.sourceId,
           primaryEventId: input.primaryEventId,
           metadata: input.metadata as InputJsonValue | undefined,
         },
@@ -145,10 +141,6 @@ export const alertResolvers = {
     },
   },
   Alert: {
-    source: (parent: { sourceId: string | null }, _args: unknown, { prisma }: Context) => {
-      if (!parent.sourceId) return null;
-      return prisma.dataSource.findUnique({ where: { id: parent.sourceId } });
-    },
     createdBy: (parent: { createdById: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.createdById) return null;
       return prisma.user.findUnique({ where: { id: parent.createdById } });
