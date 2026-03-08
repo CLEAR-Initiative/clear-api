@@ -11,6 +11,5 @@ export const dataSourceTypeDef = gql`
     createdAt: DateTime!
     updatedAt: DateTime!
     detections: [Detection!]!
-    alerts: [Alert!]!
   }
 `;

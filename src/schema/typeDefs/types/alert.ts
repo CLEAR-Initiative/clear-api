@@ -13,7 +13,6 @@ export const alertTypeDef = gql`
     description: String!
     severity: Int!
     status: AlertStatus!
-    source: DataSource
     createdBy: User
     primaryEvent: Event
     metadata: JSON
