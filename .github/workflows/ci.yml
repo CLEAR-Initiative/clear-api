@@ -16,7 +16,7 @@ jobs:
           bun-version: latest
 
       - run: bun install --frozen-lockfile
-      - run: prisma generate
+      - run: bunx prisma generate
       - run: bun run lint
       - run: bun run typecheck
       # - run: bun run test
