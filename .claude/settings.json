@@ -47,7 +47,11 @@
       "Bash(railway logs -n 200 --json)",
       "Bash(curl -s -w \"\\\\nHTTP_STATUS: %{http_code}\\\\n\" -X POST https://api.clearinitiative.io/api/auth/sign-in/email -H \"Content-Type: application/json\" -d '{\"\"email\"\":\"\"test@test.com\"\",\"\"password\"\":\"\"testpassword123\"\"}')",
       "Bash(ls -la /Users/james/code/clear-apollo/node_modules/better-auth/dist/crypto*)",
-      "Bash(gtimeout 8 bun dev)"
+      "Bash(gtimeout 8 bun dev)",
+      "Bash(bun add @graphql-tools/schema)",
+      "Bash(git add src/schema/typeDefs/query.ts src/schema/typeDefs/types/alert.ts src/schema/typeDefs/types/apiKey.ts src/schema/typeDefs/types/dataSource.ts src/schema/typeDefs/types/detection.ts src/schema/typeDefs/types/location.ts)",
+      "Bash(git rebase --continue)",
+      "Bash(git add .claude/settings.json)"
     ]
   }
 }
