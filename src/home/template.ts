@@ -88,6 +88,7 @@ export function renderHomePage(): string {
   <nav class="nav">
     <a class="nav-brand" href="/"><span>&#9670;</span> CLEAR API</a>
     <div class="nav-links">
+      <a href="/docs">Docs</a>
       <a href="/portal">Developer Portal</a>
       <a href="/graphql">GraphQL Sandbox</a>
     </div>

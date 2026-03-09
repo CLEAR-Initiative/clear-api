@@ -1,22 +1,30 @@
 import { gql } from "graphql-tag";
 
 export const locationTypeDef = gql`
+  """A geographic location in a hierarchy (country > state > city, etc.)."""
   type Location {
     id: String!
+    """Unique geographic identifier."""
     geoId: String!
     name: String!
+    """Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc."""
     level: Int!
     latitude: Float
     longitude: Float
     pointType: String
     point: GeoJSON
     boundary: GeoJSON
+    """Parent location in the hierarchy."""
     parent: Location
+    """Child locations one level below."""
     children: [Location!]!
+    """Alerts affecting this location."""
     alertLinks: [AlertLocation!]!
+    """Detections at this location."""
     detectionLinks: [DetectionLocation!]!
   }
 
+  """Links an alert to a geographic location."""
   type AlertLocation {
     id: String!
     alert: Alert!
@@ -24,6 +32,7 @@ export const locationTypeDef = gql`
     createdAt: DateTime!
   }
 
+  """Links a detection to a geographic location."""
   type DetectionLocation {
     id: String!
     detection: Detection!

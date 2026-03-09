@@ -94,6 +94,16 @@ Better Auth handles auth via REST endpoints at `/api/auth/*`. Session cookies ar
 - The GraphQL context resolves the session from request cookies on every request
 - The `me` query is the GraphQL entry point for the authenticated user
 
+## Documentation
+
+Auto-generated docs are served at `/docs`. The API Reference section is built at startup by introspecting the GraphQL schema — change a type definition and the docs update on next restart.
+
+### Updating Docs
+
+- **API Reference**: Update `"""..."""` description strings in `src/schema/typeDefs/` files. These are the source of truth.
+- **Prose sections** (intro, quick start, auth, features): Edit `src/docs/template.ts`.
+- **Voice & style**: Follow the guidelines in the AI memory file `docs-voice.md` — clear, direct, developer-friendly, precise, brief.
+
 ## Project Structure
 
 ```
@@ -112,6 +122,12 @@ src/
       types/            # Domain type definitions (user, alert, detection, etc.)
   resolvers/            # GraphQL resolvers (one per domain entity)
   plugins/              # Apollo plugins
+  docs/
+    index.ts            # Express router for /docs
+    schema-introspect.ts # Extracts schema data from GraphQLSchema
+    template.ts         # HTML template (prose + auto-generated reference)
+  home/                 # Public landing page at /
+  portal/               # Developer portal at /portal (auth required)
   utils/
     env.ts              # Environment validation (Zod)
     auth-guard.ts       # requireAuth / requireRole helpers

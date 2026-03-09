@@ -120,6 +120,7 @@ export function renderPortal({ userEmail }: PortalOptions): string {
   <nav class="nav">
     <div class="nav-brand"><span>&#9670;</span> Developer Portal</div>
     <div class="nav-user">
+      <a href="/docs" style="color:var(--color-muted);font-size:0.8rem;">Docs</a>
       <span>${escapeHtml(userEmail)}</span>
       <button onclick="signOut()">Sign Out</button>
     </div>
