@@ -13,6 +13,7 @@ import { prisma } from "./lib/prisma.js";
 import { auth } from "./lib/auth.js";
 import { env } from "./utils/env.js";
 import { portalRouter } from "./portal/index.js";
+import { homeRouter } from "./home/index.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -34,6 +35,9 @@ app.all("/api/auth/*splat", toNodeHandler(auth));
 
 // Developer portal
 app.use("/portal", portalRouter);
+
+// Public home page
+app.use("/", homeRouter);
 
 // Health check
 app.get("/health", (_req, res) => {
