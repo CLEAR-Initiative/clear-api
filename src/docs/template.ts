@@ -24,11 +24,7 @@ function renderFieldRow(field: SchemaField): string {
   </tr>`;
 }
 
-function renderOperationSection(
-  title: string,
-  id: string,
-  fields: SchemaField[],
-): string {
+function renderOperationSection(title: string, id: string, fields: SchemaField[]): string {
   if (!fields.length) return "";
   return `
     <h2 id="${id}">${escapeHtml(title)}</h2>
@@ -231,9 +227,9 @@ export function renderDocsPage(schema: SchemaData): string {
       <div id="section-introduction">
         <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
         <h1 id="introduction">Introduction</h1>
-        <p class="subtitle">Welcome to the CLEAR API &mdash; your gateway to environmental intelligence.</p>
+        <p class="subtitle">Welcome to the CLEAR API - your gateway to humanitarian intelligence.</p>
 
-        <p>The CLEAR API gives you programmatic access to environmental alerts, detection events, data sources, and geographic location data through a single GraphQL endpoint. Whether you&rsquo;re building a monitoring dashboard, integrating alerts into your workflow, or analysing detection patterns, this API has you covered.</p>
+        <p>The CLEAR API gives you programmatic access to alerts, detection events, data sources, and geographic location data through a single GraphQL endpoint. Whether you&rsquo;re building a monitoring dashboard, integrating alerts into your workflow, or analysing detection patterns, this API has you covered.</p>
 
         <p>Everything here is accessible via GraphQL at <code>/graphql</code>. You send a query describing exactly the data you want, and you get back precisely that &mdash; nothing more, nothing less.</p>
 
@@ -241,7 +237,7 @@ export function renderDocsPage(schema: SchemaData): string {
         <table class="feature-table">
           <thead><tr><th>Feature</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td><a href="#type-alert">Alerts</a></td><td>Browse, filter, and inspect environmental alerts with severity levels and geographic scope.</td></tr>
+            <tr><td><a href="#type-alert">Alerts</a></td><td>Browse, filter, and inspect humanitarian alerts with severity levels and geographic scope.</td></tr>
             <tr><td><a href="#type-detection">Detections</a></td><td>Access raw and processed detection events from multiple data sources with confidence scores.</td></tr>
             <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data sources that feed into the platform (satellites, sensors, manual reports).</td></tr>
             <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; and see what&rsquo;s happening where.</td></tr>
