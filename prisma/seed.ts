@@ -121,12 +121,12 @@ async function seed() {
 
   for (const geo of geoUpdates) {
     await prisma.$executeRawUnsafe(
-      `UPDATE "Location" SET "point" = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE "id" = $3`,
+      `UPDATE "location" SET "point" = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE "id" = $3`,
       geo.lon, geo.lat, geo.id,
     );
     if (geo.boundary) {
       await prisma.$executeRawUnsafe(
-        `UPDATE "Location" SET "boundary" = ST_GeomFromText($1, 4326) WHERE "id" = $2`,
+        `UPDATE "location" SET "boundary" = ST_GeomFromText($1, 4326) WHERE "id" = $2`,
         geo.boundary, geo.id,
       );
     }
