@@ -13,17 +13,23 @@ enum AlertStatus {
   draft
   published
   archived
+
+  @@map("alert_status")
 }
 
 enum DetectionStatus {
   raw
   processed
   ignored
+
+  @@map("detection_status")
 }
 
 enum PointType {
   CENTROID
   GPS
+
+  @@map("point_type")
 }
 
 enum NotificationStatus {
@@ -31,6 +37,8 @@ enum NotificationStatus {
   DELIVERED
   FAILED
   READ
+
+  @@map("notification_status")
 }
 
 // ─── Auth (Better Auth) ────────────────────────────────────────────────────
@@ -39,55 +47,55 @@ model user {
   id            String  @id @default(cuid())
   name          String
   email         String  @unique
-  emailVerified Boolean @default(false)
-  phoneNumber   String?
+  emailVerified Boolean @default(false) @map("email_verified")
+  phoneNumber   String? @map("phone_number")
   image         String?
   role          String  @default("viewer")
-  isActive      Boolean @default(true)
+  isActive      Boolean @default(true) @map("is_active")
 
-  enableInAppNotification Boolean @default(false)
-  enableEmailNotification Boolean @default(false)
-  enableSMSNotification   Boolean @default(false)
+  enableInAppNotification Boolean @default(false) @map("enable_in_app_notification")
+  enableEmailNotification Boolean @default(false) @map("enable_email_notification")
+  enableSMSNotification   Boolean @default(false) @map("enable_sms_notification")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
 
   sessions session[]
   accounts account[]
 
-  createdAlerts Alert[]         @relation("AlertCreatedBy")
-  feedback      UserAlert[]
-  apiKeys       ApiKey[]
-  notifications Notifications[]
+  createdAlerts alert[]         @relation("AlertCreatedBy")
+  feedback      userAlert[]
+  apiKeys       apiKey[]
+  notifications notifications[]
 }
 
 model session {
   id        String   @id @default(cuid())
-  userId    String
+  userId    String   @map("user_id")
   token     String   @unique
-  expiresAt DateTime
-  ipAddress String?
-  userAgent String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  expiresAt DateTime @map("expires_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @map("updated_at")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model account {
   id                    String    @id @default(cuid())
-  userId                String
-  accountId             String
-  providerId            String
-  accessToken           String?
-  refreshToken          String?
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
+  userId                String    @map("user_id")
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
   scope                 String?
-  idToken               String?
+  idToken               String?   @map("id_token")
   password              String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @default(now())
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @default(now()) @map("updated_at")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -96,28 +104,28 @@ model verification {
   id         String    @id @default(cuid())
   identifier String
   value      String
-  expiresAt  DateTime
-  createdAt  DateTime?
-  updatedAt  DateTime?
+  expiresAt  DateTime  @map("expires_at")
+  createdAt  DateTime? @map("created_at")
+  updatedAt  DateTime? @map("updated_at")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────
 
-model Location {
+model location {
   id        String                                      @id @default(cuid())
-  geoId     String                                      @unique
+  geoId     String                                      @unique @map("geo_id")
   point     Unsupported("geography(Point,4326)")?
   boundary  Unsupported("geometry(MultiPolygon,4326)")?
-  pointType PointType?
+  pointType PointType?                                  @map("point_type")
   name      String
   level     Int
-  parentId  String?
+  parentId  String?                                     @map("parent_id")
 
-  parent   Location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-  children Location[] @relation("LocationHierarchy")
+  parent   location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children location[] @relation("LocationHierarchy")
 
-  alertLinks     AlertLocation[]
-  detectionLinks DetectionLocation[]
+  alertLinks     alertLocation[]
+  detectionLinks detectionLocation[]
 
   @@index([level])
   @@index([parentId])
@@ -125,38 +133,39 @@ model Location {
 
 // ─── Data Mining ─────────────────────────────────────────────────────────────
 
-model DataSource {
+model dataSource {
   id        String   @id @default(cuid())
   name      String
   type      String
-  isActive  Boolean  @default(true)
-  baseUrl   String?
-  infoUrl   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean  @default(true) @map("is_active")
+  baseUrl   String?  @map("base_url")
+  infoUrl   String?  @map("info_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  detections Detection[]
+  detections detection[]
 
   @@index([type])
   @@index([isActive])
+  @@map("data_source")
 }
 
-model Detection {
+model detection {
   id         String          @id @default(cuid())
   title      String
   confidence Float?
   status     DetectionStatus @default(raw)
-  detectedAt DateTime        @default(now())
-  rawData    Json?
+  detectedAt DateTime        @default(now()) @map("detected_at")
+  rawData    Json?           @map("raw_data")
 
-  sourceId String?
-  source   DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourceId String?     @map("source_id")
+  source   dataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
 
-  locations DetectionLocation[]
-  signal    Signal?             @relation("SignalDetection")
+  locations detectionLocation[]
+  signal    signal?             @relation("SignalDetection")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([status, detectedAt])
   @@index([sourceId, detectedAt])
@@ -164,50 +173,50 @@ model Detection {
 
 // ─── Core Product ────────────────────────────────────────────────────────────
 
-model Signal {
+model signal {
   id          String    @id @default(cuid())
-  detectionId String    @unique
-  detection   Detection @relation("SignalDetection", fields: [detectionId], references: [id])
+  detectionId String    @unique @map("detection_id")
+  detection   detection @relation("SignalDetection", fields: [detectionId], references: [id])
 
   // Reverse side of Event.signals (many-to-many via implicit join)
-  events    Event[] @relation("EventSignals")
+  events    event[] @relation("EventSignals")
   // Reverse side of Event.primarySignal
-  primaryOf Event[] @relation("PrimarySignal")
+  primaryOf event[] @relation("PrimarySignal")
 }
 
-model Event {
+model event {
   id              String   @id @default(cuid())
-  signals         Signal[] @relation("EventSignals")
-  primarySignalId String?
-  primarySignal   Signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
+  signals         signal[] @relation("EventSignals")
+  primarySignalId String?  @map("primary_signal_id")
+  primarySignal   signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
 
   // Reverse sides for Alert relations
-  primaryOf Alert[] @relation("PrimaryEvent")
-  alerts    Alert[] @relation("AlertEvents")
+  primaryOf alert[] @relation("PrimaryEvent")
+  alerts    alert[] @relation("AlertEvents")
 }
 
-model Alert {
+model alert {
   id          String      @id @default(cuid())
   title       String
   description String
   severity    Int
   status      AlertStatus @default(draft)
 
-  createdById String?
+  createdById String? @map("created_by_id")
   createdBy   user?   @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  primaryEventId String?
-  primaryEvent   Event?  @relation("PrimaryEvent", fields: [primaryEventId], references: [id], onDelete: SetNull)
+  primaryEventId String? @map("primary_event_id")
+  primaryEvent   event?  @relation("PrimaryEvent", fields: [primaryEventId], references: [id], onDelete: SetNull)
 
   metadata Json?
 
-  events Event[] @relation("AlertEvents")
+  events event[] @relation("AlertEvents")
 
-  locations AlertLocation[]
-  feedback  UserAlert[]
+  locations alertLocation[]
+  feedback  userAlert[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([status, createdAt])
   @@index([severity])
@@ -216,98 +225,104 @@ model Alert {
 
 // ─── Join Tables ─────────────────────────────────────────────────────────────
 
-model AlertLocation {
+model alertLocation {
   id         String   @id @default(cuid())
-  alertId    String
-  locationId String
-  createdAt  DateTime @default(now())
+  alertId    String   @map("alert_id")
+  locationId String   @map("location_id")
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  alert    Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  alert    alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  location location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([alertId, locationId])
   @@index([locationId])
+  @@map("alert_location")
 }
 
-model DetectionLocation {
+model detectionLocation {
   id          String   @id @default(cuid())
-  detectionId String
-  locationId  String
-  createdAt   DateTime @default(now())
+  detectionId String   @map("detection_id")
+  locationId  String   @map("location_id")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  detection Detection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
-  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  detection detection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
+  location  location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([detectionId, locationId])
   @@index([locationId])
+  @@map("detection_location")
 }
 
-model UserAlert {
+model userAlert {
   id      String @id @default(cuid())
-  userId  String
-  alertId String
+  userId  String @map("user_id")
+  alertId String @map("alert_id")
 
-  readAt  DateTime?
+  readAt  DateTime? @map("read_at")
   rating  Int?
   comment String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user  user  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  alert alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
 
   @@unique([userId, alertId])
   @@index([alertId])
   @@index([userId, readAt])
+  @@map("user_alert")
 }
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 
-model ApiKey {
+model apiKey {
   id         String    @id @default(cuid())
-  userId     String
+  userId     String    @map("user_id")
   name       String
   prefix     String
-  keyHash    String    @unique
-  expiresAt  DateTime?
-  lastUsedAt DateTime?
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  keyHash    String    @unique @map("key_hash")
+  expiresAt  DateTime? @map("expires_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([keyHash])
   @@index([userId])
+  @@map("api_key")
 }
 
 // ─── Feature Flags ───────────────────────────────────────────────────────────
 
-model FeatureFlag {
+model featureFlag {
   id        String   @id @default(cuid())
   key       String   @unique
   enabled   Boolean  @default(false)
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flag")
 }
 
 // ─── Notifications ———————————————————————————————————————————————————————————
 
-model Notifications {
+model notifications {
   id               String @id @default(cuid())
-  userId           String
+  userId           String @map("user_id")
   message          String
-  notificationType String
+  notificationType String @map("notification_type")
 
-  actionUrl  String?
-  actionText String?
+  actionUrl  String? @map("action_url")
+  actionText String? @map("action_text")
 
   status                  NotificationStatus  @default(PENDING)
-  emailNotificationStatus NotificationStatus?
-  smsNotificationStatus   NotificationStatus?
+  emailNotificationStatus NotificationStatus? @map("email_notification_status")
+  smsNotificationStatus   NotificationStatus? @map("sms_notification_status")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

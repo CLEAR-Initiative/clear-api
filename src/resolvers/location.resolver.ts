@@ -55,8 +55,8 @@ function fetchLocationGeo(
         ST_X("point"::geometry) as lng,
         ST_AsGeoJSON("point"::geometry) as point_geojson,
         ST_AsGeoJSON("boundary") as boundary_geojson,
-        "pointType" as point_type
-      FROM "Location"
+        "point_type" as point_type
+      FROM "location"
       WHERE "id" = ${id}
     `
     .then((rows) => rows[0] ?? null);
@@ -73,7 +73,7 @@ async function setPointGeometry(
   latitude: number,
 ): Promise<void> {
   await prisma.$executeRaw`
-    UPDATE "Location"
+    UPDATE "location"
     SET "point" = ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography
     WHERE "id" = ${locationId}
   `;
