@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import "dotenv/config";
+import { Prisma } from "../src/generated/prisma/client.js";
 import { prisma } from "../src/lib/prisma.js";
 import { auth } from "../src/lib/auth.js";
 
@@ -16,7 +18,7 @@ async function seed() {
   await prisma.source.deleteMany();
   await prisma.featureFlag.deleteMany();
   await prisma.dataSource.deleteMany();
-  await prisma.location.deleteMany();
+  await prisma.$executeRaw`DELETE FROM "location"`;
   await prisma.organisationUser.deleteMany();
   await prisma.organisation.deleteMany();
   await prisma.session.deleteMany();
@@ -61,88 +63,51 @@ async function seed() {
   console.log(`Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`);
 
   // ─── Locations (Sudan hierarchy: Country → State → Locality) ─────────────
+  // Using raw SQL because the `geometry` Unsupported field prevents Prisma client writes.
+
+  async function insertLocation(
+    id: string, name: string, level: number, wkt: string, parentId: string | null = null,
+  ) {
+    await prisma.$executeRaw`
+      INSERT INTO "location" ("id", "name", "level", "parent_id", "geometry")
+      VALUES (${id}, ${name}, ${level}, ${parentId}, ST_GeomFromText(${wkt}, 4326))
+    `;
+    return { id };
+  }
+
   // Level 0: Country
-  const sudan = await prisma.location.create({
-    data: { geoId: "SD", name: "Sudan", level: 0 },
-  });
+  const sudanId = randomUUID();
+  const sudan = await insertLocation(sudanId, "Sudan", 0, "POINT(30.0 15.5)");
 
   // Level 1: States
+  const khartoumId = randomUUID();
+  const northDarfurId = randomUUID();
+  const southDarfurId = randomUUID();
+  const northKordofanId = randomUUID();
+
   const [khartoum, northDarfur, southDarfur, northKordofan] = await Promise.all([
-    prisma.location.create({
-      data: { geoId: "SD_001", name: "Khartoum", level: 1, parentId: sudan.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_002", name: "North Darfur", level: 1, parentId: sudan.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_003", name: "South Darfur", level: 1, parentId: sudan.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_004", name: "North Kordofan", level: 1, parentId: sudan.id, pointType: "CENTROID" },
-    }),
+    insertLocation(khartoumId, "Khartoum", 1, "MULTIPOLYGON(((31.7 15.19, 34.38 15.19, 34.38 16.63, 31.7 16.63, 31.7 15.19)))", sudan.id),
+    insertLocation(northDarfurId, "North Darfur", 1, "MULTIPOLYGON(((23.0 13.0, 27.5 13.0, 27.5 20.0, 23.0 20.0, 23.0 13.0)))", sudan.id),
+    insertLocation(southDarfurId, "South Darfur", 1, "MULTIPOLYGON(((23.5 8.65, 27.5 8.65, 27.5 13.12, 23.5 13.12, 23.5 8.65)))", sudan.id),
+    insertLocation(northKordofanId, "North Kordofan", 1, "MULTIPOLYGON(((27.5 12.0, 32.5 12.0, 32.5 16.0, 27.5 16.0, 27.5 12.0)))", sudan.id),
   ]);
 
   // Level 2: Localities
+  const khartoumCityId = randomUUID();
+  const omdurmanId = randomUUID();
+  const elFasherId = randomUUID();
+  const kutumId = randomUUID();
+  const nyalaId = randomUUID();
+  const elDaeinId = randomUUID();
+
   const [khartoumCity, omdurman, elFasher, kutum, nyala, elDaein] = await Promise.all([
-    prisma.location.create({
-      data: { geoId: "SD_001_001", name: "Khartoum City", level: 2, parentId: khartoum.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_001_002", name: "Omdurman", level: 2, parentId: khartoum.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_002_001", name: "El Fasher", level: 2, parentId: northDarfur.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_002_002", name: "Kutum", level: 2, parentId: northDarfur.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_003_001", name: "Nyala", level: 2, parentId: southDarfur.id, pointType: "CENTROID" },
-    }),
-    prisma.location.create({
-      data: { geoId: "SD_003_002", name: "Ed Daein", level: 2, parentId: southDarfur.id, pointType: "CENTROID" },
-    }),
+    insertLocation(khartoumCityId, "Khartoum City", 2, "POINT(32.56 15.59)", khartoum.id),
+    insertLocation(omdurmanId, "Omdurman", 2, "POINT(32.48 15.64)", khartoum.id),
+    insertLocation(elFasherId, "El Fasher", 2, "POINT(25.35 13.63)", northDarfur.id),
+    insertLocation(kutumId, "Kutum", 2, "POINT(24.67 14.20)", northDarfur.id),
+    insertLocation(nyalaId, "Nyala", 2, "POINT(24.88 12.05)", southDarfur.id),
+    insertLocation(elDaeinId, "Ed Daein", 2, "POINT(26.13 11.46)", southDarfur.id),
   ]);
-
-  // Set geographic data using raw SQL (Unsupported types can't be set via Prisma client)
-  const geoUpdates = [
-    { id: sudan.id, lon: 30.0, lat: 15.5, boundary: null },
-    {
-      id: khartoum.id, lon: 32.53, lat: 15.55,
-      boundary: `MULTIPOLYGON(((31.7 15.19, 34.38 15.19, 34.38 16.63, 31.7 16.63, 31.7 15.19)))`,
-    },
-    {
-      id: northDarfur.id, lon: 25.09, lat: 15.45,
-      boundary: `MULTIPOLYGON(((23.0 13.0, 27.5 13.0, 27.5 20.0, 23.0 20.0, 23.0 13.0)))`,
-    },
-    {
-      id: southDarfur.id, lon: 25.0, lat: 11.5,
-      boundary: `MULTIPOLYGON(((23.5 8.65, 27.5 8.65, 27.5 13.12, 23.5 13.12, 23.5 8.65)))`,
-    },
-    {
-      id: northKordofan.id, lon: 30.0, lat: 13.5,
-      boundary: `MULTIPOLYGON(((27.5 12.0, 32.5 12.0, 32.5 16.0, 27.5 16.0, 27.5 12.0)))`,
-    },
-    { id: khartoumCity.id, lon: 32.56, lat: 15.59, boundary: null },
-    { id: omdurman.id, lon: 32.48, lat: 15.64, boundary: null },
-    { id: elFasher.id, lon: 25.35, lat: 13.63, boundary: null },
-    { id: kutum.id, lon: 24.67, lat: 14.20, boundary: null },
-    { id: nyala.id, lon: 24.88, lat: 12.05, boundary: null },
-    { id: elDaein.id, lon: 26.13, lat: 11.46, boundary: null },
-  ];
-
-  for (const geo of geoUpdates) {
-    await prisma.$executeRawUnsafe(
-      `UPDATE "location" SET "point" = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE "id" = $3`,
-      geo.lon, geo.lat, geo.id,
-    );
-    if (geo.boundary) {
-      await prisma.$executeRawUnsafe(
-        `UPDATE "location" SET "boundary" = ST_GeomFromText($1, 4326) WHERE "id" = $2`,
-        geo.boundary, geo.id,
-      );
-    }
-  }
 
   console.log("Created 11 locations (1 country, 4 states, 6 localities) with geographic data");
 

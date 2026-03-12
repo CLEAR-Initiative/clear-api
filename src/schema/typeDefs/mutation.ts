@@ -184,23 +184,21 @@ export const mutationTypeDef = gql`
   }
 
   input CreateLocationInput {
-    geoId: String!
+    geoId: Int
+    osmId: String
+    pCode: String
     name: String!
     level: Int!
-    pointType: String
     parentId: String
-    latitude: Float
-    longitude: Float
   }
 
   input UpdateLocationInput {
-    geoId: String
+    geoId: Int
+    osmId: String
+    pCode: String
     name: String
     level: Int
-    pointType: String
     parentId: String
-    latitude: Float
-    longitude: Float
   }
 
   input CreateNotificationInput {

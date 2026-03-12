@@ -25,13 +25,6 @@ enum DetectionStatus {
   @@map("detection_status")
 }
 
-enum PointType {
-  CENTROID
-  GPS
-
-  @@map("point_type")
-}
-
 enum NotificationStatus {
   PENDING
   DELIVERED
@@ -145,14 +138,14 @@ model organisationUser {
 // ─── Geography ───────────────────────────────────────────────────────────────
 
 model location {
-  id        String                                      @id @default(cuid())
-  geoId     String                                      @unique @map("geo_id")
-  point     Unsupported("geography(Point,4326)")?
-  boundary  Unsupported("geometry(MultiPolygon,4326)")?
-  pointType PointType?                                  @map("point_type")
-  name      String
-  level     Int
-  parentId  String?                                     @map("parent_id")
+  id       String                                  @id @default(cuid())
+  geoId    Int?                                    @map("geonames_id")
+  osmId    BigInt?                                 @map("osm_id")
+  pCode    String?                                 @map("p_code") @db.VarChar(50)
+  geometry Unsupported("geometry(Geometry, 4326)") // use CHECK (GeometryType(geometry) IN ('POINT', 'MULTIPOLYGON'))
+  name     String
+  level    Int
+  parentId String?                                 @map("parent_id")
 
   parent   location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
   children location[] @relation("LocationHierarchy")
@@ -166,11 +159,10 @@ model location {
   signalLocations    signal[] @relation("SignalLocation")
 
   // Reverse relations for event
-  eventOrigins            event[]                @relation("EventOrigin")
-  eventDestinations       event[]                @relation("EventDestination")
-  eventLocations          event[]                @relation("EventLocation")
-  userAlertSubscription   userAlertSubscription? @relation(fields: [userAlertSubscriptionId], references: [id])
-  userAlertSubscriptionId String?
+  eventOrigins           event[]                 @relation("EventOrigin")
+  eventDestinations      event[]                 @relation("EventDestination")
+  eventLocations         event[]                 @relation("EventLocation")
+  userAlertSubscriptions userAlertSubscription[]
 
   @@index([level])
   @@index([parentId])
@@ -246,9 +238,9 @@ model signal {
 model event {
   id String @id @default(cuid())
 
-  signals             signal[] @relation("EventSignals")
-  primarySignalId     String?  @map("primary_signal_id")
-  primarySignal       signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
+  signals              signal[] @relation("EventSignals")
+  primarySignalId      String?  @map("primary_signal_id")
+  primarySignal        signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
   firstSignalCreatedAt DateTime @map("first_signal")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
 
@@ -334,16 +326,19 @@ model userAlertSubscription {
   id     String @id @default(cuid())
   userId String @map("user_id")
 
-  locations location[]
-  alertType String     @map("alert_type")
-  active    Boolean    @default(true)
+  location  location @relation(fields: [locationId], references: [id])
+  alertType String   @map("alert_type")
+  active    Boolean  @default(true)
 
   channel   Channel
   frequency Frequency
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  locationId String
 
+  @@index([locationId, alertType])
+  @@index([locationId])
   @@map("user_alert_subscription")
 }
 
