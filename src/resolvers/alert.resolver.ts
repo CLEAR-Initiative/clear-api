@@ -5,36 +5,45 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
 import { requireRole } from "../utils/auth-guard.js";
 
 interface CreateAlertInput {
-  title: string;
   description: string;
   severity: number;
   status?: AlertStatus;
-  primaryEventId?: string;
-  eventIds?: string[];
+  eventType: string;
+  rank: number;
+  primarySignalId?: string;
+  signalIds?: string[];
+  locationIds?: string[];
+  metadata?: Record<string, unknown>;
+  firstSignalCreatedAt: string;
+  lastSignalCreatedAt: string;
+}
+
+interface UpdateAlertInput {
+  description?: string;
+  severity?: number;
+  status?: AlertStatus;
+  eventType?: string;
+  rank?: number;
+  primarySignalId?: string;
+  signalIds?: string[];
   locationIds?: string[];
   metadata?: Record<string, unknown>;
 }
 
-interface UpdateAlertInput {
-  title?: string;
-  description?: string;
-  severity?: number;
-  status?: AlertStatus;
-  primaryEventId?: string;
-  eventIds?: string[];
-  locationIds?: string[];
-  metadata?: Record<string, unknown>;
-}
+// Alerts are events with isAlert=true
+const ALERT_FILTER = { isAlert: true };
 
 export const alertResolvers = {
   Query: {
     alerts: (_parent: unknown, args: { status?: AlertStatus }, { prisma }: Context) => {
-      return prisma.alert.findMany({
-        where: args.status ? { status: args.status } : undefined,
+      return prisma.event.findMany({
+        where: { ...ALERT_FILTER, ...(args.status ? { status: args.status } : {}) },
       });
     },
-    alert: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.alert.findUnique({ where: { id: args.id } });
+    alert: async (_parent: unknown, args: { id: string }, { prisma }: Context) => {
+      const event = await prisma.event.findUnique({ where: { id: args.id } });
+      if (!event?.isAlert) return null;
+      return event;
     },
   },
   Mutation: {
@@ -43,20 +52,23 @@ export const alertResolvers = {
       args: { input: CreateAlertInput },
       context: Context,
     ) => {
-      const user = requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
-      const alert = await context.prisma.alert.create({
+      const alert = await context.prisma.event.create({
         data: {
-          title: input.title,
+          isAlert: true,
           description: input.description,
           severity: input.severity,
           status: input.status ?? "draft",
-          primaryEventId: input.primaryEventId,
-          createdById: user.id,
+          eventType: input.eventType,
+          rank: input.rank,
+          firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
+          lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
+          primarySignalId: input.primarySignalId,
           metadata: input.metadata ? (input.metadata as InputJsonValue) : undefined,
-          events: input.eventIds?.length
-            ? { connect: input.eventIds.map((id) => ({ id })) }
+          signals: input.signalIds?.length
+            ? { connect: input.signalIds.map((id) => ({ id })) }
             : undefined,
         },
       });
@@ -81,17 +93,17 @@ export const alertResolvers = {
       requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
 
-      const existing = await context.prisma.alert.findUnique({ where: { id } });
-      if (!existing) {
+      const existing = await context.prisma.event.findUnique({ where: { id } });
+      if (!existing?.isAlert) {
         throw new GraphQLError("Alert not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
 
-      if (input.eventIds !== undefined) {
-        await context.prisma.alert.update({
+      if (input.signalIds !== undefined) {
+        await context.prisma.event.update({
           where: { id },
-          data: { events: { set: input.eventIds.map((eid) => ({ id: eid })) } },
+          data: { signals: { set: input.signalIds.map((sid) => ({ id: sid })) } },
         });
       }
 
@@ -107,14 +119,15 @@ export const alertResolvers = {
         }
       }
 
-      return context.prisma.alert.update({
+      return context.prisma.event.update({
         where: { id },
         data: {
-          title: input.title ?? undefined,
           description: input.description ?? undefined,
           severity: input.severity ?? undefined,
           status: input.status ?? undefined,
-          primaryEventId: input.primaryEventId,
+          eventType: input.eventType ?? undefined,
+          rank: input.rank ?? undefined,
+          primarySignalId: input.primarySignalId,
           metadata: input.metadata as InputJsonValue | undefined,
         },
       });
@@ -127,36 +140,32 @@ export const alertResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const existing = await context.prisma.alert.findUnique({
+      const existing = await context.prisma.event.findUnique({
         where: { id: args.id },
       });
-      if (!existing) {
+      if (!existing?.isAlert) {
         throw new GraphQLError("Alert not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
 
-      await context.prisma.alert.delete({ where: { id: args.id } });
+      await context.prisma.event.delete({ where: { id: args.id } });
       return true;
     },
   },
   Alert: {
-    createdBy: (parent: { createdById: string | null }, _args: unknown, { prisma }: Context) => {
-      if (!parent.createdById) return null;
-      return prisma.user.findUnique({ where: { id: parent.createdById } });
-    },
-    primaryEvent: (
-      parent: { primaryEventId: string | null },
+    primarySignal: (
+      parent: { primarySignalId: string | null },
       _args: unknown,
       { prisma }: Context,
     ) => {
-      if (!parent.primaryEventId) return null;
-      return prisma.event.findUnique({ where: { id: parent.primaryEventId } });
+      if (!parent.primarySignalId) return null;
+      return prisma.signal.findUnique({ where: { id: parent.primarySignalId } });
     },
-    events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alert
+    signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.event
         .findUnique({ where: { id: parent.id } })
-        .events();
+        .signals();
     },
     locations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.alertLocation.findMany({ where: { alertId: parent.id } });
@@ -170,7 +179,7 @@ export const alertResolvers = {
       return prisma.user.findUnique({ where: { id: parent.userId } });
     },
     alert: (parent: { alertId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alert.findUnique({ where: { id: parent.alertId } });
+      return prisma.event.findUnique({ where: { id: parent.alertId } });
     },
   },
 };

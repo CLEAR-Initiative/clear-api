@@ -14,31 +14,35 @@ export const signalResolvers = {
   Mutation: {
     createSignal: async (
       _parent: unknown,
-      args: { detectionId: string },
+      args: { sourceId: string; publishedAt: string; collectedAt: string },
       context: Context,
     ) => {
       requireRole(context, ["admin", "analyst"]);
 
-      const detection = await context.prisma.detection.findUnique({
-        where: { id: args.detectionId },
+      const source = await context.prisma.source.findUnique({
+        where: { id: args.sourceId },
       });
-      if (!detection) {
-        throw new GraphQLError("Detection not found", {
+      if (!source) {
+        throw new GraphQLError("Source not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
 
       const existing = await context.prisma.signal.findUnique({
-        where: { detectionId: args.detectionId },
+        where: { sourceId: args.sourceId },
       });
       if (existing) {
-        throw new GraphQLError("A signal already exists for this detection", {
+        throw new GraphQLError("A signal already exists for this source", {
           extensions: { code: "BAD_USER_INPUT" },
         });
       }
 
       return context.prisma.signal.create({
-        data: { detectionId: args.detectionId },
+        data: {
+          sourceId: args.sourceId,
+          publishedAt: new Date(args.publishedAt),
+          collectedAt: new Date(args.collectedAt),
+        },
       });
     },
 
@@ -63,8 +67,8 @@ export const signalResolvers = {
     },
   },
   Signal: {
-    detection: (parent: { detectionId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.detection.findUnique({ where: { id: parent.detectionId } });
+    source: (parent: { sourceId: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.source.findUnique({ where: { id: parent.sourceId } });
     },
     events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.signal

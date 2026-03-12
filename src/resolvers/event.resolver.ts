@@ -5,17 +5,29 @@ import { requireRole } from "../utils/auth-guard.js";
 interface CreateEventInput {
   signalIds: string[];
   primarySignalId?: string;
+  eventType: string;
+  rank: number;
+  severity: number;
+  description?: string;
+  firstSignalCreatedAt: string;
+  lastSignalCreatedAt: string;
 }
 
 interface UpdateEventInput {
   signalIds?: string[];
   primarySignalId?: string;
+  eventType?: string;
+  rank?: number;
+  severity?: number;
+  description?: string;
 }
 
 export const eventResolvers = {
   Query: {
     events: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.event.findMany();
+      return prisma.event.findMany({
+        where: { isAlert: false },
+      });
     },
     event: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
       return prisma.event.findUnique({ where: { id: args.id } });
@@ -33,6 +45,12 @@ export const eventResolvers = {
       return context.prisma.event.create({
         data: {
           primarySignalId: input.primarySignalId,
+          eventType: input.eventType,
+          rank: input.rank,
+          severity: input.severity,
+          description: input.description,
+          firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
+          lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
           signals: {
             connect: input.signalIds.map((id) => ({ id })),
           },
@@ -59,6 +77,10 @@ export const eventResolvers = {
         where: { id },
         data: {
           primarySignalId: input.primarySignalId,
+          eventType: input.eventType ?? undefined,
+          rank: input.rank ?? undefined,
+          severity: input.severity ?? undefined,
+          description: input.description ?? undefined,
           signals: input.signalIds
             ? { set: input.signalIds.map((sid) => ({ id: sid })) }
             : undefined,
@@ -96,10 +118,11 @@ export const eventResolvers = {
       if (!parent.primarySignalId) return null;
       return prisma.signal.findUnique({ where: { id: parent.primarySignalId } });
     },
-    alerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.event
-        .findUnique({ where: { id: parent.id } })
-        .alerts();
+    locations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.alertLocation.findMany({ where: { alertId: parent.id } });
+    },
+    feedback: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.userAlert.findMany({ where: { alertId: parent.id } });
     },
   },
 };
