@@ -8,26 +8,29 @@ export const alertTypeDef = gql`
     archived
   }
 
-  """An environmental alert with severity, geographic scope, and linked detections."""
+  """An alert (an event with isAlert=true) with severity, geographic scope, and linked signals."""
   type Alert {
     id: String!
-    title: String!
-    description: String!
+    description: String
     """Severity from 1 (low) to 5 (critical)."""
     severity: Int!
     status: AlertStatus!
-    """The user who created this alert."""
-    createdBy: User
-    """The primary event that triggered this alert."""
-    primaryEvent: Event
+    eventType: String!
+    rank: Float!
+    populationAffected: String
+    isAlert: Boolean!
     """Arbitrary metadata as JSON."""
     metadata: JSON
-    """All events linked to this alert."""
-    events: [Event!]!
+    """The primary signal that triggered this alert."""
+    primarySignal: Signal
+    """All signals linked to this alert."""
+    signals: [Signal!]!
     """Geographic locations affected by this alert."""
     locations: [AlertLocation!]!
     """User feedback and ratings for this alert."""
     feedback: [UserAlert!]!
+    firstSignalCreatedAt: DateTime!
+    lastSignalCreatedAt: DateTime!
     createdAt: DateTime!
     updatedAt: DateTime!
   }

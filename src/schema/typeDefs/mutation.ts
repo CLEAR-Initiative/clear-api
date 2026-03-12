@@ -41,8 +41,8 @@ export const mutationTypeDef = gql`
     deleteDetection(id: String!): Boolean!
 
     # ─── Signals ───────────────────────────────────────────────────────────────
-    """Create a signal from a detection."""
-    createSignal(detectionId: String!): Signal!
+    """Create a signal from a source (detection)."""
+    createSignal(sourceId: String!, publishedAt: String!, collectedAt: String!): Signal!
 
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
@@ -103,23 +103,27 @@ export const mutationTypeDef = gql`
   }
 
   input CreateAlertInput {
-    title: String!
     description: String!
     severity: Int!
     status: AlertStatus
-    primaryEventId: String
-    eventIds: [String!]
+    eventType: String!
+    rank: Float!
+    primarySignalId: String
+    signalIds: [String!]
     locationIds: [String!]
     metadata: JSON
+    firstSignalCreatedAt: String!
+    lastSignalCreatedAt: String!
   }
 
   input UpdateAlertInput {
-    title: String
     description: String
     severity: Int
     status: AlertStatus
-    primaryEventId: String
-    eventIds: [String!]
+    eventType: String
+    rank: Float
+    primarySignalId: String
+    signalIds: [String!]
     locationIds: [String!]
     metadata: JSON
   }
@@ -130,7 +134,7 @@ export const mutationTypeDef = gql`
     status: DetectionStatus
     detectedAt: DateTime
     rawData: JSON
-    sourceId: String
+    dataSourceId: String
     locationIds: [String!]
   }
 
@@ -139,18 +143,28 @@ export const mutationTypeDef = gql`
     confidence: Float
     status: DetectionStatus
     rawData: JSON
-    sourceId: String
+    dataSourceId: String
     locationIds: [String!]
   }
 
   input CreateEventInput {
     signalIds: [String!]!
     primarySignalId: String
+    eventType: String!
+    rank: Float!
+    severity: Int!
+    description: String
+    firstSignalCreatedAt: String!
+    lastSignalCreatedAt: String!
   }
 
   input UpdateEventInput {
     signalIds: [String!]
     primarySignalId: String
+    eventType: String
+    rank: Float
+    severity: Int
+    description: String
   }
 
   input CreateDataSourceInput {
