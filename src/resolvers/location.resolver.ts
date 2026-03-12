@@ -180,8 +180,8 @@ export const locationResolvers = {
     alertLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.alertLocation.findMany({ where: { locationId: parent.id } });
     },
-    detectionLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.detectionLocation.findMany({ where: { locationId: parent.id } });
+    sourceLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.sourceLocation.findMany({ where: { locationId: parent.id } });
     },
     latitude: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       const geo = await fetchLocationGeo(prisma, parent.id);
@@ -210,15 +210,15 @@ export const locationResolvers = {
   },
   AlertLocation: {
     alert: (parent: { alertId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alert.findUnique({ where: { id: parent.alertId } });
+      return prisma.event.findUnique({ where: { id: parent.alertId } });
     },
     location: (parent: { locationId: string }, _args: unknown, { prisma }: Context) => {
       return prisma.location.findUnique({ where: { id: parent.locationId } });
     },
   },
-  DetectionLocation: {
-    detection: (parent: { detectionId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.detection.findUnique({ where: { id: parent.detectionId } });
+  SourceLocation: {
+    source: (parent: { sourceId: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.source.findUnique({ where: { id: parent.sourceId } });
     },
     location: (parent: { locationId: string }, _args: unknown, { prisma }: Context) => {
       return prisma.location.findUnique({ where: { id: parent.locationId } });

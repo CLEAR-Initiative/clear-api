@@ -53,7 +53,7 @@ export async function createContext(
           !apiKey.revokedAt &&
           (!apiKey.expiresAt || apiKey.expiresAt > new Date())
         ) {
-          user = apiKey.user as User;
+          user = apiKey.user as unknown as User;
           authMethod = "api-key";
 
           // Fire-and-forget: update lastUsedAt

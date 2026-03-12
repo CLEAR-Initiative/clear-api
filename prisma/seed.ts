@@ -10,14 +10,15 @@ async function seed() {
   await prisma.notifications.deleteMany();
   await prisma.apiKey.deleteMany();
   await prisma.alertLocation.deleteMany();
-  await prisma.alert.deleteMany();
   await prisma.event.deleteMany();
   await prisma.signal.deleteMany();
-  await prisma.detectionLocation.deleteMany();
-  await prisma.detection.deleteMany();
+  await prisma.sourceLocation.deleteMany();
+  await prisma.source.deleteMany();
   await prisma.featureFlag.deleteMany();
   await prisma.dataSource.deleteMany();
   await prisma.location.deleteMany();
+  await prisma.organisationUser.deleteMany();
+  await prisma.organisation.deleteMany();
   await prisma.session.deleteMany();
   await prisma.account.deleteMany();
   await prisma.verification.deleteMany();
@@ -28,23 +29,34 @@ async function seed() {
   const adminSignup = await auth.api.signUpEmail({
     body: { name: "Admin User", email: "admin@clear.dev", password: "password123" },
   });
-  const admin = await prisma.user.update({
-    where: { id: adminSignup.user.id },
-    data: { role: "admin" },
-  });
+  const admin = adminSignup.user;
 
   const analystSignup = await auth.api.signUpEmail({
     body: { name: "Analyst User", email: "analyst@clear.dev", password: "password123" },
   });
-  const analyst = await prisma.user.update({
-    where: { id: analystSignup.user.id },
-    data: { role: "analyst" },
-  });
+  const analyst = analystSignup.user;
 
   const viewerSignup = await auth.api.signUpEmail({
     body: { name: "Viewer User", email: "viewer@clear.dev", password: "password123" },
   });
   const viewer = viewerSignup.user;
+
+  // ─── Organisation & Roles ─────────────────────────────────────────────────
+  const org = await prisma.organisation.create({
+    data: { name: "CLEAR Platform" },
+  });
+
+  await Promise.all([
+    prisma.organisationUser.create({
+      data: { userId: admin.id, organisationId: org.id, role: "admin" },
+    }),
+    prisma.organisationUser.create({
+      data: { userId: analyst.id, organisationId: org.id, role: "analyst" },
+    }),
+    prisma.organisationUser.create({
+      data: { userId: viewer.id, organisationId: org.id, role: "viewer" },
+    }),
+  ]);
 
   console.log(`Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`);
 
@@ -167,177 +179,207 @@ async function seed() {
 
   console.log("Created 3 data sources");
 
-  // ─── Detections ──────────────────────────────────────────────────────────
-  // Each detection is an independent raw signal from a data source.
-  // The pipeline promotes them: Detection → Signal → Event → Alert
-  const [det1, det2, det3, det4, det5, det6, det7, det8, det9, det10] = await Promise.all([
+  // ─── Sources (raw data items from data sources) ───────────────────────────
+  // Each source is an independent raw record from a data source.
+  // The pipeline promotes them: Source → Signal → Event (→ Alert via isAlert)
+  const now = new Date();
+  const [src1, src2, src3, src4, src5, src6, src7, src8, src9, src10] = await Promise.all([
     // Darfur conflict cluster
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Armed clashes reported near El Fasher",
-        confidence: 0.91, status: "processed", sourceId: acled.id,
+        confidence: 0.91, status: "processed", dataSourceId: acled.id,
         rawData: { events: 12, fatalities: "unknown", source: "ACLED" },
       },
     }),
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "RSF troop movements detected in North Darfur",
-        confidence: 0.87, status: "processed", sourceId: socialMedia.id,
+        confidence: 0.87, status: "processed", dataSourceId: socialMedia.id,
         rawData: { posts: 156, sentiment: "fear", hashtags: ["#RSF", "#Darfur"] },
       },
     }),
     // Displacement cluster
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Displacement surge detected in South Darfur",
-        confidence: 0.88, status: "processed", sourceId: socialMedia.id,
+        confidence: 0.88, status: "processed", dataSourceId: socialMedia.id,
         rawData: { posts: 234, sentiment: "distress", hashtags: ["#Darfur", "#displacement"] },
       },
     }),
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "IDP camp overcrowding reported in Nyala",
-        confidence: 0.82, status: "processed", sourceId: fewsNet.id,
+        confidence: 0.82, status: "processed", dataSourceId: fewsNet.id,
         rawData: { camp: "Kalma", capacity_pct: 187, report_id: "OCHA-2026-SD-019" },
       },
     }),
     // Khartoum flood cluster
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Flood warnings along the Nile in Khartoum",
-        confidence: 0.94, status: "processed", sourceId: socialMedia.id,
+        confidence: 0.94, status: "processed", dataSourceId: socialMedia.id,
         rawData: { posts: 187, sentiment: "alarmed", hashtags: ["#KhartoumFloods", "#Nile"] },
       },
     }),
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Bridge damage reported in Omdurman",
-        confidence: 0.79, status: "processed", sourceId: socialMedia.id,
+        confidence: 0.79, status: "processed", dataSourceId: socialMedia.id,
         rawData: { posts: 98, images: 12, location: "White Nile Bridge" },
       },
     }),
     // Food security cluster
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Food insecurity escalation in Kutum locality",
-        confidence: 0.85, status: "processed", sourceId: fewsNet.id,
+        confidence: 0.85, status: "processed", dataSourceId: fewsNet.id,
         rawData: { ipc_phase: 4, report_id: "FEWSNET-2026-03", population_affected: "120K" },
       },
     }),
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Staple food price spikes across North Darfur markets",
-        confidence: 0.80, status: "processed", sourceId: fewsNet.id,
+        confidence: 0.80, status: "processed", dataSourceId: fewsNet.id,
         rawData: { sorghum_pct_increase: 112, millet_pct_increase: 95, period: "Q1 2026" },
       },
     }),
-    // Unprocessed / ignored detections (not promoted to signals)
-    prisma.detection.create({
+    // Unprocessed / ignored sources (not promoted to signals)
+    prisma.source.create({
       data: {
         title: "Minor locust sighting in North Kordofan",
-        confidence: 0.42, status: "raw", sourceId: fewsNet.id,
+        confidence: 0.42, status: "raw", dataSourceId: fewsNet.id,
         rawData: { report_id: "FAO-2026-SD-047", agency: "FAO" },
       },
     }),
-    prisma.detection.create({
+    prisma.source.create({
       data: {
         title: "Duplicate weather station reading - Omdurman",
-        confidence: 0.25, status: "ignored", sourceId: socialMedia.id,
+        confidence: 0.25, status: "ignored", dataSourceId: socialMedia.id,
         rawData: { station: "SD-WX-0012", note: "sensor malfunction confirmed" },
       },
     }),
   ]);
 
-  // Link detections to locations
+  // Link sources to locations
   await Promise.all([
-    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: elFasher.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det1.id, locationId: northDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det2.id, locationId: northDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: nyala.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det3.id, locationId: southDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det4.id, locationId: nyala.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det4.id, locationId: southDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: khartoumCity.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det5.id, locationId: khartoum.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det6.id, locationId: omdurman.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det6.id, locationId: khartoum.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det7.id, locationId: kutum.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det7.id, locationId: northDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det8.id, locationId: northDarfur.id } }),
-    prisma.detectionLocation.create({ data: { detectionId: det9.id, locationId: northKordofan.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src1.id, locationId: elFasher.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src1.id, locationId: northDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src2.id, locationId: northDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src3.id, locationId: nyala.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src3.id, locationId: southDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src4.id, locationId: nyala.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src4.id, locationId: southDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src5.id, locationId: khartoumCity.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src5.id, locationId: khartoum.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src6.id, locationId: omdurman.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src6.id, locationId: khartoum.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src7.id, locationId: kutum.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src7.id, locationId: northDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src8.id, locationId: northDarfur.id } }),
+    prisma.sourceLocation.create({ data: { sourceId: src9.id, locationId: northKordofan.id } }),
   ]);
 
-  console.log("Created 10 detections with location links");
+  console.log("Created 10 sources with location links");
 
-  // ─── Signals (1:1 with processed detections) ─────────────────────────────
-  // Only processed detections are promoted to signals
+  // ─── Signals (1:1 with processed sources) ─────────────────────────────────
+  // Only processed sources are promoted to signals
   const [sig1, sig2, sig3, sig4, sig5, sig6, sig7, sig8] = await Promise.all([
-    prisma.signal.create({ data: { detectionId: det1.id } }),  // armed clashes
-    prisma.signal.create({ data: { detectionId: det2.id } }),  // RSF movements
-    prisma.signal.create({ data: { detectionId: det3.id } }),  // displacement surge
-    prisma.signal.create({ data: { detectionId: det4.id } }),  // IDP overcrowding
-    prisma.signal.create({ data: { detectionId: det5.id } }),  // Nile floods
-    prisma.signal.create({ data: { detectionId: det6.id } }),  // bridge damage
-    prisma.signal.create({ data: { detectionId: det7.id } }),  // food insecurity
-    prisma.signal.create({ data: { detectionId: det8.id } }),  // price spikes
+    prisma.signal.create({ data: { sourceId: src1.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src2.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src3.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src4.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src5.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src6.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src7.id, publishedAt: now, collectedAt: now } }),
+    prisma.signal.create({ data: { sourceId: src8.id, publishedAt: now, collectedAt: now } }),
   ]);
 
-  console.log("Created 8 signals from processed detections");
+  console.log("Created 8 signals from processed sources");
 
   // ─── Events (group related signals into coherent events) ─────────────────
-  // Each event groups signals that describe the same real-world situation
+  // Each event groups signals that describe the same real-world situation.
+  // Events with isAlert=true are elevated to actionable alerts.
   const evtDarfurConflict = await prisma.event.create({
     data: {
       primarySignalId: sig1.id,
-      signals: { connect: [{ id: sig1.id }, { id: sig2.id }] },  // clashes + troop movements
+      signals: { connect: [{ id: sig1.id }, { id: sig2.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "conflict",
+      rank: 0.91,
+      severity: 3,
+      status: "published",
+      description: "Armed clashes and RSF troop movements detected across North Darfur",
     },
   });
 
   const evtDisplacement = await prisma.event.create({
     data: {
       primarySignalId: sig3.id,
-      signals: { connect: [{ id: sig3.id }, { id: sig4.id }] },  // displacement + IDP camps
+      signals: { connect: [{ id: sig3.id }, { id: sig4.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "displacement",
+      rank: 0.85,
+      severity: 3,
+      status: "published",
+      description: "Displacement surge in South Darfur with IDP camp overcrowding",
     },
   });
 
   const evtKhartoumFlood = await prisma.event.create({
     data: {
       primarySignalId: sig5.id,
-      signals: { connect: [{ id: sig5.id }, { id: sig6.id }] },  // flood warning + bridge damage
+      signals: { connect: [{ id: sig5.id }, { id: sig6.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "natural_disaster",
+      rank: 0.87,
+      severity: 2,
+      status: "published",
+      description: "Nile flooding threatening Khartoum and Omdurman with bridge damage reported",
     },
   });
 
   const evtFoodCrisis = await prisma.event.create({
     data: {
       primarySignalId: sig7.id,
-      signals: { connect: [{ id: sig7.id }, { id: sig8.id }] },  // food insecurity + price spikes
+      signals: { connect: [{ id: sig7.id }, { id: sig8.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "food_security",
+      rank: 0.82,
+      severity: 3,
+      status: "published",
+      description: "Food insecurity escalation with price spikes across North Darfur",
     },
   });
 
   console.log("Created 4 events (each grouping 2 related signals)");
 
-  // ─── Alerts (aggregate events into actionable alerts) ────────────────────
-  // Alerts are NOT standalone — they aggregate one or more events that together
-  // form a situation requiring coordinated response.
+  // ─── Alerts (events elevated to actionable alerts via isAlert) ─────────────
+  // Alerts are events with isAlert=true, carrying additional severity/metadata.
 
-  // Alert 1: Darfur Humanitarian Crisis — aggregates conflict + displacement events
-  // Rationale: armed conflict in North Darfur is driving displacement in South Darfur
-  const alert1 = await prisma.alert.create({
+  // Alert 1: Darfur Humanitarian Crisis
+  const alert1 = await prisma.event.create({
     data: {
-      title: "Darfur Humanitarian Crisis — Conflict-Driven Displacement",
+      primarySignalId: sig1.id,
+      signals: { connect: [{ id: sig1.id }, { id: sig2.id }, { id: sig3.id }, { id: sig4.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "compound_crisis",
+      rank: 0.95,
+      severity: 5,
+      status: "published",
+      isAlert: true,
       description:
         "Multiple correlated events indicate an escalating humanitarian crisis across Darfur. " +
         "ACLED data confirms intensified armed clashes and RSF troop movements in North Darfur (El Fasher), " +
         "while social media and OCHA reports show a resulting displacement surge in South Darfur (Nyala, Kalma camp at 187% capacity). " +
         "These events are causally linked — the conflict is driving civilian displacement across state lines.",
-      severity: 5,
-      status: "published",
-      createdById: admin.id,
-      primaryEventId: evtDarfurConflict.id,
-      events: { connect: [{ id: evtDarfurConflict.id }, { id: evtDisplacement.id }] },
       metadata: {
         category: "compound_crisis",
-        eventCount: 2,
         signalCount: 4,
         affectedPopulation: "500K+",
         triggerChain: "conflict → displacement",
@@ -345,22 +387,24 @@ async function seed() {
     },
   });
 
-  // Alert 2: Khartoum Flood Emergency — single event but multi-signal
-  const alert2 = await prisma.alert.create({
+  // Alert 2: Khartoum Flood Emergency
+  const alert2 = await prisma.event.create({
     data: {
-      title: "Nile Flood Emergency — Khartoum State",
+      primarySignalId: sig5.id,
+      signals: { connect: [{ id: sig5.id }, { id: sig6.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "natural_disaster",
+      rank: 0.90,
+      severity: 4,
+      status: "published",
+      isAlert: true,
       description:
         "Rising Nile water levels threaten low-lying areas of Khartoum and Omdurman. " +
         "Social media reports confirm flooding in residential neighborhoods and structural damage to the White Nile Bridge. " +
         "Emergency flood response recommended for Khartoum City and Omdurman.",
-      severity: 4,
-      status: "published",
-      createdById: analyst.id,
-      primaryEventId: evtKhartoumFlood.id,
-      events: { connect: [{ id: evtKhartoumFlood.id }] },
       metadata: {
         category: "natural_disaster",
-        eventCount: 1,
         signalCount: 2,
         nileLevel: "17.5m",
         threshold: "17.0m",
@@ -368,24 +412,25 @@ async function seed() {
     },
   });
 
-  // Alert 3: North Darfur Compound Crisis — conflict + food insecurity
-  // Rationale: conflict disrupts markets and supply chains, worsening food security
-  const alert3 = await prisma.alert.create({
+  // Alert 3: North Darfur Compound Crisis (draft)
+  const alert3 = await prisma.event.create({
     data: {
-      title: "North Darfur Compound Crisis — Conflict & Food Insecurity",
+      primarySignalId: sig7.id,
+      signals: { connect: [{ id: sig1.id }, { id: sig2.id }, { id: sig7.id }, { id: sig8.id }] },
+      firstSignalCreatedAt: now,
+      lastSignalCreatedAt: now,
+      eventType: "compound_crisis",
+      rank: 0.93,
+      severity: 5,
+      status: "draft",
+      isAlert: true,
       description:
         "Conflict in North Darfur is compounding a food security emergency. " +
         "FEWS NET reports IPC Phase 4 (Emergency) in Kutum locality with 120K people affected, " +
         "while staple food prices have more than doubled. Armed clashes and RSF troop movements " +
         "are disrupting market access and humanitarian supply routes across the state.",
-      severity: 5,
-      status: "draft",
-      createdById: admin.id,
-      primaryEventId: evtFoodCrisis.id,
-      events: { connect: [{ id: evtDarfurConflict.id }, { id: evtFoodCrisis.id }] },
       metadata: {
         category: "compound_crisis",
-        eventCount: 2,
         signalCount: 4,
         ipcPhase: 4,
         triggerChain: "conflict → market disruption → food insecurity",
@@ -394,7 +439,7 @@ async function seed() {
     },
   });
 
-  // Link alerts to locations (derived from their constituent events' detection locations)
+  // Link alerts to locations
   await Promise.all([
     // Alert 1 spans North Darfur (conflict) + South Darfur (displacement)
     prisma.alertLocation.create({ data: { alertId: alert1.id, locationId: elFasher.id } }),
@@ -411,11 +456,10 @@ async function seed() {
     prisma.alertLocation.create({ data: { alertId: alert3.id, locationId: northDarfur.id } }),
   ]);
 
-  console.log("Created 3 alerts aggregating events:");
-  console.log("  Alert 1: 2 events (conflict + displacement) → 4 signals → 4 detections");
-  console.log("  Alert 2: 1 event (flooding) → 2 signals → 2 detections");
-  console.log("  Alert 3: 2 events (conflict + food crisis) → 4 signals → 4 detections");
-  console.log("  Note: Darfur conflict event is shared by Alert 1 and Alert 3");
+  console.log("Created 3 alerts (events with isAlert=true) + 4 regular events:");
+  console.log("  Alert 1: compound crisis (conflict + displacement) → 4 signals");
+  console.log("  Alert 2: natural disaster (flooding) → 2 signals");
+  console.log("  Alert 3: compound crisis (conflict + food) → 4 signals (draft)");
 
   // ─── User Feedback (UserAlert) ─────────────────────────────────────────────
   await Promise.all([
@@ -451,7 +495,7 @@ async function seed() {
       data: {
         userId: analyst.id, alertId: alert3.id,
         rating: 4,
-        comment: "Strong analysis linking conflict to food insecurity. Sharing the conflict event with Alert 1 provides good cross-referencing.",
+        comment: "Strong analysis linking conflict to food insecurity.",
       },
     }),
   ]);
@@ -463,7 +507,7 @@ async function seed() {
     prisma.notifications.create({
       data: {
         userId: analyst.id,
-        message: "New compound alert published: Darfur Humanitarian Crisis aggregating 2 events and 4 signals",
+        message: "New compound alert published: Darfur Humanitarian Crisis",
         notificationType: "alert",
         actionUrl: `/alerts/${alert1.id}`,
         actionText: "View Alert",
@@ -514,10 +558,9 @@ async function seed() {
 
   // ─── Summary ───────────────────────────────────────────────────────────────
   console.log("\n─── Pipeline Summary ───");
-  console.log("  10 detections (8 processed, 1 raw, 1 ignored)");
-  console.log("   → 8 signals (from processed detections)");
-  console.log("   → 4 events (each grouping 2 related signals)");
-  console.log("   → 3 alerts (aggregating 1-2 events each)");
+  console.log("  10 sources (8 processed, 1 raw, 1 ignored)");
+  console.log("   → 8 signals (from processed sources)");
+  console.log("   → 4 events + 3 alerts (events with isAlert=true)");
   console.log("");
   console.log("Seed complete! Demo credentials:");
   console.log("  admin@clear.dev    / password123  (role: admin)");

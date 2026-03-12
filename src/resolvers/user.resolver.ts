@@ -84,14 +84,17 @@ export const userResolvers = {
     },
   },
   User: {
-    createdAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alert.findMany({ where: { createdById: parent.id } });
+    feedback: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.userAlert.findMany({ where: { userId: parent.id } });
     },
     notifications: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.notifications.findMany({
         where: { userId: parent.id },
         orderBy: { createdAt: "desc" },
       });
+    },
+    organisations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.organisationUser.findMany({ where: { userId: parent.id } });
     },
   },
 };
