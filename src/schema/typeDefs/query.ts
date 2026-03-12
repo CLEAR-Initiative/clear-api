@@ -17,11 +17,11 @@ export const queryTypeDef = gql`
     """Look up an alert by ID."""
     alert(id: String!): Alert
 
-    """List detections, optionally filtered by status."""
-    detections(status: DetectionStatus): [Detection!]!
+    """List sources, optionally filtered by status."""
+    sources(status: DetectionStatus): [Source!]!
 
-    """Look up a detection by ID."""
-    detection(id: String!): Detection
+    """Look up a source by ID."""
+    source(id: String!): Source
 
     """List all signals."""
     signals: [Signal!]!

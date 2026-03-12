@@ -5,17 +5,9 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
 import { requireRole } from "../utils/auth-guard.js";
 
 interface CreateAlertInput {
-  description: string;
-  severity: number;
-  status?: AlertStatus;
-  eventType: string;
-  rank: number;
-  primarySignalId?: string;
-  signalIds?: string[];
+  eventId: string;
   locationIds?: string[];
   metadata?: Record<string, unknown>;
-  firstSignalCreatedAt: string;
-  lastSignalCreatedAt: string;
 }
 
 interface UpdateAlertInput {
@@ -55,24 +47,31 @@ export const alertResolvers = {
       requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
-      const alert = await context.prisma.event.create({
+      // Verify the event exists and is not already an alert
+      const event = await context.prisma.event.findUnique({
+        where: { id: input.eventId },
+      });
+      if (!event) {
+        throw new GraphQLError("Event not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      if (event.isAlert) {
+        throw new GraphQLError("Event is already an alert", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      // Toggle isAlert on the event
+      const alert = await context.prisma.event.update({
+        where: { id: input.eventId },
         data: {
           isAlert: true,
-          description: input.description,
-          severity: input.severity,
-          status: input.status ?? "draft",
-          eventType: input.eventType,
-          rank: input.rank,
-          firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
-          lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
-          primarySignalId: input.primarySignalId,
           metadata: input.metadata ? (input.metadata as InputJsonValue) : undefined,
-          signals: input.signalIds?.length
-            ? { connect: input.signalIds.map((id) => ({ id })) }
-            : undefined,
         },
       });
 
+      // Link locations if provided
       if (input.locationIds?.length) {
         await context.prisma.alertLocation.createMany({
           data: input.locationIds.map((locationId) => ({
@@ -80,6 +79,42 @@ export const alertResolvers = {
             locationId,
           })),
         });
+      }
+
+      // Gather all location IDs associated with this alert
+      const alertLocationIds = input.locationIds ?? [];
+      const existingAlertLocations = await context.prisma.alertLocation.findMany({
+        where: { alertId: alert.id },
+        select: { locationId: true },
+      });
+      const allLocationIds = [
+        ...new Set([
+          ...alertLocationIds,
+          ...existingAlertLocations.map((al) => al.locationId),
+        ]),
+      ];
+
+      // Find subscribers matching the alert's eventType and locations
+      if (allLocationIds.length > 0) {
+        const subscriptions = await context.prisma.userAlertSubscription.findMany({
+          where: {
+            active: true,
+            alertType: event.eventType,
+            locationId: { in: allLocationIds },
+          },
+        });
+
+        // Create userAlert entries for each unique subscriber
+        const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+        if (uniqueUserIds.length > 0) {
+          await context.prisma.userAlert.createMany({
+            data: uniqueUserIds.map((userId) => ({
+              userId,
+              alertId: alert.id,
+            })),
+            skipDuplicates: true,
+          });
+        }
       }
 
       return alert;

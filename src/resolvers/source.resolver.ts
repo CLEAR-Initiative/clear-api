@@ -23,9 +23,9 @@ interface UpdateSourceInput {
   locationIds?: string[];
 }
 
-export const detectionResolvers = {
+export const sourceResolvers = {
   Query: {
-    detections: (
+    sources: (
       _parent: unknown,
       args: { status?: DetectionStatus },
       { prisma }: Context,
@@ -34,12 +34,12 @@ export const detectionResolvers = {
         where: args.status ? { status: args.status } : undefined,
       });
     },
-    detection: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
+    source: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
       return prisma.source.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
-    createDetection: async (
+    createSource: async (
       _parent: unknown,
       args: { input: CreateSourceInput },
       context: Context,
@@ -70,7 +70,7 @@ export const detectionResolvers = {
       return source;
     },
 
-    updateDetection: async (
+    updateSource: async (
       _parent: unknown,
       args: { id: string; input: UpdateSourceInput },
       context: Context,
@@ -80,7 +80,7 @@ export const detectionResolvers = {
 
       const existing = await context.prisma.source.findUnique({ where: { id } });
       if (!existing) {
-        throw new GraphQLError("Detection not found", {
+        throw new GraphQLError("Source not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
@@ -109,7 +109,7 @@ export const detectionResolvers = {
       });
     },
 
-    deleteDetection: async (
+    deleteSource: async (
       _parent: unknown,
       args: { id: string },
       context: Context,
@@ -120,7 +120,7 @@ export const detectionResolvers = {
         where: { id: args.id },
       });
       if (!existing) {
-        throw new GraphQLError("Detection not found", {
+        throw new GraphQLError("Source not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
@@ -129,8 +129,8 @@ export const detectionResolvers = {
       return true;
     },
   },
-  Detection: {
-    source: (parent: { dataSourceId: string | null }, _args: unknown, { prisma }: Context) => {
+  Source: {
+    dataSource: (parent: { dataSourceId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.dataSourceId) return null;
       return prisma.dataSource.findUnique({ where: { id: parent.dataSourceId } });
     },

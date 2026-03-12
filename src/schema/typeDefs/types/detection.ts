@@ -8,22 +8,22 @@ export const detectionTypeDef = gql`
     ignored
   }
 
-  """A detection event from a data source, with confidence score and geographic scope."""
-  type Detection {
+  """A source detection from a data source, with confidence score and geographic scope."""
+  type Source {
     id: String!
     title: String!
     """Confidence score from 0.0 to 1.0."""
     confidence: Float
     status: DetectionStatus!
-    """When this event was originally detected."""
+    """When this was originally detected."""
     detectedAt: DateTime!
     """Original detection payload as JSON."""
     rawData: JSON
-    """The data source that produced this detection."""
-    source: DataSource
-    """The signal derived from this detection, if any."""
+    """The data source that produced this source."""
+    dataSource: DataSource
+    """The signal derived from this source, if any."""
     signal: Signal
-    """Geographic locations where this detection occurred."""
+    """Geographic locations where this source was detected."""
     locations: [SourceLocation!]!
     createdAt: DateTime!
     updatedAt: DateTime!

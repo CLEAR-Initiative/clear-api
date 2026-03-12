@@ -15,6 +15,6 @@ export const dataSourceTypeDef = gql`
     createdAt: DateTime!
     updatedAt: DateTime!
     """Source detections produced by this data source."""
-    sources: [Detection!]!
+    sources: [Source!]!
   }
 `;

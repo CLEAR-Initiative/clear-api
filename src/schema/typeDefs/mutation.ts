@@ -21,7 +21,7 @@ export const mutationTypeDef = gql`
     updateProfile(input: UpdateProfileInput!): User!
 
     # ─── Alerts ────────────────────────────────────────────────────────────────
-    """Create a new alert."""
+    """Elevate an event to an alert, notifying subscribers."""
     createAlert(input: CreateAlertInput!): Alert!
 
     """Update an existing alert."""
@@ -30,15 +30,15 @@ export const mutationTypeDef = gql`
     """Delete an alert."""
     deleteAlert(id: String!): Boolean!
 
-    # ─── Detections ────────────────────────────────────────────────────────────
-    """Create a new detection."""
-    createDetection(input: CreateDetectionInput!): Detection!
+    # ─── Sources ─────────────────────────────────────────────────────────────
+    """Create a new source."""
+    createSource(input: CreateSourceInput!): Source!
 
-    """Update an existing detection."""
-    updateDetection(id: String!, input: UpdateDetectionInput!): Detection!
+    """Update an existing source."""
+    updateSource(id: String!, input: UpdateSourceInput!): Source!
 
-    """Delete a detection."""
-    deleteDetection(id: String!): Boolean!
+    """Delete a source."""
+    deleteSource(id: String!): Boolean!
 
     # ─── Signals ───────────────────────────────────────────────────────────────
     """Create a signal from a source (detection)."""
@@ -103,17 +103,10 @@ export const mutationTypeDef = gql`
   }
 
   input CreateAlertInput {
-    description: String!
-    severity: Int!
-    status: AlertStatus
-    eventType: String!
-    rank: Float!
-    primarySignalId: String
-    signalIds: [String!]
+    """The event ID to elevate to an alert."""
+    eventId: String!
     locationIds: [String!]
     metadata: JSON
-    firstSignalCreatedAt: String!
-    lastSignalCreatedAt: String!
   }
 
   input UpdateAlertInput {
@@ -128,7 +121,7 @@ export const mutationTypeDef = gql`
     metadata: JSON
   }
 
-  input CreateDetectionInput {
+  input CreateSourceInput {
     title: String!
     confidence: Float
     status: DetectionStatus
@@ -138,7 +131,7 @@ export const mutationTypeDef = gql`
     locationIds: [String!]
   }
 
-  input UpdateDetectionInput {
+  input UpdateSourceInput {
     title: String
     confidence: Float
     status: DetectionStatus
