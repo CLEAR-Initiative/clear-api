@@ -4,16 +4,17 @@ export const locationTypeDef = gql`
   """A geographic location in a hierarchy (country > state > city, etc.)."""
   type Location {
     id: String!
-    """Unique geographic identifier."""
-    geoId: String!
+    """GeoNames identifier."""
+    geoId: Int
+    """OpenStreetMap identifier."""
+    osmId: String
+    """P-Code identifier."""
+    pCode: String
     name: String!
     """Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc."""
     level: Int!
-    latitude: Float
-    longitude: Float
-    pointType: String
-    point: GeoJSON
-    boundary: GeoJSON
+    """Geometry as GeoJSON (Point or MultiPolygon)."""
+    geometry: GeoJSON
     """Parent location in the hierarchy."""
     parent: Location
     """Child locations one level below."""

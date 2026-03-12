@@ -1,38 +1,32 @@
+import { randomUUID } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import type { PrismaClient } from "../generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
 
 interface CreateLocationInput {
-  geoId: string;
+  geoId?: number;
+  osmId?: string; // BigInt as string from GraphQL
+  pCode?: string;
   name: string;
   level: number;
-  pointType?: string;
   parentId?: string;
-  latitude?: number;
-  longitude?: number;
 }
 
 interface UpdateLocationInput {
-  geoId?: string;
+  geoId?: number;
+  osmId?: string;
+  pCode?: string;
   name?: string;
   level?: number;
-  pointType?: string;
   parentId?: string;
-  latitude?: number;
-  longitude?: number;
 }
 
-/* ── Helper: fetch all geo data for a location in one raw query ── */
+/* ── Helper: fetch geometry GeoJSON for a location via raw SQL ── */
 interface LocationGeoRow {
-  lat: number | null;
-  lng: number | null;
-  point_geojson: string | null;
-  boundary_geojson: string | null;
-  point_type: string | null;
+  geometry_geojson: string | null;
 }
 
-// Per-request cache to avoid N+1 queries when multiple geo fields are resolved
 const geoCache = new WeakMap<PrismaClient, Map<string, Promise<LocationGeoRow | null>>>();
 
 function fetchLocationGeo(
@@ -51,11 +45,7 @@ function fetchLocationGeo(
   const promise = prisma
     .$queryRaw<LocationGeoRow[]>`
       SELECT
-        ST_Y("point"::geometry) as lat,
-        ST_X("point"::geometry) as lng,
-        ST_AsGeoJSON("point"::geometry) as point_geojson,
-        ST_AsGeoJSON("boundary") as boundary_geojson,
-        "point_type" as point_type
+        ST_AsGeoJSON("geometry") as geometry_geojson
       FROM "location"
       WHERE "id" = ${id}
     `
@@ -63,20 +53,6 @@ function fetchLocationGeo(
 
   cache.set(id, promise);
   return promise;
-}
-
-/* ── Helper: set point geometry via raw SQL ── */
-async function setPointGeometry(
-  prisma: PrismaClient,
-  locationId: string,
-  longitude: number,
-  latitude: number,
-): Promise<void> {
-  await prisma.$executeRaw`
-    UPDATE "location"
-    SET "point" = ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography
-    WHERE "id" = ${locationId}
-  `;
 }
 
 export const locationResolvers = {
@@ -98,22 +74,18 @@ export const locationResolvers = {
     ) => {
       requireRole(context, ["admin"]);
       const { input } = args;
+      const id = randomUUID();
+      const geoId = input.geoId ?? null;
+      const osmId = input.osmId ? BigInt(input.osmId) : null;
+      const pCode = input.pCode ?? null;
+      const parentId = input.parentId ?? null;
 
-      const location = await context.prisma.location.create({
-        data: {
-          geoId: input.geoId,
-          name: input.name,
-          level: input.level,
-          pointType: input.pointType as "CENTROID" | "GPS" | undefined,
-          parentId: input.parentId,
-        },
-      });
+      await context.prisma.$executeRaw`
+        INSERT INTO "location" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "geometry")
+        VALUES (${id}, ${geoId}, ${osmId}, ${pCode}, ${input.name}, ${input.level}, ${parentId}, ST_GeomFromText('POINT(0 0)', 4326))
+      `;
 
-      if (input.latitude != null && input.longitude != null) {
-        await setPointGeometry(context.prisma, location.id, input.longitude, input.latitude);
-      }
-
-      return location;
+      return context.prisma.location.findUniqueOrThrow({ where: { id } });
     },
 
     updateLocation: async (
@@ -131,22 +103,37 @@ export const locationResolvers = {
         });
       }
 
-      const location = await context.prisma.location.update({
-        where: { id },
-        data: {
-          geoId: input.geoId ?? undefined,
-          name: input.name ?? undefined,
-          level: input.level ?? undefined,
-          pointType: input.pointType as "CENTROID" | "GPS" | undefined,
-          parentId: input.parentId,
-        },
-      });
+      // Build SET clauses dynamically using Prisma.sql for safe parameterization
+      const setClauses: Prisma.Sql[] = [];
 
-      if (input.latitude != null && input.longitude != null) {
-        await setPointGeometry(context.prisma, location.id, input.longitude, input.latitude);
+      if (input.geoId !== undefined) {
+        setClauses.push(Prisma.sql`"geonames_id" = ${input.geoId}`);
+      }
+      if (input.osmId !== undefined) {
+        setClauses.push(Prisma.sql`"osm_id" = ${BigInt(input.osmId)}`);
+      }
+      if (input.pCode !== undefined) {
+        setClauses.push(Prisma.sql`"p_code" = ${input.pCode}`);
+      }
+      if (input.name !== undefined) {
+        setClauses.push(Prisma.sql`"name" = ${input.name}`);
+      }
+      if (input.level !== undefined) {
+        setClauses.push(Prisma.sql`"level" = ${input.level}`);
+      }
+      if (input.parentId !== undefined) {
+        setClauses.push(Prisma.sql`"parent_id" = ${input.parentId}`);
       }
 
-      return location;
+      if (setClauses.length > 0) {
+        await context.prisma.$executeRaw`
+          UPDATE "location"
+          SET ${Prisma.join(setClauses, ", ")}
+          WHERE "id" = ${id}
+        `;
+      }
+
+      return context.prisma.location.findUniqueOrThrow({ where: { id } });
     },
 
     deleteLocation: async (
@@ -165,7 +152,9 @@ export const locationResolvers = {
         });
       }
 
-      await context.prisma.location.delete({ where: { id: args.id } });
+      await context.prisma.$executeRaw`
+        DELETE FROM "location" WHERE "id" = ${args.id}
+      `;
       return true;
     },
   },
@@ -183,29 +172,10 @@ export const locationResolvers = {
     sourceLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.sourceLocation.findMany({ where: { locationId: parent.id } });
     },
-    latitude: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    geometry: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       const geo = await fetchLocationGeo(prisma, parent.id);
-      return geo?.lat ?? null;
-    },
-    longitude: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      const geo = await fetchLocationGeo(prisma, parent.id);
-      return geo?.lng ?? null;
-    },
-    pointType: async (parent: { id: string; pointType?: string | null }, _args: unknown, { prisma }: Context) => {
-      // pointType is a regular Prisma field, so it may already be on the parent
-      if (parent.pointType !== undefined) return parent.pointType;
-      const geo = await fetchLocationGeo(prisma, parent.id);
-      return geo?.point_type ?? null;
-    },
-    point: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      const geo = await fetchLocationGeo(prisma, parent.id);
-      if (!geo?.point_geojson) return null;
-      return JSON.parse(geo.point_geojson) as unknown;
-    },
-    boundary: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      const geo = await fetchLocationGeo(prisma, parent.id);
-      if (!geo?.boundary_geojson) return null;
-      return JSON.parse(geo.boundary_geojson) as unknown;
+      if (!geo?.geometry_geojson) return null;
+      return JSON.parse(geo.geometry_geojson) as unknown;
     },
   },
   AlertLocation: {
