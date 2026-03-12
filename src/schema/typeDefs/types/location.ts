@@ -36,7 +36,7 @@ export const locationTypeDef = gql`
   """Links a source (detection) to a geographic location."""
   type SourceLocation {
     id: String!
-    source: Detection!
+    source: Source!
     location: Location!
     createdAt: DateTime!
   }
