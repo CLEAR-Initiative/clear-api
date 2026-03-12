@@ -20,8 +20,8 @@ export const locationTypeDef = gql`
     children: [Location!]!
     """Alerts affecting this location."""
     alertLinks: [AlertLocation!]!
-    """Detections at this location."""
-    detectionLinks: [DetectionLocation!]!
+    """Sources (detections) at this location."""
+    sourceLinks: [SourceLocation!]!
   }
 
   """Links an alert to a geographic location."""
@@ -32,10 +32,10 @@ export const locationTypeDef = gql`
     createdAt: DateTime!
   }
 
-  """Links a detection to a geographic location."""
-  type DetectionLocation {
+  """Links a source (detection) to a geographic location."""
+  type SourceLocation {
     id: String!
-    detection: Detection!
+    source: Detection!
     location: Location!
     createdAt: DateTime!
   }

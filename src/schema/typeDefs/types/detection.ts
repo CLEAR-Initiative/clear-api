@@ -24,7 +24,7 @@ export const detectionTypeDef = gql`
     """The signal derived from this detection, if any."""
     signal: Signal
     """Geographic locations where this detection occurred."""
-    locations: [DetectionLocation!]!
+    locations: [SourceLocation!]!
     createdAt: DateTime!
     updatedAt: DateTime!
   }

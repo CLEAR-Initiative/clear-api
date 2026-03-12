@@ -14,7 +14,7 @@ export const dataSourceTypeDef = gql`
     infoUrl: String
     createdAt: DateTime!
     updatedAt: DateTime!
-    """Detections produced by this source."""
-    detections: [Detection!]!
+    """Source detections produced by this data source."""
+    sources: [Detection!]!
   }
 `;
