@@ -3,7 +3,6 @@ import { scalarResolvers } from "./scalars.resolver.js";
 import { authResolvers } from "./auth.resolver.js";
 import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
-import { sourceResolvers } from "./source.resolver.js";
 import { signalResolvers } from "./signal.resolver.js";
 import { eventResolvers } from "./event.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
@@ -17,7 +16,6 @@ export const resolvers: IResolvers[] = [
   authResolvers,
   userResolvers,
   alertResolvers,
-  sourceResolvers,
   signalResolvers,
   eventResolvers,
   dataSourceResolvers,

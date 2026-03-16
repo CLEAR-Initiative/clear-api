@@ -17,11 +17,17 @@ export const userTypeDef = gql`
     enableSMSNotification: Boolean!
     createdAt: DateTime!
     updatedAt: DateTime!
-    """This user's feedback on alerts."""
-    feedback: [UserAlert!]!
+    """Alerts received by this user."""
+    alerts: [UserAlert!]!
     notifications: [Notification!]!
     """Organisations this user belongs to."""
     organisations: [OrganisationUser!]!
+    """Feedback given by this user."""
+    feedbacks: [UserFeedback!]!
+    """Comments made by this user."""
+    comments: [UserComment!]!
+    """Events/alerts escalated by this user."""
+    escalations: [EventEscalation!]!
   }
 
   """Links a user to an organisation with a role."""

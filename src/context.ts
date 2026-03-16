@@ -43,7 +43,7 @@ export async function createContext(
       const token = authHeader.slice(7); // Remove "Bearer " prefix
       try {
         const keyHash = hashKey(token);
-        const apiKey = await prisma.apiKey.findUnique({
+        const apiKey = await prisma.apiKeys.findUnique({
           where: { keyHash },
           include: { user: true },
         });
@@ -57,7 +57,7 @@ export async function createContext(
           authMethod = "api-key";
 
           // Fire-and-forget: update lastUsedAt
-          prisma.apiKey
+          prisma.apiKeys
             .update({
               where: { id: apiKey.id },
               data: { lastUsedAt: new Date() },

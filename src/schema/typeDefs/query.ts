@@ -17,12 +17,6 @@ export const queryTypeDef = gql`
     """Look up an alert by ID."""
     alert(id: String!): Alert
 
-    """List sources, optionally filtered by status."""
-    sources(status: DetectionStatus): [Source!]!
-
-    """Look up a source by ID."""
-    source(id: String!): Source
-
     """List all signals."""
     signals: [Signal!]!
 

@@ -51,11 +51,11 @@ export const userResolvers = {
       }
 
       if (input.enableInAppNotification !== undefined) {
-        data.enableInAppNotification = input.enableInAppNotification;
+        data.inAppNotification = input.enableInAppNotification;
       }
 
       if (input.enableEmailNotification !== undefined) {
-        data.enableEmailNotification = input.enableEmailNotification;
+        data.emailNotification = input.enableEmailNotification;
       }
 
       if (input.enableSMSNotification !== undefined) {
@@ -74,7 +74,7 @@ export const userResolvers = {
             );
           }
         }
-        data.enableSMSNotification = input.enableSMSNotification;
+        data.smsNotification = input.enableSMSNotification;
       }
 
       return context.prisma.user.update({
@@ -84,8 +84,8 @@ export const userResolvers = {
     },
   },
   User: {
-    feedback: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userAlert.findMany({ where: { userId: parent.id } });
+    alerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.userAlerts.findMany({ where: { userId: parent.id } });
     },
     notifications: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.notifications.findMany({
@@ -94,7 +94,16 @@ export const userResolvers = {
       });
     },
     organisations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.organisationUser.findMany({ where: { userId: parent.id } });
+      return prisma.organisationUsers.findMany({ where: { userId: parent.id } });
+    },
+    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.userFeedbacks.findMany({ where: { userId: parent.id } });
+    },
+    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.userComments.findMany({ where: { userId: parent.id } });
+    },
+    escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.eventEscaladedByUsers.findMany({ where: { userId: parent.id } });
     },
   },
 };
