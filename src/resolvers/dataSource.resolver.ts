@@ -21,10 +21,10 @@ interface UpdateDataSourceInput {
 export const dataSourceResolvers = {
   Query: {
     dataSources: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.dataSource.findMany();
+      return prisma.dataSources.findMany();
     },
     dataSource: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.dataSource.findUnique({ where: { id: args.id } });
+      return prisma.dataSources.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
@@ -36,7 +36,7 @@ export const dataSourceResolvers = {
       requireRole(context, ["admin"]);
       const { input } = args;
 
-      return context.prisma.dataSource.create({
+      return context.prisma.dataSources.create({
         data: {
           name: input.name,
           type: input.type,
@@ -55,14 +55,14 @@ export const dataSourceResolvers = {
       requireRole(context, ["admin"]);
       const { id, input } = args;
 
-      const existing = await context.prisma.dataSource.findUnique({ where: { id } });
+      const existing = await context.prisma.dataSources.findUnique({ where: { id } });
       if (!existing) {
         throw new GraphQLError("DataSource not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
 
-      return context.prisma.dataSource.update({
+      return context.prisma.dataSources.update({
         where: { id },
         data: {
           name: input.name ?? undefined,
@@ -81,7 +81,7 @@ export const dataSourceResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const existing = await context.prisma.dataSource.findUnique({
+      const existing = await context.prisma.dataSources.findUnique({
         where: { id: args.id },
       });
       if (!existing) {
@@ -90,13 +90,13 @@ export const dataSourceResolvers = {
         });
       }
 
-      await context.prisma.dataSource.delete({ where: { id: args.id } });
+      await context.prisma.dataSources.delete({ where: { id: args.id } });
       return true;
     },
   },
   DataSource: {
-    sources: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.source.findMany({ where: { dataSourceId: parent.id } });
+    signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.signals.findMany({ where: { sourceId: parent.id } });
     },
   },
 };

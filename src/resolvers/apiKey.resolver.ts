@@ -7,7 +7,7 @@ export const apiKeyResolvers = {
   Query: {
     myApiKeys: (_parent: unknown, _args: unknown, context: Context) => {
       const user = requireAuth(context);
-      return context.prisma.apiKey.findMany({
+      return context.prisma.apiKeys.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
       });
@@ -22,7 +22,7 @@ export const apiKeyResolvers = {
     ) => {
       const user = requireAuth(context);
 
-      const activeCount = await context.prisma.apiKey.count({
+      const activeCount = await context.prisma.apiKeys.count({
         where: { userId: user.id, revokedAt: null },
       });
       if (activeCount >= 10) {
@@ -34,7 +34,7 @@ export const apiKeyResolvers = {
 
       const { plaintextKey, prefix, keyHash } = generateApiKey();
 
-      const apiKey = await context.prisma.apiKey.create({
+      const apiKey = await context.prisma.apiKeys.create({
         data: {
           userId: user.id,
           name: args.input.name,
@@ -56,7 +56,7 @@ export const apiKeyResolvers = {
     ) => {
       const user = requireAuth(context);
 
-      const apiKey = await context.prisma.apiKey.findUnique({
+      const apiKey = await context.prisma.apiKeys.findUnique({
         where: { id: args.id },
       });
 
@@ -78,7 +78,7 @@ export const apiKeyResolvers = {
         });
       }
 
-      return context.prisma.apiKey.update({
+      return context.prisma.apiKeys.update({
         where: { id: args.id },
         data: { revokedAt: new Date() },
       });

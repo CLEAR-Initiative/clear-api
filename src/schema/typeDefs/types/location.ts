@@ -19,25 +19,5 @@ export const locationTypeDef = gql`
     parent: Location
     """Child locations one level below."""
     children: [Location!]!
-    """Alerts affecting this location."""
-    alertLinks: [AlertLocation!]!
-    """Sources (detections) at this location."""
-    sourceLinks: [SourceLocation!]!
-  }
-
-  """Links an alert to a geographic location."""
-  type AlertLocation {
-    id: String!
-    alert: Alert!
-    location: Location!
-    createdAt: DateTime!
-  }
-
-  """Links a source (detection) to a geographic location."""
-  type SourceLocation {
-    id: String!
-    source: Source!
-    location: Location!
-    createdAt: DateTime!
   }
 `;

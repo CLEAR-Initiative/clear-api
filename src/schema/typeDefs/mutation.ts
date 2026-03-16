@@ -21,7 +21,7 @@ export const mutationTypeDef = gql`
     updateProfile(input: UpdateProfileInput!): User!
 
     # ─── Alerts ────────────────────────────────────────────────────────────────
-    """Elevate an event to an alert, notifying subscribers."""
+    """Create an alert from an event, notifying subscribers."""
     createAlert(input: CreateAlertInput!): Alert!
 
     """Update an existing alert."""
@@ -30,19 +30,9 @@ export const mutationTypeDef = gql`
     """Delete an alert."""
     deleteAlert(id: String!): Boolean!
 
-    # ─── Sources ─────────────────────────────────────────────────────────────
-    """Create a new source."""
-    createSource(input: CreateSourceInput!): Source!
-
-    """Update an existing source."""
-    updateSource(id: String!, input: UpdateSourceInput!): Source!
-
-    """Delete a source."""
-    deleteSource(id: String!): Boolean!
-
     # ─── Signals ───────────────────────────────────────────────────────────────
-    """Create a signal from a source (detection)."""
-    createSignal(sourceId: String!, publishedAt: String!, collectedAt: String!): Signal!
+    """Create a signal from a data source."""
+    createSignal(input: CreateSignalInput!): Signal!
 
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
@@ -103,61 +93,60 @@ export const mutationTypeDef = gql`
   }
 
   input CreateAlertInput {
-    """The event ID to elevate to an alert."""
+    """The event ID to create an alert from."""
     eventId: String!
-    locationIds: [String!]
-    metadata: JSON
+    status: AlertStatus
   }
 
   input UpdateAlertInput {
-    description: String
-    severity: Int
     status: AlertStatus
-    eventType: String
-    rank: Float
-    primarySignalId: String
-    signalIds: [String!]
-    locationIds: [String!]
-    metadata: JSON
   }
 
-  input CreateSourceInput {
-    title: String!
-    confidence: Float
-    status: DetectionStatus
-    detectedAt: DateTime
-    rawData: JSON
-    dataSourceId: String
-    locationIds: [String!]
-  }
-
-  input UpdateSourceInput {
+  input CreateSignalInput {
+    sourceId: String!
+    rawData: JSON!
+    publishedAt: String!
+    collectedAt: String!
+    url: String
     title: String
-    confidence: Float
-    status: DetectionStatus
-    rawData: JSON
-    dataSourceId: String
-    locationIds: [String!]
+    description: String
+    originId: String
+    destinationId: String
+    locationId: String
   }
 
   input CreateEventInput {
     signalIds: [String!]!
-    primarySignalId: String
-    eventType: String!
-    rank: Float!
-    severity: Int!
+    title: String
     description: String
+    descriptionSignals: JSON
+    validFrom: String!
+    validTo: String!
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
+    originId: String
+    destinationId: String
+    locationId: String
+    types: [String!]!
+    populationAffected: String
+    rank: Float!
   }
 
   input UpdateEventInput {
     signalIds: [String!]
-    primarySignalId: String
-    eventType: String
-    rank: Float
-    severity: Int
+    title: String
     description: String
+    descriptionSignals: JSON
+    validFrom: String
+    validTo: String
+    firstSignalCreatedAt: String
+    lastSignalCreatedAt: String
+    originId: String
+    destinationId: String
+    locationId: String
+    types: [String!]
+    populationAffected: String
+    rank: Float
   }
 
   input CreateDataSourceInput {

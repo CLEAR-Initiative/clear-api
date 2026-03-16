@@ -46,7 +46,7 @@ function fetchLocationGeo(
     .$queryRaw<LocationGeoRow[]>`
       SELECT
         ST_AsGeoJSON("geometry") as geometry_geojson
-      FROM "location"
+      FROM "locations"
       WHERE "id" = ${id}
     `
     .then((rows) => rows[0] ?? null);
@@ -58,12 +58,12 @@ function fetchLocationGeo(
 export const locationResolvers = {
   Query: {
     locations: (_parent: unknown, args: { level?: number }, { prisma }: Context) => {
-      return prisma.location.findMany({
+      return prisma.locations.findMany({
         where: args.level !== undefined ? { level: args.level } : undefined,
       });
     },
     location: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.location.findUnique({ where: { id: args.id } });
+      return prisma.locations.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
@@ -81,11 +81,11 @@ export const locationResolvers = {
       const parentId = input.parentId ?? null;
 
       await context.prisma.$executeRaw`
-        INSERT INTO "location" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "geometry")
+        INSERT INTO "locations" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "geometry")
         VALUES (${id}, ${geoId}, ${osmId}, ${pCode}, ${input.name}, ${input.level}, ${parentId}, ST_GeomFromText('POINT(0 0)', 4326))
       `;
 
-      return context.prisma.location.findUniqueOrThrow({ where: { id } });
+      return context.prisma.locations.findUniqueOrThrow({ where: { id } });
     },
 
     updateLocation: async (
@@ -96,7 +96,7 @@ export const locationResolvers = {
       requireRole(context, ["admin"]);
       const { id, input } = args;
 
-      const existing = await context.prisma.location.findUnique({ where: { id } });
+      const existing = await context.prisma.locations.findUnique({ where: { id } });
       if (!existing) {
         throw new GraphQLError("Location not found", {
           extensions: { code: "NOT_FOUND" },
@@ -127,13 +127,13 @@ export const locationResolvers = {
 
       if (setClauses.length > 0) {
         await context.prisma.$executeRaw`
-          UPDATE "location"
+          UPDATE "locations"
           SET ${Prisma.join(setClauses, ", ")}
           WHERE "id" = ${id}
         `;
       }
 
-      return context.prisma.location.findUniqueOrThrow({ where: { id } });
+      return context.prisma.locations.findUniqueOrThrow({ where: { id } });
     },
 
     deleteLocation: async (
@@ -143,7 +143,7 @@ export const locationResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const existing = await context.prisma.location.findUnique({
+      const existing = await context.prisma.locations.findUnique({
         where: { id: args.id },
       });
       if (!existing) {
@@ -153,7 +153,7 @@ export const locationResolvers = {
       }
 
       await context.prisma.$executeRaw`
-        DELETE FROM "location" WHERE "id" = ${args.id}
+        DELETE FROM "locations" WHERE "id" = ${args.id}
       `;
       return true;
     },
@@ -161,37 +161,15 @@ export const locationResolvers = {
   Location: {
     parent: (parent: { parentId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.parentId) return null;
-      return prisma.location.findUnique({ where: { id: parent.parentId } });
+      return prisma.locations.findUnique({ where: { id: parent.parentId } });
     },
     children: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.location.findMany({ where: { parentId: parent.id } });
-    },
-    alertLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.alertLocation.findMany({ where: { locationId: parent.id } });
-    },
-    sourceLinks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.sourceLocation.findMany({ where: { locationId: parent.id } });
+      return prisma.locations.findMany({ where: { parentId: parent.id } });
     },
     geometry: async (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       const geo = await fetchLocationGeo(prisma, parent.id);
       if (!geo?.geometry_geojson) return null;
       return JSON.parse(geo.geometry_geojson) as unknown;
-    },
-  },
-  AlertLocation: {
-    alert: (parent: { alertId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.event.findUnique({ where: { id: parent.alertId } });
-    },
-    location: (parent: { locationId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.location.findUnique({ where: { id: parent.locationId } });
-    },
-  },
-  SourceLocation: {
-    source: (parent: { sourceId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.source.findUnique({ where: { id: parent.sourceId } });
-    },
-    location: (parent: { locationId: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.location.findUnique({ where: { id: parent.locationId } });
     },
   },
 };

@@ -11,6 +11,7 @@ import { locationTypeDef } from "./typeDefs/types/location.js";
 import { notificationTypeDef } from "./typeDefs/types/notification.js";
 import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
+import { feedbackTypeDef } from "./typeDefs/types/feedback.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -26,4 +27,5 @@ export const typeDefs = [
   notificationTypeDef,
   featureFlagTypeDef,
   apiKeyTypeDef,
+  feedbackTypeDef,
 ];

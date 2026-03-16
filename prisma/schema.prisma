@@ -58,9 +58,9 @@ model user {
   role          String  @default("viewer")
   isActive      Boolean @default(true) @map("is_active")
 
-  enableInAppNotification Boolean @default(false) @map("enable_in_app_notification")
-  enableEmailNotification Boolean @default(false) @map("enable_email_notification")
-  enableSMSNotification   Boolean @default(false) @map("enable_sms_notification")
+  inAppNotification Boolean @default(false) @map("in_app_notification")
+  emailNotification Boolean @default(false) @map("email_notification")
+  smsNotification   Boolean @default(false) @map("sms_notification")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @map("updated_at")
@@ -68,10 +68,14 @@ model user {
   sessions session[]
   accounts account[]
 
-  feedback      userAlert[]
-  apiKeys       apiKey[]
-  notifications notifications[]
-  organisations organisationUser[]
+  alerts                userAlerts[]
+  apiKeys               apiKeys[]
+  notifications         notifications[]
+  organisations         organisationUsers[]
+  eventEscaladedByUsers eventEscaladedByUsers[]
+  userFeedbacks         userFeedbacks[]
+  userComments          userComments[]
+  commentTags           commentTags[]
 }
 
 model session {
@@ -116,28 +120,28 @@ model verification {
 
 // ––– Organisation ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 
-model organisation {
-  id    String             @id @default(cuid())
+model organisations {
+  id    String              @id @default(cuid())
   name  String
-  users organisationUser[]
+  users organisationUsers[]
 }
 
-model organisationUser {
+model organisationUsers {
   id             String @id @default(cuid())
   userId         String @map("user_id")
   organisationId String @map("organisation_id")
   role           String @default("viewer")
 
-  user         user         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organisation organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user         user          @relation(fields: [userId], references: [id])
+  organisation organisations @relation(fields: [organisationId], references: [id])
 
   @@unique([userId, organisationId])
-  @@map("organisation_user")
+  @@map("organisation_users")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────
 
-model location {
+model locations {
   id       String                                  @id @default(cuid())
   geoId    Int?                                    @map("geonames_id")
   osmId    BigInt?                                 @map("osm_id")
@@ -147,22 +151,22 @@ model location {
   level    Int
   parentId String?                                 @map("parent_id")
 
-  parent   location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-  children location[] @relation("LocationHierarchy")
+  parent   locations?  @relation("LocationHierarchy", fields: [parentId], references: [id])
+  children locations[] @relation("LocationHierarchy")
 
-  alertLinks  alertLocation[]
-  sourceLinks sourceLocation[]
+  // alertLinks  alertLocations[]
+  // sourceLinks sourceLocations[]
 
   // Reverse relations for signal
-  signalOrigins      signal[] @relation("SignalOrigin")
-  signalDestinations signal[] @relation("SignalDestination")
-  signalLocations    signal[] @relation("SignalLocation")
+  signalOrigins      signals[] @relation("SignalOrigin")
+  signalDestinations signals[] @relation("SignalDestination")
+  signalLocations    signals[] @relation("SignalLocation")
 
   // Reverse relations for event
-  eventOrigins           event[]                 @relation("EventOrigin")
-  eventDestinations      event[]                 @relation("EventDestination")
-  eventLocations         event[]                 @relation("EventLocation")
-  userAlertSubscriptions userAlertSubscription[]
+  eventOrigins           events[]                 @relation("EventOrigin")
+  eventDestinations      events[]                 @relation("EventDestination")
+  eventLocations         events[]                 @relation("EventLocation")
+  userAlertSubscriptions userAlertSubscriptions[]
 
   @@index([level])
   @@index([parentId])
@@ -170,7 +174,7 @@ model location {
 
 // ─── Data Mining ─────────────────────────────────────────────────────────────
 
-model dataSource {
+model dataSources {
   id        String   @id @default(cuid())
   name      String
   type      String
@@ -180,171 +184,257 @@ model dataSource {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  sources source[]
+  signals signals[]
 
   @@index([type])
   @@index([isActive])
-  @@map("data_source")
+  @@map("data_sources")
 }
 
-model source {
-  id         String          @id @default(cuid())
-  title      String
-  confidence Float?
-  status     DetectionStatus @default(raw)
-  detectedAt DateTime        @default(now()) @map("detected_at")
-  rawData    Json?           @map("raw_data")
-
-  dataSourceId String?     @map("data_source_id")
-  source       dataSource? @relation(fields: [dataSourceId], references: [id], onDelete: SetNull)
-
-  locations sourceLocation[]
-  signal    signal?          @relation("SignalDetection")
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@index([status, detectedAt])
-  @@index([dataSourceId, detectedAt])
-}
+/**
+ * model source {
+ * id         String          @id @default(cuid())
+ * title      String
+ * confidence Float?
+ * status     DetectionStatus @default(raw)
+ * detectedAt DateTime        @default(now()) @map("detected_at")
+ * rawData    Json?           @map("raw_data")
+ * dataSourceId String?     @map("data_source_id")
+ * source       dataSource? @relation(fields: [dataSourceId], references: [id], onDelete: SetNull)
+ * locations sourceLocation[]
+ * signal    signal?          @relation("SignalDetection")
+ * createdAt DateTime @default(now()) @map("created_at")
+ * updatedAt DateTime @updatedAt @map("updated_at")
+ * @@index([status, detectedAt])
+ * @@index([dataSourceId, detectedAt])
+ * }
+ */
 
 // ─── Core Product ────────────────────────────────────────────────────────────
 
-model signal {
-  id       String @id @default(cuid())
-  sourceId String @unique @map("source_id")
-  source   source @relation("SignalDetection", fields: [sourceId], references: [id])
+model signals {
+  id       String      @id @default(cuid())
+  sourceId String      @map("source_id")
+  source   dataSources @relation(fields: [sourceId], references: [id])
 
+  rawData     Json     @map("raw_data")
   publishedAt DateTime @map("published_at")
   collectedAt DateTime @map("collected_at")
 
-  origin         String?
-  originLocation location? @relation("SignalOrigin", fields: [origin], references: [id], onDelete: SetNull)
-
-  destination         String?
-  destinationLocation location? @relation("SignalDestination", fields: [destination], references: [id], onDelete: SetNull)
-
-  locationId      String?   @map("location") // In case of signals without origin or destination
-  generalLocation location? @relation("SignalLocation", fields: [locationId], references: [id], onDelete: SetNull)
-
+  url         String?
+  title       String?
   description String?
 
-  // Reverse side of Event.signals (many-to-many via implicit join)
-  events    event[] @relation("EventSignals")
-  // Reverse side of Event.primarySignal
-  primaryOf event[] @relation("PrimarySignal")
+  originId       String?    @map("origin_id")
+  originLocation locations? @relation("SignalOrigin", fields: [originId], references: [id])
+
+  destinationId       String?    @map("destination_id")
+  destinationLocation locations? @relation("SignalDestination", fields: [destinationId], references: [id])
+
+  locationId      String?         @map("location_id") // In case of signals without origin or destination
+  generalLocation locations?      @relation("SignalLocation", fields: [locationId], references: [id])
+  userFeedbacks   userFeedbacks[]
+  userComments    userComments[]
+  signalEvents    signalEvents[]
 }
 
-model event {
-  id String @id @default(cuid())
+model events {
+  id                  String  @id @default(cuid())
+  title               String?
+  description         String?
+  // For LLM
+  description_signals Json?
 
-  signals              signal[] @relation("EventSignals")
-  primarySignalId      String?  @map("primary_signal_id")
-  primarySignal        signal?  @relation("PrimarySignal", fields: [primarySignalId], references: [id], onDelete: SetNull)
-  firstSignalCreatedAt DateTime @map("first_signal")
+  validFrom            DateTime @map("valid_from")
+  validTo              DateTime @map("valid_to")
+  firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
 
-  status   AlertStatus @default(draft)
-  severity Int
+  originId       String?    @map("origin_id")
+  originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])
 
-  origin         String?
-  originLocation location? @relation("EventOrigin", fields: [origin], references: [id], onDelete: SetNull)
+  destinationId       String?    @map("destination_id")
+  destinationLocation locations? @relation("EventDestination", fields: [destinationId], references: [id])
 
-  destination         String?
-  destinationLocation location? @relation("EventDestination", fields: [destination], references: [id], onDelete: SetNull)
+  locationId      String?    @map("location_id") // In case of events without origin or destination
+  generalLocation locations? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
 
-  locationId      String?   @map("location") // In case of events without origin or destination
-  generalLocation location? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
-
-  description        String?
-  eventType          String  @map("event_type")
-  populationAffected BigInt? @map("population_affected")
+  types              String[]
+  populationAffected BigInt?         @map("population_affected")
   rank               Float
+  alerts             alerts[]
+  userFeedbacks      userFeedbacks[]
+  userComments       userComments[]
+  signalEvents       signalEvents[]
+}
 
-  isAlert  Boolean @default(false) @map("is_alert")
-  metadata Json?
+model alerts {
+  id      String      @id @default(cuid())
+  eventId String      @map("event_id")
+  status  AlertStatus
 
-  feedback userAlert[]
-
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  alertLocations alertLocation[]
+  event                 events                  @relation(fields: [eventId], references: [id])
+  userAlerts            userAlerts[]
+  eventEscaladedByUsers eventEscaladedByUsers[]
 }
 
 // ─── Join Tables ─────────────────────────────────────────────────────────────
 
-model alertLocation {
-  id         String   @id @default(cuid())
-  alertId    String   @map("alert_id")
-  locationId String   @map("location_id")
-  createdAt  DateTime @default(now()) @map("created_at")
+/**
+ * model alertLocations {
+ * id         String   @id @default(cuid())
+ * alertId    String   @map("alert_id")
+ * locationId String   @map("location_id")
+ * createdAt  DateTime @default(now()) @map("created_at")
+ * updatedAt  DateTime @default(now()) @map("updated_at")
+ * alert    alerts    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+ * location locations @relation(fields: [locationId], references: [id], onDelete: Cascade)
+ * @@unique([alertId, locationId])
+ * @@index([locationId])
+ * @@map("alert_locations")
+ * }
+ * model sourceLocations {
+ * id         String   @id @default(cuid())
+ * sourceId   String   @map("source_id")
+ * locationId String   @map("location_id")
+ * createdAt  DateTime @default(now()) @map("created_at")
+ * source   dataSources   @relation(fields: [sourceId], references: [id])
+ * location locations @relation(fields: [locationId], references: [id])
+ * @@unique([sourceId, locationId])
+ * @@index([locationId])
+ * @@map("source_locations")
+ * }
+ */
 
-  alert    event    @relation(fields: [alertId], references: [id], onDelete: Cascade)
-  location location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-
-  @@unique([alertId, locationId])
-  @@index([locationId])
-  @@map("alert_location")
-}
-
-model sourceLocation {
-  id         String   @id @default(cuid())
-  sourceId   String   @map("source_id")
-  locationId String   @map("location_id")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  source   source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  location location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-
-  @@unique([sourceId, locationId])
-  @@index([locationId])
-  @@map("source_location")
-}
-
-model userAlert {
-  id      String @id @default(cuid())
-  userId  String @map("user_id")
-  alertId String @map("alert_id")
-
-  readAt  DateTime? @map("read_at")
-  rating  Int?
-  comment String?
+// Map alerts received by users
+model userAlerts {
+  id       String    @id @default(cuid())
+  userId   String    @map("user_id")
+  alertId  String    @map("alert_id")
+  viewedAt DateTime? @map("viewed_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user  user  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  alert event @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
 
   @@unique([userId, alertId])
   @@index([alertId])
-  @@index([userId, readAt])
-  @@map("user_alert")
+  @@index([userId, viewedAt])
+  @@map("user_alerts")
 }
 
-model userAlertSubscription {
+// Map the events escaladed by users as alerts which can be further escaladed as situation
+model eventEscaladedByUsers {
+  id          String  @id @default(cuid())
+  userId      String  @map("user_id")
+  alertId     String  @map("alert_id")
+  isSituation Boolean @default(false) @map("is_situation")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alertId])
+  @@index([alertId])
+  @@map("event_escaladed_by_users")
+}
+
+model userFeedbacks {
   id     String @id @default(cuid())
   userId String @map("user_id")
 
-  location  location @relation(fields: [locationId], references: [id])
-  alertType String   @map("alert_type")
-  active    Boolean  @default(true)
+  eventId  String? @map("event_id")
+  signalId String? @map("signal_id")
+  rating   Int
+  // Textual feedback
+  feedback String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal signals? @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  event  events?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_feedbacks")
+}
+
+model userComments {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  eventId  String? @map("event_id")
+  signalId String? @map("signal_id")
+
+  comment            String
+  isCommentReply     Boolean @map("is_comment_reply")
+  repliedToCommentId String? @map("replied_to_comment_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user        user          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal      signals?      @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  event       events?       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  commentTags commentTags[]
+
+  @@index([userId])
+  @@index([eventId])
+  @@index([signalId])
+  @@map("user_comments")
+}
+
+model commentTags {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  commentId String @map("comment_id")
+
+  user    user         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment userComments @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([commentId])
+  @@map("comment_tags")
+}
+
+model userAlertSubscriptions {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  locationId String    @map("location_id")
+  location   locations @relation(fields: [locationId], references: [id])
+
+  alertType String  @map("event_type")
+  active    Boolean @default(true)
 
   channel   Channel
   frequency Frequency
 
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-  locationId String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([locationId, alertType])
-  @@index([locationId])
-  @@map("user_alert_subscription")
+  @@map("user_alert_subscriptions")
+}
+
+model signalEvents {
+  id          String   @id @default(cuid())
+  signalId    String   @map("signal_id")
+  eventId     String   @map("event_id")
+  collectedAt DateTime @map("collected_at")
+
+  signal signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  event  events  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("signal_to_events")
 }
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 
-model apiKey {
+model apiKeys {
   id         String    @id @default(cuid())
   userId     String    @map("user_id")
   name       String
@@ -360,18 +450,18 @@ model apiKey {
 
   @@index([keyHash])
   @@index([userId])
-  @@map("api_key")
+  @@map("api_keys")
 }
 
 // ─── Feature Flags ───────────────────────────────────────────────────────────
 
-model featureFlag {
+model featureFlags {
   id        String   @id @default(cuid())
   key       String   @unique
   enabled   Boolean  @default(false)
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("feature_flag")
+  @@map("feature_flags")
 }
 
 // ─── Notifications ———————————————————————————————————————————————————————————
