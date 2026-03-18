@@ -16,8 +16,6 @@ export const alertTypeDef = gql`
     status: AlertStatus!
     """Users who received this alert."""
     userAlerts: [UserAlert!]!
-    """Users who escalated this alert."""
-    escalations: [EventEscalation!]!
   }
 
   """Tracks an alert delivered to a user — view status."""
@@ -27,18 +25,16 @@ export const alertTypeDef = gql`
     alert: Alert!
     """When the user viewed this alert."""
     viewedAt: DateTime
-    createdAt: DateTime!
-    updatedAt: DateTime!
   }
 
-  """Tracks a user escalating an event/alert, optionally to a situation."""
+  """Tracks a user escalating an event, optionally to a situation."""
   type EventEscalation {
     id: String!
     user: User!
-    alert: Alert!
+    event: Event!
     """Whether this has been escalated to a situation."""
     isSituation: Boolean!
-    createdAt: DateTime!
-    updatedAt: DateTime!
+    validFrom: DateTime!
+    validTo: DateTime!
   }
 `;
