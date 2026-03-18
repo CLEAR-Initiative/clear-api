@@ -10,7 +10,7 @@ export const feedbackTypeDef = gql`
     """Rating from 1 to 5."""
     rating: Int!
     """Optional textual feedback."""
-    feedback: String
+    text: String
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -34,7 +34,6 @@ export const feedbackTypeDef = gql`
 
   """A tag linking a user to a comment."""
   type CommentTag {
-    id: String!
     user: User!
     comment: UserComment!
   }

@@ -7,7 +7,7 @@ interface CreateSignalInput {
   sourceId: string;
   rawData: Record<string, unknown>;
   publishedAt: string;
-  collectedAt: string;
+  collectedAt?: string;
   url?: string;
   title?: string;
   description?: string;
@@ -48,7 +48,7 @@ export const signalResolvers = {
           sourceId: input.sourceId,
           rawData: input.rawData as InputJsonValue,
           publishedAt: new Date(input.publishedAt),
-          collectedAt: new Date(input.collectedAt),
+          collectedAt: input.collectedAt ? new Date(input.collectedAt) : new Date(),
           url: input.url,
           title: input.title,
           description: input.description,

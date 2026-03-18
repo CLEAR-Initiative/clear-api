@@ -199,5 +199,16 @@ export const eventResolvers = {
     populationAffected: (parent: { populationAffected: bigint | null }) => {
       return parent.populationAffected?.toString() ?? null;
     },
+    escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.eventEscaladedByUsers.findMany({ where: { eventId: parent.id } });
+    },
+  },
+  EventEscalation: {
+    user: (parent: { userId: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.user.findUnique({ where: { id: parent.userId } });
+    },
+    event: (parent: { eventId: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.events.findUnique({ where: { id: parent.eventId } });
+    },
   },
 };

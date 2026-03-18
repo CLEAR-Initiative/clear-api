@@ -31,5 +31,7 @@ export const eventTypeDef = gql`
     feedbacks: [UserFeedback!]!
     """User comments on this event."""
     comments: [UserComment!]!
+    """Escalations by users."""
+    escalations: [EventEscalation!]!
   }
 `;

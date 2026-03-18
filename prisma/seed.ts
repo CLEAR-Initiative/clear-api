@@ -8,6 +8,7 @@ async function seed() {
   console.log("Seeding database...\n");
 
   // ─── Clear existing data (dependency-safe order) ───────────────────────────
+  // NOTE: user, account, session, verification, and apiKeys are preserved
   await prisma.commentTags.deleteMany();
   await prisma.userComments.deleteMany();
   await prisma.userFeedbacks.deleteMany();
@@ -16,36 +17,28 @@ async function seed() {
   await prisma.userAlertSubscriptions.deleteMany();
   await prisma.alerts.deleteMany();
   await prisma.notifications.deleteMany();
-  await prisma.apiKeys.deleteMany();
   await prisma.signalEvents.deleteMany();
   await prisma.events.deleteMany();
   await prisma.signals.deleteMany();
   await prisma.featureFlags.deleteMany();
+  await prisma.disasterTypes.deleteMany();
   await prisma.dataSources.deleteMany();
   await prisma.$executeRaw`DELETE FROM "locations"`;
   await prisma.organisationUsers.deleteMany();
   await prisma.organisations.deleteMany();
-  await prisma.session.deleteMany();
-  await prisma.account.deleteMany();
-  await prisma.verification.deleteMany();
-  await prisma.user.deleteMany();
-  console.log("Cleared existing data.");
+  console.log("Cleared existing data (users, sessions, accounts, and API keys preserved).");
 
-  // ─── Users (via Better Auth) ───────────────────────────────────────────────
-  const adminSignup = await auth.api.signUpEmail({
-    body: { name: "Admin User", email: "admin@clear.dev", password: "password123" },
-  });
-  const admin = adminSignup.user;
+  // ─── Users (find existing or create via Better Auth) ───────────────────────
+  async function getOrCreateUser(name: string, email: string, password: string) {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return existing;
+    const signup = await auth.api.signUpEmail({ body: { name, email, password } });
+    return signup.user;
+  }
 
-  const analystSignup = await auth.api.signUpEmail({
-    body: { name: "Analyst User", email: "analyst@clear.dev", password: "password123" },
-  });
-  const analyst = analystSignup.user;
-
-  const viewerSignup = await auth.api.signUpEmail({
-    body: { name: "Viewer User", email: "viewer@clear.dev", password: "password123" },
-  });
-  const viewer = viewerSignup.user;
+  const admin = await getOrCreateUser("Admin User", "admin@clear.dev", "password123");
+  const analyst = await getOrCreateUser("Analyst User", "analyst@clear.dev", "password123");
+  const viewer = await getOrCreateUser("Viewer User", "viewer@clear.dev", "password123");
 
   // ─── Organisation & Roles ─────────────────────────────────────────────────
   const org = await prisma.organisations.create({
@@ -144,37 +137,46 @@ async function seed() {
   console.log("Created 11 locations (1 country, 4 states, 6 localities) with geographic data");
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
-  const [socialMedia, acled, fewsNet] = await Promise.all([
+  const [dataminr, acled, gdacs, dtm] = await Promise.all([
     prisma.dataSources.create({
       data: {
-        name: "Social Media Monitor",
-        type: "social_media",
+        name: "dataminr",
+        type: "api",
         isActive: true,
-        baseUrl: "https://api.social-monitor.org/v2",
-        infoUrl: "https://social-monitor.org",
+        baseUrl: "https://api.dataminr.com/firstalert/",
+        infoUrl: "https://www.dataminr.com/",
       },
     }),
     prisma.dataSources.create({
       data: {
-        name: "ACLED Conflict Data",
-        type: "conflict_tracker",
+        name: "acled",
+        type: "api",
         isActive: true,
-        baseUrl: "https://acleddata.com/api/v3",
-        infoUrl: "https://acleddata.com",
+        baseUrl: "https://acleddata.com/api/",
+        infoUrl: "https://acleddata.com/",
       },
     }),
     prisma.dataSources.create({
       data: {
-        name: "FEWS NET",
-        type: "food_security",
+        name: "gdacs",
+        type: "api",
         isActive: true,
-        baseUrl: "https://fews.net/api",
-        infoUrl: "https://fews.net",
+        baseUrl: "https://www.gdacs.org/gdacsapi/api/",
+        infoUrl: "https://gdacs.org/",
+      },
+    }),
+    prisma.dataSources.create({
+      data: {
+        name: "dtm",
+        type: "api",
+        isActive: true,
+        baseUrl: "https://dtmapi.iom.int/api/",
+        infoUrl: "https://dtm.iom.int/",
       },
     }),
   ]);
 
-  console.log("Created 3 data sources");
+  console.log("Created 4 data sources");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
@@ -183,7 +185,7 @@ async function seed() {
     // Darfur conflict cluster
     prisma.signals.create({
       data: {
-        sourceId: acled.id,
+        sourceId: acled.id, // ACLED
         rawData: { events: 12, fatalities: "unknown", source: "ACLED" },
         publishedAt: now,
         collectedAt: now,
@@ -195,7 +197,7 @@ async function seed() {
     }),
     prisma.signals.create({
       data: {
-        sourceId: socialMedia.id,
+        sourceId: dataminr.id,
         rawData: { posts: 156, sentiment: "fear", hashtags: ["#RSF", "#Darfur"] },
         publishedAt: now,
         collectedAt: now,
@@ -207,7 +209,7 @@ async function seed() {
     // Displacement cluster
     prisma.signals.create({
       data: {
-        sourceId: socialMedia.id,
+        sourceId: dataminr.id,
         rawData: { posts: 234, sentiment: "distress", hashtags: ["#Darfur", "#displacement"] },
         publishedAt: now,
         collectedAt: now,
@@ -220,7 +222,7 @@ async function seed() {
     }),
     prisma.signals.create({
       data: {
-        sourceId: fewsNet.id,
+        sourceId: gdacs.id,
         rawData: { camp: "Kalma", capacity_pct: 187, report_id: "OCHA-2026-SD-019" },
         publishedAt: now,
         collectedAt: now,
@@ -232,7 +234,7 @@ async function seed() {
     // Khartoum flood cluster
     prisma.signals.create({
       data: {
-        sourceId: socialMedia.id,
+        sourceId: dataminr.id,
         rawData: { posts: 187, sentiment: "alarmed", hashtags: ["#KhartoumFloods", "#Nile"] },
         publishedAt: now,
         collectedAt: now,
@@ -243,7 +245,7 @@ async function seed() {
     }),
     prisma.signals.create({
       data: {
-        sourceId: socialMedia.id,
+        sourceId: dataminr.id,
         rawData: { posts: 98, images: 12, location: "White Nile Bridge" },
         publishedAt: now,
         collectedAt: now,
@@ -255,7 +257,7 @@ async function seed() {
     // Food security cluster
     prisma.signals.create({
       data: {
-        sourceId: fewsNet.id,
+        sourceId: gdacs.id,
         rawData: { ipc_phase: 4, report_id: "FEWSNET-2026-03", population_affected: "120K" },
         publishedAt: now,
         collectedAt: now,
@@ -266,7 +268,7 @@ async function seed() {
     }),
     prisma.signals.create({
       data: {
-        sourceId: fewsNet.id,
+        sourceId: gdacs.id,
         rawData: { sorghum_pct_increase: 112, millet_pct_increase: 95, period: "Q1 2026" },
         publishedAt: now,
         collectedAt: now,
@@ -424,7 +426,7 @@ async function seed() {
         userId: analyst.id,
         eventId: evtDarfurConflict.id,
         rating: 5,
-        feedback: "Excellent conflict analysis. Well-corroborated signals.",
+        text: "Excellent conflict analysis. Well-corroborated signals.",
       },
     }),
     prisma.userFeedbacks.create({
@@ -432,7 +434,7 @@ async function seed() {
         userId: viewer.id,
         eventId: evtDisplacement.id,
         rating: 4,
-        feedback: "Useful displacement data. Would benefit from satellite imagery.",
+        text: "Useful displacement data. Would benefit from satellite imagery.",
       },
     }),
     prisma.userFeedbacks.create({
@@ -440,7 +442,7 @@ async function seed() {
         userId: analyst.id,
         signalId: sig1.id,
         rating: 5,
-        feedback: "High confidence ACLED data, well verified.",
+        text: "High confidence ACLED data, well verified.",
       },
     }),
   ]);
@@ -478,8 +480,9 @@ async function seed() {
   await prisma.eventEscaladedByUsers.create({
     data: {
       userId: analyst.id,
-      alertId: alert1.id,
+      eventId: evtDarfurConflict.id,
       isSituation: false,
+      validTo: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
     },
   });
 
@@ -538,6 +541,49 @@ async function seed() {
   ]);
 
   console.log("Created 4 feature flags");
+
+  // ─── Disaster Types ─────────────────────────────────────────────────────────
+  await prisma.disasterTypes.createMany({
+    data: [
+      { glideNumber: "et", disasterType: "extreme temperature", disasterClass: "" },
+      { glideNumber: "cw", disasterType: "cold wave", disasterClass: "" },
+      { glideNumber: "ht", disasterType: "heat wave", disasterClass: "" },
+      { glideNumber: "ce", disasterType: "complex emergency", disasterClass: "" },
+      { glideNumber: "dr", disasterType: "drought", disasterClass: "" },
+      { glideNumber: "eq", disasterType: "earthquake", disasterClass: "" },
+      { glideNumber: "ep", disasterType: "epidemic", disasterClass: "" },
+      { glideNumber: "ec", disasterType: "extratropical cyclone", disasterClass: "" },
+      { glideNumber: "fr", disasterType: "fire", disasterClass: "" },
+      { glideNumber: "ff", disasterType: "flash flood", disasterClass: "" },
+      { glideNumber: "fl", disasterType: "flood", disasterClass: "" },
+      { glideNumber: "in", disasterType: "insect infestation", disasterClass: "" },
+      { glideNumber: "sl", disasterType: "slide", disasterClass: "" },
+      { glideNumber: "ls", disasterType: "land slide", disasterClass: "" },
+      { glideNumber: "ms", disasterType: "mud slide", disasterClass: "" },
+      { glideNumber: "av", disasterType: "snow avalanche", disasterClass: "" },
+      { glideNumber: "st", disasterType: "severe local storm", disasterClass: "" },
+      { glideNumber: "ac", disasterType: "technological disaster", disasterClass: "" },
+      { glideNumber: "to", disasterType: "tornado", disasterClass: "" },
+      { glideNumber: "tc", disasterType: "tropical cyclone", disasterClass: "" },
+      { glideNumber: "wv", disasterType: "wave or surge", disasterClass: "" },
+      { glideNumber: "ss", disasterType: "storm surge", disasterClass: "" },
+      { glideNumber: "ts", disasterType: "tsunami", disasterClass: "" },
+      { glideNumber: "vo", disasterType: "volcano", disasterClass: "" },
+      { glideNumber: "wf", disasterType: "wild fire", disasterClass: "" },
+      { glideNumber: "vw", disasterType: "violent wind", disasterClass: "" },
+      { glideNumber: "ot", disasterType: "other", disasterClass: "" },
+      { glideNumber: "pv", disasterType: "political violence", disasterClass: "conflict and violence" },
+      { glideNumber: "ba", disasterType: "battles", disasterClass: "conflict and violence" },
+      { glideNumber: "pr", disasterType: "protests", disasterClass: "conflict and violence" },
+      { glideNumber: "ri", disasterType: "riots", disasterClass: "conflict and violence" },
+      { glideNumber: "rv", disasterType: "explosions or remote violence", disasterClass: "conflict and violence" },
+      { glideNumber: "vc", disasterType: "violence against civilians", disasterClass: "conflict and violence" },
+      { glideNumber: "fc", disasterType: "economic crisis", disasterClass: "" },
+      { glideNumber: "fa", disasterType: "famine", disasterClass: "" },
+    ],
+  });
+
+  console.log("Created 35 disaster types");
 
   // ─── Summary ───────────────────────────────────────────────────────────────
   console.log("\n─── Pipeline Summary ───");

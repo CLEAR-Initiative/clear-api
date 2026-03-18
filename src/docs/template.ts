@@ -229,7 +229,7 @@ export function renderDocsPage(schema: SchemaData): string {
         <h1 id="introduction">Introduction</h1>
         <p class="subtitle">Welcome to the CLEAR API - your gateway to humanitarian intelligence.</p>
 
-        <p>The CLEAR API gives you programmatic access to alerts, detection events, data sources, and geographic location data through a single GraphQL endpoint. Whether you&rsquo;re building a monitoring dashboard, integrating alerts into your workflow, or analysing detection patterns, this API has you covered.</p>
+        <p>The CLEAR API gives you programmatic access to signals, events, alerts, data sources, and geographic location data through a single GraphQL endpoint. Whether you&rsquo;re building a monitoring dashboard, integrating alerts into your workflow, or analysing humanitarian patterns, this API has you covered.</p>
 
         <p>Everything here is accessible via GraphQL at <code>/graphql</code>. You send a query describing exactly the data you want, and you get back precisely that &mdash; nothing more, nothing less.</p>
 
@@ -237,10 +237,12 @@ export function renderDocsPage(schema: SchemaData): string {
         <table class="feature-table">
           <thead><tr><th>Feature</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td><a href="#type-alert">Alerts</a></td><td>Browse, filter, and inspect humanitarian alerts with severity levels and geographic scope.</td></tr>
-            <tr><td><a href="#type-detection">Detections</a></td><td>Access raw and processed detection events from multiple data sources with confidence scores.</td></tr>
-            <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data sources that feed into the platform (satellites, sensors, manual reports).</td></tr>
-            <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; and see what&rsquo;s happening where.</td></tr>
+            <tr><td><a href="#type-signal">Signals</a></td><td>Access raw data items collected from data sources, with location links and metadata.</td></tr>
+            <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent situations, with location, population, and type data.</td></tr>
+            <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
+            <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
+            <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; with PostGIS geometry.</td></tr>
+            <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
           </tbody>

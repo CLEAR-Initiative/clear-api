@@ -136,7 +136,7 @@ model organisationUsers {
   organisation organisations @relation(fields: [organisationId], references: [id])
 
   @@unique([userId, organisationId])
-  @@map("organisation_users")
+  @@map("user_to_organisation")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────
@@ -179,8 +179,8 @@ model dataSources {
   name      String
   type      String
   isActive  Boolean  @default(true) @map("is_active")
-  baseUrl   String?  @map("base_url")
-  infoUrl   String?  @map("info_url")
+  baseUrl   String?  @map("url_base")
+  infoUrl   String?  @map("url_info")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -219,7 +219,7 @@ model signals {
 
   rawData     Json     @map("raw_data")
   publishedAt DateTime @map("published_at")
-  collectedAt DateTime @map("collected_at")
+  collectedAt DateTime @default(now()) @map("collected_at")
 
   url         String?
   title       String?
@@ -245,7 +245,7 @@ model events {
   // For LLM
   description_signals Json?
 
-  validFrom            DateTime @map("valid_from")
+  validFrom            DateTime @default(now()) @map("valid_from")
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
@@ -259,13 +259,23 @@ model events {
   locationId      String?    @map("location_id") // In case of events without origin or destination
   generalLocation locations? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
 
-  types              String[]
-  populationAffected BigInt?         @map("population_affected")
-  rank               Float
-  alerts             alerts[]
-  userFeedbacks      userFeedbacks[]
-  userComments       userComments[]
-  signalEvents       signalEvents[]
+  types                 String[]
+  populationAffected    BigInt?                 @map("population_affected")
+  rank                  Float
+  alerts                alerts[]
+  userFeedbacks         userFeedbacks[]
+  userComments          userComments[]
+  signalEvents          signalEvents[]
+  eventEscaladedByUsers eventEscaladedByUsers[]
+}
+
+model disasterTypes {
+  id            String @id @default(cuid())
+  disasterType  String @map("disaster_type")
+  disasterClass String @map("disaster_class")
+  glideNumber   String @map("glide_number")
+
+  @@map("disaster_types")
 }
 
 model alerts {
@@ -273,9 +283,8 @@ model alerts {
   eventId String      @map("event_id")
   status  AlertStatus
 
-  event                 events                  @relation(fields: [eventId], references: [id])
-  userAlerts            userAlerts[]
-  eventEscaladedByUsers eventEscaladedByUsers[]
+  event      events       @relation(fields: [eventId], references: [id])
+  userAlerts userAlerts[]
 }
 
 // ─── Join Tables ─────────────────────────────────────────────────────────────
@@ -313,9 +322,6 @@ model userAlerts {
   alertId  String    @map("alert_id")
   viewedAt DateTime? @map("viewed_at")
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
   user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
   alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
 
@@ -329,17 +335,17 @@ model userAlerts {
 model eventEscaladedByUsers {
   id          String  @id @default(cuid())
   userId      String  @map("user_id")
-  alertId     String  @map("alert_id")
+  eventId     String  @map("event_id")
   isSituation Boolean @default(false) @map("is_situation")
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  validFrom DateTime @default(now()) @map("valid_from")
+  validTo   DateTime @map("valid_to")
 
   user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  event events @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, alertId])
-  @@index([alertId])
+  @@unique([userId, eventId])
+  @@index([eventId])
   @@map("event_escaladed_by_users")
 }
 
@@ -351,7 +357,7 @@ model userFeedbacks {
   signalId String? @map("signal_id")
   rating   Int
   // Textual feedback
-  feedback String?
+  text     String?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -371,7 +377,7 @@ model userComments {
   eventId  String? @map("event_id")
   signalId String? @map("signal_id")
 
-  comment            String
+  comment            String  @map("text")
   isCommentReply     Boolean @map("is_comment_reply")
   repliedToCommentId String? @map("replied_to_comment_id")
 
@@ -390,13 +396,13 @@ model userComments {
 }
 
 model commentTags {
-  id        String @id @default(cuid())
   userId    String @map("user_id")
   commentId String @map("comment_id")
 
   user    user         @relation(fields: [userId], references: [id], onDelete: Cascade)
   comment userComments @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, commentId])
   @@index([commentId])
   @@map("comment_tags")
 }

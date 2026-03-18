@@ -132,9 +132,6 @@ export const alertResolvers = {
     userAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userAlerts.findMany({ where: { alertId: parent.id } });
     },
-    escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.eventEscaladedByUsers.findMany({ where: { alertId: parent.id } });
-    },
   },
   UserAlert: {
     user: (parent: { userId: string }, _args: unknown, { prisma }: Context) => {

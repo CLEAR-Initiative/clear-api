@@ -106,7 +106,7 @@ export const mutationTypeDef = gql`
     sourceId: String!
     rawData: JSON!
     publishedAt: String!
-    collectedAt: String!
+    collectedAt: String
     url: String
     title: String
     description: String
