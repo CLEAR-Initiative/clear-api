@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "bun run build:docs && tsc -p tsconfig.build.json",
+    "build:docs": "bun run scripts/build-docs.ts",
     "start": "node dist/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
@@ -18,7 +19,6 @@
   "dependencies": {
     "@apollo/server": "^5.4.0",
     "@as-integrations/express5": "^1.1.2",
-    "@graphql-tools/schema": "^10.0.31",
     "@prisma/adapter-pg": "^7.4.2",
     "@prisma/client": "^7.4.2",
     "better-auth": "^1.5.1",
@@ -42,6 +42,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
+    "@graphql-tools/schema": "^10.0.31",
     "vitest": "^4.0.18"
   }
 }
