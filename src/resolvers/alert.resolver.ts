@@ -1,7 +1,9 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -14,9 +16,25 @@ interface UpdateAlertInput {
 
 export const alertResolvers = {
   Query: {
-    alerts: (_parent: unknown, args: { status?: AlertStatus }, { prisma }: Context) => {
-      return prisma.alerts.findMany({
-        where: args.status ? { status: args.status } : undefined,
+    alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string }, context: Context) => {
+      const user = requireAuth(context);
+      if (!args.teamId) {
+        if (user.role !== "admin") {
+          throw new GraphQLError("teamId is required", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        return context.prisma.alerts.findMany({
+          where: args.status ? { status: args.status } : undefined,
+        });
+      }
+      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      const eventLocationFilter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
+      return context.prisma.alerts.findMany({
+        where: {
+          ...(args.status ? { status: args.status } : {}),
+          ...(eventLocationFilter ? { event: eventLocationFilter } : {}),
+        },
       });
     },
     alert: (_parent: unknown, args: { id: string }, { prisma }: Context) => {

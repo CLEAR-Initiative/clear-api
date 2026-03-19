@@ -1,7 +1,9 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateEventInput {
   title?: string;
@@ -39,8 +41,19 @@ interface UpdateEventInput {
 
 export const eventResolvers = {
   Query: {
-    events: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.events.findMany();
+    events: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+      const user = requireAuth(context);
+      if (!args.teamId) {
+        if (user.role !== "admin") {
+          throw new GraphQLError("teamId is required", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        return context.prisma.events.findMany();
+      }
+      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
+      return context.prisma.events.findMany({ where: filter });
     },
     event: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
       return prisma.events.findUnique({ where: { id: args.id } });
