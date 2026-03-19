@@ -37,8 +37,41 @@ export const alertResolvers = {
         },
       });
     },
-    alert: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.alerts.findUnique({ where: { id: args.id } });
+    alert: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const user = requireAuth(context);
+      const alert = await context.prisma.alerts.findUnique({
+        where: { id: args.id },
+        include: { event: true },
+      });
+      if (!alert) return null;
+      if (user.role !== "admin") {
+        const teamMemberships = await context.prisma.teamMembers.findMany({
+          where: { userId: user.id },
+          select: { teamId: true },
+        });
+        if (teamMemberships.length === 0) {
+          throw new GraphQLError("No team membership found", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+        let accessible = false;
+        for (const { teamId } of teamMemberships) {
+          const eventFilter = await buildEventLocationFilterForTeam(context.prisma, teamId);
+          if (!eventFilter) { accessible = true; break; }
+          const found = await context.prisma.alerts.findFirst({
+            where: { id: args.id, event: eventFilter },
+          });
+          if (found) { accessible = true; break; }
+        }
+        if (!accessible) {
+          throw new GraphQLError("Alert not accessible from your teams", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+      }
+      // Return without the included event to match the type
+      const { event: _event, ...alertData } = alert;
+      return alertData;
     },
   },
   Mutation: {

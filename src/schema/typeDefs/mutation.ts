@@ -88,7 +88,7 @@ export const mutationTypeDef = gql`
     updateOrganisation(id: String!, input: UpdateOrganisationInput!): Organisation!
 
     """Add a member to an organisation."""
-    addOrgMember(orgId: String!, userId: String!, role: String): OrgMember!
+    addOrgMember(orgId: String!, userId: String!, role: OrgMemberRole): OrgMember!
 
     """Remove a member from an organisation."""
     removeOrgMember(orgId: String!, userId: String!): Boolean!
@@ -104,13 +104,13 @@ export const mutationTypeDef = gql`
     deleteTeam(id: String!): Boolean!
 
     """Add a member to a team."""
-    addTeamMember(teamId: String!, userId: String!, role: String): TeamMember!
+    addTeamMember(teamId: String!, userId: String!, role: TeamMemberRole): TeamMember!
 
     """Remove a member from a team."""
     removeTeamMember(teamId: String!, userId: String!): Boolean!
 
     """Update a team member's role."""
-    updateTeamMemberRole(teamId: String!, userId: String!, role: String!): TeamMember!
+    updateTeamMemberRole(teamId: String!, userId: String!, role: TeamMemberRole!): TeamMember!
 
     """Set the locations a team is scoped to. Replaces all existing locations."""
     setTeamLocations(teamId: String!, locationIds: [String!]!): Team!

@@ -196,12 +196,25 @@ export const teamResolvers = {
         team.organisationId,
       );
 
-      await context.prisma.teamMembers.delete({
-        where: {
-          teamId_userId: { teamId: args.teamId, userId: args.userId },
-        },
-      });
-      return true;
+      try {
+        await context.prisma.teamMembers.delete({
+          where: {
+            teamId_userId: { teamId: args.teamId, userId: args.userId },
+          },
+        });
+        return true;
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          throw new GraphQLError("Team member not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        throw error;
+      }
     },
 
     updateTeamMemberRole: async (
@@ -226,12 +239,25 @@ export const teamResolvers = {
         team.organisationId,
       );
 
-      return context.prisma.teamMembers.update({
-        where: {
-          teamId_userId: { teamId: args.teamId, userId: args.userId },
-        },
-        data: { role: args.role },
-      });
+      try {
+        return await context.prisma.teamMembers.update({
+          where: {
+            teamId_userId: { teamId: args.teamId, userId: args.userId },
+          },
+          data: { role: args.role },
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          throw new GraphQLError("Team member not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        throw error;
+      }
     },
 
     setTeamLocations: async (
@@ -278,17 +304,28 @@ export const teamResolvers = {
     ) => {
       const user = requireAuth(context);
 
-      // Verify membership
-      const membership = await context.prisma.teamMembers.findUnique({
-        where: {
-          teamId_userId: { teamId: args.teamId, userId: user.id },
-        },
+      // Verify team exists
+      const team = await context.prisma.teams.findUnique({
+        where: { id: args.teamId },
       });
-
-      if (!membership && user.role !== "admin") {
-        throw new GraphQLError("Not a member of this team", {
-          extensions: { code: "FORBIDDEN" },
+      if (!team) {
+        throw new GraphQLError("Team not found", {
+          extensions: { code: "NOT_FOUND" },
         });
+      }
+
+      // Verify membership (admins bypass)
+      if (user.role !== "admin") {
+        const membership = await context.prisma.teamMembers.findUnique({
+          where: {
+            teamId_userId: { teamId: args.teamId, userId: user.id },
+          },
+        });
+        if (!membership) {
+          throw new GraphQLError("Not a member of this team", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
       }
 
       await context.prisma.user.update({
@@ -296,7 +333,7 @@ export const teamResolvers = {
         data: { defaultTeamId: args.teamId },
       });
 
-      return context.prisma.teams.findUnique({ where: { id: args.teamId } });
+      return team;
     },
   },
 

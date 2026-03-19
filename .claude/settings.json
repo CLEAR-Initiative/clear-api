@@ -56,7 +56,12 @@
       "Bash(bun run tsc -p tsconfig.build.json --noEmit)",
       "Bash(ls node_modules/nodemailer/lib/*.d.ts)",
       "Bash(bun test:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git stash:*)",
+      "Bash(bun run:*)"
     ]
   }
 }
