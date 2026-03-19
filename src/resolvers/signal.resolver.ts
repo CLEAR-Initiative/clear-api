@@ -34,8 +34,36 @@ export const signalResolvers = {
       const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.signals.findMany({ where: filter });
     },
-    signal: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.signals.findUnique({ where: { id: args.id } });
+    signal: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const user = requireAuth(context);
+      const signal = await context.prisma.signals.findUnique({ where: { id: args.id } });
+      if (!signal) return null;
+      if (user.role !== "admin") {
+        const teamMemberships = await context.prisma.teamMembers.findMany({
+          where: { userId: user.id },
+          select: { teamId: true },
+        });
+        if (teamMemberships.length === 0) {
+          throw new GraphQLError("No team membership found", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+        let accessible = false;
+        for (const { teamId } of teamMemberships) {
+          const filter = await buildLocationFilterForTeam(context.prisma, teamId);
+          if (!filter) { accessible = true; break; }
+          const found = await context.prisma.signals.findFirst({
+            where: { id: args.id, ...filter },
+          });
+          if (found) { accessible = true; break; }
+        }
+        if (!accessible) {
+          throw new GraphQLError("Signal not accessible from your teams", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+      }
+      return signal;
     },
   },
   Mutation: {

@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireAuth } from "../utils/auth-guard.js";
 
 interface CreateOrganisationInput {
   name: string;
@@ -100,6 +100,16 @@ export const organisationResolvers = {
       context: Context,
     ) => {
       const user = requireAuth(context);
+
+      const org = await context.prisma.organisations.findUnique({
+        where: { id: args.id },
+      });
+      if (!org) {
+        throw new GraphQLError("Organisation not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
       await requireOrgAdmin(context.prisma, user, args.id);
 
       return context.prisma.organisations.update({
@@ -133,15 +143,26 @@ export const organisationResolvers = {
       const user = requireAuth(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
-      await context.prisma.organisationUsers.delete({
-        where: {
-          userId_organisationId: {
-            userId: args.userId,
-            organisationId: args.orgId,
+      try {
+        await context.prisma.organisationUsers.delete({
+          where: {
+            userId_organisationId: {
+              userId: args.userId,
+              organisationId: args.orgId,
+            },
           },
-        },
-      });
-      return true;
+        });
+        return true;
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          return false;
+        }
+        throw error;
+      }
     },
   },
 
