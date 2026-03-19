@@ -1,7 +1,9 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateSignalInput {
   sourceId: string;
@@ -18,8 +20,19 @@ interface CreateSignalInput {
 
 export const signalResolvers = {
   Query: {
-    signals: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.signals.findMany();
+    signals: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+      const user = requireAuth(context);
+      if (!args.teamId) {
+        if (user.role !== "admin") {
+          throw new GraphQLError("teamId is required", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        return context.prisma.signals.findMany();
+      }
+      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
+      return context.prisma.signals.findMany({ where: filter });
     },
     signal: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
       return prisma.signals.findUnique({ where: { id: args.id } });

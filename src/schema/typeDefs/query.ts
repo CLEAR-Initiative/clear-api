@@ -11,20 +11,20 @@ export const queryTypeDef = gql`
     """Look up a user by ID."""
     user(id: String!): User
 
-    """List alerts, optionally filtered by status."""
-    alerts(status: AlertStatus): [Alert!]!
+    """List alerts, optionally filtered by status. Pass teamId to scope by team locations."""
+    alerts(status: AlertStatus, teamId: String): [Alert!]!
 
     """Look up an alert by ID."""
     alert(id: String!): Alert
 
-    """List all signals."""
-    signals: [Signal!]!
+    """List signals. Pass teamId to scope by team locations."""
+    signals(teamId: String): [Signal!]!
 
     """Look up a signal by ID."""
     signal(id: String!): Signal
 
-    """List all events."""
-    events: [Event!]!
+    """List events. Pass teamId to scope by team locations."""
+    events(teamId: String): [Event!]!
 
     """Look up an event by ID."""
     event(id: String!): Event
@@ -61,5 +61,18 @@ export const queryTypeDef = gql`
 
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
+
+    # ─── Organisations & Teams ─────────────────────────────────────────────────
+    """List organisations the authenticated user belongs to."""
+    myOrganisations: [Organisation!]!
+
+    """Look up an organisation by ID. Requires membership or global admin."""
+    organisation(id: String!): Organisation
+
+    """List teams the authenticated user belongs to."""
+    myTeams: [Team!]!
+
+    """Look up a team by ID. Requires membership or global admin."""
+    team(id: String!): Team
   }
 `;
