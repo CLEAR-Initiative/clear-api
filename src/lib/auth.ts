@@ -35,6 +35,11 @@ export const auth = betterAuth({
         defaultValue: true,
         input: false,
       },
+      defaultTeamId: {
+        type: "string",
+        required: false,
+        input: false,
+      },
     },
   },
   trustedOrigins: env.CORS_ORIGINS,
