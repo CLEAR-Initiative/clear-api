@@ -2,7 +2,11 @@ node_modules
 dist
 .git
 .github
+.beads
+.claude
 infra
+scripts
 *.md
+*.test.ts
 .env
 .env.*
