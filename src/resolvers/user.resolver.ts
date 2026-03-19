@@ -93,8 +93,15 @@ export const userResolvers = {
         orderBy: { createdAt: "desc" },
       });
     },
+    defaultTeam: (parent: { defaultTeamId: string | null }, _args: unknown, { prisma }: Context) => {
+      if (!parent.defaultTeamId) return null;
+      return prisma.teams.findUnique({ where: { id: parent.defaultTeamId } });
+    },
     organisations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.organisationUsers.findMany({ where: { userId: parent.id } });
+    },
+    teamMemberships: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+      return prisma.teamMembers.findMany({ where: { userId: parent.id } });
     },
     feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userFeedbacks.findMany({ where: { userId: parent.id } });

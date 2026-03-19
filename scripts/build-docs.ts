@@ -8,10 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const schema = makeExecutableSchema({ typeDefs });
-const schemaData = introspectSchema(schema);
-const html = renderDocsPage(schemaData);
+try {
+  const schema = makeExecutableSchema({ typeDefs });
+  const schemaData = introspectSchema(schema);
+  const html = renderDocsPage(schemaData);
 
-const outPath = join(__dirname, "../src/docs/docs.html");
-writeFileSync(outPath, html, "utf-8");
-console.log(`docs: wrote ${outPath}`);
+  const outPath = join(__dirname, "../src/docs/docs.html");
+  writeFileSync(outPath, html, "utf-8");
+  console.log(`docs: wrote ${outPath}`);
+} catch (error) {
+  console.error("docs build failed:", error);
+  process.exit(1);
+}

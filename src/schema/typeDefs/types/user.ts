@@ -20,8 +20,12 @@ export const userTypeDef = gql`
     """Alerts received by this user."""
     alerts: [UserAlert!]!
     notifications: [Notification!]!
+    """The user's default team (last selected)."""
+    defaultTeam: Team
     """Organisations this user belongs to."""
     organisations: [OrganisationUser!]!
+    """Teams this user belongs to."""
+    teamMemberships: [TeamMember!]!
     """Feedback given by this user."""
     feedbacks: [UserFeedback!]!
     """Comments made by this user."""
