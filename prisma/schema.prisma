@@ -68,10 +68,14 @@ model user {
   sessions session[]
   accounts account[]
 
+  defaultTeamId String? @map("default_team_id")
+  defaultTeam   teams?  @relation("DefaultTeam", fields: [defaultTeamId], references: [id], onDelete: SetNull)
+
   alerts                userAlerts[]
   apiKeys               apiKeys[]
   notifications         notifications[]
   organisations         organisationUsers[]
+  teamMemberships       teamMembers[]
   eventEscaladedByUsers eventEscaladedByUsers[]
   userFeedbacks         userFeedbacks[]
   userComments          userComments[]
@@ -121,22 +125,78 @@ model verification {
 // ––– Organisation ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 
 model organisations {
-  id    String              @id @default(cuid())
-  name  String
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   users organisationUsers[]
+  teams teams[]
 }
 
 model organisationUsers {
-  id             String @id @default(cuid())
-  userId         String @map("user_id")
-  organisationId String @map("organisation_id")
-  role           String @default("viewer")
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  organisationId String   @map("organisation_id")
+  role           String   @default("member") // owner | admin | member
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  user         user          @relation(fields: [userId], references: [id])
-  organisation organisations @relation(fields: [organisationId], references: [id])
+  user         user          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisation organisations @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
   @@unique([userId, organisationId])
   @@map("user_to_organisation")
+}
+
+// ––– Teams –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+model teams {
+  id             String   @id @default(cuid())
+  organisationId String   @map("organisation_id")
+  name           String
+  slug           String
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organisation  organisations  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members       teamMembers[]
+  locations     teamLocations[]
+  defaultForUsers user[]       @relation("DefaultTeam")
+
+  @@unique([organisationId, slug])
+  @@index([organisationId])
+}
+
+model teamMembers {
+  id        String   @id @default(cuid())
+  teamId    String   @map("team_id")
+  userId    String   @map("user_id")
+  role      String   @default("viewer") // lead | analyst | viewer
+  createdAt DateTime @default(now()) @map("created_at")
+
+  team teams @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user user  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model teamLocations {
+  id         String   @id @default(cuid())
+  teamId     String   @map("team_id")
+  locationId String   @map("location_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  team     teams     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  location locations @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, locationId])
+  @@index([locationId])
+  @@map("team_locations")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────
@@ -167,6 +227,7 @@ model locations {
   eventDestinations      events[]                 @relation("EventDestination")
   eventLocations         events[]                 @relation("EventLocation")
   userAlertSubscriptions userAlertSubscriptions[]
+  teamScopes             teamLocations[]
 
   @@index([level])
   @@index([parentId])
