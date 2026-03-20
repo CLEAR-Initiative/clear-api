@@ -5,7 +5,7 @@ dist
 .beads
 .claude
 infra
-scripts
+
 *.md
 *.test.ts
 .env
