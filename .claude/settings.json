@@ -62,7 +62,8 @@
       "Bash(gh pr:*)",
       "Bash(git stash:*)",
       "Bash(bun run:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(kill 59234)"
     ],
     "additionalDirectories": [
       "/Users/james/code/clear-mvp"
