@@ -61,7 +61,11 @@
       "Bash(git push:*)",
       "Bash(gh pr:*)",
       "Bash(git stash:*)",
-      "Bash(bun run:*)"
+      "Bash(bun run:*)",
+      "Bash(git fetch:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/james/code/clear-mvp"
     ]
   }
 }
