@@ -74,6 +74,12 @@ export const teamResolvers = {
           name: args.input.name,
           slug: args.input.slug,
           description: args.input.description,
+          members: {
+            create: {
+              userId: user.id,
+              role: "lead",
+            },
+          },
         },
       });
     },
