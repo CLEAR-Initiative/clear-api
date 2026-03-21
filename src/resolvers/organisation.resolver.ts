@@ -126,9 +126,22 @@ export const organisationResolvers = {
       const user = requireAuth(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
+      let targetUserId = args.userId;
+      if (args.userId.includes("@")) {
+        const found = await context.prisma.user.findFirst({
+          where: { email: args.userId },
+        });
+        if (!found) {
+          throw new GraphQLError("No user found with that email address", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        targetUserId = found.id;
+      }
+
       return context.prisma.organisationUsers.create({
         data: {
-          userId: args.userId,
+          userId: targetUserId,
           organisationId: args.orgId,
           role: args.role ?? "member",
         },
