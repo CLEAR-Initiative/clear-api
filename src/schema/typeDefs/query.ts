@@ -23,11 +23,20 @@ export const queryTypeDef = gql`
     """Look up a signal by ID. Requires authentication. Non-admins can only access signals within their team scope."""
     signal(id: String!): Signal
 
+    """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
+    signalsByLocation(locationId: String!): [Signal!]!
+
     """List events. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
     events(teamId: String): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event
+
+    """List events by location. Returns all events whose origin, destination, or general location is within the given location (including descendants)."""
+    eventsByLocation(locationId: String!): [Event!]!
+
+    """List alerts by location. Returns all alerts whose event's location is within the given location (including descendants)."""
+    alertsByLocation(locationId: String!, status: AlertStatus): [Alert!]!
 
     """List all data sources."""
     dataSources: [DataSource!]!
