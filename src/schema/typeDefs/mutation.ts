@@ -151,6 +151,10 @@ export const mutationTypeDef = gql`
     originId: String
     destinationId: String
     locationId: String
+    """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
+    lat: Float
+    """Longitude for automatic geo-resolution."""
+    lng: Float
   }
 
   input CreateEventInput {
@@ -168,6 +172,10 @@ export const mutationTypeDef = gql`
     types: [String!]!
     populationAffected: String
     rank: Float!
+    """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
+    lat: Float
+    """Longitude for automatic geo-resolution."""
+    lng: Float
   }
 
   input UpdateEventInput {

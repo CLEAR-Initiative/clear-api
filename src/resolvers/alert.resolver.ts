@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateAlertInput {
@@ -34,6 +35,26 @@ export const alertResolvers = {
         where: {
           ...(args.status ? { status: args.status } : {}),
           ...(eventLocationFilter ? { event: eventLocationFilter } : {}),
+        },
+      });
+    },
+    alertsByLocation: async (
+      _parent: unknown,
+      args: { locationId: string; status?: AlertStatus },
+      context: Context,
+    ) => {
+      requireAuth(context);
+      const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      return context.prisma.alerts.findMany({
+        where: {
+          ...(args.status ? { status: args.status } : {}),
+          event: {
+            OR: [
+              { originId: { in: locationIds } },
+              { destinationId: { in: locationIds } },
+              { locationId: { in: locationIds } },
+            ],
+          },
         },
       });
     },

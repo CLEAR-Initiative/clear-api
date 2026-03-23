@@ -1,8 +1,310 @@
 import { randomUUID } from "node:crypto";
 import "dotenv/config";
-import { Prisma } from "../src/generated/prisma/client.js";
 import { prisma } from "../src/lib/prisma.js";
 import { auth } from "../src/lib/auth.js";
+
+// ─── Location Seeding (can be run independently) ────────────────────────────
+
+// ─── Sudan Location Data ─────────────────────────────────────────────────────
+
+interface StateData {
+  key: string;
+  name: string;
+  bbox: string; // MULTIPOLYGON WKT
+  districts: { key: string; name: string; lng: number; lat: number }[];
+}
+
+const SUDAN_STATES: StateData[] = [
+  {
+    key: "khartoum", name: "Khartoum",
+    bbox: "MULTIPOLYGON(((31.7 15.19, 34.38 15.19, 34.38 16.63, 31.7 16.63, 31.7 15.19)))",
+    districts: [
+      { key: "khartoumCity", name: "Khartoum City", lng: 32.56, lat: 15.59 },
+      { key: "omdurman", name: "Omdurman", lng: 32.48, lat: 15.64 },
+      { key: "bahri", name: "Bahri (Khartoum North)", lng: 32.55, lat: 15.65 },
+      { key: "jabelAwlia", name: "Jabel Awlia", lng: 32.47, lat: 15.22 },
+      { key: "sharqAlNeel", name: "Sharq Al Neel", lng: 32.67, lat: 15.68 },
+      { key: "umbadda", name: "Umbadda", lng: 32.38, lat: 15.70 },
+      { key: "karrari", name: "Karrari", lng: 32.41, lat: 15.72 },
+    ],
+  },
+  {
+    key: "northDarfur", name: "North Darfur",
+    bbox: "MULTIPOLYGON(((23.0 13.0, 27.5 13.0, 27.5 20.0, 23.0 20.0, 23.0 13.0)))",
+    districts: [
+      { key: "elFasher", name: "El Fasher", lng: 25.35, lat: 13.63 },
+      { key: "kutum", name: "Kutum", lng: 24.67, lat: 14.20 },
+      { key: "kebkabiya", name: "Kebkabiya", lng: 24.32, lat: 13.99 },
+      { key: "mellit", name: "Mellit", lng: 25.48, lat: 14.78 },
+      { key: "umKeddada", name: "Um Keddada", lng: 26.29, lat: 13.60 },
+      { key: "tawila", name: "Tawila", lng: 24.85, lat: 13.36 },
+      { key: "elLait", name: "El Lait", lng: 25.85, lat: 18.00 },
+      { key: "sarafOmra", name: "Saraf Omra", lng: 24.14, lat: 13.11 },
+    ],
+  },
+  {
+    key: "southDarfur", name: "South Darfur",
+    bbox: "MULTIPOLYGON(((23.5 8.65, 27.5 8.65, 27.5 13.12, 23.5 13.12, 23.5 8.65)))",
+    districts: [
+      { key: "nyala", name: "Nyala", lng: 24.88, lat: 12.05 },
+      { key: "edDaein", name: "Ed Daein", lng: 26.13, lat: 11.46 },
+      { key: "kass", name: "Kass", lng: 24.26, lat: 12.50 },
+      { key: "buram", name: "Buram", lng: 25.72, lat: 9.96 },
+      { key: "tullus", name: "Tullus", lng: 26.65, lat: 10.58 },
+      { key: "reheidAlBirdi", name: "Reheid Al Birdi", lng: 25.90, lat: 12.30 },
+      { key: "marshing", name: "Marshing", lng: 24.42, lat: 12.98 },
+      { key: "adila", name: "Adila", lng: 27.18, lat: 11.52 },
+    ],
+  },
+  {
+    key: "westDarfur", name: "West Darfur",
+    bbox: "MULTIPOLYGON(((21.8 11.0, 23.5 11.0, 23.5 14.0, 21.8 14.0, 21.8 11.0)))",
+    districts: [
+      { key: "elGeneina", name: "El Geneina", lng: 22.45, lat: 13.45 },
+      { key: "kulbus", name: "Kulbus", lng: 22.22, lat: 13.88 },
+      { key: "habila", name: "Habila (West Darfur)", lng: 22.90, lat: 12.90 },
+      { key: "beida", name: "Beida", lng: 22.35, lat: 13.00 },
+      { key: "sirba", name: "Sirba", lng: 22.62, lat: 13.22 },
+      { key: "jabelMoon", name: "Jabel Moon", lng: 22.15, lat: 13.60 },
+    ],
+  },
+  {
+    key: "centralDarfur", name: "Central Darfur",
+    bbox: "MULTIPOLYGON(((23.0 11.5, 25.5 11.5, 25.5 14.0, 23.0 14.0, 23.0 11.5)))",
+    districts: [
+      { key: "zalingei", name: "Zalingei", lng: 23.47, lat: 12.91 },
+      { key: "nertiti", name: "Nertiti", lng: 24.26, lat: 12.93 },
+      { key: "azum", name: "Azum", lng: 23.62, lat: 13.22 },
+      { key: "wadiSalih", name: "Wadi Salih", lng: 23.75, lat: 12.15 },
+      { key: "mukjar", name: "Mukjar", lng: 23.89, lat: 12.32 },
+      { key: "umDukhun", name: "Um Dukhun", lng: 23.40, lat: 11.76 },
+    ],
+  },
+  {
+    key: "eastDarfur", name: "East Darfur",
+    bbox: "MULTIPOLYGON(((25.5 9.5, 28.0 9.5, 28.0 13.5, 25.5 13.5, 25.5 9.5)))",
+    districts: [
+      { key: "edDaeinEast", name: "Ed Daein (East Darfur)", lng: 26.13, lat: 11.46 },
+      { key: "abuKarinka", name: "Abu Karinka", lng: 26.27, lat: 11.90 },
+      { key: "assalaya", name: "Assalaya", lng: 25.69, lat: 11.35 },
+      { key: "elFirdous", name: "El Firdous", lng: 26.52, lat: 10.35 },
+      { key: "sheiria", name: "Sheiria", lng: 27.15, lat: 11.43 },
+      { key: "yassin", name: "Yassin", lng: 25.88, lat: 12.10 },
+    ],
+  },
+  {
+    key: "northKordofan", name: "North Kordofan",
+    bbox: "MULTIPOLYGON(((27.5 12.0, 32.5 12.0, 32.5 16.0, 27.5 16.0, 27.5 12.0)))",
+    districts: [
+      { key: "elObeid", name: "El Obeid", lng: 30.22, lat: 13.18 },
+      { key: "umRawaba", name: "Um Rawaba", lng: 31.22, lat: 12.90 },
+      { key: "enNahud", name: "En Nahud", lng: 28.43, lat: 12.69 },
+      { key: "sheikan", name: "Sheikan", lng: 30.30, lat: 13.30 },
+      { key: "bara", name: "Bara", lng: 30.37, lat: 13.70 },
+      { key: "sodari", name: "Sodari", lng: 30.55, lat: 14.45 },
+      { key: "umDam", name: "Um Dam", lng: 31.45, lat: 13.51 },
+      { key: "jabrat", name: "Jabrat El Sheikh", lng: 29.33, lat: 12.95 },
+    ],
+  },
+  {
+    key: "southKordofan", name: "South Kordofan",
+    bbox: "MULTIPOLYGON(((28.5 9.5, 32.0 9.5, 32.0 12.5, 28.5 12.5, 28.5 9.5)))",
+    districts: [
+      { key: "kadugli", name: "Kadugli", lng: 29.72, lat: 11.01 },
+      { key: "dilling", name: "Dilling", lng: 29.66, lat: 12.06 },
+      { key: "abuJubaiyha", name: "Abu Jubaiyha", lng: 31.22, lat: 11.60 },
+      { key: "rashad", name: "Rashad", lng: 31.05, lat: 11.85 },
+      { key: "talodi", name: "Talodi", lng: 30.38, lat: 10.63 },
+      { key: "kaduqli", name: "Heiban", lng: 30.12, lat: 11.40 },
+      { key: "lagawa", name: "Lagawa", lng: 28.92, lat: 11.35 },
+    ],
+  },
+  {
+    key: "westKordofan", name: "West Kordofan",
+    bbox: "MULTIPOLYGON(((27.0 10.0, 30.0 10.0, 30.0 13.0, 27.0 13.0, 27.0 10.0)))",
+    districts: [
+      { key: "elFula", name: "El Fula", lng: 28.35, lat: 11.73 },
+      { key: "muglad", name: "Muglad", lng: 27.73, lat: 11.04 },
+      { key: "abyei", name: "Abyei", lng: 28.44, lat: 9.59 },
+      { key: "babanusa", name: "Babanusa", lng: 27.80, lat: 11.33 },
+      { key: "ghubaysh", name: "Ghubaysh", lng: 28.60, lat: 12.30 },
+    ],
+  },
+  {
+    key: "blueNile", name: "Blue Nile",
+    bbox: "MULTIPOLYGON(((33.0 9.5, 35.5 9.5, 35.5 12.5, 33.0 12.5, 33.0 9.5)))",
+    districts: [
+      { key: "edDamazin", name: "Ed Damazin", lng: 34.36, lat: 11.79 },
+      { key: "roseires", name: "Roseires", lng: 34.38, lat: 11.85 },
+      { key: "kurmuk", name: "Kurmuk", lng: 34.28, lat: 10.55 },
+      { key: "bau", name: "Bau", lng: 34.07, lat: 10.96 },
+      { key: "geissan", name: "Geissan", lng: 34.42, lat: 10.99 },
+      { key: "tadamon", name: "Tadamon", lng: 33.85, lat: 11.28 },
+    ],
+  },
+  {
+    key: "whiteNile", name: "White Nile",
+    bbox: "MULTIPOLYGON(((31.5 12.0, 33.5 12.0, 33.5 14.5, 31.5 14.5, 31.5 12.0)))",
+    districts: [
+      { key: "rabak", name: "Rabak", lng: 32.74, lat: 13.18 },
+      { key: "kosti", name: "Kosti", lng: 32.66, lat: 13.16 },
+      { key: "dueim", name: "Ed Dueim", lng: 32.30, lat: 14.00 },
+      { key: "tendalti", name: "Tendalti", lng: 32.60, lat: 13.46 },
+      { key: "jabalein", name: "Jabalein", lng: 32.95, lat: 12.59 },
+      { key: "guli", name: "Guli", lng: 32.25, lat: 12.65 },
+    ],
+  },
+  {
+    key: "sennar", name: "Sennar",
+    bbox: "MULTIPOLYGON(((32.5 12.0, 35.5 12.0, 35.5 14.0, 32.5 14.0, 32.5 12.0)))",
+    districts: [
+      { key: "sennarCity", name: "Sennar City", lng: 33.60, lat: 13.55 },
+      { key: "singa", name: "Singa", lng: 33.93, lat: 13.15 },
+      { key: "dinder", name: "Dinder", lng: 35.00, lat: 12.50 },
+      { key: "abuHugar", name: "Abu Hugar", lng: 33.33, lat: 13.09 },
+      { key: "easternSennar", name: "Eastern Sennar", lng: 34.30, lat: 13.25 },
+      { key: "suruj", name: "Suruj", lng: 33.66, lat: 12.70 },
+    ],
+  },
+  {
+    key: "gezira", name: "Gezira",
+    bbox: "MULTIPOLYGON(((32.5 13.5, 34.5 13.5, 34.5 15.5, 32.5 15.5, 32.5 13.5)))",
+    districts: [
+      { key: "wadMedani", name: "Wad Medani", lng: 33.52, lat: 14.40 },
+      { key: "managil", name: "Managil", lng: 32.99, lat: 14.25 },
+      { key: "hasaheisa", name: "Hasaheisa", lng: 33.30, lat: 14.75 },
+      { key: "kamlin", name: "Kamlin", lng: 32.70, lat: 15.30 },
+      { key: "elMesallamiya", name: "El Mesallamiya", lng: 33.60, lat: 14.63 },
+      { key: "southGezira", name: "South Gezira", lng: 33.18, lat: 13.90 },
+      { key: "umAlQura", name: "Um Al Qura", lng: 33.02, lat: 14.55 },
+    ],
+  },
+  {
+    key: "kassala", name: "Kassala",
+    bbox: "MULTIPOLYGON(((35.0 14.5, 37.0 14.5, 37.0 17.0, 35.0 17.0, 35.0 14.5)))",
+    districts: [
+      { key: "kassalaCity", name: "Kassala City", lng: 36.40, lat: 15.45 },
+      { key: "halfa", name: "New Halfa", lng: 35.60, lat: 15.32 },
+      { key: "aroma", name: "Aroma", lng: 36.14, lat: 15.82 },
+      { key: "khashm", name: "Khashm El Girba", lng: 35.88, lat: 14.90 },
+      { key: "wagerHamid", name: "Wagar", lng: 36.25, lat: 15.56 },
+      { key: "telkok", name: "Telkok", lng: 36.50, lat: 15.00 },
+    ],
+  },
+  {
+    key: "redSea", name: "Red Sea",
+    bbox: "MULTIPOLYGON(((35.5 17.5, 38.6 17.5, 38.6 22.0, 35.5 22.0, 35.5 17.5)))",
+    districts: [
+      { key: "portSudan", name: "Port Sudan", lng: 37.22, lat: 19.62 },
+      { key: "suakin", name: "Suakin", lng: 37.33, lat: 19.11 },
+      { key: "tokar", name: "Tokar", lng: 37.73, lat: 18.43 },
+      { key: "halayib", name: "Halayib", lng: 36.65, lat: 22.19 },
+      { key: "sinkat", name: "Sinkat", lng: 36.72, lat: 19.78 },
+      { key: "haya", name: "Haya", lng: 36.38, lat: 18.33 },
+    ],
+  },
+  {
+    key: "riverNile", name: "River Nile",
+    bbox: "MULTIPOLYGON(((31.5 16.5, 35.0 16.5, 35.0 20.0, 31.5 20.0, 31.5 16.5)))",
+    districts: [
+      { key: "atbara", name: "Atbara", lng: 33.98, lat: 17.70 },
+      { key: "edDamer", name: "Ed Damer", lng: 33.95, lat: 17.59 },
+      { key: "shendi", name: "Shendi", lng: 33.43, lat: 16.68 },
+      { key: "berber", name: "Berber", lng: 33.98, lat: 18.02 },
+      { key: "abuHamed", name: "Abu Hamed", lng: 33.32, lat: 19.53 },
+      { key: "meroe", name: "Meroe", lng: 33.75, lat: 16.94 },
+    ],
+  },
+  {
+    key: "northern", name: "Northern",
+    bbox: "MULTIPOLYGON(((24.0 18.0, 33.0 18.0, 33.0 22.0, 24.0 22.0, 24.0 18.0)))",
+    districts: [
+      { key: "dongola", name: "Dongola", lng: 30.48, lat: 19.17 },
+      { key: "merowe", name: "Merowe", lng: 31.82, lat: 18.49 },
+      { key: "wadi", name: "Wadi Halfa", lng: 31.35, lat: 21.80 },
+      { key: "delgo", name: "Delgo", lng: 30.45, lat: 20.46 },
+      { key: "elGolid", name: "El Golid", lng: 30.12, lat: 18.88 },
+      { key: "elDebba", name: "El Debba", lng: 30.95, lat: 18.06 },
+    ],
+  },
+  {
+    key: "gedaref", name: "Gedaref",
+    bbox: "MULTIPOLYGON(((34.0 12.5, 37.0 12.5, 37.0 15.5, 34.0 15.5, 34.0 12.5)))",
+    districts: [
+      { key: "gedarefCity", name: "Gedaref City", lng: 35.40, lat: 14.03 },
+      { key: "elFashaga", name: "El Fashaga", lng: 36.19, lat: 13.28 },
+      { key: "elFao", name: "El Fao", lng: 34.47, lat: 13.97 },
+      { key: "galabat", name: "Galabat", lng: 36.14, lat: 12.92 },
+      { key: "rahad", name: "Eastern Rahad", lng: 35.10, lat: 13.55 },
+      { key: "butana", name: "Butana", lng: 34.60, lat: 14.80 },
+      { key: "gureisha", name: "Gureisha", lng: 35.90, lat: 13.85 },
+    ],
+  },
+];
+
+// ─── Seed Locations ──────────────────────────────────────────────────────────
+
+/** Seeded location IDs keyed by their data key (e.g. "khartoum", "elFasher") */
+export type LocationMap = Record<string, { id: string }>;
+
+export async function seedLocations(): Promise<LocationMap> {
+  console.log("Seeding locations...");
+
+  // Clear existing locations
+  await prisma.$executeRaw`DELETE FROM "locations"`;
+
+  // Track ancestor chains for each location
+  const locationAncestors = new Map<string, string[]>();
+  const result: LocationMap = {};
+
+  async function insertLocation(
+    key: string,
+    name: string,
+    level: number,
+    wkt: string,
+    parentId: string | null = null,
+  ) {
+    const id = randomUUID();
+    const ancestorIds = parentId
+      ? [parentId, ...(locationAncestors.get(parentId) ?? [])]
+      : [];
+    locationAncestors.set(id, ancestorIds);
+
+    await prisma.$executeRaw`
+      INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
+      VALUES (${id}, ${name}, ${level}, ${parentId}, ${ancestorIds}, ST_GeomFromText(${wkt}, 4326))
+    `;
+    result[key] = { id };
+    return { id };
+  }
+
+  // Level 0: Country
+  const sudan = await insertLocation("sudan", "Sudan", 0, "POINT(30.0 15.5)");
+
+  // Level 1: States (sequential to ensure parent exists before children reference it)
+  for (const state of SUDAN_STATES) {
+    const stateResult = await insertLocation(state.key, state.name, 1, state.bbox, sudan.id);
+
+    // Level 2: Districts within each state
+    for (const district of state.districts) {
+      await insertLocation(
+        district.key,
+        district.name,
+        2,
+        `POINT(${district.lng} ${district.lat})`,
+        stateResult.id,
+      );
+    }
+  }
+
+  const stateCount = SUDAN_STATES.length;
+  const districtCount = SUDAN_STATES.reduce((sum, s) => sum + s.districts.length, 0);
+  console.log(`Created ${1 + stateCount + districtCount} locations (1 country, ${stateCount} states, ${districtCount} districts) with geographic data`);
+
+  return result;
+}
+
+// ─── Full Seed ───────────────────────────────────────────────────────────────
 
 async function seed() {
   console.log("Seeding database...\n");
@@ -23,7 +325,6 @@ async function seed() {
   await prisma.featureFlags.deleteMany();
   await prisma.disasterTypes.deleteMany();
   await prisma.dataSources.deleteMany();
-  await prisma.$executeRaw`DELETE FROM "locations"`;
   await prisma.organisationUsers.deleteMany();
   await prisma.organisations.deleteMany();
   console.log("Cleared existing data (users, sessions, accounts, and API keys preserved).");
@@ -61,80 +362,17 @@ async function seed() {
     `Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`,
   );
 
-  // ─── Locations (Sudan hierarchy: Country → State → Locality) ─────────────
-  async function insertLocation(
-    id: string,
-    name: string,
-    level: number,
-    wkt: string,
-    parentId: string | null = null,
-  ) {
-    await prisma.$executeRaw`
-      INSERT INTO "locations" ("id", "name", "level", "parent_id", "geometry")
-      VALUES (${id}, ${name}, ${level}, ${parentId}, ST_GeomFromText(${wkt}, 4326))
-    `;
-    return { id };
-  }
+  const loc = await seedLocations();
 
-  // Level 0: Country
-  const sudanId = randomUUID();
-  const sudan = await insertLocation(sudanId, "Sudan", 0, "POINT(30.0 15.5)");
-
-  // Level 1: States
-  const khartoumId = randomUUID();
-  const northDarfurId = randomUUID();
-  const southDarfurId = randomUUID();
-  const northKordofanId = randomUUID();
-
-  const [khartoum, northDarfur, southDarfur, _northKordofan] = await Promise.all([
-    insertLocation(
-      khartoumId,
-      "Khartoum",
-      1,
-      "MULTIPOLYGON(((31.7 15.19, 34.38 15.19, 34.38 16.63, 31.7 16.63, 31.7 15.19)))",
-      sudan.id,
-    ),
-    insertLocation(
-      northDarfurId,
-      "North Darfur",
-      1,
-      "MULTIPOLYGON(((23.0 13.0, 27.5 13.0, 27.5 20.0, 23.0 20.0, 23.0 13.0)))",
-      sudan.id,
-    ),
-    insertLocation(
-      southDarfurId,
-      "South Darfur",
-      1,
-      "MULTIPOLYGON(((23.5 8.65, 27.5 8.65, 27.5 13.12, 23.5 13.12, 23.5 8.65)))",
-      sudan.id,
-    ),
-    insertLocation(
-      northKordofanId,
-      "North Kordofan",
-      1,
-      "MULTIPOLYGON(((27.5 12.0, 32.5 12.0, 32.5 16.0, 27.5 16.0, 27.5 12.0)))",
-      sudan.id,
-    ),
-  ]);
-
-  // Level 2: Localities
-  const khartoumCityId = randomUUID();
-  const omdurmanId = randomUUID();
-  const elFasherId = randomUUID();
-  const kutumId = randomUUID();
-  const nyalaId = randomUUID();
-  const elDaeinId = randomUUID();
-
-  const [khartoumCity, omdurman, elFasher, kutum, nyala, elDaein] = await Promise.all([
-    insertLocation(khartoumCityId, "Khartoum City", 2, "POINT(32.56 15.59)", khartoum.id),
-    insertLocation(omdurmanId, "Omdurman", 2, "POINT(32.48 15.64)", khartoum.id),
-    insertLocation(elFasherId, "El Fasher", 2, "POINT(25.35 13.63)", northDarfur.id),
-    insertLocation(kutumId, "Kutum", 2, "POINT(24.67 14.20)", northDarfur.id),
-    insertLocation(nyalaId, "Nyala", 2, "POINT(24.88 12.05)", southDarfur.id),
-    insertLocation(elDaeinId, "Ed Daein", 2, "POINT(26.13 11.46)", southDarfur.id),
-  ]);
-
-  console.log("Created 11 locations (1 country, 4 states, 6 localities) with geographic data");
+  // Convenience aliases for signal/event seed data
+  const khartoum = loc.khartoum!;
+  const northDarfur = loc.northDarfur!;
+  const southDarfur = loc.southDarfur!;
+  const khartoumCity = loc.khartoumCity!;
+  const omdurman = loc.omdurman!;
+  const elFasher = loc.elFasher!;
+  const kutum = loc.kutum!;
+  const nyala = loc.nyala!;
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
   const [dataminr, acled, gdacs, dtm] = await Promise.all([
@@ -598,9 +836,26 @@ async function seed() {
   console.log("  viewer@clear.dev   / password123  (role: viewer)");
 }
 
-seed()
-  .catch((e) => {
-    console.error("Seed failed:", e);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+// ─── CLI Entry Point ─────────────────────────────────────────────────────────
+// Usage:
+//   bun run prisma/seed.ts                 # Full seed (all tables)
+//   bun run prisma/seed.ts --locations     # Seed only locations
+
+const args = process.argv.slice(2);
+
+if (args.includes("--locations")) {
+  seedLocations()
+    .then(() => console.log("Location seed complete."))
+    .catch((e) => {
+      console.error("Location seed failed:", e);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+} else {
+  seed()
+    .catch((e) => {
+      console.error("Seed failed:", e);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+}
