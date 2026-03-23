@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { resolveLatLngToLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateEventInput {
@@ -20,6 +21,8 @@ interface CreateEventInput {
   populationAffected?: string;
   rank: number;
   signalIds: string[];
+  lat?: number;
+  lng?: number;
 }
 
 interface UpdateEventInput {
@@ -54,6 +57,19 @@ export const eventResolvers = {
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.events.findMany({ where: filter });
+    },
+    eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
+      requireAuth(context);
+      const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      return context.prisma.events.findMany({
+        where: {
+          OR: [
+            { originId: { in: locationIds } },
+            { destinationId: { in: locationIds } },
+            { locationId: { in: locationIds } },
+          ],
+        },
+      });
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireAuth(context);
@@ -99,6 +115,15 @@ export const eventResolvers = {
       requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
+      // Resolve lat/lng to a location if no explicit locationId is provided
+      let locationId = input.locationId;
+      if (!locationId && input.lat != null && input.lng != null) {
+        const resolved = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
+        if (resolved) {
+          locationId = resolved.id;
+        }
+      }
+
       const event = await context.prisma.events.create({
         data: {
           title: input.title,
@@ -112,7 +137,7 @@ export const eventResolvers = {
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
           originId: input.originId,
           destinationId: input.destinationId,
-          locationId: input.locationId,
+          locationId,
           types: input.types,
           populationAffected: input.populationAffected
             ? BigInt(input.populationAffected)
