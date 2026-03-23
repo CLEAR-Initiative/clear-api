@@ -161,10 +161,10 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation  organisations  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  members       teamMembers[]
-  locations     teamLocations[]
-  defaultForUsers user[]       @relation("DefaultTeam")
+  organisation    organisations   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members         teamMembers[]
+  locations       teamLocations[]
+  defaultForUsers user[]          @relation("DefaultTeam")
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -202,14 +202,15 @@ model teamLocations {
 // ─── Geography ───────────────────────────────────────────────────────────────
 
 model locations {
-  id       String                                  @id @default(cuid())
-  geoId    Int?                                    @map("geonames_id")
-  osmId    BigInt?                                 @map("osm_id")
-  pCode    String?                                 @map("p_code") @db.VarChar(50)
-  geometry Unsupported("geometry(Geometry, 4326)") // use CHECK (GeometryType(geometry) IN ('POINT', 'MULTIPOLYGON'))
-  name     String
-  level    Int
-  parentId String?                                 @map("parent_id")
+  id          String                                  @id @default(cuid())
+  geoId       Int?                                    @map("geonames_id")
+  osmId       BigInt?                                 @map("osm_id")
+  pCode       String?                                 @map("p_code") @db.VarChar(50)
+  geometry    Unsupported("geometry(Geometry, 4326)") // use CHECK (GeometryType(geometry) IN ('POINT', 'MULTIPOLYGON'))
+  name        String
+  level       Int
+  parentId    String?                                 @map("parent_id")
+  ancestorIds String[]                                @map("ancestor_ids")
 
   parent   locations?  @relation("LocationHierarchy", fields: [parentId], references: [id])
   children locations[] @relation("LocationHierarchy")
@@ -231,6 +232,7 @@ model locations {
 
   @@index([level])
   @@index([parentId])
+  @@index([ancestorIds(ops: ArrayOps)], type: Gin)
 }
 
 // ─── Data Mining ─────────────────────────────────────────────────────────────

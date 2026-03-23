@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { resolveLatLngToLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateSignalInput {
@@ -16,6 +17,8 @@ interface CreateSignalInput {
   originId?: string;
   destinationId?: string;
   locationId?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export const signalResolvers = {
@@ -33,6 +36,19 @@ export const signalResolvers = {
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
       const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.signals.findMany({ where: filter });
+    },
+    signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
+      requireAuth(context);
+      const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      return context.prisma.signals.findMany({
+        where: {
+          OR: [
+            { originId: { in: locationIds } },
+            { destinationId: { in: locationIds } },
+            { locationId: { in: locationIds } },
+          ],
+        },
+      });
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireAuth(context);
@@ -84,6 +100,15 @@ export const signalResolvers = {
         });
       }
 
+      // Resolve lat/lng to a location if no explicit locationId is provided
+      let locationId = input.locationId;
+      if (!locationId && input.lat != null && input.lng != null) {
+        const resolved = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
+        if (resolved) {
+          locationId = resolved.id;
+        }
+      }
+
       return context.prisma.signals.create({
         data: {
           sourceId: input.sourceId,
@@ -95,7 +120,7 @@ export const signalResolvers = {
           description: input.description,
           originId: input.originId,
           destinationId: input.destinationId,
-          locationId: input.locationId,
+          locationId,
         },
       });
     },
