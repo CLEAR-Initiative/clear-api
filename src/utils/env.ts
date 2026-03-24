@@ -20,6 +20,10 @@ const envSchema = z.object({
   SMTP_FROM: z.string().default("noreply@clear-platform.org"),
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
+
+  // Global admin seed (env overrides seed defaults)
+  ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
+  ADMIN_PASSWORD: z.string().min(8).default("password123"),
 });
 
 const parsed = envSchema.parse(process.env);
