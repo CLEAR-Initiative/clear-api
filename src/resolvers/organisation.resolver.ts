@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface CreateOrganisationInput {
   name: string;
@@ -21,6 +21,14 @@ export const organisationResolvers = {
       context: Context,
     ) => {
       const user = requireAuth(context);
+
+      // Global admins see all organisations
+      if (user.role === "admin") {
+        return context.prisma.organisations.findMany({
+          orderBy: { createdAt: "desc" },
+        });
+      }
+
       const memberships = await context.prisma.organisationUsers.findMany({
         where: { userId: user.id },
         select: { organisationId: true },
@@ -68,7 +76,8 @@ export const organisationResolvers = {
       args: { input: CreateOrganisationInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      // Only global admins can create organisations
+      requireRole(context, ["admin"]);
       const { name, slug } = args.input;
 
       const existing = await context.prisma.organisations.findUnique({
@@ -80,18 +89,33 @@ export const organisationResolvers = {
         });
       }
 
+      // Global admin creates the org but is NOT added as a member —
+      // they control everything via their global role.
       return context.prisma.organisations.create({
-        data: {
-          name,
-          slug,
-          users: {
-            create: {
-              userId: user.id,
-              role: "owner",
-            },
-          },
-        },
+        data: { name, slug },
       });
+    },
+
+    deleteOrganisation: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      // Only global admins can delete organisations
+      requireRole(context, ["admin"]);
+
+      const org = await context.prisma.organisations.findUnique({
+        where: { id: args.id },
+      });
+      if (!org) {
+        throw new GraphQLError("Organisation not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Cascade is handled by Prisma schema (onDelete: Cascade on teams, members, invitations)
+      await context.prisma.organisations.delete({ where: { id: args.id } });
+      return true;
     },
 
     updateOrganisation: async (

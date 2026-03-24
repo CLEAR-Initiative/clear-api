@@ -120,5 +120,111 @@ export const authResolvers = {
 
       return true;
     },
+
+    requestPasswordReset: async (
+      _parent: unknown,
+      args: { email: string },
+      context: Context,
+    ) => {
+      // Always return true to prevent email enumeration
+      const user = await context.prisma.user.findUnique({
+        where: { email: args.email },
+      });
+
+      if (!user) return true;
+
+      // Throttle check
+      const identifier = `password-reset:${args.email}`;
+      const recent = await context.prisma.verification.findFirst({
+        where: { identifier },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (recent?.createdAt && Date.now() - recent.createdAt.getTime() < THROTTLE_MS) {
+        // Silently succeed — don't reveal throttle to client
+        return true;
+      }
+
+      // Clean up old tokens
+      await context.prisma.verification.deleteMany({ where: { identifier } });
+
+      // Create reset token (1 hour expiry)
+      const token = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+      await context.prisma.verification.create({
+        data: { identifier, value: token, expiresAt },
+      });
+
+      // Send password reset email
+      const resetUrl = `${env.FRONTEND_URL}/auth/reset-password?token=${token}`;
+      const emailContent = templates.passwordReset(user.name, resetUrl);
+
+      try {
+        const provider = await getEmailProvider();
+        await provider.send({
+          to: args.email,
+          subject: emailContent.subject,
+          textBody: emailContent.textBody,
+          htmlBody: emailContent.htmlBody,
+        });
+      } catch (error) {
+        console.error("[AUTH] Failed to send password reset email:", error instanceof Error ? error.message : error);
+        // Don't throw — silently fail to prevent info leakage
+      }
+
+      return true;
+    },
+
+    resetPassword: async (
+      _parent: unknown,
+      args: { token: string; newPassword: string },
+      context: Context,
+    ) => {
+      if (args.newPassword.length < 8) {
+        throw new GraphQLError("Password must be at least 8 characters", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const verification = await context.prisma.verification.findFirst({
+        where: {
+          value: args.token,
+          identifier: { startsWith: "password-reset:" },
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+      if (!verification) {
+        throw new GraphQLError("Invalid or expired reset token", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const email = verification.identifier.replace("password-reset:", "");
+      const user = await context.prisma.user.findUnique({ where: { email } });
+
+      if (!user) {
+        throw new GraphQLError("User not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Hash new password using Better Auth's built-in hasher
+      const { hashPassword } = await import("better-auth/crypto");
+      const hashedPassword = await hashPassword(args.newPassword);
+
+      await context.prisma.account.updateMany({
+        where: { userId: user.id, providerId: "credential" },
+        data: { password: hashedPassword },
+      });
+
+      // Clean up verification token
+      await context.prisma.verification.delete({
+        where: { id: verification.id },
+      });
+
+      return true;
+    },
   },
 };

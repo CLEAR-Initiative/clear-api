@@ -83,5 +83,12 @@ export const queryTypeDef = gql`
 
     """Look up a team by ID. Requires membership or global admin."""
     team(id: String!): Team
+
+    # ─── Invitations ──────────────────────────────────────────────────────────
+    """List pending invitations for an organisation. Requires org admin."""
+    pendingInvites(organisationId: String!): [Invitation!]!
+
+    """Look up an invitation by token (public — used on accept-invite page)."""
+    invitationByToken(token: String!): InvitationInfo
   }
 `;
