@@ -1,7 +1,10 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -14,13 +17,82 @@ interface UpdateAlertInput {
 
 export const alertResolvers = {
   Query: {
-    alerts: (_parent: unknown, args: { status?: AlertStatus }, { prisma }: Context) => {
-      return prisma.alerts.findMany({
-        where: args.status ? { status: args.status } : undefined,
+    alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string }, context: Context) => {
+      const user = requireAuth(context);
+      if (!args.teamId) {
+        if (user.role !== "admin") {
+          throw new GraphQLError("teamId is required", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        return context.prisma.alerts.findMany({
+          where: args.status ? { status: args.status } : undefined,
+        });
+      }
+      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      const eventLocationFilter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
+      return context.prisma.alerts.findMany({
+        where: {
+          ...(args.status ? { status: args.status } : {}),
+          ...(eventLocationFilter ? { event: eventLocationFilter } : {}),
+        },
       });
     },
-    alert: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.alerts.findUnique({ where: { id: args.id } });
+    alertsByLocation: async (
+      _parent: unknown,
+      args: { locationId: string; status?: AlertStatus },
+      context: Context,
+    ) => {
+      requireAuth(context);
+      const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      return context.prisma.alerts.findMany({
+        where: {
+          ...(args.status ? { status: args.status } : {}),
+          event: {
+            OR: [
+              { originId: { in: locationIds } },
+              { destinationId: { in: locationIds } },
+              { locationId: { in: locationIds } },
+            ],
+          },
+        },
+      });
+    },
+    alert: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const user = requireAuth(context);
+      const alert = await context.prisma.alerts.findUnique({
+        where: { id: args.id },
+        include: { event: true },
+      });
+      if (!alert) return null;
+      if (user.role !== "admin") {
+        const teamMemberships = await context.prisma.teamMembers.findMany({
+          where: { userId: user.id },
+          select: { teamId: true },
+        });
+        if (teamMemberships.length === 0) {
+          throw new GraphQLError("No team membership found", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+        let accessible = false;
+        for (const { teamId } of teamMemberships) {
+          const eventFilter = await buildEventLocationFilterForTeam(context.prisma, teamId);
+          if (!eventFilter) { accessible = true; break; }
+          const found = await context.prisma.alerts.findFirst({
+            where: { id: args.id, event: eventFilter },
+          });
+          if (found) { accessible = true; break; }
+        }
+        if (!accessible) {
+          throw new GraphQLError("Alert not accessible from your teams", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+      }
+      // Return without the included event to match the type
+      const { event: _event, ...alertData } = alert;
+      return alertData;
     },
   },
   Mutation: {

@@ -19,5 +19,9 @@ export const locationTypeDef = gql`
     parent: Location
     """Child locations one level below."""
     children: [Location!]!
+    """IDs of all ancestor locations (parent, grandparent, etc.)."""
+    ancestorIds: [String!]!
+    """All ancestor locations (parent, grandparent, etc.)."""
+    ancestors: [Location!]!
   }
 `;

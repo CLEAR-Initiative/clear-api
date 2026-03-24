@@ -13,6 +13,9 @@ import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
 import { feedbackTypeDef } from "./typeDefs/types/feedback.js";
 import { disasterTypeTypeDef } from "./typeDefs/types/disasterType.js";
+import { organisationTypeDef } from "./typeDefs/types/organisation.js";
+import { teamTypeDef } from "./typeDefs/types/team.js";
+import { invitationTypeDef } from "./typeDefs/types/invitation.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -30,4 +33,7 @@ export const typeDefs = [
   apiKeyTypeDef,
   feedbackTypeDef,
   disasterTypeTypeDef,
+  organisationTypeDef,
+  teamTypeDef,
+  invitationTypeDef,
 ];
