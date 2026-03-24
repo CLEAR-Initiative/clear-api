@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma.js";
 import { auth } from "../src/lib/auth.js";
+import { env } from "../src/utils/env.js";
 
 // ─── Location Seeding (can be run independently) ────────────────────────────
 
@@ -325,6 +326,7 @@ async function seed() {
   await prisma.featureFlags.deleteMany();
   await prisma.disasterTypes.deleteMany();
   await prisma.dataSources.deleteMany();
+  await prisma.invitations.deleteMany();
   await prisma.organisationUsers.deleteMany();
   await prisma.organisations.deleteMany();
   console.log("Cleared existing data (users, sessions, accounts, and API keys preserved).");
@@ -337,30 +339,36 @@ async function seed() {
     return signup.user;
   }
 
-  const admin = await getOrCreateUser("Admin User", "admin@clear.dev", "password123");
-  const analyst = await getOrCreateUser("Analyst User", "analyst@clear.dev", "password123");
-  const viewer = await getOrCreateUser("Viewer User", "viewer@clear.dev", "password123");
-
-  // ─── Organisation & Roles ─────────────────────────────────────────────────
-  const org = await prisma.organisations.create({
-    data: { name: "CLEAR Platform" },
+  const admin = await getOrCreateUser("Admin User", env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
+  // Ensure admin has global admin role and verified email
+  await prisma.user.update({
+    where: { id: admin.id },
+    data: { role: "admin", emailVerified: true },
   });
 
-  await Promise.all([
-    prisma.organisationUsers.create({
-      data: { userId: admin.id, organisationId: org.id, role: "admin" },
-    }),
-    prisma.organisationUsers.create({
-      data: { userId: analyst.id, organisationId: org.id, role: "analyst" },
-    }),
-    prisma.organisationUsers.create({
-      data: { userId: viewer.id, organisationId: org.id, role: "viewer" },
-    }),
-  ]);
+  const analyst = await getOrCreateUser("Analyst User", "analyst@clear.dev", "password123");
+  await prisma.user.update({ where: { id: analyst.id }, data: { emailVerified: true } });
+
+  const viewer = await getOrCreateUser("Viewer User", "viewer@clear.dev", "password123");
+  await prisma.user.update({ where: { id: viewer.id }, data: { emailVerified: true } });
+
+  // ─── Organisation ────────────────────────────────────────────────────────
+  // Global admin (admin@clear.dev) does NOT need org membership — global role is sufficient.
+  // Analyst is added as the org owner for demo purposes.
+  const org = await prisma.organisations.create({
+    data: { name: "CLEAR Platform", slug: "clear-platform" },
+  });
+
+  await prisma.organisationUsers.create({
+    data: { userId: analyst.id, organisationId: org.id, role: "owner" },
+  });
 
   console.log(
     `Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`,
   );
+  console.log("  admin@clear.dev is global admin (no org membership needed)");
+  console.log("  analyst@clear.dev is org owner of 'CLEAR Platform'");
+  console.log("  viewer@clear.dev has no org membership (invite-only)");
 
   const loc = await seedLocations();
 

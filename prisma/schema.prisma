@@ -80,6 +80,7 @@ model user {
   userFeedbacks         userFeedbacks[]
   userComments          userComments[]
   commentTags           commentTags[]
+  invitationsSent       invitations[] @relation("InvitedBy")
 }
 
 model session {
@@ -132,8 +133,9 @@ model organisations {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users organisationUsers[]
-  teams teams[]
+  users       organisationUsers[]
+  teams       teams[]
+  invitations invitations[]
 }
 
 model organisationUsers {
@@ -165,6 +167,7 @@ model teams {
   members         teamMembers[]
   locations       teamLocations[]
   defaultForUsers user[]          @relation("DefaultTeam")
+  invitations     invitations[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -197,6 +200,30 @@ model teamLocations {
   @@unique([teamId, locationId])
   @@index([locationId])
   @@map("team_locations")
+}
+
+// ─── Invitations ─────────────────────────────────────────────────────────────
+
+model invitations {
+  id             String    @id @default(cuid())
+  email          String
+  organisationId String    @map("organisation_id")
+  teamId         String?   @map("team_id")
+  role           String    @default("member") // org role: owner | admin | member
+  teamRole       String?   @map("team_role") // team role: lead | analyst | viewer
+  token          String    @unique
+  expiresAt      DateTime  @map("expires_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  invitedById    String    @map("invited_by_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organisation organisations @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  team         teams?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  invitedBy    user          @relation("InvitedBy", fields: [invitedById], references: [id])
+
+  @@index([email])
+  @@index([organisationId])
+  @@map("invitations")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────

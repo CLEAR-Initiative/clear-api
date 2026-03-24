@@ -93,6 +93,9 @@ export const mutationTypeDef = gql`
     """Remove a member from an organisation."""
     removeOrgMember(orgId: String!, userId: String!): Boolean!
 
+    """Delete an organisation and all its teams, members, and invitations. Requires global admin."""
+    deleteOrganisation(id: String!): Boolean!
+
     # ─── Teams ─────────────────────────────────────────────────────────────────
     """Create a new team within an organisation. Requires org admin or owner."""
     createTeam(input: CreateTeamInput!): Team!
@@ -117,9 +120,45 @@ export const mutationTypeDef = gql`
 
     """Set the authenticated user's default team (for frontend convenience)."""
     setDefaultTeam(teamId: String!): Team!
+
+    # ─── Invitations ──────────────────────────────────────────────────────────
+    """Invite a user to an organisation (and optionally a team). Sends invite email."""
+    inviteUser(input: InviteUserInput!): Invitation!
+
+    """Accept an invitation. Creates user account if new, adds to org and team."""
+    acceptInvite(input: AcceptInviteInput!): Boolean!
+
+    """Cancel a pending invitation."""
+    cancelInvite(id: String!): Boolean!
+
+    """Resend an invitation email (resets expiry to 7 days)."""
+    resendInvite(id: String!): Invitation!
+
+    # ─── Password Reset ──────────────────────────────────────────────────────
+    """Request a password reset email (public, always returns true)."""
+    requestPasswordReset(email: String!): Boolean!
+
+    """Reset password using a token from the reset email."""
+    resetPassword(token: String!, newPassword: String!): Boolean!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
+
+  input InviteUserInput {
+    email: String!
+    organisationId: String!
+    teamId: String
+    """Organisation role: owner, admin, member (default: member)."""
+    role: String
+    """Team role: lead, analyst, viewer (default: viewer). Only used if teamId is provided."""
+    teamRole: String
+  }
+
+  input AcceptInviteInput {
+    token: String!
+    name: String!
+    password: String!
+  }
 
   input UpdateProfileInput {
     name: String
