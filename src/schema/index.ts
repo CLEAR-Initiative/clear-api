@@ -15,6 +15,7 @@ import { feedbackTypeDef } from "./typeDefs/types/feedback.js";
 import { disasterTypeTypeDef } from "./typeDefs/types/disasterType.js";
 import { organisationTypeDef } from "./typeDefs/types/organisation.js";
 import { teamTypeDef } from "./typeDefs/types/team.js";
+import { invitationTypeDef } from "./typeDefs/types/invitation.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -34,4 +35,5 @@ export const typeDefs = [
   disasterTypeTypeDef,
   organisationTypeDef,
   teamTypeDef,
+  invitationTypeDef,
 ];
