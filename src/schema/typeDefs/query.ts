@@ -11,23 +11,32 @@ export const queryTypeDef = gql`
     """Look up a user by ID."""
     user(id: String!): User
 
-    """List alerts, optionally filtered by status."""
-    alerts(status: AlertStatus): [Alert!]!
+    """List alerts. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
+    alerts(status: AlertStatus, teamId: String): [Alert!]!
 
-    """Look up an alert by ID."""
+    """Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope."""
     alert(id: String!): Alert
 
-    """List all signals."""
-    signals: [Signal!]!
+    """List signals. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
+    signals(teamId: String): [Signal!]!
 
-    """Look up a signal by ID."""
+    """Look up a signal by ID. Requires authentication. Non-admins can only access signals within their team scope."""
     signal(id: String!): Signal
 
-    """List all events."""
-    events: [Event!]!
+    """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
+    signalsByLocation(locationId: String!): [Signal!]!
 
-    """Look up an event by ID."""
+    """List events. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
+    events(teamId: String): [Event!]!
+
+    """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event
+
+    """List events by location. Returns all events whose origin, destination, or general location is within the given location (including descendants)."""
+    eventsByLocation(locationId: String!): [Event!]!
+
+    """List alerts by location. Returns all alerts whose event's location is within the given location (including descendants)."""
+    alertsByLocation(locationId: String!, status: AlertStatus): [Alert!]!
 
     """List all data sources."""
     dataSources: [DataSource!]!
@@ -61,5 +70,25 @@ export const queryTypeDef = gql`
 
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
+
+    # ─── Organisations & Teams ─────────────────────────────────────────────────
+    """List organisations the authenticated user belongs to."""
+    myOrganisations: [Organisation!]!
+
+    """Look up an organisation by ID. Requires membership or global admin."""
+    organisation(id: String!): Organisation
+
+    """List teams the authenticated user belongs to."""
+    myTeams: [Team!]!
+
+    """Look up a team by ID. Requires membership or global admin."""
+    team(id: String!): Team
+
+    # ─── Invitations ──────────────────────────────────────────────────────────
+    """List pending invitations for an organisation. Requires org admin."""
+    pendingInvites(organisationId: String!): [Invitation!]!
+
+    """Look up an invitation by token (public — used on accept-invite page)."""
+    invitationByToken(token: String!): InvitationInfo
   }
 `;

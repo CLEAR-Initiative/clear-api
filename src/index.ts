@@ -6,7 +6,6 @@ import express from "express";
 import http from "node:http";
 import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
-import { makeExecutableSchema } from "@graphql-tools/schema";
 import { typeDefs } from "./schema/index.js";
 import { resolvers } from "./resolvers/index.js";
 import { createContext, type Context } from "./context.js";
@@ -20,10 +19,9 @@ import { createDocsRouter } from "./docs/index.js";
 const app = express();
 const httpServer = http.createServer(app);
 
-const schema = makeExecutableSchema({ typeDefs, resolvers });
-
 const server = new ApolloServer<Context>({
-  schema,
+  typeDefs,
+  resolvers,
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
   introspection: env.NODE_ENV !== "production",
 });
@@ -39,8 +37,8 @@ app.all("/api/auth/*splat", toNodeHandler(auth));
 // Developer portal
 app.use("/portal", portalRouter);
 
-// Auto-generated docs (introspects the running schema)
-app.use("/docs", createDocsRouter(schema));
+// Auto-generated docs (pre-built HTML)
+app.use("/docs", createDocsRouter());
 
 // Public home page
 app.use("/", homeRouter);

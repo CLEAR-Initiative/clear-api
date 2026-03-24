@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLEAR API — Documentation</title>
+  <style>
+    :root {
+      --color-bg: #0f1117;
+      --color-surface: #1a1d27;
+      --color-border: #2e3347;
+      --color-accent: #6366f1;
+      --color-accent-hover: #4f52d4;
+      --color-text: #e2e8f0;
+      --color-muted: #8892a4;
+      --color-code-bg: #12141c;
+      --radius: 8px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
+      --sidebar-width: 240px;
+      --toc-width: 200px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
+    a { color: var(--color-accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Nav */
+    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); position: sticky; top: 0; z-index: 100; }
+    .nav-brand { font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; color: var(--color-text); text-decoration: none; }
+    .nav-brand span { color: var(--color-accent); }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a { font-size: 0.875rem; color: var(--color-muted); }
+    .nav-links a:hover { color: var(--color-text); text-decoration: none; }
+
+    /* Layout */
+    .layout { display: flex; min-height: calc(100vh - 49px); }
+
+    /* Left sidebar */
+    .sidebar { width: var(--sidebar-width); flex-shrink: 0; border-right: 1px solid var(--color-border); background: var(--color-surface); padding: 1.5rem 0; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
+    .sidebar-section { padding: 0 1.25rem; margin-bottom: 1.5rem; }
+    .sidebar-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
+    .sidebar-link { display: block; font-size: 0.85rem; color: var(--color-muted); padding: 0.25rem 0; transition: color 0.1s; }
+    .sidebar-link:hover { color: var(--color-text); text-decoration: none; }
+    .sidebar-link.active { color: var(--color-accent); }
+    .sidebar-link.depth-2 { padding-left: 0.75rem; font-size: 0.8rem; }
+
+    /* Main content */
+    .content { flex: 1; max-width: 780px; padding: 2.5rem 3rem; min-width: 0; }
+    .content h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    .content h2 { font-size: 1.3rem; margin: 2.5rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+    .content h2:first-of-type { border-top: none; padding-top: 0; }
+    .content h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+    .content p { color: var(--color-muted); margin-bottom: 0.75rem; }
+    .content ul { padding-left: 1.5rem; color: var(--color-muted); margin-bottom: 0.75rem; }
+    .content li { margin: 0.3rem 0; }
+    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
+
+    /* Right TOC */
+    .toc { width: var(--toc-width); flex-shrink: 0; padding: 1.5rem 1rem; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
+    .toc-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
+    .toc a { display: block; font-size: 0.78rem; color: var(--color-muted); padding: 0.2rem 0; }
+    .toc a:hover { color: var(--color-text); text-decoration: none; }
+    .toc a.active { color: var(--color-accent); }
+
+    /* Code */
+    pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
+    code { font-family: var(--font-mono); font-size: 0.85rem; color: #a5f3fc; }
+    p code, li code, td code { background: var(--color-code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
+    .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; background: var(--color-border); border: none; border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 0.75rem; font-family: var(--font); }
+    .copy-btn:hover { background: var(--color-accent); color: #fff; }
+
+    /* Reference tables */
+    .ref-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    .ref-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
+    .ref-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; vertical-align: top; }
+    .ref-table td:first-child { white-space: nowrap; }
+
+    /* Field args */
+    .field-args { margin-top: 0.35rem; }
+    .field-args .arg { display: block; font-size: 0.78rem; color: var(--color-muted); padding-left: 0.5rem; border-left: 2px solid var(--color-border); margin-top: 0.2rem; }
+
+    /* Type badge */
+    .type-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; background: var(--color-border); color: var(--color-muted); }
+
+    /* Feature table */
+    .feature-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .feature-table th { text-align: left; padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
+    .feature-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
+    .feature-table td:first-child a { font-weight: 500; }
+
+    /* Steps */
+    .steps { margin-top: 1rem; }
+    .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: #fff; }
+    .step-content h4 { margin: 0 0 0.25rem; color: var(--color-text); font-size: 0.95rem; }
+    .step-content p { margin: 0.25rem 0; }
+
+    /* Notice */
+    .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
+    .notice-info { background: #0c1a3a; border: 1px solid #3b82f6; color: #93c5fd; }
+    .notice-warning { background: #451a03; border: 1px solid #f59e0b; color: #fde68a; }
+
+    /* Responsive */
+    @media (max-width: 1100px) {
+      .toc { display: none; }
+    }
+    @media (max-width: 800px) {
+      .sidebar { display: none; }
+      .content { padding: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-brand" href="/"><span>&#9670;</span> CLEAR API</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/portal">Developer Portal</a>
+      <a href="/graphql">GraphQL Sandbox</a>
+    </div>
+  </nav>
+
+  <div class="layout">
+    <!-- Left sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Get Started</div>
+        <a href="#introduction" class="sidebar-link">Introduction</a>
+        <a href="#quick-start" class="sidebar-link">Quick Start</a>
+        <a href="#authentication" class="sidebar-link">Authentication</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Features</div>
+        <a href="#features" class="sidebar-link">Overview</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">API Reference</div>
+        <a href="#queries" class="sidebar-link">Queries</a>
+        <a href="#mutations" class="sidebar-link">Mutations</a>
+        <a href="#types" class="sidebar-link">Types</a>
+        <a href="#type-datetime" class="sidebar-link depth-2">DateTime</a><a href="#type-geojson" class="sidebar-link depth-2">GeoJSON</a><a href="#type-json" class="sidebar-link depth-2">JSON</a><a href="#type-alertstatus" class="sidebar-link depth-2">AlertStatus</a><a href="#type-detectionstatus" class="sidebar-link depth-2">DetectionStatus</a><a href="#type-notificationstatus" class="sidebar-link depth-2">NotificationStatus</a><a href="#type-orgmemberrole" class="sidebar-link depth-2">OrgMemberRole</a><a href="#type-teammemberrole" class="sidebar-link depth-2">TeamMemberRole</a><a href="#type-createalertinput" class="sidebar-link depth-2">CreateAlertInput</a><a href="#type-createapikeyinput" class="sidebar-link depth-2">CreateApiKeyInput</a><a href="#type-createdatasourceinput" class="sidebar-link depth-2">CreateDataSourceInput</a><a href="#type-createeventinput" class="sidebar-link depth-2">CreateEventInput</a><a href="#type-createlocationinput" class="sidebar-link depth-2">CreateLocationInput</a><a href="#type-createnotificationinput" class="sidebar-link depth-2">CreateNotificationInput</a><a href="#type-createorganisationinput" class="sidebar-link depth-2">CreateOrganisationInput</a><a href="#type-createsignalinput" class="sidebar-link depth-2">CreateSignalInput</a><a href="#type-createteaminput" class="sidebar-link depth-2">CreateTeamInput</a><a href="#type-updatealertinput" class="sidebar-link depth-2">UpdateAlertInput</a><a href="#type-updatedatasourceinput" class="sidebar-link depth-2">UpdateDataSourceInput</a><a href="#type-updateeventinput" class="sidebar-link depth-2">UpdateEventInput</a><a href="#type-updatelocationinput" class="sidebar-link depth-2">UpdateLocationInput</a><a href="#type-updateorganisationinput" class="sidebar-link depth-2">UpdateOrganisationInput</a><a href="#type-updateprofileinput" class="sidebar-link depth-2">UpdateProfileInput</a><a href="#type-updateteaminput" class="sidebar-link depth-2">UpdateTeamInput</a><a href="#type-alert" class="sidebar-link depth-2">Alert</a><a href="#type-apikey" class="sidebar-link depth-2">ApiKey</a><a href="#type-commenttag" class="sidebar-link depth-2">CommentTag</a><a href="#type-createapikeypayload" class="sidebar-link depth-2">CreateApiKeyPayload</a><a href="#type-datasource" class="sidebar-link depth-2">DataSource</a><a href="#type-disastertype" class="sidebar-link depth-2">DisasterType</a><a href="#type-event" class="sidebar-link depth-2">Event</a><a href="#type-eventescalation" class="sidebar-link depth-2">EventEscalation</a><a href="#type-featureflag" class="sidebar-link depth-2">FeatureFlag</a><a href="#type-location" class="sidebar-link depth-2">Location</a><a href="#type-notification" class="sidebar-link depth-2">Notification</a><a href="#type-organisation" class="sidebar-link depth-2">Organisation</a><a href="#type-organisationuser" class="sidebar-link depth-2">OrganisationUser</a><a href="#type-orgmember" class="sidebar-link depth-2">OrgMember</a><a href="#type-signal" class="sidebar-link depth-2">Signal</a><a href="#type-team" class="sidebar-link depth-2">Team</a><a href="#type-teammember" class="sidebar-link depth-2">TeamMember</a><a href="#type-user" class="sidebar-link depth-2">User</a><a href="#type-useralert" class="sidebar-link depth-2">UserAlert</a><a href="#type-usercomment" class="sidebar-link depth-2">UserComment</a><a href="#type-userfeedback" class="sidebar-link depth-2">UserFeedback</a>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="content">
+      <div id="section-introduction">
+        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
+        <h1 id="introduction">Introduction</h1>
+        <p class="subtitle">Welcome to the CLEAR API - your gateway to humanitarian intelligence.</p>
+
+        <p>The CLEAR API gives you programmatic access to signals, events, alerts, data sources, and geographic location data through a single GraphQL endpoint. Whether you&rsquo;re building a monitoring dashboard, integrating alerts into your workflow, or analysing humanitarian patterns, this API has you covered.</p>
+
+        <p>Everything here is accessible via GraphQL at <code>/graphql</code>. You send a query describing exactly the data you want, and you get back precisely that &mdash; nothing more, nothing less.</p>
+
+        <h2 id="features">What You Can Do</h2>
+        <table class="feature-table">
+          <thead><tr><th>Feature</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><a href="#type-signal">Signals</a></td><td>Access raw data items collected from data sources, with location links and metadata.</td></tr>
+            <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent situations, with location, population, and type data.</td></tr>
+            <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
+            <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
+            <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; with PostGIS geometry.</td></tr>
+            <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
+            <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
+            <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="section-quickstart">
+        <h2 id="quick-start">Quick Start</h2>
+        <p>Go from zero to your first API response in three steps.</p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Create an account</h4>
+              <p>Head to the <a href="/portal">Developer Portal</a> and sign up. It takes about ten seconds.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Generate an API key</h4>
+              <p>In the portal, go to <a href="/portal#api-keys">API Keys</a> and create one. Copy it immediately &mdash; you won&rsquo;t see it again.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <h4>Make your first query</h4>
+              <p>Send a request with your key in the <code>Authorization</code> header:</p>
+              <pre><code>curl -X POST https://api.clearinitiative.io/graphql \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ me { id email } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+            </div>
+          </div>
+        </div>
+
+        <p>Want to explore interactively? Open the <a href="/graphql" target="_blank">GraphQL Sandbox</a> to browse the full schema, autocomplete queries, and test requests in your browser.</p>
+      </div>
+
+      <div id="section-authentication">
+        <h2 id="authentication">Authentication</h2>
+        <p>Two ways to authenticate, depending on your use case.</p>
+
+        <h3>API Keys (server-to-server)</h3>
+        <p>Pass your key as a Bearer token in the <code>Authorization</code> header:</p>
+        <pre><code>Authorization: Bearer sk_live_your_key_here</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+        <div class="notice notice-warning">
+          Never expose API keys in client-side code or version control. Store them in environment variables or a secrets manager.
+        </div>
+
+        <h3>Session Cookies (browser apps)</h3>
+        <p>Sign in via the REST auth API. The session cookie is set automatically and sent with subsequent requests:</p>
+        <pre><code>// Sign in
+const res = await fetch('/api/auth/sign-in/email', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({ email: 'you@example.com', password: '...' }),
+});
+
+// Then query (cookie sent automatically)
+const data = await fetch('/graphql', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({ query: '{ me { id email } }' }),
+});</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+      </div>
+
+      <div id="section-reference">
+        
+    <h2 id="queries">Queries</h2>
+    <table class="ref-table">
+      <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
+      <tbody><tr>
+    <td><code>me</code></td>
+    <td><code>User</code></td>
+    <td>Returns the currently authenticated user, or null if not signed in.</td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>[User!]!</code></td>
+    <td>List all users.</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User</code></td>
+    <td>Look up a user by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>alerts</code></td>
+    <td><code>[Alert!]!</code></td>
+    <td>List alerts. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to.<div class="field-args"><span class="arg"><code>status: AlertStatus</code></span><span class="arg"><code>teamId: String</code></span></div></td>
+  </tr><tr>
+    <td><code>alert</code></td>
+    <td><code>Alert</code></td>
+    <td>Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>List signals. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to.<div class="field-args"><span class="arg"><code>teamId: String</code></span></div></td>
+  </tr><tr>
+    <td><code>signal</code></td>
+    <td><code>Signal</code></td>
+    <td>Look up a signal by ID. Requires authentication. Non-admins can only access signals within their team scope.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>events</code></td>
+    <td><code>[Event!]!</code></td>
+    <td>List events. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to.<div class="field-args"><span class="arg"><code>teamId: String</code></span></div></td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event</code></td>
+    <td>Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>dataSources</code></td>
+    <td><code>[DataSource!]!</code></td>
+    <td>List all data sources.</td>
+  </tr><tr>
+    <td><code>dataSource</code></td>
+    <td><code>DataSource</code></td>
+    <td>Look up a data source by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>locations</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.).<div class="field-args"><span class="arg"><code>level: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>location</code></td>
+    <td><code>Location</code></td>
+    <td>Look up a location by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>notifications</code></td>
+    <td><code>[Notification!]!</code></td>
+    <td>List notifications, optionally filtered by status.<div class="field-args"><span class="arg"><code>status: NotificationStatus</code></span></div></td>
+  </tr><tr>
+    <td><code>notification</code></td>
+    <td><code>Notification</code></td>
+    <td>Look up a notification by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>featureFlags</code></td>
+    <td><code>[FeatureFlag!]!</code></td>
+    <td>List all feature flags.</td>
+  </tr><tr>
+    <td><code>featureFlag</code></td>
+    <td><code>FeatureFlag</code></td>
+    <td>Look up a feature flag by its unique key.<div class="field-args"><span class="arg"><code>key: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>disasterTypes</code></td>
+    <td><code>[DisasterType!]!</code></td>
+    <td>List all disaster type classifications.</td>
+  </tr><tr>
+    <td><code>disasterType</code></td>
+    <td><code>DisasterType</code></td>
+    <td>Look up a disaster type by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>myApiKeys</code></td>
+    <td><code>[ApiKey!]!</code></td>
+    <td>List all API keys belonging to the authenticated user. Requires authentication.</td>
+  </tr><tr>
+    <td><code>myOrganisations</code></td>
+    <td><code>[Organisation!]!</code></td>
+    <td>List organisations the authenticated user belongs to.</td>
+  </tr><tr>
+    <td><code>organisation</code></td>
+    <td><code>Organisation</code></td>
+    <td>Look up an organisation by ID. Requires membership or global admin.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>myTeams</code></td>
+    <td><code>[Team!]!</code></td>
+    <td>List teams the authenticated user belongs to.</td>
+  </tr><tr>
+    <td><code>team</code></td>
+    <td><code>Team</code></td>
+    <td>Look up a team by ID. Requires membership or global admin.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr></tbody>
+    </table>
+        
+    <h2 id="mutations">Mutations</h2>
+    <table class="ref-table">
+      <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
+      <tbody><tr>
+    <td><code>createApiKey</code></td>
+    <td><code>CreateApiKeyPayload!</code></td>
+    <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>revokeApiKey</code></td>
+    <td><code>ApiKey!</code></td>
+    <td>Revoke an API key by ID. Only the key owner or an admin can revoke.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>requestEmailVerification</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Request an email verification link for the authenticated user.</td>
+  </tr><tr>
+    <td><code>verifyEmail</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Verify email using a token from the verification link.<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateProfile</code></td>
+    <td><code>User!</code></td>
+    <td>Update the authenticated user's profile and notification preferences.<div class="field-args"><span class="arg"><code>input: UpdateProfileInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>createAlert</code></td>
+    <td><code>Alert!</code></td>
+    <td>Create an alert from an event, notifying subscribers.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateAlert</code></td>
+    <td><code>Alert!</code></td>
+    <td>Update an existing alert.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAlertInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteAlert</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete an alert.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createSignal</code></td>
+    <td><code>Signal!</code></td>
+    <td>Create a signal from a data source.<div class="field-args"><span class="arg"><code>input: CreateSignalInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteSignal</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createEvent</code></td>
+    <td><code>Event!</code></td>
+    <td>Create a new event from signals.<div class="field-args"><span class="arg"><code>input: CreateEventInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateEvent</code></td>
+    <td><code>Event!</code></td>
+    <td>Update an existing event.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateEventInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteEvent</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete an event.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createDataSource</code></td>
+    <td><code>DataSource!</code></td>
+    <td>Create a new data source.<div class="field-args"><span class="arg"><code>input: CreateDataSourceInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateDataSource</code></td>
+    <td><code>DataSource!</code></td>
+    <td>Update an existing data source.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateDataSourceInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteDataSource</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a data source.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createLocation</code></td>
+    <td><code>Location!</code></td>
+    <td>Create a new location.<div class="field-args"><span class="arg"><code>input: CreateLocationInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateLocation</code></td>
+    <td><code>Location!</code></td>
+    <td>Update an existing location.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateLocationInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteLocation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a location.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createNotification</code></td>
+    <td><code>Notification!</code></td>
+    <td>Create a notification for a user.<div class="field-args"><span class="arg"><code>input: CreateNotificationInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteNotification</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a notification.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>markNotificationRead</code></td>
+    <td><code>Notification!</code></td>
+    <td>Mark a notification as read.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>markAllNotificationsRead</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Mark all notifications as read for the authenticated user.</td>
+  </tr><tr>
+    <td><code>createOrganisation</code></td>
+    <td><code>Organisation!</code></td>
+    <td>Create a new organisation. The creator becomes the owner.<div class="field-args"><span class="arg"><code>input: CreateOrganisationInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateOrganisation</code></td>
+    <td><code>Organisation!</code></td>
+    <td>Update an existing organisation. Requires org owner or admin.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateOrganisationInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>addOrgMember</code></td>
+    <td><code>OrgMember!</code></td>
+    <td>Add a member to an organisation.<div class="field-args"><span class="arg"><code>orgId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: OrgMemberRole</code></span></div></td>
+  </tr><tr>
+    <td><code>removeOrgMember</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Remove a member from an organisation.<div class="field-args"><span class="arg"><code>orgId: String!</code></span><span class="arg"><code>userId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>createTeam</code></td>
+    <td><code>Team!</code></td>
+    <td>Create a new team within an organisation. Requires org admin or owner.<div class="field-args"><span class="arg"><code>input: CreateTeamInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateTeam</code></td>
+    <td><code>Team!</code></td>
+    <td>Update an existing team.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateTeamInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteTeam</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a team.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>addTeamMember</code></td>
+    <td><code>TeamMember!</code></td>
+    <td>Add a member to a team.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole</code></span></div></td>
+  </tr><tr>
+    <td><code>removeTeamMember</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Remove a member from a team.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateTeamMemberRole</code></td>
+    <td><code>TeamMember!</code></td>
+    <td>Update a team member's role.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole!</code></span></div></td>
+  </tr><tr>
+    <td><code>setTeamLocations</code></td>
+    <td><code>Team!</code></td>
+    <td>Set the locations a team is scoped to. Replaces all existing locations.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>locationIds: [String!]!</code></span></div></td>
+  </tr><tr>
+    <td><code>setDefaultTeam</code></td>
+    <td><code>Team!</code></td>
+    <td>Set the authenticated user's default team (for frontend convenience).<div class="field-args"><span class="arg"><code>teamId: String!</code></span></div></td>
+  </tr></tbody>
+    </table>
+
+        <h2 id="types">Types</h2>
+        <p>All types in the schema, auto-generated from the running server.</p>
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>owner</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>lead</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>viewer</code></td><td>—</td></tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>The event ID to create an alert from.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>AlertStatus</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createapikeyinput"><code>CreateApiKeyInput</code> <span class="type-badge">input</span></h3><p>Input for creating a new API key.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>A descriptive name for this key (e.g. my-app-prod).</td>
+  </tr><tr>
+    <td><code>expiresAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Optional expiration date. Omit for a key that never expires.</td>
+  </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>baseUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>infoUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createeventinput"><code>CreateEventInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>descriptionSignals</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>firstSignalCreatedAt</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSignalCreatedAt</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>destinationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>types</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationAffected</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rank</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createlocationinput"><code>CreateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>geoId</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>osmId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pCode</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>parentId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createnotificationinput"><code>CreateNotificationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>message</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>notificationType</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actionUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actionText</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createorganisationinput"><code>CreateOrganisationInput</code> <span class="type-badge">input</span></h3><p>Fields for creating a new organisation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Display name for the organisation.</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String!</code></td>
+    <td>URL-friendly identifier. Must be unique.</td>
+  </tr></tbody></table><h3 id="type-createsignalinput"><code>CreateSignalInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rawData</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>collectedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>destinationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createteaminput"><code>CreateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>organisationId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updatealertinput"><code>UpdateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>status</code></td>
+    <td><code>AlertStatus</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updatedatasourceinput"><code>UpdateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>baseUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>infoUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updateeventinput"><code>UpdateEventInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>descriptionSignals</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>firstSignalCreatedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSignalCreatedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>destinationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>types</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationAffected</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rank</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>geoId</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>osmId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pCode</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>parentId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updateorganisationinput"><code>UpdateOrganisationInput</code> <span class="type-badge">input</span></h3><p>Fields for updating an existing organisation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>New display name.</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String</code></td>
+    <td>New URL-friendly identifier.</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean</code></td>
+    <td>Set active/inactive status.</td>
+  </tr></tbody></table><h3 id="type-updateprofileinput"><code>UpdateProfileInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>phoneNumber</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>image</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableInAppNotification</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableEmailNotification</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableSMSNotification</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updateteaminput"><code>UpdateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-alert"><code>Alert</code> <span class="type-badge">object</span></h3><p>An alert created from an event, distributed to subscribed users.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>The event this alert was created from.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>AlertStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>userAlerts</code></td>
+    <td><code>[UserAlert!]!</code></td>
+    <td>Users who received this alert.</td>
+  </tr></tbody></table><h3 id="type-apikey"><code>ApiKey</code> <span class="type-badge">object</span></h3><p>A personal API key for programmatic access. The full key is only shown once at creation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Descriptive name you chose when creating the key.</td>
+  </tr><tr>
+    <td><code>prefix</code></td>
+    <td><code>String!</code></td>
+    <td>Short prefix for identification (e.g. sk_live_abc1).</td>
+  </tr><tr>
+    <td><code>expiresAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Optional expiration date. Expired keys are rejected automatically.</td>
+  </tr><tr>
+    <td><code>lastUsedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When this key was last used to authenticate a request.</td>
+  </tr><tr>
+    <td><code>revokedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When this key was revoked, if applicable. Revocation is permanent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-commenttag"><code>CommentTag</code> <span class="type-badge">object</span></h3><p>A tag linking a user to a comment.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>comment</code></td>
+    <td><code>UserComment!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-createapikeypayload"><code>CreateApiKeyPayload</code> <span class="type-badge">object</span></h3><p>Returned only from createApiKey. Contains the full plaintext
+key that will never be retrievable again.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>apiKey</code></td>
+    <td><code>ApiKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>key</code></td>
+    <td><code>String!</code></td>
+    <td>The full API key. Copy this immediately — it cannot be retrieved later.</td>
+  </tr></tbody></table><h3 id="type-datasource"><code>DataSource</code> <span class="type-badge">object</span></h3><p>An external data source that feeds signals into the system.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String!</code></td>
+    <td>Source type identifier (e.g. satellite, sensor, manual).</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>baseUrl</code></td>
+    <td><code>String</code></td>
+    <td>Base URL of the data source API.</td>
+  </tr><tr>
+    <td><code>infoUrl</code></td>
+    <td><code>String</code></td>
+    <td>URL with more information about this source.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>Signals collected from this data source.</td>
+  </tr></tbody></table><h3 id="type-disastertype"><code>DisasterType</code> <span class="type-badge">object</span></h3><p>A disaster classification with GLIDE number.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>disasterType</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>disasterClass</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>glideNumber</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-event"><code>Event</code> <span class="type-badge">object</span></h3><p>An event grouping related signals into a coherent situation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>descriptionSignals</code></td>
+    <td><code>JSON</code></td>
+    <td>LLM-generated signal descriptions as JSON.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>firstSignalCreatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSignalCreatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originLocation</code></td>
+    <td><code>Location</code></td>
+    <td>Origin location of the event.</td>
+  </tr><tr>
+    <td><code>destinationLocation</code></td>
+    <td><code>Location</code></td>
+    <td>Destination location of the event.</td>
+  </tr><tr>
+    <td><code>generalLocation</code></td>
+    <td><code>Location</code></td>
+    <td>General location (when no origin/destination).</td>
+  </tr><tr>
+    <td><code>types</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Event type tags.</td>
+  </tr><tr>
+    <td><code>populationAffected</code></td>
+    <td><code>String</code></td>
+    <td>Estimated population affected.</td>
+  </tr><tr>
+    <td><code>rank</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>Signals linked to this event.</td>
+  </tr><tr>
+    <td><code>alerts</code></td>
+    <td><code>[Alert!]!</code></td>
+    <td>Alerts created from this event.</td>
+  </tr><tr>
+    <td><code>feedbacks</code></td>
+    <td><code>[UserFeedback!]!</code></td>
+    <td>User feedback on this event.</td>
+  </tr><tr>
+    <td><code>comments</code></td>
+    <td><code>[UserComment!]!</code></td>
+    <td>User comments on this event.</td>
+  </tr><tr>
+    <td><code>escalations</code></td>
+    <td><code>[EventEscalation!]!</code></td>
+    <td>Escalations by users.</td>
+  </tr></tbody></table><h3 id="type-eventescalation"><code>EventEscalation</code> <span class="type-badge">object</span></h3><p>Tracks a user escalating an event, optionally to a situation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isSituation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Whether this has been escalated to a situation.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-featureflag"><code>FeatureFlag</code> <span class="type-badge">object</span></h3><p>A feature toggle that controls runtime behavior.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>key</code></td>
+    <td><code>String!</code></td>
+    <td>Unique key used to look up this flag (e.g. dark_mode).</td>
+  </tr><tr>
+    <td><code>enabled</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-location"><code>Location</code> <span class="type-badge">object</span></h3><p>A geographic location in a hierarchy (country &gt; state &gt; city, etc.).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>geoId</code></td>
+    <td><code>Int</code></td>
+    <td>GeoNames identifier.</td>
+  </tr><tr>
+    <td><code>osmId</code></td>
+    <td><code>String</code></td>
+    <td>OpenStreetMap identifier.</td>
+  </tr><tr>
+    <td><code>pCode</code></td>
+    <td><code>String</code></td>
+    <td>P-Code identifier.</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int!</code></td>
+    <td>Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc.</td>
+  </tr><tr>
+    <td><code>geometry</code></td>
+    <td><code>GeoJSON</code></td>
+    <td>Geometry as GeoJSON (Point or MultiPolygon).</td>
+  </tr><tr>
+    <td><code>parent</code></td>
+    <td><code>Location</code></td>
+    <td>Parent location in the hierarchy.</td>
+  </tr><tr>
+    <td><code>children</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Child locations one level below.</td>
+  </tr></tbody></table><h3 id="type-notification"><code>Notification</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>message</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>notificationType</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actionUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actionText</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>NotificationStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>emailNotificationStatus</code></td>
+    <td><code>NotificationStatus</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>smsNotificationStatus</code></td>
+    <td><code>NotificationStatus</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-organisation"><code>Organisation</code> <span class="type-badge">object</span></h3><p>An organisation that owns teams and has members.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String!</code></td>
+    <td>URL-friendly identifier.</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Whether this organisation is active. Inactive organisations are hidden from non-admin users.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When this organisation was created.</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When this organisation was last updated.</td>
+  </tr><tr>
+    <td><code>teams</code></td>
+    <td><code>[Team!]!</code></td>
+    <td>Teams belonging to this organisation.</td>
+  </tr><tr>
+    <td><code>members</code></td>
+    <td><code>[OrgMember!]!</code></td>
+    <td>Members of this organisation.</td>
+  </tr></tbody></table><h3 id="type-organisationuser"><code>OrganisationUser</code> <span class="type-badge">object</span></h3><p>Links a user to an organisation with a role.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>organisationId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-orgmember"><code>OrgMember</code> <span class="type-badge">object</span></h3><p>Links a user to an organisation with an org-level role.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>Organisation-level role: owner, admin, or member.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When this membership was created.</td>
+  </tr></tbody></table><h3 id="type-signal"><code>Signal</code> <span class="type-badge">object</span></h3><p>A signal derived from a data source.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>DataSource!</code></td>
+    <td>The data source this signal was collected from.</td>
+  </tr><tr>
+    <td><code>rawData</code></td>
+    <td><code>JSON!</code></td>
+    <td>Original signal payload as JSON.</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>collectedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originLocation</code></td>
+    <td><code>Location</code></td>
+    <td>Origin location of the signal.</td>
+  </tr><tr>
+    <td><code>destinationLocation</code></td>
+    <td><code>Location</code></td>
+    <td>Destination location of the signal.</td>
+  </tr><tr>
+    <td><code>generalLocation</code></td>
+    <td><code>Location</code></td>
+    <td>General location (when no origin/destination).</td>
+  </tr><tr>
+    <td><code>events</code></td>
+    <td><code>[Event!]!</code></td>
+    <td>Events this signal is linked to.</td>
+  </tr><tr>
+    <td><code>feedbacks</code></td>
+    <td><code>[UserFeedback!]!</code></td>
+    <td>User feedback on this signal.</td>
+  </tr><tr>
+    <td><code>comments</code></td>
+    <td><code>[UserComment!]!</code></td>
+    <td>User comments on this signal.</td>
+  </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>slug</code></td>
+    <td><code>String!</code></td>
+    <td>URL-friendly identifier, unique within the organisation.</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>organisation</code></td>
+    <td><code>Organisation!</code></td>
+    <td>The organisation this team belongs to.</td>
+  </tr><tr>
+    <td><code>members</code></td>
+    <td><code>[TeamMember!]!</code></td>
+    <td>Members of this team.</td>
+  </tr><tr>
+    <td><code>locations</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Locations this team is scoped to. Empty means global monitoring.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-teammember"><code>TeamMember</code> <span class="type-badge">object</span></h3><p>Links a user to a team with a team-level role.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>Team-level role: lead, analyst, or viewer.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-user"><code>User</code> <span class="type-badge">object</span></h3><p>A registered user with role-based access.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>email</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>emailVerified</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>phoneNumber</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>image</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>User role: viewer, editor, or admin.</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableInAppNotification</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableEmailNotification</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enableSMSNotification</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alerts</code></td>
+    <td><code>[UserAlert!]!</code></td>
+    <td>Alerts received by this user.</td>
+  </tr><tr>
+    <td><code>notifications</code></td>
+    <td><code>[Notification!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>defaultTeam</code></td>
+    <td><code>Team</code></td>
+    <td>The user's default team (last selected).</td>
+  </tr><tr>
+    <td><code>organisations</code></td>
+    <td><code>[OrganisationUser!]!</code></td>
+    <td>Organisations this user belongs to.</td>
+  </tr><tr>
+    <td><code>teamMemberships</code></td>
+    <td><code>[TeamMember!]!</code></td>
+    <td>Teams this user belongs to.</td>
+  </tr><tr>
+    <td><code>feedbacks</code></td>
+    <td><code>[UserFeedback!]!</code></td>
+    <td>Feedback given by this user.</td>
+  </tr><tr>
+    <td><code>comments</code></td>
+    <td><code>[UserComment!]!</code></td>
+    <td>Comments made by this user.</td>
+  </tr><tr>
+    <td><code>escalations</code></td>
+    <td><code>[EventEscalation!]!</code></td>
+    <td>Events/alerts escalated by this user.</td>
+  </tr></tbody></table><h3 id="type-useralert"><code>UserAlert</code> <span class="type-badge">object</span></h3><p>Tracks an alert delivered to a user — view status.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alert</code></td>
+    <td><code>Alert!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>viewedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the user viewed this alert.</td>
+  </tr></tbody></table><h3 id="type-usercomment"><code>UserComment</code> <span class="type-badge">object</span></h3><p>A user comment on a signal or event, with reply support.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signal</code></td>
+    <td><code>Signal</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>comment</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isCommentReply</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Whether this comment is a reply to another comment.</td>
+  </tr><tr>
+    <td><code>repliedToCommentId</code></td>
+    <td><code>String</code></td>
+    <td>ID of the comment being replied to, if any.</td>
+  </tr><tr>
+    <td><code>tags</code></td>
+    <td><code>[CommentTag!]!</code></td>
+    <td>Users tagged in this comment.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-userfeedback"><code>UserFeedback</code> <span class="type-badge">object</span></h3><p>User feedback on a signal or event — rating and optional text.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signal</code></td>
+    <td><code>Signal</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rating</code></td>
+    <td><code>Int!</code></td>
+    <td>Rating from 1 to 5.</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String</code></td>
+    <td>Optional textual feedback.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table>
+      </div>
+    </main>
+
+    <!-- Right TOC -->
+    <aside class="toc">
+      <div class="toc-heading">On This Page</div>
+      <a href="#introduction">Introduction</a>
+      <a href="#features">What You Can Do</a>
+      <a href="#quick-start">Quick Start</a>
+      <a href="#authentication">Authentication</a>
+      <a href="#queries">Queries</a>
+      <a href="#mutations">Mutations</a>
+      <a href="#types">Types</a>
+    </aside>
+  </div>
+
+  <script>
+    // Copy to clipboard
+    function copyCode(btn) {
+      var code = btn.closest('pre').querySelector('code');
+      copyText(code.textContent, btn);
+    }
+    async function copyText(text, btn) {
+      try {
+        await navigator.clipboard.writeText(text);
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      } catch (e) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      }
+    }
+
+    // Active sidebar link tracking
+    var sidebarLinks = document.querySelectorAll('.sidebar-link');
+    var headings = [];
+    sidebarLinks.forEach(function(link) {
+      var id = link.getAttribute('href');
+      if (id && id.startsWith('#')) {
+        var el = document.getElementById(id.slice(1));
+        if (el) headings.push({ el: el, link: link });
+      }
+    });
+
+    function updateActive() {
+      var scrollY = window.scrollY + 80;
+      var current = headings[0];
+      for (var i = 0; i < headings.length; i++) {
+        if (headings[i].el.offsetTop <= scrollY) current = headings[i];
+      }
+      sidebarLinks.forEach(function(l) { l.classList.remove('active'); });
+      if (current) current.link.classList.add('active');
+    }
+    window.addEventListener('scroll', updateActive, { passive: true });
+    updateActive();
+  </script>
+</body>
+</html>

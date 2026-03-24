@@ -79,9 +79,86 @@ export const mutationTypeDef = gql`
 
     """Mark all notifications as read for the authenticated user."""
     markAllNotificationsRead: Boolean!
+
+    # ─── Organisations ─────────────────────────────────────────────────────────
+    """Create a new organisation. The creator becomes the owner."""
+    createOrganisation(input: CreateOrganisationInput!): Organisation!
+
+    """Update an existing organisation. Requires org owner or admin."""
+    updateOrganisation(id: String!, input: UpdateOrganisationInput!): Organisation!
+
+    """Add a member to an organisation."""
+    addOrgMember(orgId: String!, userId: String!, role: OrgMemberRole): OrgMember!
+
+    """Remove a member from an organisation."""
+    removeOrgMember(orgId: String!, userId: String!): Boolean!
+
+    """Delete an organisation and all its teams, members, and invitations. Requires global admin."""
+    deleteOrganisation(id: String!): Boolean!
+
+    # ─── Teams ─────────────────────────────────────────────────────────────────
+    """Create a new team within an organisation. Requires org admin or owner."""
+    createTeam(input: CreateTeamInput!): Team!
+
+    """Update an existing team."""
+    updateTeam(id: String!, input: UpdateTeamInput!): Team!
+
+    """Delete a team."""
+    deleteTeam(id: String!): Boolean!
+
+    """Add a member to a team."""
+    addTeamMember(teamId: String!, userId: String!, role: TeamMemberRole): TeamMember!
+
+    """Remove a member from a team."""
+    removeTeamMember(teamId: String!, userId: String!): Boolean!
+
+    """Update a team member's role."""
+    updateTeamMemberRole(teamId: String!, userId: String!, role: TeamMemberRole!): TeamMember!
+
+    """Set the locations a team is scoped to. Replaces all existing locations."""
+    setTeamLocations(teamId: String!, locationIds: [String!]!): Team!
+
+    """Set the authenticated user's default team (for frontend convenience)."""
+    setDefaultTeam(teamId: String!): Team!
+
+    # ─── Invitations ──────────────────────────────────────────────────────────
+    """Invite a user to an organisation (and optionally a team). Sends invite email."""
+    inviteUser(input: InviteUserInput!): Invitation!
+
+    """Accept an invitation. Creates user account if new, adds to org and team."""
+    acceptInvite(input: AcceptInviteInput!): Boolean!
+
+    """Cancel a pending invitation."""
+    cancelInvite(id: String!): Boolean!
+
+    """Resend an invitation email (resets expiry to 7 days)."""
+    resendInvite(id: String!): Invitation!
+
+    # ─── Password Reset ──────────────────────────────────────────────────────
+    """Request a password reset email (public, always returns true)."""
+    requestPasswordReset(email: String!): Boolean!
+
+    """Reset password using a token from the reset email."""
+    resetPassword(token: String!, newPassword: String!): Boolean!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
+
+  input InviteUserInput {
+    email: String!
+    organisationId: String!
+    teamId: String
+    """Organisation role: owner, admin, member (default: member)."""
+    role: String
+    """Team role: lead, analyst, viewer (default: viewer). Only used if teamId is provided."""
+    teamRole: String
+  }
+
+  input AcceptInviteInput {
+    token: String!
+    name: String!
+    password: String!
+  }
 
   input UpdateProfileInput {
     name: String
@@ -113,6 +190,10 @@ export const mutationTypeDef = gql`
     originId: String
     destinationId: String
     locationId: String
+    """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
+    lat: Float
+    """Longitude for automatic geo-resolution."""
+    lng: Float
   }
 
   input CreateEventInput {
@@ -130,6 +211,10 @@ export const mutationTypeDef = gql`
     types: [String!]!
     populationAffected: String
     rank: Float!
+    """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
+    lat: Float
+    """Longitude for automatic geo-resolution."""
+    lng: Float
   }
 
   input UpdateEventInput {

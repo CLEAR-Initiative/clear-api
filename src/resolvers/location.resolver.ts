@@ -3,6 +3,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
+import { computeAncestorIds } from "../utils/geo-resolve.js";
 
 interface CreateLocationInput {
   geoId?: number;
@@ -80,9 +81,12 @@ export const locationResolvers = {
       const pCode = input.pCode ?? null;
       const parentId = input.parentId ?? null;
 
+      // Compute ancestor IDs from the parent chain
+      const ancestorIds = await computeAncestorIds(context.prisma, parentId);
+
       await context.prisma.$executeRaw`
-        INSERT INTO "locations" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "geometry")
-        VALUES (${id}, ${geoId}, ${osmId}, ${pCode}, ${input.name}, ${input.level}, ${parentId}, ST_GeomFromText('POINT(0 0)', 4326))
+        INSERT INTO "locations" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "ancestor_ids", "geometry")
+        VALUES (${id}, ${geoId}, ${osmId}, ${pCode}, ${input.name}, ${input.level}, ${parentId}, ${ancestorIds}, ST_GeomFromText('POINT(0 0)', 4326))
       `;
 
       return context.prisma.locations.findUniqueOrThrow({ where: { id } });
@@ -170,6 +174,16 @@ export const locationResolvers = {
       const geo = await fetchLocationGeo(prisma, parent.id);
       if (!geo?.geometry_geojson) return null;
       return JSON.parse(geo.geometry_geojson) as unknown;
+    },
+    ancestorIds: (parent: { ancestorIds: string[] }) => {
+      return parent.ancestorIds ?? [];
+    },
+    ancestors: (parent: { ancestorIds: string[] }, _args: unknown, { prisma }: Context) => {
+      if (!parent.ancestorIds?.length) return [];
+      return prisma.locations.findMany({
+        where: { id: { in: parent.ancestorIds } },
+        orderBy: { level: "asc" },
+      });
     },
   },
 };

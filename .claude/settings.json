@@ -51,7 +51,22 @@
       "Bash(bun add @graphql-tools/schema)",
       "Bash(git add src/schema/typeDefs/query.ts src/schema/typeDefs/types/alert.ts src/schema/typeDefs/types/apiKey.ts src/schema/typeDefs/types/dataSource.ts src/schema/typeDefs/types/detection.ts src/schema/typeDefs/types/location.ts)",
       "Bash(git rebase --continue)",
-      "Bash(git add .claude/settings.json)"
+      "Bash(git add .claude/settings.json)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(bun run tsc -p tsconfig.build.json --noEmit)",
+      "Bash(ls node_modules/nodemailer/lib/*.d.ts)",
+      "Bash(bun test:*)",
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git stash:*)",
+      "Bash(bun run:*)",
+      "Bash(git fetch:*)",
+      "Bash(kill 59234)"
+    ],
+    "additionalDirectories": [
+      "/Users/james/code/clear-mvp"
     ]
   }
 }

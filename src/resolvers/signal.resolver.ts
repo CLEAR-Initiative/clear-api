@@ -1,7 +1,10 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { resolveTeamMembership } from "../utils/auth-guard.js";
+import { resolveLatLngToLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateSignalInput {
   sourceId: string;
@@ -14,15 +17,69 @@ interface CreateSignalInput {
   originId?: string;
   destinationId?: string;
   locationId?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export const signalResolvers = {
   Query: {
-    signals: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.signals.findMany();
+    signals: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+      const user = requireAuth(context);
+      if (!args.teamId) {
+        if (user.role !== "admin") {
+          throw new GraphQLError("teamId is required", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+        return context.prisma.signals.findMany();
+      }
+      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
+      return context.prisma.signals.findMany({ where: filter });
     },
-    signal: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.signals.findUnique({ where: { id: args.id } });
+    signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
+      requireAuth(context);
+      const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      return context.prisma.signals.findMany({
+        where: {
+          OR: [
+            { originId: { in: locationIds } },
+            { destinationId: { in: locationIds } },
+            { locationId: { in: locationIds } },
+          ],
+        },
+      });
+    },
+    signal: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const user = requireAuth(context);
+      const signal = await context.prisma.signals.findUnique({ where: { id: args.id } });
+      if (!signal) return null;
+      if (user.role !== "admin") {
+        const teamMemberships = await context.prisma.teamMembers.findMany({
+          where: { userId: user.id },
+          select: { teamId: true },
+        });
+        if (teamMemberships.length === 0) {
+          throw new GraphQLError("No team membership found", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+        let accessible = false;
+        for (const { teamId } of teamMemberships) {
+          const filter = await buildLocationFilterForTeam(context.prisma, teamId);
+          if (!filter) { accessible = true; break; }
+          const found = await context.prisma.signals.findFirst({
+            where: { id: args.id, ...filter },
+          });
+          if (found) { accessible = true; break; }
+        }
+        if (!accessible) {
+          throw new GraphQLError("Signal not accessible from your teams", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+      }
+      return signal;
     },
   },
   Mutation: {
@@ -43,6 +100,15 @@ export const signalResolvers = {
         });
       }
 
+      // Resolve lat/lng to a location if no explicit locationId is provided
+      let locationId = input.locationId;
+      if (!locationId && input.lat != null && input.lng != null) {
+        const resolved = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
+        if (resolved) {
+          locationId = resolved.id;
+        }
+      }
+
       return context.prisma.signals.create({
         data: {
           sourceId: input.sourceId,
@@ -54,7 +120,7 @@ export const signalResolvers = {
           description: input.description,
           originId: input.originId,
           destinationId: input.destinationId,
-          locationId: input.locationId,
+          locationId,
         },
       });
     },
