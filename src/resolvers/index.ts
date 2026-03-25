@@ -13,6 +13,7 @@ import { apiKeyResolvers } from "./apiKey.resolver.js";
 import { disasterTypeResolvers } from "./disasterType.resolver.js";
 import { organisationResolvers } from "./organisation.resolver.js";
 import { teamResolvers } from "./team.resolver.js";
+import { feedbackResolvers } from "./feedback.resolver.js";
 import { invitationResolvers } from "./invitation.resolver.js";
 
 export const resolvers: IResolvers[] = [
@@ -30,5 +31,6 @@ export const resolvers: IResolvers[] = [
   disasterTypeResolvers,
   organisationResolvers,
   teamResolvers,
+  feedbackResolvers,
   invitationResolvers,
 ];
