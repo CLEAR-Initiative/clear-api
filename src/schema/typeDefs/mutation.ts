@@ -71,6 +71,15 @@ export const mutationTypeDef = gql`
     """Create a notification for a user."""
     createNotification(input: CreateNotificationInput!): Notification!
 
+    """Create notifications for multiple users at once. Returns the count of notifications created."""
+    createBulkNotifications(input: CreateBulkNotificationsInput!): Int!
+
+    """Notify all subscribers of a single alert (immediate frequency). Matches on event types and locations."""
+    notifyAlertSubscribers(input: AlertNotifyInput!): Int!
+
+    """Send a digest notification for multiple alerts to subscribers of the given frequency (daily/weekly/monthly)."""
+    notifyAlertDigest(input: AlertDigestInput!): Int!
+
     """Delete a notification."""
     deleteNotification(id: String!): Boolean!
 
@@ -79,6 +88,26 @@ export const mutationTypeDef = gql`
 
     """Mark all notifications as read for the authenticated user."""
     markAllNotificationsRead: Boolean!
+
+    # ─── Feedback ──────────────────────────────────────────────────────────────
+    """Add feedback (rating + optional text) to a signal or event."""
+    addFeedback(input: AddFeedbackInput!): UserFeedback!
+
+    """Delete your own feedback."""
+    deleteFeedback(id: String!): Boolean!
+
+    # ─── Comments ─────────────────────────────────────────────────────────────
+    """Add a comment to a signal or event."""
+    addComment(input: AddCommentInput!): UserComment!
+
+    """Reply to an existing comment."""
+    replyToComment(input: ReplyToCommentInput!): UserComment!
+
+    """Delete your own comment."""
+    deleteComment(id: String!): Boolean!
+
+    """Tag users in a comment."""
+    tagUsersInComment(commentId: String!, userIds: [String!]!): UserComment!
 
     # ─── Organisations ─────────────────────────────────────────────────────────
     """Create a new organisation. The creator becomes the owner."""
@@ -274,5 +303,53 @@ export const mutationTypeDef = gql`
     notificationType: String!
     actionUrl: String
     actionText: String
+  }
+
+  input CreateBulkNotificationsInput {
+    """List of user IDs to notify."""
+    userIds: [String!]!
+    message: String!
+    notificationType: String!
+    actionUrl: String
+    actionText: String
+  }
+
+  input AlertNotifyInput {
+    """Alert ID to notify subscribers about (uses immediate frequency)."""
+    alertId: String!
+  }
+
+  input AlertDigestInput {
+    """List of alert IDs to include in the digest."""
+    alertIds: [String!]!
+    """Frequency: daily, weekly, or monthly."""
+    frequency: String!
+  }
+
+  input AddFeedbackInput {
+    """Provide exactly one of eventId or signalId."""
+    eventId: String
+    signalId: String
+    """Rating from 1 to 5."""
+    rating: Int!
+    """Optional textual feedback."""
+    text: String
+  }
+
+  input AddCommentInput {
+    """Provide exactly one of eventId or signalId."""
+    eventId: String
+    signalId: String
+    comment: String!
+    """User IDs to tag in the comment."""
+    tagUserIds: [String!]
+  }
+
+  input ReplyToCommentInput {
+    """ID of the comment to reply to."""
+    repliedToCommentId: String!
+    comment: String!
+    """User IDs to tag in the reply."""
+    tagUserIds: [String!]
   }
 `;

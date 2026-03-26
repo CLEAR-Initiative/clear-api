@@ -279,8 +279,8 @@ export async function seedLocations(): Promise<LocationMap> {
     return { id };
   }
 
-  // Level 0: Country
-  const sudan = await insertLocation("sudan", "Sudan", 0, "POINT(30.0 15.5)");
+  // Level 0: Country (bounding box covering all of Sudan ~8.5°N to 22°N, 21.8°E to 38.6°E)
+  const sudan = await insertLocation("sudan", "Sudan", 0, "MULTIPOLYGON(((21.8 8.5, 38.6 8.5, 38.6 22.0, 21.8 22.0, 21.8 8.5)))");
 
   // Level 1: States (sequential to ensure parent exists before children reference it)
   for (const state of SUDAN_STATES) {

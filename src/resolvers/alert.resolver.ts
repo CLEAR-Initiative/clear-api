@@ -5,6 +5,9 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
+import { env } from "../utils/env.js";
+import { getEmailProvider } from "../services/messaging/registry.js";
+import { alertNotification } from "../services/messaging/templates.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -122,7 +125,7 @@ export const alertResolvers = {
         },
       });
 
-      // Find subscribers matching the event's types and locations
+      // Fan out notifications to immediate subscribers
       const eventLocationIds = [
         event.originId,
         event.destinationId,
@@ -130,17 +133,34 @@ export const alertResolvers = {
       ].filter((id): id is string => id !== null);
 
       if (eventLocationIds.length > 0 && event.types.length > 0) {
+        // Expand locations to include ancestors so country-level subscriptions
+        // match district-level alerts
+        const allLocationIds = new Set(eventLocationIds);
+        const locations = await context.prisma.locations.findMany({
+          where: { id: { in: eventLocationIds } },
+          select: { ancestorIds: true },
+        });
+        for (const loc of locations) {
+          for (const aid of loc.ancestorIds) allLocationIds.add(aid);
+        }
+
         const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
           where: {
             active: true,
+            frequency: "immediately",
             alertType: { in: event.types },
-            locationId: { in: eventLocationIds },
+            locationId: { in: [...allLocationIds] },
           },
+          select: { userId: true },
         });
 
-        // Create userAlerts entries for each unique subscriber
         const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+
         if (uniqueUserIds.length > 0) {
+          const title = event.title ?? event.types[0] ?? "Alert";
+          const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+
+          // 1. Populate userAlerts join table
           await context.prisma.userAlerts.createMany({
             data: uniqueUserIds.map((userId) => ({
               userId,
@@ -148,6 +168,44 @@ export const alertResolvers = {
             })),
             skipDuplicates: true,
           });
+
+          // 2. Create in-app notifications
+          await context.prisma.notifications.createMany({
+            data: uniqueUserIds.map((userId) => ({
+              userId,
+              message: `New alert: ${title}`,
+              notificationType: "alert",
+              actionUrl: `/alerts/${alert.id}`,
+              actionText: "View Alert",
+            })),
+          });
+
+          // 3. Send email notifications (fire-and-forget)
+          const emailUsers = await context.prisma.user.findMany({
+            where: { id: { in: uniqueUserIds }, emailNotification: true },
+            select: { name: true, email: true },
+          });
+
+          if (emailUsers.length > 0) {
+            void (async () => {
+              try {
+                const emailProvider = await getEmailProvider();
+                await emailProvider.sendBulk(
+                  emailUsers.map((u) => {
+                    const content = alertNotification(u.name, title, event.description, alertUrl);
+                    return {
+                      to: u.email,
+                      subject: content.subject,
+                      textBody: content.textBody,
+                      htmlBody: content.htmlBody,
+                    };
+                  }),
+                );
+              } catch (err) {
+                console.error("[createAlert] Failed to send alert emails:", err);
+              }
+            })();
+          }
         }
       }
 
