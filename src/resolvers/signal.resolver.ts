@@ -3,7 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
-import { resolveLatLngToLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateSignalInput {
@@ -100,13 +100,16 @@ export const signalResolvers = {
         });
       }
 
-      // Resolve lat/lng to a location if no explicit locationId is provided
+      // Resolve lat/lng to a level-4 point location if no explicit locationId is provided
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
-        const resolved = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
-        if (resolved) {
-          locationId = resolved.id;
-        }
+        const pointLoc = await createPointLocation(
+          context.prisma,
+          input.lat,
+          input.lng,
+          input.title ?? undefined,
+        );
+        locationId = pointLoc.id;
       }
 
       return context.prisma.signals.create({

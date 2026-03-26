@@ -3,7 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
-import { resolveLatLngToLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { createPointLocation, createRegionFromPoints, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 
 interface CreateEventInput {
@@ -115,12 +115,56 @@ export const eventResolvers = {
       requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
-      // Resolve lat/lng to a location if no explicit locationId is provided
+      // Resolve location for the event
       let locationId = input.locationId;
-      if (!locationId && input.lat != null && input.lng != null) {
-        const resolved = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
-        if (resolved) {
-          locationId = resolved.id;
+      let originId = input.originId;
+      let destinationId = input.destinationId;
+
+      if (!locationId && !originId && !destinationId) {
+        if (input.lat != null && input.lng != null) {
+          // Single lat/lng provided — create a point location
+          const pointLoc = await createPointLocation(
+            context.prisma, input.lat, input.lng, input.title ?? undefined,
+          );
+          locationId = pointLoc.id;
+        } else if (input.signalIds.length > 0) {
+          // No explicit location — gather point geometries from linked signals
+          const signalLocations = await context.prisma.signals.findMany({
+            where: { id: { in: input.signalIds } },
+            select: { locationId: true, originId: true, destinationId: true },
+          });
+
+          // Collect unique location IDs from signals
+          const locIds = new Set<string>();
+          for (const sl of signalLocations) {
+            if (sl.locationId) locIds.add(sl.locationId);
+            if (sl.originId) locIds.add(sl.originId);
+            if (sl.destinationId) locIds.add(sl.destinationId);
+          }
+
+          if (locIds.size > 0) {
+            // Fetch point geometries for these locations
+            const locPoints = await context.prisma.$queryRaw<
+              Array<{ lat: number; lng: number }>
+            >`
+              SELECT ST_Y("geometry"::geometry) as lat, ST_X("geometry"::geometry) as lng
+              FROM "locations"
+              WHERE id = ANY(${[...locIds]}::text[])
+                AND "geometry" IS NOT NULL
+                AND ST_GeometryType("geometry"::geometry) = 'ST_Point'
+            `;
+
+            if (locPoints.length === 1) {
+              // Single point — reuse the signal's location directly
+              locationId = [...locIds][0]!;
+            } else if (locPoints.length > 1) {
+              // Multiple points — create a convex hull region
+              const region = await createRegionFromPoints(
+                context.prisma, locPoints, input.title ?? undefined,
+              );
+              locationId = region.id;
+            }
+          }
         }
       }
 
@@ -135,8 +179,8 @@ export const eventResolvers = {
           validTo: new Date(input.validTo),
           firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
-          originId: input.originId,
-          destinationId: input.destinationId,
+          originId,
+          destinationId,
           locationId,
           types: input.types,
           populationAffected: input.populationAffected
