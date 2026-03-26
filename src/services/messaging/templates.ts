@@ -293,3 +293,109 @@ If you did not request this, you can safely ignore this email. Your password wil
     ),
   };
 }
+
+/**
+ * Immediate alert notification — single alert sent to a subscriber.
+ */
+export function alertNotification(
+  userName: string,
+  alertTitle: string,
+  alertDescription: string | null,
+  alertUrl: string,
+): EmailContent {
+  const displayName = userName || "there";
+
+  return {
+    subject: `Alert: ${alertTitle} — CLEAR Platform`,
+
+    textBody: `Hi ${displayName},
+
+A new alert has been published that matches your subscriptions:
+
+${alertTitle}
+${alertDescription ?? ""}
+
+View the alert: ${alertUrl}
+
+— The CLEAR Platform Team`,
+
+    htmlBody: wrapHtml(
+      "New Alert",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${displayName},
+      </p>
+      <p style="margin: 0 0 8px; font-size: 15px; color: #525252; line-height: 1.5;">
+        A new alert has been published that matches your subscriptions:
+      </p>
+      <div style="margin: 16px 0; padding: 16px; background: #F5F5F5; border-radius: 8px; border-left: 4px solid #E85D3D;">
+        <p style="margin: 0 0 4px; font-size: 16px; font-weight: 600; color: #171717;">${alertTitle}</p>
+        ${alertDescription ? `<p style="margin: 0; font-size: 14px; color: #525252; line-height: 1.5;">${alertDescription}</p>` : ""}
+      </div>
+      ${ctaButton("View Alert", alertUrl)}
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
+        You received this because of your alert subscriptions. Manage your subscriptions in Settings.
+      </p>`,
+    ),
+  };
+}
+
+/**
+ * Alert digest — personalized list of alerts for a subscriber.
+ */
+export function alertDigest(
+  userName: string,
+  frequency: string,
+  alertItems: Array<{ title: string; description: string | null; url: string }>,
+  dashboardUrl: string,
+): EmailContent {
+  const displayName = userName || "there";
+  const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
+  const count = alertItems.length;
+
+  const alertListText = alertItems
+    .map((a, i) => `${i + 1}. ${a.title}${a.description ? ` — ${a.description}` : ""}`)
+    .join("\n");
+
+  const alertListHtml = alertItems
+    .map(
+      (a) =>
+        `<div style="margin: 8px 0; padding: 12px 16px; background: #F5F5F5; border-radius: 6px; border-left: 3px solid #E85D3D;">
+          <a href="${a.url}" style="text-decoration: none;">
+            <p style="margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #171717;">${a.title}</p>
+            ${a.description ? `<p style="margin: 0; font-size: 13px; color: #525252;">${a.description}</p>` : ""}
+          </a>
+        </div>`,
+    )
+    .join("");
+
+  return {
+    subject: `${freqLabel} Alert Digest (${count}) — CLEAR Platform`,
+
+    textBody: `Hi ${displayName},
+
+Here is your ${frequency} alert digest with ${count} alert${count > 1 ? "s" : ""}:
+
+${alertListText}
+
+View all alerts: ${dashboardUrl}
+
+— The CLEAR Platform Team`,
+
+    htmlBody: wrapHtml(
+      `${freqLabel} Alert Digest`,
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${displayName},
+      </p>
+      <p style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5;">
+        Here is your ${frequency} alert digest with <strong>${count}</strong> alert${count > 1 ? "s" : ""} matching your subscriptions:
+      </p>
+      ${alertListHtml}
+      ${ctaButton("View All Alerts", dashboardUrl)}
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
+        You received this because of your alert subscriptions. Manage your subscriptions in Settings.
+      </p>`,
+    ),
+  };
+}
