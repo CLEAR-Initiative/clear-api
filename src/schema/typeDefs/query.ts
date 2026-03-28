@@ -90,5 +90,12 @@ export const queryTypeDef = gql`
 
     """Look up an invitation by token (public — used on accept-invite page)."""
     invitationByToken(token: String!): InvitationInfo
+
+    # ─── Alert Subscriptions ────────────────────────────────────────────────
+    """List the authenticated user's alert subscriptions."""
+    myAlertSubscriptions: [AlertSubscription!]!
+
+    """List all alert subscriptions for a location (admin only)."""
+    alertSubscriptionsByLocation(locationId: String!): [AlertSubscription!]!
   }
 `;
