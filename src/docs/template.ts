@@ -69,7 +69,7 @@ function renderSidebarTypeLinks(types: SchemaType[]): string {
 }
 
 export function renderDocsPage(schema: SchemaData): string {
-  const typesByKind = {
+  const _typesByKind = {
     scalar: schema.types.filter((t) => t.kind === "scalar"),
     enum: schema.types.filter((t) => t.kind === "enum"),
     input: schema.types.filter((t) => t.kind === "input"),
