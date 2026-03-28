@@ -4,10 +4,7 @@ import type { NotificationStatus, PrismaClient } from "../generated/prisma/clien
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
-import {
-  alertNotification,
-  alertDigest,
-} from "../services/messaging/templates.js";
+import { alertNotification, alertDigest } from "../services/messaging/templates.js";
 
 interface CreateNotificationInput {
   userId: string;
@@ -74,11 +71,7 @@ async function findSubscribers(
 
 export const notificationResolvers = {
   Query: {
-    notifications: (
-      _parent: unknown,
-      args: { status?: NotificationStatus },
-      context: Context,
-    ) => {
+    notifications: (_parent: unknown, args: { status?: NotificationStatus }, context: Context) => {
       const user = requireAuth(context);
       return context.prisma.notifications.findMany({
         where: {
@@ -114,7 +107,6 @@ export const notificationResolvers = {
         },
       });
     },
-
     createBulkNotifications: async (
       _parent: unknown,
       args: { input: CreateBulkNotificationsInput },
@@ -135,7 +127,6 @@ export const notificationResolvers = {
 
       return result.count;
     },
-
     notifyAlertSubscribers: async (
       _parent: unknown,
       args: { input: AlertNotifyInput },
@@ -154,11 +145,9 @@ export const notificationResolvers = {
       }
 
       const event = alert.event;
-      const eventLocationIds = [
-        event.originId,
-        event.destinationId,
-        event.locationId,
-      ].filter((id): id is string => id !== null);
+      const eventLocationIds = [event.originId, event.destinationId, event.locationId].filter(
+        (id): id is string => id !== null,
+      );
 
       const userIds = await findSubscribers(
         context.prisma,
@@ -201,12 +190,7 @@ export const notificationResolvers = {
       if (emailUsers.length > 0) {
         const emailProvider = await getEmailProvider();
         const emails = emailUsers.map((u) => {
-          const content = alertNotification(
-            u.name,
-            title,
-            event.description,
-            alertUrl,
-          );
+          const content = alertNotification(u.name, title, event.description, alertUrl);
           return {
             to: u.email,
             subject: content.subject,
@@ -223,7 +207,6 @@ export const notificationResolvers = {
 
       return result.count;
     },
-
     notifyAlertDigest: async (
       _parent: unknown,
       args: { input: AlertDigestInput },
@@ -389,12 +372,7 @@ export const notificationResolvers = {
 
       return result.count;
     },
-
-    deleteNotification: async (
-      _parent: unknown,
-      args: { id: string },
-      context: Context,
-    ) => {
+    deleteNotification: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireAuth(context);
 
       const notification = await context.prisma.notifications.findUnique({
@@ -410,12 +388,7 @@ export const notificationResolvers = {
       await context.prisma.notifications.delete({ where: { id: args.id } });
       return true;
     },
-
-    markNotificationRead: async (
-      _parent: unknown,
-      args: { id: string },
-      context: Context,
-    ) => {
+    markNotificationRead: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireAuth(context);
 
       const notification = await context.prisma.notifications.findUnique({
@@ -433,11 +406,7 @@ export const notificationResolvers = {
         data: { status: "READ" },
       });
     },
-    markAllNotificationsRead: async (
-      _parent: unknown,
-      _args: unknown,
-      context: Context,
-    ) => {
+    markAllNotificationsRead: async (_parent: unknown, _args: unknown, context: Context) => {
       const user = requireAuth(context);
 
       await context.prisma.notifications.updateMany({
