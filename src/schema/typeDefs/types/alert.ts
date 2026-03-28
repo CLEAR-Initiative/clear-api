@@ -37,4 +37,33 @@ export const alertTypeDef = gql`
     validFrom: DateTime!
     validTo: DateTime!
   }
+
+  """Notification channel for alert subscriptions."""
+  enum Channel {
+    email
+    sms
+  }
+
+  """How often a user receives alert notifications."""
+  enum Frequency {
+    immediately
+    daily
+    weekly
+    monthly
+  }
+
+  """A user's subscription to alerts of a specific type at a specific location."""
+  type AlertSubscription {
+    id: String!
+    userId: String!
+    user: User!
+    location: Location!
+    """Disaster/event type to subscribe to (e.g. 'fl' for flood, 'eq' for earthquake)."""
+    alertType: String!
+    active: Boolean!
+    channel: Channel!
+    frequency: Frequency!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
 `;
