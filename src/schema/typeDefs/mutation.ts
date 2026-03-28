@@ -169,9 +169,33 @@ export const mutationTypeDef = gql`
 
     """Reset password using a token from the reset email."""
     resetPassword(token: String!, newPassword: String!): Boolean!
+
+    # ─── Alert Subscriptions ──────────────────────────────────────────────────
+    """Subscribe to alerts for a specific type and location."""
+    subscribeToAlerts(input: SubscribeToAlertsInput!): AlertSubscription!
+
+    """Update an existing alert subscription (channel, frequency, active)."""
+    updateAlertSubscription(id: String!, input: UpdateAlertSubscriptionInput!): AlertSubscription!
+
+    """Unsubscribe — deletes the subscription."""
+    unsubscribeFromAlerts(id: String!): Boolean!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
+
+  input SubscribeToAlertsInput {
+    locationId: String!
+    """Disaster/event type (glideNumber from disaster_types, e.g. 'fl', 'eq')."""
+    alertType: String!
+    channel: Channel!
+    frequency: Frequency!
+  }
+
+  input UpdateAlertSubscriptionInput {
+    channel: Channel
+    frequency: Frequency
+    active: Boolean
+  }
 
   input InviteUserInput {
     email: String!

@@ -117,8 +117,8 @@ export const eventResolvers = {
 
       // Resolve location for the event
       let locationId = input.locationId;
-      let originId = input.originId;
-      let destinationId = input.destinationId;
+      const originId = input.originId;
+      const destinationId = input.destinationId;
 
       if (!locationId && !originId && !destinationId) {
         if (input.lat != null && input.lng != null) {
