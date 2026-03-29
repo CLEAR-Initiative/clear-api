@@ -20,6 +20,8 @@ export const eventTypeDef = gql`
     generalLocation: Location
     """Event type tags."""
     types: [String!]!
+    """Severity score (1–5). Aggregated from signal severities."""
+    severity: Int
     """Estimated population affected."""
     populationAffected: String
     rank: Float!

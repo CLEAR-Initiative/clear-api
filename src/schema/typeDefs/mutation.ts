@@ -34,6 +34,9 @@ export const mutationTypeDef = gql`
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
 
+    """Update a signal's severity score."""
+    updateSignalSeverity(id: String!, severity: Int!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -240,6 +243,8 @@ export const mutationTypeDef = gql`
     url: String
     title: String
     description: String
+    """Severity score (1–5). From data source or estimated by pipeline."""
+    severity: Int
     originId: String
     destinationId: String
     locationId: String
@@ -262,6 +267,8 @@ export const mutationTypeDef = gql`
     destinationId: String
     locationId: String
     types: [String!]!
+    """Severity score (1–5). Aggregated from signal severities."""
+    severity: Int
     populationAffected: String
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
@@ -283,6 +290,7 @@ export const mutationTypeDef = gql`
     destinationId: String
     locationId: String
     types: [String!]
+    severity: Int
     populationAffected: String
     rank: Float
   }

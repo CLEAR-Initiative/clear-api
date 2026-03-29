@@ -13,6 +13,8 @@ export const signalTypeDef = gql`
     url: String
     title: String
     description: String
+    """Severity score (1–5). From data source or estimated by pipeline."""
+    severity: Int
     """Origin location of the signal."""
     originLocation: Location
     """Destination location of the signal."""

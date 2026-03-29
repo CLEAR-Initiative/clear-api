@@ -18,6 +18,7 @@ interface CreateEventInput {
   destinationId?: string;
   locationId?: string;
   types: string[];
+  severity?: number;
   populationAffected?: string;
   rank: number;
   signalIds: string[];
@@ -37,6 +38,7 @@ interface UpdateEventInput {
   destinationId?: string;
   locationId?: string;
   types?: string[];
+  severity?: number;
   populationAffected?: string;
   rank?: number;
   signalIds?: string[];
@@ -183,6 +185,7 @@ export const eventResolvers = {
           destinationId,
           locationId,
           types: input.types,
+          severity: input.severity,
           populationAffected: input.populationAffected
             ? BigInt(input.populationAffected)
             : undefined,
