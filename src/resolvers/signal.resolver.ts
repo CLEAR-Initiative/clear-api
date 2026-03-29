@@ -14,6 +14,7 @@ interface CreateSignalInput {
   url?: string;
   title?: string;
   description?: string;
+  severity?: number;
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -121,10 +122,33 @@ export const signalResolvers = {
           url: input.url,
           title: input.title,
           description: input.description,
+          severity: input.severity,
           originId: input.originId,
           destinationId: input.destinationId,
           locationId,
         },
+      });
+    },
+
+    updateSignalSeverity: async (
+      _parent: unknown,
+      args: { id: string; severity: number },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.signals.update({
+        where: { id: args.id },
+        data: { severity: args.severity },
       });
     },
 
