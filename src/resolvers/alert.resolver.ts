@@ -20,8 +20,9 @@ interface UpdateAlertInput {
 
 export const alertResolvers = {
   Query: {
-    alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string }, context: Context) => {
+    alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string; includeDummy?: boolean }, context: Context) => {
       const user = requireAuth(context);
+      const eventDummyFilter = args.includeDummy ? {} : { isDummy: false };
       if (!args.teamId) {
         if (user.role !== "admin") {
           throw new GraphQLError("teamId is required", {
@@ -29,7 +30,10 @@ export const alertResolvers = {
           });
         }
         return context.prisma.alerts.findMany({
-          where: args.status ? { status: args.status } : undefined,
+          where: {
+            ...(args.status ? { status: args.status } : {}),
+            event: eventDummyFilter,
+          },
         });
       }
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
@@ -37,7 +41,7 @@ export const alertResolvers = {
       return context.prisma.alerts.findMany({
         where: {
           ...(args.status ? { status: args.status } : {}),
-          ...(eventLocationFilter ? { event: eventLocationFilter } : {}),
+          event: { ...eventDummyFilter, ...(eventLocationFilter ?? {}) },
         },
       });
     },

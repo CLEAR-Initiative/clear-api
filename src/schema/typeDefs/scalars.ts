@@ -7,4 +7,7 @@ export const scalarTypeDef = gql`
   """Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null."""
   scalar JSON
   scalar GeoJSON
+
+  """File upload scalar (via graphql-upload)."""
+  scalar Upload
 `;

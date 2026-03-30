@@ -22,6 +22,8 @@ export const eventTypeDef = gql`
     types: [String!]!
     """Severity score (1–5). Aggregated from signal severities."""
     severity: Int
+    """Whether this is seed/demo data."""
+    isDummy: Boolean!
     """Estimated population affected."""
     populationAffected: String
     rank: Float!

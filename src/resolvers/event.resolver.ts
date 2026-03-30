@@ -46,19 +46,20 @@ interface UpdateEventInput {
 
 export const eventResolvers = {
   Query: {
-    events: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+    events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
       const user = requireAuth(context);
+      const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       if (!args.teamId) {
         if (user.role !== "admin") {
           throw new GraphQLError("teamId is required", {
             extensions: { code: "BAD_USER_INPUT" },
           });
         }
-        return context.prisma.events.findMany();
+        return context.prisma.events.findMany({ where: dummyFilter });
       }
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.events.findMany({ where: filter });
+      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter } });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireAuth(context);
@@ -282,6 +283,51 @@ export const eventResolvers = {
 
       await context.prisma.events.delete({ where: { id: args.id } });
       return true;
+    },
+
+    escalateEvent: async (
+      _parent: unknown,
+      args: { eventId: string; userId: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+
+      const event = await context.prisma.events.findUnique({
+        where: { id: args.eventId },
+      });
+      if (!event) {
+        throw new GraphQLError("Event not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Check if an alert already exists for this event
+      const existingAlert = await context.prisma.alerts.findFirst({
+        where: { eventId: args.eventId, status: "published" },
+      });
+
+      // Create alert if none exists
+      if (!existingAlert) {
+        await context.prisma.alerts.create({
+          data: { eventId: args.eventId, status: "published" },
+        });
+      }
+
+      // Record user escalation (upsert to handle idempotency)
+      const escalation = await context.prisma.eventEscaladedByUsers.upsert({
+        where: {
+          userId_eventId: { userId: args.userId, eventId: args.eventId },
+        },
+        create: {
+          userId: args.userId,
+          eventId: args.eventId,
+          validFrom: new Date(),
+          validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        },
+        update: {},
+      });
+
+      return escalation;
     },
   },
   Event: {
