@@ -315,6 +315,8 @@ model signals {
   title       String?
   description String?
   severity    Int?    // 1-5 scale; from data source or estimated by pipeline
+  media       String[]
+  isDummy     Boolean @default(false)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("SignalOrigin", fields: [originId], references: [id])
@@ -340,6 +342,7 @@ model events {
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  isDummy Boolean @default(false)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])

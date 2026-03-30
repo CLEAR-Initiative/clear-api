@@ -21,6 +21,16 @@ const envSchema = z.object({
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
 
+  // Pipeline API URL (for forwarding manual signals)
+  PIPELINE_URL: z.string().default("http://localhost:8000"),
+
+  // S3 (for manual signal media uploads)
+  S3_BUCKET: z.string().default("clear-media"),
+  S3_REGION: z.string().default("us-east-1"),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_ENDPOINT: z.string().optional(), // For S3-compatible services (MinIO, R2, etc.)
+
   // Global admin seed (env overrides seed defaults)
   ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
   ADMIN_PASSWORD: z.string().min(8).default("password123"),

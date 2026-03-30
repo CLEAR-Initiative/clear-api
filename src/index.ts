@@ -15,6 +15,8 @@ import { env } from "./utils/env.js";
 import { portalRouter } from "./portal/index.js";
 import { homeRouter } from "./home/index.js";
 import { createDocsRouter } from "./docs/index.js";
+import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
+import { uploadRouter } from "./routes/upload.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -24,6 +26,7 @@ const server = new ApolloServer<Context>({
   resolvers,
   plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
   introspection: env.NODE_ENV !== "production",
+  csrfPrevention: false,
 });
 
 await server.start();
@@ -43,14 +46,18 @@ app.use("/docs", createDocsRouter());
 // Public home page
 app.use("/", homeRouter);
 
+// Media upload (multipart/form-data → S3)
+app.use("/api/upload", uploadRouter);
+
 // Health check
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-// GraphQL — express.json() scoped to this route only
+// GraphQL (with multipart upload support)
 app.use(
   "/graphql",
+  graphqlUploadExpress({ maxFileSize: 20_000_000, maxFiles: 10 }),
   express.json(),
   expressMiddleware(server, {
     context: createContext,

@@ -19,21 +19,28 @@
   "dependencies": {
     "@apollo/server": "^5.4.0",
     "@as-integrations/express5": "^1.1.2",
+    "@aws-sdk/client-s3": "^3.1019.0",
     "@prisma/adapter-pg": "^7.4.2",
     "@prisma/client": "^7.4.2",
+    "apollo-server": ".",
     "better-auth": "^1.5.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "graphql": "^16.13.0",
     "graphql-tag": "^2.12.6",
+    "graphql-upload": "^17.0.0",
+    "multer": "^2.1.1",
     "nodemailer": "^8.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@graphql-tools/schema": "^10.0.31",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/graphql-upload": "^17.0.0",
+    "@types/multer": "^2.1.0",
     "@types/node": "^25.3.2",
     "@types/nodemailer": "^7.0.11",
     "eslint": "^10.0.2",
@@ -42,7 +49,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
-    "@graphql-tools/schema": "^10.0.31",
     "vitest": "^4.0.18"
   }
 }

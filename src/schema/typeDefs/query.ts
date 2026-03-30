@@ -12,13 +12,13 @@ export const queryTypeDef = gql`
     user(id: String!): User
 
     """List alerts. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
-    alerts(status: AlertStatus, teamId: String): [Alert!]!
+    alerts(status: AlertStatus, teamId: String, includeDummy: Boolean): [Alert!]!
 
     """Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope."""
     alert(id: String!): Alert
 
-    """List signals. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
-    signals(teamId: String): [Signal!]!
+    """List signals. Requires authentication. includeDummy defaults to false."""
+    signals(teamId: String, includeDummy: Boolean): [Signal!]!
 
     """Look up a signal by ID. Requires authentication. Non-admins can only access signals within their team scope."""
     signal(id: String!): Signal
@@ -26,8 +26,8 @@ export const queryTypeDef = gql`
     """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
     signalsByLocation(locationId: String!): [Signal!]!
 
-    """List events. Requires authentication. Admins may omit teamId to list all; non-admins must provide a teamId for a team they belong to."""
-    events(teamId: String): [Event!]!
+    """List events. Requires authentication. includeDummy defaults to false."""
+    events(teamId: String, includeDummy: Boolean): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event

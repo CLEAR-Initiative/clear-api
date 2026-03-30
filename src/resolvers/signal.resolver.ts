@@ -5,6 +5,34 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
+import { env } from "../utils/env.js";
+import { uploadFileToS3 } from "../services/s3.js";
+
+const TRUSTED_SOURCE_TYPES = new Set(["field_officer", "partner", "government"]);
+
+interface FileUpload {
+  filename: string;
+  mimetype: string;
+  encoding: string;
+  createReadStream: () => NodeJS.ReadableStream;
+}
+
+interface CreateManualSignalInput {
+  sourceId: string;
+  title: string;
+  description: string;
+  severity?: number;
+  url?: string;
+  /** Media URLs (pre-uploaded via /api/upload endpoint) */
+  mediaUrls?: string[];
+  /** Media files (direct upload via graphql-upload) */
+  media?: Promise<FileUpload>[];
+  locationId?: string;
+  originId?: string;
+  destinationId?: string;
+  lat?: number;
+  lng?: number;
+}
 
 interface CreateSignalInput {
   sourceId: string;
@@ -15,6 +43,8 @@ interface CreateSignalInput {
   title?: string;
   description?: string;
   severity?: number;
+  /** Media URLs from source (stored directly, no S3 upload) */
+  media?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -24,19 +54,20 @@ interface CreateSignalInput {
 
 export const signalResolvers = {
   Query: {
-    signals: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+    signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
       const user = requireAuth(context);
+      const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       if (!args.teamId) {
         if (user.role !== "admin") {
           throw new GraphQLError("teamId is required", {
             extensions: { code: "BAD_USER_INPUT" },
           });
         }
-        return context.prisma.signals.findMany();
+        return context.prisma.signals.findMany({ where: dummyFilter });
       }
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
       const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.signals.findMany({ where: filter });
+      return context.prisma.signals.findMany({ where: { ...filter, ...dummyFilter } });
     },
     signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireAuth(context);
@@ -123,11 +154,105 @@ export const signalResolvers = {
           title: input.title,
           description: input.description,
           severity: input.severity,
+          media: input.media ?? [],
           originId: input.originId,
           destinationId: input.destinationId,
           locationId,
         },
       });
+    },
+
+    createManualSignal: async (
+      _parent: unknown,
+      args: { input: CreateManualSignalInput },
+      context: Context,
+    ) => {
+      const user = requireAuth(context);
+      requireRole(context, ["admin", "analyst"]);
+      const { input } = args;
+
+      // Validate source exists and is a trusted type
+      const dataSource = await context.prisma.dataSources.findUnique({
+        where: { id: input.sourceId },
+      });
+      if (!dataSource) {
+        throw new GraphQLError("DataSource not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      if (!TRUSTED_SOURCE_TYPES.has(dataSource.type)) {
+        throw new GraphQLError(
+          `Manual signals must use a trusted source type (${[...TRUSTED_SOURCE_TYPES].join(", ")}), got "${dataSource.type}"`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
+      // Resolve location from lat/lng if needed
+      let locationId = input.locationId;
+      if (!locationId && input.lat != null && input.lng != null) {
+        const pointLoc = await createPointLocation(
+          context.prisma, input.lat, input.lng, input.title,
+        );
+        locationId = pointLoc.id;
+      }
+
+      // Collect media URLs — from pre-uploaded URLs and/or direct file uploads
+      const media: string[] = [...(input.mediaUrls ?? [])];
+      if (input.media && input.media.length > 0) {
+        const files = await Promise.all(input.media);
+        for (const file of files) {
+          const url = await uploadFileToS3(file.createReadStream(), file.filename, file.mimetype);
+          media.push(url);
+        }
+      }
+
+      // Create the signal
+      const signal = await context.prisma.signals.create({
+        data: {
+          sourceId: input.sourceId,
+          rawData: {
+            manual: true,
+            createdBy: user.id,
+            title: input.title,
+            description: input.description,
+          } as InputJsonValue,
+          publishedAt: new Date(),
+          collectedAt: new Date(),
+          url: input.url,
+          title: input.title,
+          description: input.description,
+          severity: input.severity,
+          media,
+          originId: input.originId,
+          destinationId: input.destinationId,
+          locationId,
+        },
+      });
+
+      // Forward to pipeline for event grouping + auto-escalation (fire-and-forget)
+      void (async () => {
+        try {
+          const resp = await fetch(`${env.PIPELINE_URL}/api/manual-signal`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              signal_id: signal.id,
+              source_type: dataSource.type,
+              title: input.title,
+              description: input.description,
+              severity: input.severity,
+              user_id: user.id,
+            }),
+          });
+          if (!resp.ok) {
+            console.error("[createManualSignal] Pipeline responded with", resp.status, await resp.text());
+          }
+        } catch (err) {
+          console.error("[createManualSignal] Failed to forward to pipeline:", err);
+        }
+      })();
+
+      return signal;
     },
 
     updateSignalSeverity: async (
