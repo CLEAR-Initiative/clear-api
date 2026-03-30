@@ -358,6 +358,10 @@ export const eventResolvers = {
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userComments.findMany({ where: { eventId: parent.id } });
     },
+    // Map Prisma snake_case field to GraphQL camelCase
+    descriptionSignals: (parent: { description_signals?: unknown }) => {
+      return parent.description_signals ?? null;
+    },
     populationAffected: (parent: { populationAffected: bigint | null }) => {
       return parent.populationAffected?.toString() ?? null;
     },
