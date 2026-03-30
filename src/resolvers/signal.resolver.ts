@@ -8,7 +8,7 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { uploadFileToS3 } from "../services/s3.js";
 
-const TRUSTED_SOURCE_TYPES = new Set(["field_officer", "partner", "government"]);
+const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
 interface FileUpload {
   filename: string;
@@ -180,9 +180,9 @@ export const signalResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      if (!TRUSTED_SOURCE_TYPES.has(dataSource.type)) {
+      if (!TRUSTED_SOURCE_NAMES.has(dataSource.name)) {
         throw new GraphQLError(
-          `Manual signals must use a trusted source type (${[...TRUSTED_SOURCE_TYPES].join(", ")}), got "${dataSource.type}"`,
+          `Manual signals must use a trusted source (${[...TRUSTED_SOURCE_NAMES].join(", ")}), got "${dataSource.name}"`,
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
@@ -237,7 +237,7 @@ export const signalResolvers = {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               signal_id: signal.id,
-              source_type: dataSource.type,
+              source_type: dataSource.name,
               title: input.title,
               description: input.description,
               severity: input.severity,
