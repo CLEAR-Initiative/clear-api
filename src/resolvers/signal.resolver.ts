@@ -5,8 +5,8 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
-import { env } from "../utils/env.js";
 import { uploadFileToS3 } from "../services/s3.js";
+import { sendCeleryTask } from "../services/celery.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
@@ -229,28 +229,17 @@ export const signalResolvers = {
         },
       });
 
-      // Forward to pipeline for event grouping + auto-escalation (fire-and-forget)
-      void (async () => {
-        try {
-          const resp = await fetch(`${env.PIPELINE_URL}/api/manual-signal`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              signal_id: signal.id,
-              source_type: dataSource.name,
-              title: input.title,
-              description: input.description,
-              severity: input.severity,
-              user_id: user.id,
-            }),
-          });
-          if (!resp.ok) {
-            console.error("[createManualSignal] Pipeline responded with", resp.status, await resp.text());
-          }
-        } catch (err) {
-          console.error("[createManualSignal] Failed to forward to pipeline:", err);
-        }
-      })();
+      // Queue pipeline processing via Celery (fire-and-forget)
+      void sendCeleryTask("src.tasks.process.process_manual_signal", {
+        signal_id: signal.id,
+        source_type: dataSource.name,
+        title: input.title,
+        description: input.description,
+        severity: input.severity ?? null,
+        user_id: user.id,
+      }).catch((err) => {
+        console.error("[createManualSignal] Failed to queue pipeline task:", err);
+      });
 
       return signal;
     },

@@ -21,8 +21,8 @@ const envSchema = z.object({
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
 
-  // Pipeline API URL (for forwarding manual signals)
-  PIPELINE_URL: z.string().default("http://localhost:8000"),
+  // Celery broker (Redis) — for sending tasks to clear-pipeline workers
+  CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
 
   // S3 (for manual signal media uploads)
   S3_BUCKET: z.string().default("clear-media"),
