@@ -112,5 +112,15 @@ export const userResolvers = {
     escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.eventEscaladedByUsers.findMany({ where: { userId: parent.id } });
     },
+    // Map Prisma field names to GraphQL field names
+    enableEmailNotification: (parent: { emailNotification?: boolean }) => {
+      return parent.emailNotification ?? false;
+    },
+    enableInAppNotification: (parent: { inAppNotification?: boolean }) => {
+      return parent.inAppNotification ?? false;
+    },
+    enableSMSNotification: (parent: { smsNotification?: boolean }) => {
+      return parent.smsNotification ?? false;
+    },
   },
 };
