@@ -1,7 +1,12 @@
 /**
  * Publish Celery tasks directly to Redis broker.
- * Avoids the need for an HTTP API in the pipeline —
- * the Celery worker picks up tasks from Redis automatically.
+ *
+ * Implements the Celery v2 message protocol matching kombu's
+ * Redis transport so Python Celery workers can pick up tasks.
+ *
+ * The body is a plain JSON string (utf-8), NOT base64.
+ * kombu's Redis transport uses json.dumps on the entire message dict,
+ * with the body already as a JSON string inside it.
  */
 
 import { randomUUID } from "node:crypto";
@@ -14,13 +19,11 @@ async function getRedis(): Promise<RedisClientType> {
   if (_redis?.isReady) return _redis;
 
   if (_connecting) {
-    // Wait for in-progress connection
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (_redis?.isReady) return _redis;
   }
 
   _connecting = true;
-  // Import env lazily to avoid circular dependency issues at startup
   const { env } = await import("../utils/env.js");
   const url = env.CELERY_BROKER_URL;
   _redis = createClient({ url }) as RedisClientType;
@@ -31,8 +34,10 @@ async function getRedis(): Promise<RedisClientType> {
 }
 
 /**
- * Send a Celery task to the broker (Redis).
- * The task will be picked up by the next available Celery worker.
+ * Send a Celery task to the Redis broker.
+ *
+ * Uses kwargs-only calling convention matching kombu's
+ * prepare_message + Redis transport format.
  */
 export async function sendCeleryTask(
   taskName: string,
@@ -42,8 +47,15 @@ export async function sendCeleryTask(
   const redis = await getRedis();
   const taskId = randomUUID();
 
+  // Celery v2 body: [args, kwargs, embed]
+  const body = JSON.stringify([
+    [],
+    kwargs,
+    { callbacks: null, errbacks: null, chain: null, chord: null },
+  ]);
+
   const message = {
-    body: JSON.stringify([[], kwargs, { callbacks: null, errbacks: null, chain: null, chord: null }]),
+    body,
     "content-encoding": "utf-8",
     "content-type": "application/json",
     headers: {
@@ -61,7 +73,7 @@ export async function sendCeleryTask(
       parent_id: null,
       argsrepr: "()",
       kwargsrepr: JSON.stringify(kwargs).slice(0, 200),
-      origin: "clear-api",
+      origin: "clear-api@node",
       ignore_result: false,
       replaced_task_nesting: 0,
       stamped_headers: null,
@@ -71,14 +83,18 @@ export async function sendCeleryTask(
       correlation_id: taskId,
       reply_to: "",
       delivery_mode: 2,
-      delivery_info: { exchange: "", routing_key: queue },
+      delivery_info: {
+        exchange: "",
+        routing_key: queue,
+      },
       priority: 0,
-      body_encoding: "base64",
       delivery_tag: randomUUID(),
     },
   };
 
+  // kombu Redis transport: LPUSH queue JSON.dumps(message)
   await redis.lPush(queue, JSON.stringify(message));
 
+  console.log(`[celery] Task ${taskName} queued: ${taskId}`);
   return taskId;
 }
