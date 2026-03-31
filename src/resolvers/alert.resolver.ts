@@ -136,17 +136,28 @@ export const alertResolvers = {
         event.locationId,
       ].filter((id): id is string => id !== null);
 
+      console.log(`[createAlert] Event ${event.id}: types=${JSON.stringify(event.types)}, locationIds=${JSON.stringify(eventLocationIds)}`);
+
+      if (eventLocationIds.length === 0) {
+        console.log("[createAlert] No locations on event — skipping subscriber notifications");
+      } else if (event.types.length === 0) {
+        console.log("[createAlert] No types on event — skipping subscriber notifications");
+      }
+
       if (eventLocationIds.length > 0 && event.types.length > 0) {
         // Expand locations to include ancestors so country-level subscriptions
         // match district-level alerts
         const allLocationIds = new Set(eventLocationIds);
         const locations = await context.prisma.locations.findMany({
           where: { id: { in: eventLocationIds } },
-          select: { ancestorIds: true },
+          select: { id: true, name: true, ancestorIds: true },
         });
         for (const loc of locations) {
           for (const aid of loc.ancestorIds) allLocationIds.add(aid);
         }
+
+        const locationNames = locations.map((l) => l.name).join(", ");
+        console.log(`[createAlert] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
         const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
           where: {
@@ -159,6 +170,11 @@ export const alertResolvers = {
         });
 
         const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+        console.log(`[createAlert] Found ${subscriptions.length} subscriptions → ${uniqueUserIds.length} unique users`);
+
+        if (uniqueUserIds.length === 0) {
+          console.log(`[createAlert] No subscribers found for locations=[${locationNames}] and types=${JSON.stringify(event.types)}`);
+        }
 
         if (uniqueUserIds.length > 0) {
           const title = event.title ?? event.types[0] ?? "Alert";
@@ -172,6 +188,7 @@ export const alertResolvers = {
             })),
             skipDuplicates: true,
           });
+          console.log(`[createAlert] Created ${uniqueUserIds.length} userAlert records`);
 
           // 2. Create in-app notifications
           await context.prisma.notifications.createMany({
@@ -183,6 +200,7 @@ export const alertResolvers = {
               actionText: "View Alert",
             })),
           });
+          console.log(`[createAlert] Created ${uniqueUserIds.length} in-app notifications`);
 
           // 3. Send email notifications (fire-and-forget)
           const emailUsers = await context.prisma.user.findMany({
@@ -190,7 +208,11 @@ export const alertResolvers = {
             select: { name: true, email: true },
           });
 
+          console.log(`[createAlert] ${emailUsers.length}/${uniqueUserIds.length} users have email notifications enabled`);
+
           if (emailUsers.length > 0) {
+            const emailList = emailUsers.map((u) => u.email).join(", ");
+            console.log(`[createAlert] Sending emails to: ${emailList}`);
             void (async () => {
               try {
                 const emailProvider = await getEmailProvider();
@@ -205,10 +227,13 @@ export const alertResolvers = {
                     };
                   }),
                 );
+                console.log(`[createAlert] Email sent successfully to ${emailUsers.length} users`);
               } catch (err) {
                 console.error("[createAlert] Failed to send alert emails:", err);
               }
             })();
+          } else {
+            console.log("[createAlert] No users with email notifications enabled — skipping emails");
           }
         }
       }
