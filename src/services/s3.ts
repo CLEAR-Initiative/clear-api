@@ -1,10 +1,16 @@
 /**
- * S3 upload service for signal media files.
+ * S3 service for signal media files.
+ *
+ * Stores S3 keys (not URLs) in the database.
+ * Generates presigned GET URLs at runtime when serving media.
  */
 
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "node:crypto";
 import { env } from "../utils/env.js";
+
+const PRESIGNED_URL_EXPIRY = 3600; // 1 hour
 
 let _client: S3Client | null = null;
 
@@ -27,15 +33,8 @@ function getClient(): S3Client {
   return _client;
 }
 
-function keyToUrl(key: string): string {
-  if (env.S3_ENDPOINT) {
-    return `${env.S3_ENDPOINT}/${env.S3_BUCKET}/${key}`;
-  }
-  return `https://${env.S3_BUCKET}.s3.${env.S3_REGION}.amazonaws.com/${key}`;
-}
-
 /**
- * Upload a file stream to S3 and return the public URL.
+ * Upload a file stream to S3. Returns the S3 key (NOT a URL).
  */
 export async function uploadFileToS3(
   stream: NodeJS.ReadableStream,
@@ -60,5 +59,24 @@ export async function uploadFileToS3(
     }),
   );
 
-  return keyToUrl(key);
+  return key;
+}
+
+/**
+ * Generate a presigned GET URL for an S3 key.
+ * URLs expire after 1 hour.
+ */
+export async function getPresignedUrl(key: string): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: env.S3_BUCKET,
+    Key: key,
+  });
+  return getSignedUrl(getClient(), command, { expiresIn: PRESIGNED_URL_EXPIRY });
+}
+
+/**
+ * Generate presigned GET URLs for multiple S3 keys.
+ */
+export async function getPresignedUrls(keys: string[]): Promise<string[]> {
+  return Promise.all(keys.map(getPresignedUrl));
 }
