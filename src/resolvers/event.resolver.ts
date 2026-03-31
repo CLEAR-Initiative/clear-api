@@ -5,6 +5,9 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, createRegionFromPoints, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
+import { env } from "../utils/env.js";
+import { getEmailProvider } from "../services/messaging/registry.js";
+import { alertNotification } from "../services/messaging/templates.js";
 
 interface CreateEventInput {
   title?: string;
@@ -306,11 +309,96 @@ export const eventResolvers = {
         where: { eventId: args.eventId, status: "published" },
       });
 
-      // Create alert if none exists
-      if (!existingAlert) {
-        await context.prisma.alerts.create({
+      // Create alert if none exists, and fan out notifications
+      let alert = existingAlert;
+      if (!alert) {
+        alert = await context.prisma.alerts.create({
           data: { eventId: args.eventId, status: "published" },
         });
+
+        // Fan out notifications to subscribers (same logic as createAlert)
+        const eventLocationIds = [
+          event.originId,
+          event.destinationId,
+          event.locationId,
+        ].filter((id): id is string => id !== null);
+
+        if (eventLocationIds.length > 0 && event.types.length > 0) {
+          // Expand to include ancestor locations so country/state subscriptions
+          // match district-level events
+          const allLocationIds = new Set(eventLocationIds);
+          const locations = await context.prisma.locations.findMany({
+            where: { id: { in: eventLocationIds } },
+            select: { ancestorIds: true },
+          });
+          for (const loc of locations) {
+            for (const aid of loc.ancestorIds) allLocationIds.add(aid);
+          }
+
+          const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
+            where: {
+              active: true,
+              frequency: "immediately",
+              alertType: { in: event.types },
+              locationId: { in: [...allLocationIds] },
+            },
+            select: { userId: true },
+          });
+
+          const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+
+          if (uniqueUserIds.length > 0) {
+            const title = event.title ?? event.types[0] ?? "Alert";
+            const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+
+            // 1. Populate userAlerts
+            await context.prisma.userAlerts.createMany({
+              data: uniqueUserIds.map((userId) => ({
+                userId,
+                alertId: alert.id,
+              })),
+              skipDuplicates: true,
+            });
+
+            // 2. In-app notifications
+            await context.prisma.notifications.createMany({
+              data: uniqueUserIds.map((userId) => ({
+                userId,
+                message: `New alert: ${title}`,
+                notificationType: "alert",
+                actionUrl: `/alerts/${alert.id}`,
+                actionText: "View Alert",
+              })),
+            });
+
+            // 3. Email notifications (fire-and-forget)
+            const emailUsers = await context.prisma.user.findMany({
+              where: { id: { in: uniqueUserIds }, emailNotification: true },
+              select: { name: true, email: true },
+            });
+
+            if (emailUsers.length > 0) {
+              void (async () => {
+                try {
+                  const emailProvider = await getEmailProvider();
+                  await emailProvider.sendBulk(
+                    emailUsers.map((u) => {
+                      const content = alertNotification(u.name, title, event.description, alertUrl);
+                      return {
+                        to: u.email,
+                        subject: content.subject,
+                        textBody: content.textBody,
+                        htmlBody: content.htmlBody,
+                      };
+                    }),
+                  );
+                } catch (err) {
+                  console.error("[escalateEvent] Failed to send alert emails:", err);
+                }
+              })();
+            }
+          }
+        }
       }
 
       // Record user escalation (upsert to handle idempotency)

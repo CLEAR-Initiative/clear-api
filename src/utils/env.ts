@@ -29,7 +29,7 @@ const envSchema = z.object({
   S3_REGION: z.string().default("us-east-1"),
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
-  S3_ENDPOINT: z.string().optional(), // For S3-compatible services (MinIO, R2, etc.)
+  S3_ENDPOINT: z.string().optional(),
 
   // Global admin seed (env overrides seed defaults)
   ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),

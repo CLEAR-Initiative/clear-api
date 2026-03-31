@@ -314,5 +314,16 @@ export const signalResolvers = {
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userComments.findMany({ where: { signalId: parent.id } });
     },
+    // Convert S3 keys to presigned URLs at read time.
+    // External URLs (http/https) are passed through unchanged.
+    media: async (parent: { media: string[] }) => {
+      if (!parent.media || parent.media.length === 0) return [];
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return Promise.all(
+        parent.media.map((entry) =>
+          entry.startsWith("http") ? entry : getPresignedUrl(entry),
+        ),
+      );
+    },
   },
 };

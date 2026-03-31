@@ -34,11 +34,6 @@ function getS3(): S3Client {
   return _s3;
 }
 
-function keyToUrl(key: string): string {
-  if (env.S3_ENDPOINT) return `${env.S3_ENDPOINT}/${env.S3_BUCKET}/${key}`;
-  return `https://${env.S3_BUCKET}.s3.${env.S3_REGION}.amazonaws.com/${key}`;
-}
-
 router.post("/", upload.array("files", 10), async (req, res) => {
   try {
     const session = await auth.api.getSession({ headers: req.headers as Record<string, string> });
@@ -54,7 +49,7 @@ router.post("/", upload.array("files", 10), async (req, res) => {
     }
 
     const s3 = getS3();
-    const urls: string[] = [];
+    const keys: string[] = [];
 
     for (const file of files) {
       const ext = file.originalname.includes(".") ? file.originalname.split(".").pop() : "";
@@ -67,10 +62,11 @@ router.post("/", upload.array("files", 10), async (req, res) => {
         ContentType: file.mimetype,
       }));
 
-      urls.push(keyToUrl(key));
+      keys.push(key);
     }
 
-    res.json({ urls });
+    // Return S3 keys (not URLs) — presigned URLs are generated at read time
+    res.json({ keys });
   } catch (err) {
     console.error("[upload] Failed:", err);
     res.status(500).json({ error: "Upload failed" });
