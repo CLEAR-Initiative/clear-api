@@ -363,7 +363,7 @@ export const eventResolvers = {
 
           if (uniqueUserIds.length > 0) {
             const title = event.title ?? event.types[0] ?? "Alert";
-            const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+            const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
             // 1. Populate userAlerts
             await context.prisma.userAlerts.createMany({
@@ -381,7 +381,7 @@ export const eventResolvers = {
                 userId,
                 message: `New alert: ${title}`,
                 notificationType: "alert",
-                actionUrl: `/alerts/${alert.id}`,
+                actionUrl: `/event/${event.id}`,
                 actionText: "View Alert",
               })),
             });
