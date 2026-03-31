@@ -159,7 +159,7 @@ export const notificationResolvers = {
       if (userIds.length === 0) return 0;
 
       const title = event.title ?? event.types[0] ?? "Alert";
-      const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+      const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
       // 1. Populate userAlerts join table
       await context.prisma.userAlerts.createMany({
@@ -176,7 +176,7 @@ export const notificationResolvers = {
           userId,
           message: `New alert: ${title}`,
           notificationType: "alert",
-          actionUrl: `/alerts/${alert.id}`,
+          actionUrl: `/event/${event.id}`,
           actionText: "View Alert",
         })),
       });
@@ -353,7 +353,7 @@ export const notificationResolvers = {
             .map((a) => ({
               title: a.event.title ?? a.event.types[0] ?? "Alert",
               description: a.event.description,
-              url: `${env.FRONTEND_URL}/alerts/${a.id}`,
+              url: `${env.FRONTEND_URL}/event/${a.event.id}`,
             }));
 
           const content = alertDigest(u.name, frequency, userAlerts, dashboardUrl);
