@@ -848,10 +848,20 @@ async function seed() {
 // Usage:
 //   bun run prisma/seed.ts                 # Full seed (all tables)
 //   bun run prisma/seed.ts --locations     # Seed only locations
+//   bun run prisma/seed.ts --dummy         # Add dummy signals/events/alerts (non-destructive)
 
 const args = process.argv.slice(2);
 
-if (args.includes("--locations")) {
+if (args.includes("--dummy")) {
+  import("./seed-dummy.js")
+    .then((m) => m.seedDummyData())
+    .then(() => console.log("Dummy seed complete."))
+    .catch((e) => {
+      console.error("Dummy seed failed:", e);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+} else if (args.includes("--locations")) {
   seedLocations()
     .then(() => console.log("Location seed complete."))
     .catch((e) => {

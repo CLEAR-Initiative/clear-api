@@ -13,6 +13,12 @@ export const signalTypeDef = gql`
     url: String
     title: String
     description: String
+    """Severity score (1–5). From data source or estimated by pipeline."""
+    severity: Int
+    """Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals)."""
+    media: [String!]!
+    """Whether this is seed/demo data."""
+    isDummy: Boolean!
     """Origin location of the signal."""
     originLocation: Location
     """Destination location of the signal."""

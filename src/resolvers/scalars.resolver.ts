@@ -1,6 +1,8 @@
 import { GraphQLScalarType, Kind } from "graphql";
+import GraphQLUpload from "graphql-upload/GraphQLUpload.mjs";
 
 export const scalarResolvers = {
+  Upload: GraphQLUpload,
   DateTime: new GraphQLScalarType({
     name: "DateTime",
     description: "ISO 8601 date-time string",

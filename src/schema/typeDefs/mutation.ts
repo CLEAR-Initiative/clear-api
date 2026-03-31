@@ -34,6 +34,13 @@ export const mutationTypeDef = gql`
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
 
+    """Create a manual signal from a field officer, partner, or government source.
+    Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
+    createManualSignal(input: CreateManualSignalInput!): Signal!
+
+    """Update a signal's severity score."""
+    updateSignalSeverity(id: String!, severity: Int!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -46,6 +53,10 @@ export const mutationTypeDef = gql`
 
     """Delete an event."""
     deleteEvent(id: String!): Boolean!
+
+    """Escalate an event: creates an alert (published) and records the user escalation.
+    If the event already has a published alert, just records the user escalation."""
+    escalateEvent(eventId: String!, userId: String!): EventEscalation!
 
     # ─── Data Sources ──────────────────────────────────────────────────────────
     """Create a new data source."""
@@ -232,6 +243,28 @@ export const mutationTypeDef = gql`
     status: AlertStatus
   }
 
+  input CreateManualSignalInput {
+    """Data source ID (must be field_officer, partner, or government type)."""
+    sourceId: String!
+    title: String!
+    description: String!
+    """Severity score (1–5)."""
+    severity: Int
+    """URL or reference link."""
+    url: String
+    """Media URLs (pre-uploaded via /api/upload endpoint)."""
+    mediaUrls: [String!]
+    """Media files (direct upload via graphql-upload, alternative to mediaUrls)."""
+    media: [Upload!]
+    locationId: String
+    originId: String
+    destinationId: String
+    """Latitude for automatic geo-resolution."""
+    lat: Float
+    """Longitude for automatic geo-resolution."""
+    lng: Float
+  }
+
   input CreateSignalInput {
     sourceId: String!
     rawData: JSON!
@@ -240,6 +273,10 @@ export const mutationTypeDef = gql`
     url: String
     title: String
     description: String
+    """Severity score (1–5). From data source or estimated by pipeline."""
+    severity: Int
+    """Media URLs (source URLs for images, videos, etc.)."""
+    media: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -262,6 +299,8 @@ export const mutationTypeDef = gql`
     destinationId: String
     locationId: String
     types: [String!]!
+    """Severity score (1–5). Aggregated from signal severities."""
+    severity: Int
     populationAffected: String
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
@@ -283,6 +322,7 @@ export const mutationTypeDef = gql`
     destinationId: String
     locationId: String
     types: [String!]
+    severity: Int
     populationAffected: String
     rank: Float
   }
