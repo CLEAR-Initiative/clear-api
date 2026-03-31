@@ -310,9 +310,8 @@ export const eventResolvers = {
       });
 
       // Create alert if none exists, and fan out notifications
-      let alert = existingAlert;
-      if (!alert) {
-        alert = await context.prisma.alerts.create({
+      if (!existingAlert) {
+        const alert = await context.prisma.alerts.create({
           data: { eventId: args.eventId, status: "published" },
         });
 

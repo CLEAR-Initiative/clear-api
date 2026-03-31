@@ -71,7 +71,8 @@ export async function getPresignedUrl(key: string): Promise<string> {
     Bucket: env.S3_BUCKET,
     Key: key,
   });
-  return getSignedUrl(getClient(), command, { expiresIn: PRESIGNED_URL_EXPIRY });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return getSignedUrl(getClient() as any, command, { expiresIn: PRESIGNED_URL_EXPIRY });
 }
 
 /**
