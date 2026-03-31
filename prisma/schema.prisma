@@ -314,6 +314,9 @@ model signals {
   url         String?
   title       String?
   description String?
+  severity    Int?    // 1-5 scale; from data source or estimated by pipeline
+  media       String[]
+  isDummy     Boolean @default(false)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("SignalOrigin", fields: [originId], references: [id])
@@ -339,6 +342,7 @@ model events {
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  isDummy Boolean @default(false)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])
@@ -350,6 +354,7 @@ model events {
   generalLocation locations? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
 
   types                 String[]
+  severity              Int?    // 1-5 scale; aggregated from signal severities
   populationAffected    BigInt?                 @map("population_affected")
   rank                  Float
   alerts                alerts[]

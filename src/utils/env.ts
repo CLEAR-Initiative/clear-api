@@ -21,6 +21,16 @@ const envSchema = z.object({
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
 
+  // Celery broker (Redis) — for sending tasks to clear-pipeline workers
+  CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
+
+  // S3 (for manual signal media uploads)
+  S3_BUCKET: z.string().default("clear-media"),
+  S3_REGION: z.string().default("us-east-1"),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_ENDPOINT: z.string().optional(),
+
   // Global admin seed (env overrides seed defaults)
   ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
   ADMIN_PASSWORD: z.string().min(8).default("password123"),

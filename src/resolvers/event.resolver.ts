@@ -5,6 +5,9 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, createRegionFromPoints, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
+import { env } from "../utils/env.js";
+import { getEmailProvider } from "../services/messaging/registry.js";
+import { alertNotification } from "../services/messaging/templates.js";
 
 interface CreateEventInput {
   title?: string;
@@ -18,6 +21,7 @@ interface CreateEventInput {
   destinationId?: string;
   locationId?: string;
   types: string[];
+  severity?: number;
   populationAffected?: string;
   rank: number;
   signalIds: string[];
@@ -37,6 +41,7 @@ interface UpdateEventInput {
   destinationId?: string;
   locationId?: string;
   types?: string[];
+  severity?: number;
   populationAffected?: string;
   rank?: number;
   signalIds?: string[];
@@ -44,19 +49,20 @@ interface UpdateEventInput {
 
 export const eventResolvers = {
   Query: {
-    events: async (_parent: unknown, args: { teamId?: string }, context: Context) => {
+    events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
       const user = requireAuth(context);
+      const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       if (!args.teamId) {
         if (user.role !== "admin") {
           throw new GraphQLError("teamId is required", {
             extensions: { code: "BAD_USER_INPUT" },
           });
         }
-        return context.prisma.events.findMany();
+        return context.prisma.events.findMany({ where: dummyFilter });
       }
       await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.events.findMany({ where: filter });
+      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter } });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireAuth(context);
@@ -183,6 +189,7 @@ export const eventResolvers = {
           destinationId,
           locationId,
           types: input.types,
+          severity: input.severity,
           populationAffected: input.populationAffected
             ? BigInt(input.populationAffected)
             : undefined,
@@ -280,6 +287,135 @@ export const eventResolvers = {
       await context.prisma.events.delete({ where: { id: args.id } });
       return true;
     },
+
+    escalateEvent: async (
+      _parent: unknown,
+      args: { eventId: string; userId: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+
+      const event = await context.prisma.events.findUnique({
+        where: { id: args.eventId },
+      });
+      if (!event) {
+        throw new GraphQLError("Event not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Check if an alert already exists for this event
+      const existingAlert = await context.prisma.alerts.findFirst({
+        where: { eventId: args.eventId, status: "published" },
+      });
+
+      // Create alert if none exists, and fan out notifications
+      if (!existingAlert) {
+        const alert = await context.prisma.alerts.create({
+          data: { eventId: args.eventId, status: "published" },
+        });
+
+        // Fan out notifications to subscribers (same logic as createAlert)
+        const eventLocationIds = [
+          event.originId,
+          event.destinationId,
+          event.locationId,
+        ].filter((id): id is string => id !== null);
+
+        if (eventLocationIds.length > 0 && event.types.length > 0) {
+          // Expand to include ancestor locations so country/state subscriptions
+          // match district-level events
+          const allLocationIds = new Set(eventLocationIds);
+          const locations = await context.prisma.locations.findMany({
+            where: { id: { in: eventLocationIds } },
+            select: { ancestorIds: true },
+          });
+          for (const loc of locations) {
+            for (const aid of loc.ancestorIds) allLocationIds.add(aid);
+          }
+
+          const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
+            where: {
+              active: true,
+              frequency: "immediately",
+              alertType: { in: event.types },
+              locationId: { in: [...allLocationIds] },
+            },
+            select: { userId: true },
+          });
+
+          const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+
+          if (uniqueUserIds.length > 0) {
+            const title = event.title ?? event.types[0] ?? "Alert";
+            const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+
+            // 1. Populate userAlerts
+            await context.prisma.userAlerts.createMany({
+              data: uniqueUserIds.map((userId) => ({
+                userId,
+                alertId: alert.id,
+              })),
+              skipDuplicates: true,
+            });
+
+            // 2. In-app notifications
+            await context.prisma.notifications.createMany({
+              data: uniqueUserIds.map((userId) => ({
+                userId,
+                message: `New alert: ${title}`,
+                notificationType: "alert",
+                actionUrl: `/alerts/${alert.id}`,
+                actionText: "View Alert",
+              })),
+            });
+
+            // 3. Email notifications (fire-and-forget)
+            const emailUsers = await context.prisma.user.findMany({
+              where: { id: { in: uniqueUserIds }, emailNotification: true },
+              select: { name: true, email: true },
+            });
+
+            if (emailUsers.length > 0) {
+              void (async () => {
+                try {
+                  const emailProvider = await getEmailProvider();
+                  await emailProvider.sendBulk(
+                    emailUsers.map((u) => {
+                      const content = alertNotification(u.name, title, event.description, alertUrl);
+                      return {
+                        to: u.email,
+                        subject: content.subject,
+                        textBody: content.textBody,
+                        htmlBody: content.htmlBody,
+                      };
+                    }),
+                  );
+                } catch (err) {
+                  console.error("[escalateEvent] Failed to send alert emails:", err);
+                }
+              })();
+            }
+          }
+        }
+      }
+
+      // Record user escalation (upsert to handle idempotency)
+      const escalation = await context.prisma.eventEscaladedByUsers.upsert({
+        where: {
+          userId_eventId: { userId: args.userId, eventId: args.eventId },
+        },
+        create: {
+          userId: args.userId,
+          eventId: args.eventId,
+          validFrom: new Date(),
+          validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        },
+        update: {},
+      });
+
+      return escalation;
+    },
   },
   Event: {
     signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
@@ -308,6 +444,10 @@ export const eventResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userComments.findMany({ where: { eventId: parent.id } });
+    },
+    // Map Prisma snake_case field to GraphQL camelCase
+    descriptionSignals: (parent: { description_signals?: unknown }) => {
+      return parent.description_signals ?? null;
     },
     populationAffected: (parent: { populationAffected: bigint | null }) => {
       return parent.populationAffected?.toString() ?? null;
