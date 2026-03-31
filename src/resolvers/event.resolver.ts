@@ -315,24 +315,34 @@ export const eventResolvers = {
           data: { eventId: args.eventId, status: "published" },
         });
 
-        // Fan out notifications to subscribers (same logic as createAlert)
+        // Fan out notifications to subscribers
         const eventLocationIds = [
           event.originId,
           event.destinationId,
           event.locationId,
         ].filter((id): id is string => id !== null);
 
+        console.log(`[escalateEvent] Event ${event.id}: types=${JSON.stringify(event.types)}, locationIds=${JSON.stringify(eventLocationIds)}`);
+
+        if (eventLocationIds.length === 0) {
+          console.log("[escalateEvent] No locations on event — skipping subscriber notifications");
+        } else if (event.types.length === 0) {
+          console.log("[escalateEvent] No types on event — skipping subscriber notifications");
+        }
+
         if (eventLocationIds.length > 0 && event.types.length > 0) {
-          // Expand to include ancestor locations so country/state subscriptions
-          // match district-level events
+          // Expand to include ancestor locations
           const allLocationIds = new Set(eventLocationIds);
           const locations = await context.prisma.locations.findMany({
             where: { id: { in: eventLocationIds } },
-            select: { ancestorIds: true },
+            select: { id: true, name: true, ancestorIds: true },
           });
           for (const loc of locations) {
             for (const aid of loc.ancestorIds) allLocationIds.add(aid);
           }
+
+          const locationNames = locations.map((l) => l.name).join(", ");
+          console.log(`[escalateEvent] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
           const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
             where: {
@@ -345,10 +355,15 @@ export const eventResolvers = {
           });
 
           const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
+          console.log(`[escalateEvent] Found ${subscriptions.length} subscriptions → ${uniqueUserIds.length} unique users`);
+
+          if (uniqueUserIds.length === 0) {
+            console.log(`[escalateEvent] No subscribers found for locations=[${locationNames}] and types=${JSON.stringify(event.types)}`);
+          }
 
           if (uniqueUserIds.length > 0) {
             const title = event.title ?? event.types[0] ?? "Alert";
-            const alertUrl = `${env.FRONTEND_URL}/alerts/${alert.id}`;
+            const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
             // 1. Populate userAlerts
             await context.prisma.userAlerts.createMany({
@@ -358,6 +373,7 @@ export const eventResolvers = {
               })),
               skipDuplicates: true,
             });
+            console.log(`[escalateEvent] Created ${uniqueUserIds.length} userAlert records`);
 
             // 2. In-app notifications
             await context.prisma.notifications.createMany({
@@ -365,10 +381,11 @@ export const eventResolvers = {
                 userId,
                 message: `New alert: ${title}`,
                 notificationType: "alert",
-                actionUrl: `/alerts/${alert.id}`,
+                actionUrl: `/event/${event.id}`,
                 actionText: "View Alert",
               })),
             });
+            console.log(`[escalateEvent] Created ${uniqueUserIds.length} in-app notifications`);
 
             // 3. Email notifications (fire-and-forget)
             const emailUsers = await context.prisma.user.findMany({
@@ -376,7 +393,11 @@ export const eventResolvers = {
               select: { name: true, email: true },
             });
 
+            console.log(`[escalateEvent] ${emailUsers.length}/${uniqueUserIds.length} users have email notifications enabled`);
+
             if (emailUsers.length > 0) {
+              const emailList = emailUsers.map((u) => u.email).join(", ");
+              console.log(`[escalateEvent] Sending emails to: ${emailList}`);
               void (async () => {
                 try {
                   const emailProvider = await getEmailProvider();
@@ -391,10 +412,13 @@ export const eventResolvers = {
                       };
                     }),
                   );
+                  console.log(`[escalateEvent] Email sent successfully to ${emailUsers.length} users`);
                 } catch (err) {
                   console.error("[escalateEvent] Failed to send alert emails:", err);
                 }
               })();
+            } else {
+              console.log("[escalateEvent] No users with email notifications enabled — skipping emails");
             }
           }
         }
