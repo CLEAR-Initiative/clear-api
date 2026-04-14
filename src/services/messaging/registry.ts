@@ -47,6 +47,7 @@ export async function getEmailProvider(): Promise<EmailProvider> {
  *
  * Reads `SMS_PROVIDER` env var:
  *   - `"twilio"` (default) → TwilioSMSProvider
+ *   - `"46elks"` → Elks46SMSProvider
  */
 export async function getSMSProvider(): Promise<SMSProvider> {
   if (_smsProvider) return _smsProvider;
@@ -54,6 +55,15 @@ export async function getSMSProvider(): Promise<SMSProvider> {
   const providerName = (process.env.SMS_PROVIDER ?? "twilio").toLowerCase();
 
   switch (providerName) {
+    case "46elks":
+    case "elks46":
+    case "elks": {
+      const { Elks46SMSProvider } = await import(
+        "./providers/elks46-sms.js"
+      );
+      _smsProvider = new Elks46SMSProvider();
+      break;
+    }
     case "twilio":
     default: {
       const { TwilioSMSProvider } = await import(
