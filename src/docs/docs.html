@@ -1007,6 +1007,10 @@ If the event already has a published alert, just records the user escalation.<di
     <td><code>frequency</code></td>
     <td><code>Frequency!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts).</td>
   </tr></tbody></table><h3 id="type-updatealertinput"><code>UpdateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
@@ -1023,6 +1027,10 @@ If the event already has a published alert, just records the user escalation.<di
     <td><code>active</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>Minimum event severity (1-5).</td>
   </tr></tbody></table><h3 id="type-updatedatasourceinput"><code>UpdateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
@@ -1215,6 +1223,10 @@ If the event already has a published alert, just records the user escalation.<di
     <td><code>active</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int!</code></td>
+    <td>Minimum event severity (1-5) to notify on. Alerts with event.severity &lt; minSeverity are suppressed for this user.</td>
   </tr><tr>
     <td><code>channel</code></td>
     <td><code>Channel!</code></td>
