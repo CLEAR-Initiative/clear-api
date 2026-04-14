@@ -21,6 +21,15 @@ const envSchema = z.object({
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
 
+  // SMS provider: "twilio" | "46elks"
+  SMS_PROVIDER: z.string().default("twilio"),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().optional(),
+  ELKS46_API_USERNAME: z.string().optional(),
+  ELKS46_API_PASSWORD: z.string().optional(),
+  ELKS46_FROM: z.string().optional(),
+
   // Celery broker (Redis) — for sending tasks to clear-pipeline workers
   CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
 
