@@ -344,12 +344,14 @@ export const eventResolvers = {
           const locationNames = locations.map((l) => l.name).join(", ");
           console.log(`[escalateEvent] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
+          const eventSeverity = event.severity ?? 1;
           const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
             where: {
               active: true,
               frequency: "immediately",
               alertType: { in: event.types },
               locationId: { in: [...allLocationIds] },
+              minSeverity: { lte: eventSeverity },
             },
             select: { userId: true },
           });

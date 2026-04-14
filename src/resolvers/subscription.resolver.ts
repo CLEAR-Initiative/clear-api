@@ -8,12 +8,24 @@ interface SubscribeToAlertsInput {
   alertType: string;
   channel: Channel;
   frequency: Frequency;
+  minSeverity?: number;
 }
 
 interface UpdateAlertSubscriptionInput {
   channel?: Channel;
   frequency?: Frequency;
   active?: boolean;
+  minSeverity?: number;
+}
+
+function validateSeverity(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || value < 1 || value > 5) {
+    throw new GraphQLError("minSeverity must be an integer between 1 and 5", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return value;
 }
 
 export const subscriptionResolvers = {
@@ -80,6 +92,7 @@ export const subscriptionResolvers = {
           alertType: input.alertType,
           channel: input.channel,
           frequency: input.frequency,
+          minSeverity: validateSeverity(input.minSeverity) ?? 1,
         },
       });
     },
@@ -112,6 +125,7 @@ export const subscriptionResolvers = {
           channel: input.channel ?? undefined,
           frequency: input.frequency ?? undefined,
           active: input.active ?? undefined,
+          minSeverity: validateSeverity(input.minSeverity) ?? undefined,
         },
       });
     },

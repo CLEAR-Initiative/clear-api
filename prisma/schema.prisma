@@ -512,6 +512,10 @@ model userAlertSubscriptions {
   alertType String  @map("event_type")
   active    Boolean @default(true)
 
+  /// Minimum event severity (1-5) for notification — only alerts with
+  /// event.severity >= minSeverity trigger notifications for this subscription.
+  minSeverity Int @default(1) @map("min_severity")
+
   channel   Channel
   frequency Frequency
 

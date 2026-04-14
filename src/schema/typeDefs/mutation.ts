@@ -200,12 +200,16 @@ export const mutationTypeDef = gql`
     alertType: String!
     channel: Channel!
     frequency: Frequency!
+    """Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts)."""
+    minSeverity: Int
   }
 
   input UpdateAlertSubscriptionInput {
     channel: Channel
     frequency: Frequency
     active: Boolean
+    """Minimum event severity (1-5)."""
+    minSeverity: Int
   }
 
   input InviteUserInput {
