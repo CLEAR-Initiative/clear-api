@@ -161,6 +161,39 @@ export const locationResolvers = {
       `;
       return true;
     },
+
+    updateLocationGeometry: async (
+      _parent: unknown,
+      args: { id: string; geometry: unknown },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const geojson = JSON.stringify(args.geometry);
+
+      // Invalidate the geometry cache for this location
+      const cache = geoCache.get(context.prisma);
+      if (cache) cache.delete(args.id);
+
+      await context.prisma.$executeRaw`
+        UPDATE "locations"
+        SET "geometry" = ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}), 4326))
+        WHERE "id" = ${args.id}
+      `;
+
+      return context.prisma.locations.findUniqueOrThrow({ where: { id: args.id } });
+    },
+
+    updateLocationPopulation: async (
+      _parent: unknown,
+      args: { id: string; population: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      return context.prisma.locations.update({
+        where: { id: args.id },
+        data: { population: BigInt(args.population) },
+      });
+    },
   },
   Location: {
     parent: (parent: { parentId: string | null }, _args: unknown, { prisma }: Context) => {
@@ -184,6 +217,9 @@ export const locationResolvers = {
         where: { id: { in: parent.ancestorIds } },
         orderBy: { level: "asc" },
       });
+    },
+    population: (parent: { population: bigint | null }) => {
+      return parent.population?.toString() ?? null;
     },
   },
 };

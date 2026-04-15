@@ -23,5 +23,7 @@ export const locationTypeDef = gql`
     ancestorIds: [String!]!
     """All ancestor locations (parent, grandparent, etc.)."""
     ancestors: [Location!]!
+    """Population residing within this location's geometry. Null for point locations or when not yet computed."""
+    population: String
   }
 `;
