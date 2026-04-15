@@ -58,7 +58,7 @@ app.get("/health", (_req, res) => {
 app.use(
   "/graphql",
   graphqlUploadExpress({ maxFileSize: 20_000_000, maxFiles: 10 }),
-  express.json(),
+  express.json({ limit: "50mb" }),
   expressMiddleware(server, {
     context: createContext,
   }),
