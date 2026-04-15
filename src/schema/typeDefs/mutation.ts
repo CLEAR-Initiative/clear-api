@@ -411,9 +411,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddFeedbackInput {
-    """Provide exactly one of eventId or signalId."""
+    """Provide exactly one of eventId, signalId, or situationId."""
     eventId: String
     signalId: String
+    situationId: String
     """Rating from 1 to 5."""
     rating: Int!
     """Optional textual feedback."""
@@ -421,9 +422,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddCommentInput {
-    """Provide exactly one of eventId or signalId."""
+    """Provide exactly one of eventId, signalId, or situationId."""
     eventId: String
     signalId: String
+    situationId: String
     comment: String!
     """User IDs to tag in the comment."""
     tagUserIds: [String!]

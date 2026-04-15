@@ -45,9 +45,12 @@ async function sumEventPopulationAffected(
 }
 
 /**
- * Collect the level-2 (district) ancestor IDs for the locations touched by
- * a list of events. Falls back to the event's own location when it's already
- * at level 2, or to its level-2 ancestor otherwise.
+ * Collect the most specific usable location IDs for the events.
+ *
+ * Strategy: prefer level-2 (district), fall back to level-1 (state), then
+ * level-0 (country). For events with point locations (level 4), we pick the
+ * level-2 ancestor. The pipeline task then further falls back to a parent
+ * when the chosen location lacks an areal geometry/cached population.
  */
 async function collectDistrictIds(
   prisma: Context["prisma"],
@@ -73,24 +76,32 @@ async function collectDistrictIds(
     select: { id: true, level: true, ancestorIds: true },
   });
 
+  // For each event location, pick the most specific ancestor ≤ level 2
   const candidateIds = new Set<string>();
   for (const loc of locations) {
-    if (loc.level === 2) {
+    if (loc.level <= 2) {
       candidateIds.add(loc.id);
-    } else if (loc.level > 2) {
-      for (const aid of loc.ancestorIds) candidateIds.add(aid);
     } else {
-      // level < 2 (country/state) — not specific enough, skip
+      // Point or deeper — use ancestors (walk up to find the nearest level-2)
+      for (const aid of loc.ancestorIds) candidateIds.add(aid);
     }
   }
   if (candidateIds.size === 0) return [];
 
-  // Filter down to actual level-2 districts
-  const districts = await prisma.locations.findMany({
-    where: { id: { in: [...candidateIds] }, level: 2 },
-    select: { id: true },
+  // Prefer level-2 where available; otherwise fall back to level-1, then 0
+  const candidates = await prisma.locations.findMany({
+    where: { id: { in: [...candidateIds] }, level: { lte: 2 } },
+    select: { id: true, level: true },
   });
-  return districts.map((d) => d.id);
+  if (candidates.length === 0) return [];
+
+  const byLevel2 = candidates.filter((c) => c.level === 2);
+  if (byLevel2.length > 0) return byLevel2.map((c) => c.id);
+
+  const byLevel1 = candidates.filter((c) => c.level === 1);
+  if (byLevel1.length > 0) return byLevel1.map((c) => c.id);
+
+  return candidates.map((c) => c.id);
 }
 
 /**
