@@ -442,5 +442,9 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Total population residing within the event admin areas (BigInt as string)."""
     populationInArea: String
+    """AI-generated situation title."""
+    title: String
+    """AI-generated situation summary."""
+    summary: String
   }
 `;
