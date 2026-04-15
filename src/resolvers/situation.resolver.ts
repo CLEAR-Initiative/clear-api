@@ -16,6 +16,8 @@ interface CreateSituationFromEventsInput {
 interface UpdateSituationPopulationInput {
   populationAffected?: string | null;
   populationInArea?: string | null;
+  title?: string | null;
+  summary?: string | null;
 }
 
 /**
@@ -92,22 +94,26 @@ async function collectDistrictIds(
 }
 
 /**
- * Dispatch the pipeline task that computes `populationInArea` for a situation
- * by summing the population of the given districts (via WorldPop raster).
+ * Dispatch the pipeline task that enriches a situation: computes
+ * `populationInArea` from the given districts AND generates a narrative
+ * (title + summary) via Claude across the linked events.
  */
-async function dispatchSituationPopulationTask(
+async function dispatchSituationEnrichmentTask(
   situationId: string,
+  eventIds: string[],
   districtIds: string[],
+  generateNarrative: boolean,
 ): Promise<void> {
-  if (districtIds.length === 0) return;
   try {
-    await sendCeleryTask("src.tasks.population.compute_situation_population", {
+    await sendCeleryTask("src.tasks.situation.enrich_situation", {
       situation_id: situationId,
+      event_ids: eventIds,
       district_ids: districtIds,
+      generate_narrative: generateNarrative,
     });
   } catch (err) {
     console.error(
-      `[situation] Failed to dispatch population task for ${situationId}:`,
+      `[situation] Failed to dispatch enrichment task for ${situationId}:`,
       err,
     );
   }
@@ -203,9 +209,15 @@ export const situationResolvers = {
         return created;
       });
 
-      // Async: dispatch Celery task to compute populationInArea via raster
+      // Async: dispatch Celery task for populationInArea + narrative (if not provided)
       const districtIds = await collectDistrictIds(context.prisma, input.eventIds);
-      void dispatchSituationPopulationTask(situation.id, districtIds);
+      const generateNarrative = !input.title || !input.summary;
+      void dispatchSituationEnrichmentTask(
+        situation.id,
+        input.eventIds,
+        districtIds,
+        generateNarrative,
+      );
 
       return situation;
     },
@@ -270,7 +282,13 @@ export const situationResolvers = {
       });
 
       const districtIds = await collectDistrictIds(context.prisma, allEventIds);
-      void dispatchSituationPopulationTask(situationId, districtIds);
+      // Regenerate narrative on add — keeps title/summary coherent as events grow
+      void dispatchSituationEnrichmentTask(
+        situationId,
+        allEventIds,
+        districtIds,
+        true,
+      );
 
       return link;
     },
@@ -293,6 +311,8 @@ export const situationResolvers = {
       const data: {
         populationAffected?: bigint | null;
         populationInArea?: bigint | null;
+        title?: string | null;
+        summary?: string | null;
       } = {};
       if (input.populationAffected !== undefined) {
         data.populationAffected = input.populationAffected === null
@@ -304,6 +324,8 @@ export const situationResolvers = {
           ? null
           : BigInt(input.populationInArea);
       }
+      if (input.title !== undefined) data.title = input.title;
+      if (input.summary !== undefined) data.summary = input.summary;
 
       return context.prisma.situations.update({ where: { id }, data });
     },
