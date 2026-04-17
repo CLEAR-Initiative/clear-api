@@ -40,6 +40,7 @@ async function findSubscribers(
   eventTypes: string[],
   locationIds: string[],
   frequency: "immediately" | "daily" | "weekly" | "monthly",
+  eventSeverity?: number | null,
 ): Promise<string[]> {
   if (eventTypes.length === 0 || locationIds.length === 0) return [];
 
@@ -56,12 +57,16 @@ async function findSubscribers(
     }
   }
 
+  // Events with unknown severity default to 1 (match all subscribers)
+  const effectiveSeverity = eventSeverity ?? 1;
+
   const subscriptions = await prisma.userAlertSubscriptions.findMany({
     where: {
       active: true,
       frequency,
       alertType: { in: eventTypes },
       locationId: { in: [...allLocationIds] },
+      minSeverity: { lte: effectiveSeverity },
     },
     select: { userId: true },
   });
@@ -154,6 +159,7 @@ export const notificationResolvers = {
         event.types,
         eventLocationIds,
         "immediately",
+        event.severity,
       );
 
       if (userIds.length === 0) return 0;
@@ -264,7 +270,7 @@ export const notificationResolvers = {
           alertType: { in: [...allTypes] },
           locationId: { in: [...allExpandedLocationIds] },
         },
-        select: { userId: true, alertType: true, locationId: true },
+        select: { userId: true, alertType: true, locationId: true, minSeverity: true },
       });
 
       if (subscriptions.length === 0) return 0;
@@ -278,8 +284,9 @@ export const notificationResolvers = {
           const typesMatch = alert.event.types.includes(sub.alertType);
           const locationSet = alertLocationSets.get(alert.id);
           const locationMatch = locationSet?.has(sub.locationId) ?? false;
+          const severityMatch = (alert.event.severity ?? 1) >= sub.minSeverity;
 
-          if (typesMatch && locationMatch) {
+          if (typesMatch && locationMatch && severityMatch) {
             let set = userAlertMap.get(sub.userId);
             if (!set) {
               set = new Set();

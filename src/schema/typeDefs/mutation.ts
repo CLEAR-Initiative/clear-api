@@ -78,6 +78,15 @@ export const mutationTypeDef = gql`
     """Delete a location."""
     deleteLocation(id: String!): Boolean!
 
+    """Replace a location's geometry with the given GeoJSON (admin/pipeline only)."""
+    updateLocationGeometry(id: String!, geometry: GeoJSON!): Location!
+
+    """Set a location's cached population (admin/pipeline only)."""
+    updateLocationPopulation(id: String!, population: String!): Location!
+
+    """Set a situation's populationAffected + populationInArea (admin/pipeline only)."""
+    updateSituationPopulation(id: String!, input: UpdateSituationPopulationInput!): Situation!
+
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""
     createNotification(input: CreateNotificationInput!): Notification!
@@ -190,6 +199,13 @@ export const mutationTypeDef = gql`
 
     """Unsubscribe — deletes the subscription."""
     unsubscribeFromAlerts(id: String!): Boolean!
+
+    # ─── Situations ────────────────────────────────────────────────────────────
+    """Create a new situation from a list of event IDs. Links all provided events to the new situation."""
+    createSituationFromEvents(input: CreateSituationFromEventsInput!): Situation!
+
+    """Add an existing event to an existing situation. Idempotent — returns the existing link if one already exists."""
+    addEventToSituation(situationId: String!, eventId: String!): EventSituation!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -200,12 +216,16 @@ export const mutationTypeDef = gql`
     alertType: String!
     channel: Channel!
     frequency: Frequency!
+    """Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts)."""
+    minSeverity: Int
   }
 
   input UpdateAlertSubscriptionInput {
     channel: Channel
     frequency: Frequency
     active: Boolean
+    """Minimum event severity (1-5)."""
+    minSeverity: Int
   }
 
   input InviteUserInput {
@@ -391,9 +411,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddFeedbackInput {
-    """Provide exactly one of eventId or signalId."""
+    """Provide exactly one of eventId, signalId, or situationId."""
     eventId: String
     signalId: String
+    situationId: String
     """Rating from 1 to 5."""
     rating: Int!
     """Optional textual feedback."""
@@ -401,9 +422,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddCommentInput {
-    """Provide exactly one of eventId or signalId."""
+    """Provide exactly one of eventId, signalId, or situationId."""
     eventId: String
     signalId: String
+    situationId: String
     comment: String!
     """User IDs to tag in the comment."""
     tagUserIds: [String!]
@@ -415,5 +437,16 @@ export const mutationTypeDef = gql`
     comment: String!
     """User IDs to tag in the reply."""
     tagUserIds: [String!]
+  }
+
+  input UpdateSituationPopulationInput {
+    """Population directly affected by the events (BigInt as string)."""
+    populationAffected: String
+    """Total population residing within the event admin areas (BigInt as string)."""
+    populationInArea: String
+    """AI-generated situation title."""
+    title: String
+    """AI-generated situation summary."""
+    summary: String
   }
 `;

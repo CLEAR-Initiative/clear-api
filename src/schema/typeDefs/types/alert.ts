@@ -61,6 +61,8 @@ export const alertTypeDef = gql`
     """Disaster/event type to subscribe to (e.g. 'fl' for flood, 'eq' for earthquake)."""
     alertType: String!
     active: Boolean!
+    """Minimum event severity (1-5) to notify on. Alerts with event.severity < minSeverity are suppressed for this user."""
+    minSeverity: Int!
     channel: Channel!
     frequency: Frequency!
     createdAt: DateTime!
