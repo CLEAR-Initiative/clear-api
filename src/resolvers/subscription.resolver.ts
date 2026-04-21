@@ -18,6 +18,14 @@ interface UpdateAlertSubscriptionInput {
   minSeverity?: number;
 }
 
+interface SubscribeToAlertsBatchInput {
+  locationIds: string[];
+  alertTypes: string[];
+  channel: Channel;
+  frequency: Frequency;
+  minSeverity?: number;
+}
+
 function validateSeverity(value: number | undefined): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || value < 1 || value > 5) {
@@ -94,6 +102,95 @@ export const subscriptionResolvers = {
           frequency: input.frequency,
           minSeverity: validateSeverity(input.minSeverity) ?? 1,
         },
+      });
+    },
+
+    subscribeToAlertsBatch: async (
+      _parent: unknown,
+      args: { input: SubscribeToAlertsBatchInput },
+      context: Context,
+    ) => {
+      const user = requireAuth(context);
+      const { input } = args;
+
+      if (input.locationIds.length === 0 || input.alertTypes.length === 0) {
+        throw new GraphQLError("locationIds and alertTypes must each contain at least one value", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const minSeverity = validateSeverity(input.minSeverity) ?? 1;
+
+      // De-dupe incoming pairs in case the caller sent the same value twice
+      const uniqueLocationIds = [...new Set(input.locationIds)];
+      const uniqueAlertTypes = [...new Set(input.alertTypes)];
+
+      // Verify all referenced locations exist in one query
+      const foundLocations = await context.prisma.locations.findMany({
+        where: { id: { in: uniqueLocationIds } },
+        select: { id: true },
+      });
+      if (foundLocations.length !== uniqueLocationIds.length) {
+        const foundSet = new Set(foundLocations.map((l) => l.id));
+        const missing = uniqueLocationIds.filter((id) => !foundSet.has(id));
+        throw new GraphQLError(`Location(s) not found: ${missing.join(", ")}`, {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Load existing subscriptions for this user in the requested scope so
+      // we can skip duplicates silently (vs the single-create which errors)
+      const existing = await context.prisma.userAlertSubscriptions.findMany({
+        where: {
+          userId: user.id,
+          locationId: { in: uniqueLocationIds },
+          alertType: { in: uniqueAlertTypes },
+          channel: input.channel,
+        },
+        select: { locationId: true, alertType: true },
+      });
+      const existingKeys = new Set(
+        existing.map((s) => `${s.locationId}::${s.alertType}`),
+      );
+
+      const toCreate: {
+        userId: string;
+        locationId: string;
+        alertType: string;
+        channel: Channel;
+        frequency: Frequency;
+        minSeverity: number;
+      }[] = [];
+      for (const locationId of uniqueLocationIds) {
+        for (const alertType of uniqueAlertTypes) {
+          if (existingKeys.has(`${locationId}::${alertType}`)) continue;
+          toCreate.push({
+            userId: user.id,
+            locationId,
+            alertType,
+            channel: input.channel,
+            frequency: input.frequency,
+            minSeverity,
+          });
+        }
+      }
+
+      if (toCreate.length === 0) return [];
+
+      // Create all rows in one round-trip; then return them
+      await context.prisma.userAlertSubscriptions.createMany({
+        data: toCreate,
+        skipDuplicates: true,
+      });
+
+      return context.prisma.userAlertSubscriptions.findMany({
+        where: {
+          userId: user.id,
+          locationId: { in: uniqueLocationIds },
+          alertType: { in: uniqueAlertTypes },
+          channel: input.channel,
+        },
+        orderBy: { createdAt: "desc" },
       });
     },
 
