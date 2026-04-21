@@ -194,6 +194,10 @@ export const mutationTypeDef = gql`
     """Subscribe to alerts for a specific type and location."""
     subscribeToAlerts(input: SubscribeToAlertsInput!): AlertSubscription!
 
+    """Subscribe to alerts for multiple (location × alertType) combinations in a single call.
+    Returns the list of created subscriptions. Duplicates are skipped silently."""
+    subscribeToAlertsBatch(input: SubscribeToAlertsBatchInput!): [AlertSubscription!]!
+
     """Update an existing alert subscription (channel, frequency, active)."""
     updateAlertSubscription(id: String!, input: UpdateAlertSubscriptionInput!): AlertSubscription!
 
@@ -217,6 +221,17 @@ export const mutationTypeDef = gql`
     channel: Channel!
     frequency: Frequency!
     """Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts)."""
+    minSeverity: Int
+  }
+
+  input SubscribeToAlertsBatchInput {
+    """One or more location IDs."""
+    locationIds: [String!]!
+    """One or more disaster/event types (glideNumbers). A subscription is created for every (location × alertType) pair."""
+    alertTypes: [String!]!
+    channel: Channel!
+    frequency: Frequency!
+    """Minimum event severity (1-5). Applied to all created subscriptions."""
     minSeverity: Int
   }
 
