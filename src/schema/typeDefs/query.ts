@@ -62,11 +62,14 @@ export const queryTypeDef = gql`
     """Look up a feature flag by its unique key."""
     featureFlag(key: String!): FeatureFlag
 
-    """List all disaster type classifications."""
+    """List all disaster type classifications (flat list of level-3 rows)."""
     disasterTypes: [DisasterType!]!
 
     """Look up a disaster type by ID."""
     disasterType(id: String!): DisasterType
+
+    """List disaster types grouped into the 3-level hierarchy (level1 > level2 > level3)."""
+    disasterTypeHierarchy: [DisasterLevel1!]!
 
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
