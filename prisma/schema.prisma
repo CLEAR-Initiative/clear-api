@@ -375,6 +375,16 @@ model disasterTypes {
   disasterClass String @map("disaster_class")
   glideNumber   String @map("glide_number")
 
+  /// Top-level category (e.g. "natural hazard", "conflict", "crisis").
+  level1 String @default("") @map("level_1")
+  /// Mid-level group (e.g. "protests", "battles", "flood").
+  level2 String @default("") @map("level_2")
+  /// Identifier system for glideNumber: "glide_number" or "clear_id".
+  idType String @default("glide_number") @map("id_type")
+
+  @@index([level1])
+  @@index([level2])
+  @@index([glideNumber])
   @@map("disaster_types")
 }
 
