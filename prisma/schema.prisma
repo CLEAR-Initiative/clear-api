@@ -269,7 +269,17 @@ model locations {
 
 /// Arbitrary per-location metadata keyed by type (e.g. "iom_dtm_displacement",
 /// "acaps_inform"). The `data` column is JSON so each source can store its
-/// own shape. Unique on (location_id, type) so upserts are safe.
+/// own shape.
+///
+/// History is preserved via the (validFrom, validTo) pair:
+///   - validTo IS NULL  → the row is the CURRENT value for (location, type).
+///   - validTo is set   → the row has been superseded (closed out) and is
+///     part of the audit trail.
+///
+/// A natural partial-unique "one current row per (location, type)" is
+/// enforced by the upsert resolver (close-old-then-insert-new inside a tx).
+/// Enforcing it at the DB level would require a partial unique index which
+/// Prisma doesn't model declaratively — the invariant is protected by code.
 model locationMetadata {
   id         String    @id @default(cuid())
   locationId String    @map("location_id")
@@ -278,11 +288,17 @@ model locationMetadata {
   type String // e.g. "iom_dtm_displacement"
   data Json
 
+  /// When this value became current. Defaults to row creation time.
+  validFrom DateTime @default(now()) @map("valid_from")
+  /// When this value was superseded. Null means still current.
+  validTo DateTime? @map("valid_to")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([locationId, type])
-  @@index([type])
+  @@index([locationId, type])
+  @@index([locationId, type, validTo])
+  @@index([type, validTo])
   @@map("location_metadata")
 }
 

@@ -223,15 +223,17 @@ export const locationResolvers = {
     },
     metadata: (
       parent: { id: string },
-      args: { type?: string },
+      args: { type?: string; current?: boolean },
       { prisma }: Context,
     ) => {
+      const onlyCurrent = args.current ?? true;
       return prisma.locationMetadata.findMany({
         where: {
           locationId: parent.id,
           ...(args.type ? { type: args.type } : {}),
+          ...(onlyCurrent ? { validTo: null } : {}),
         },
-        orderBy: { updatedAt: "desc" },
+        orderBy: { validFrom: "desc" },
       });
     },
   },
