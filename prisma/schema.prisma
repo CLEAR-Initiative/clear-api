@@ -347,6 +347,13 @@ model signals {
   sourceId String      @map("source_id")
   source   dataSources @relation(fields: [sourceId], references: [id])
 
+  /// Stable external identifier from the upstream source, e.g.
+  ///   "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}".
+  /// Nullable so pre-existing signals don't break the uniqueness check —
+  /// Postgres treats multiple NULLs as distinct under a UNIQUE constraint.
+  /// Any insert with a non-null externalId is deduped against existing rows.
+  externalId String? @map("external_id")
+
   rawData     Json     @map("raw_data")
   publishedAt DateTime @map("published_at")
   collectedAt DateTime @default(now()) @map("collected_at")
@@ -369,6 +376,10 @@ model signals {
   userFeedbacks   userFeedbacks[]
   userComments    userComments[]
   signalEvents    signalEvents[]
+
+  @@unique([sourceId, externalId])
+  @@index([sourceId])
+  @@index([publishedAt])
 }
 
 model events {

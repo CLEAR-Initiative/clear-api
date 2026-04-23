@@ -121,13 +121,32 @@ export const alertResolvers = {
         });
       }
 
-      // Create the alert record
-      const alert = await context.prisma.alerts.create({
-        data: {
-          eventId: input.eventId,
-          status: input.status ?? "draft",
-        },
+      // Idempotent creation: if an alert already exists for this event,
+      // return it (updating the status if the caller requested a different
+      // one). Prevents duplicate alerts when the pipeline retries or when
+      // the same event is re-escalated.
+      const existingAlert = await context.prisma.alerts.findFirst({
+        where: { eventId: input.eventId },
+        orderBy: { id: "asc" }, // deterministic: earliest wins
       });
+      const alert = existingAlert
+        ? (input.status && input.status !== existingAlert.status
+            ? await context.prisma.alerts.update({
+                where: { id: existingAlert.id },
+                data: { status: input.status },
+              })
+            : existingAlert)
+        : await context.prisma.alerts.create({
+            data: {
+              eventId: input.eventId,
+              status: input.status ?? "draft",
+            },
+          });
+
+      // Skip the notification fan-out when the alert already existed —
+      // subscribers were notified on the original create, we don't want
+      // to spam them on every retry.
+      if (existingAlert) return alert;
 
       // Fan out notifications to immediate subscribers
       const eventLocationIds = [

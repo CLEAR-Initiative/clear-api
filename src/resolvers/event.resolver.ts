@@ -197,10 +197,12 @@ export const eventResolvers = {
         },
       });
 
-      // Create signalEvents join entries
+      // Create signalEvents join entries (dedupe the input array first so
+      // the same signalId repeated in the request doesn't create duplicate links).
       if (input.signalIds.length > 0) {
+        const uniqueSignalIds = [...new Set(input.signalIds)];
         await context.prisma.signalEvents.createMany({
-          data: input.signalIds.map((signalId) => ({
+          data: uniqueSignalIds.map((signalId) => ({
             signalId,
             eventId: event.id,
             collectedAt: new Date(),
@@ -226,12 +228,23 @@ export const eventResolvers = {
         });
       }
 
-      // Update signal links if provided
-      if (input.signalIds !== undefined) {
-        await context.prisma.signalEvents.deleteMany({ where: { eventId: id } });
-        if (input.signalIds.length > 0) {
+      // Update signal links — ADDITIVE + IDEMPOTENT semantics. Passing
+      // signalIds appends them to the event; already-linked signals are
+      // skipped. Callers that want to fully replace links should delete
+      // them explicitly (no current use case).
+      if (input.signalIds !== undefined && input.signalIds.length > 0) {
+        const alreadyLinked = await context.prisma.signalEvents.findMany({
+          where: {
+            eventId: id,
+            signalId: { in: input.signalIds },
+          },
+          select: { signalId: true },
+        });
+        const linkedSet = new Set(alreadyLinked.map((r) => r.signalId));
+        const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
+        if (toLink.length > 0) {
           await context.prisma.signalEvents.createMany({
-            data: input.signalIds.map((signalId) => ({
+            data: toLink.map((signalId) => ({
               signalId,
               eventId: id,
               collectedAt: new Date(),
