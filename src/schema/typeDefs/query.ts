@@ -71,12 +71,18 @@ export const queryTypeDef = gql`
     """List disaster types grouped into the 3-level hierarchy (level1 > level2 > level3)."""
     disasterTypeHierarchy: [DisasterLevel1!]!
 
-    """List metadata entries for a location, optionally filtered by type."""
-    locationMetadata(locationId: String!, type: String): [LocationMetadata!]!
+    """List metadata entries for a location, optionally filtered by type.
+    By default only the CURRENT value is returned (validTo is null). Pass
+    current: false to include the full history."""
+    locationMetadata(locationId: String!, type: String, current: Boolean): [LocationMetadata!]!
 
     """List every locationMetadata entry of a given type across all locations.
-    Useful for dashboards (e.g. "show me all DTM displacement data")."""
-    allLocationMetadata(type: String!): [LocationMetadata!]!
+    By default only current values. Pass current: false for the full history."""
+    allLocationMetadata(type: String!, current: Boolean): [LocationMetadata!]!
+
+    """History of a (location, type) pair — newest first. Includes the current
+    row plus every superseded one."""
+    locationMetadataHistory(locationId: String!, type: String!): [LocationMetadata!]!
 
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
