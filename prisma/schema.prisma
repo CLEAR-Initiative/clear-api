@@ -447,6 +447,10 @@ model alerts {
 
   event      events       @relation(fields: [eventId], references: [id])
   userAlerts userAlerts[]
+
+  /// One alert per event. Status transitions (draft → published → archived)
+  /// update this row in place; they do not create new ones.
+  @@unique([eventId])
 }
 
 model situations {
@@ -623,6 +627,8 @@ model signalEvents {
   signal signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
   event  events  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
+  /// A signal can only be linked to a given event once.
+  @@unique([signalId, eventId])
   @@map("signal_to_events")
 }
 
