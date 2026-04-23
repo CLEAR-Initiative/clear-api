@@ -478,6 +478,9 @@ export const eventResolvers = {
     populationAffected: (parent: { populationAffected: bigint | null }) => {
       return parent.populationAffected?.toString() ?? null;
     },
+    populationDisplaced: (parent: { populationDisplaced: bigint | null }) => {
+      return parent.populationDisplaced?.toString() ?? null;
+    },
     escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.eventEscaladedByUsers.findMany({ where: { eventId: parent.id } });
     },

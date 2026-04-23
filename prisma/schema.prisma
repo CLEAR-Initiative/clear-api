@@ -260,10 +260,30 @@ model locations {
   userAlertSubscriptions userAlertSubscriptions[]
   teamScopes             teamLocations[]
   situations             situations[]             @relation("SituationLocation")
+  metadata               locationMetadata[]
 
   @@index([level])
   @@index([parentId])
   @@index([ancestorIds(ops: ArrayOps)], type: Gin)
+}
+
+/// Arbitrary per-location metadata keyed by type (e.g. "iom_dtm_displacement",
+/// "acaps_inform"). The `data` column is JSON so each source can store its
+/// own shape. Unique on (location_id, type) so upserts are safe.
+model locationMetadata {
+  id         String    @id @default(cuid())
+  locationId String    @map("location_id")
+  location   locations @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  type String // e.g. "iom_dtm_displacement"
+  data Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([locationId, type])
+  @@index([type])
+  @@map("location_metadata")
 }
 
 // ─── Data Mining ─────────────────────────────────────────────────────────────
@@ -360,6 +380,11 @@ model events {
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
   populationAffected    BigInt?                 @map("population_affected")
+  /// Population displaced by this event. Resolution order in the pipeline:
+  /// (1) max across signal-level displacement data, (2) IOM DTM value cached
+  /// in `locationMetadata(type="iom_dtm_displacement")` for the event's
+  /// admin-2 location, (3) default fallback (1670).
+  populationDisplaced   BigInt?                 @map("population_displaced")
   rank                  Float
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]

@@ -285,6 +285,38 @@ export const alertResolvers = {
       await context.prisma.alerts.delete({ where: { id: args.id } });
       return true;
     },
+
+    /**
+     * Bulk-archive alerts whose event.lastSignalCreatedAt is older than
+     * `olderThanDays` (default 14). One SQL UPDATE via Prisma updateMany.
+     * Only targets non-archived alerts so repeat runs are idempotent.
+     */
+    archiveStaleAlerts: async (
+      _parent: unknown,
+      args: { olderThanDays?: number },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+
+      const days = args.olderThanDays ?? 14;
+      if (!Number.isFinite(days) || days < 1) {
+        throw new GraphQLError("olderThanDays must be a positive integer", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      const result = await context.prisma.alerts.updateMany({
+        where: {
+          status: { not: "archived" },
+          event: { lastSignalCreatedAt: { lt: cutoff } },
+        },
+        data: { status: "archived" },
+      });
+
+      return { alertsArchived: result.count };
+    },
   },
   Alert: {
     event: (parent: { eventId: string }, _args: unknown, { prisma }: Context) => {
