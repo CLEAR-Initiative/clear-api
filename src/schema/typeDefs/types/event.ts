@@ -26,6 +26,8 @@ export const eventTypeDef = gql`
     isDummy: Boolean!
     """Estimated population affected."""
     populationAffected: String
+    """Estimated population displaced by the event (BigInt as string)."""
+    populationDisplaced: String
     rank: Float!
     """Signals linked to this event."""
     signals: [Signal!]!

@@ -30,6 +30,11 @@ export const mutationTypeDef = gql`
     """Delete an alert."""
     deleteAlert(id: String!): Boolean!
 
+    """Archive published alerts whose event.lastSignalCreatedAt is older than
+    olderThanDays (default: 14). Sets alerts.status to 'archived'. Admin or
+    pipeline only. Returns the number of rows affected."""
+    archiveStaleAlerts(olderThanDays: Int): ArchiveStaleAlertsResult!
+
     # ─── Signals ───────────────────────────────────────────────────────────────
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
@@ -86,6 +91,17 @@ export const mutationTypeDef = gql`
 
     """Set a situation's populationAffected + populationInArea (admin/pipeline only)."""
     updateSituationPopulation(id: String!, input: UpdateSituationPopulationInput!): Situation!
+
+    """Create or update a location's metadata entry for a given type (admin/pipeline only).
+    Upsert keyed by (locationId, type)."""
+    upsertLocationMetadata(input: UpsertLocationMetadataInput!): LocationMetadata!
+
+    """Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
+    Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently."""
+    upsertLocationMetadataBatch(inputs: [UpsertLocationMetadataInput!]!): [LocationMetadata!]!
+
+    """Delete a location's metadata entry for a given type (admin only)."""
+    deleteLocationMetadata(locationId: String!, type: String!): Boolean!
 
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""

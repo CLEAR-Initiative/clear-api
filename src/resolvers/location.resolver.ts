@@ -221,5 +221,18 @@ export const locationResolvers = {
     population: (parent: { population: bigint | null }) => {
       return parent.population?.toString() ?? null;
     },
+    metadata: (
+      parent: { id: string },
+      args: { type?: string },
+      { prisma }: Context,
+    ) => {
+      return prisma.locationMetadata.findMany({
+        where: {
+          locationId: parent.id,
+          ...(args.type ? { type: args.type } : {}),
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    },
   },
 };
