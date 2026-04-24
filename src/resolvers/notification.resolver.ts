@@ -31,6 +31,18 @@ interface AlertDigestInput {
   frequency: "daily" | "weekly" | "monthly";
 }
 
+function severityToLabel(severity: number | null | undefined): string | null {
+  const labels: Record<number, string> = { 1: "MINIMAL", 2: "LOW", 3: "MEDIUM", 4: "HIGH", 5: "CRITICAL" };
+  return severity != null ? (labels[severity] ?? null) : null;
+}
+
+function formatCount(n: bigint | number): string {
+  const v = typeof n === "bigint" ? Number(n) : n;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+  return v.toLocaleString();
+}
+
 /**
  * Find all subscriber user IDs for a given alert based on its event's
  * types and locations, filtered by frequency.
@@ -141,7 +153,14 @@ export const notificationResolvers = {
 
       const alert = await context.prisma.alerts.findUnique({
         where: { id: args.input.alertId },
-        include: { event: true },
+        include: {
+          event: {
+            include: {
+              generalLocation: { select: { name: true, population: true } },
+              originLocation: { select: { name: true, population: true } },
+            },
+          },
+        },
       });
       if (!alert) {
         throw new GraphQLError("Alert not found", {
@@ -195,8 +214,30 @@ export const notificationResolvers = {
 
       if (emailUsers.length > 0) {
         const emailProvider = await getEmailProvider();
+        const location = event.generalLocation ?? event.originLocation ?? null;
+        const locationName = location?.name ?? null;
+        const population = location?.population ? formatCount(BigInt(location.population)) : null;
+        const severityLabel = severityToLabel(event.severity);
+        const affectedPeople = event.populationAffected != null
+          ? formatCount(event.populationAffected)
+          : null;
+
+        const disasterType = event.types[0]
+          ? await context.prisma.disasterTypes.findFirst({
+              where: { glideNumber: event.types[0] },
+              select: { level1: true },
+            })
+          : null;
+        const eventTypeLabel = disasterType?.level1 ?? event.types[0] ?? null;
+
         const emails = emailUsers.map((u) => {
-          const content = alertNotification(u.name, title, event.description, alertUrl);
+          const content = alertNotification(u.name, title, event.description, alertUrl, {
+            severity: severityLabel,
+            eventType: eventTypeLabel,
+            locationName,
+            population,
+            affectedPeople,
+          });
           return {
             to: u.email,
             subject: content.subject,
@@ -205,7 +246,7 @@ export const notificationResolvers = {
           };
         });
 
-        // Fire-and-forget — don't block the response on email delivery
+        // Fire-and-forget - don't block the response on email delivery
         void emailProvider.sendBulk(emails).catch((err) => {
           console.error("[NOTIFY] Failed to send alert emails:", err);
         });
