@@ -33,6 +33,7 @@ interface AlertDigestInput {
 
 function severityToLabel(severity: number | null | undefined): string | null {
   if (severity == null) return null;
+  if (severity >= 5) return "CRITICAL";
   if (severity >= 4) return "HIGH";
   if (severity >= 2) return "MEDIUM";
   return "LOW";
