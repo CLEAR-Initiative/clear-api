@@ -358,6 +358,8 @@ export const mutationTypeDef = gql`
     """Severity score (1–5). Aggregated from signal severities."""
     severity: Int
     populationAffected: String
+    """Estimated population displaced (BigInt as string)."""
+    populationDisplaced: String
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
     lat: Float
@@ -380,6 +382,8 @@ export const mutationTypeDef = gql`
     types: [String!]
     severity: Int
     populationAffected: String
+    """Estimated population displaced (BigInt as string)."""
+    populationDisplaced: String
     rank: Float
   }
 
