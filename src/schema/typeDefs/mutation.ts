@@ -30,6 +30,11 @@ export const mutationTypeDef = gql`
     """Delete an alert."""
     deleteAlert(id: String!): Boolean!
 
+    """Archive published alerts whose event.lastSignalCreatedAt is older than
+    olderThanDays (default: 14). Sets alerts.status to 'archived'. Admin or
+    pipeline only. Returns the number of rows affected."""
+    archiveStaleAlerts(olderThanDays: Int): ArchiveStaleAlertsResult!
+
     # ─── Signals ───────────────────────────────────────────────────────────────
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
@@ -86,6 +91,17 @@ export const mutationTypeDef = gql`
 
     """Set a situation's populationAffected + populationInArea (admin/pipeline only)."""
     updateSituationPopulation(id: String!, input: UpdateSituationPopulationInput!): Situation!
+
+    """Create or update a location's metadata entry for a given type (admin/pipeline only).
+    Upsert keyed by (locationId, type)."""
+    upsertLocationMetadata(input: UpsertLocationMetadataInput!): LocationMetadata!
+
+    """Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
+    Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently."""
+    upsertLocationMetadataBatch(inputs: [UpsertLocationMetadataInput!]!): [LocationMetadata!]!
+
+    """Delete a location's metadata entry for a given type (admin only)."""
+    deleteLocationMetadata(locationId: String!, type: String!): Boolean!
 
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""
@@ -194,6 +210,10 @@ export const mutationTypeDef = gql`
     """Subscribe to alerts for a specific type and location."""
     subscribeToAlerts(input: SubscribeToAlertsInput!): AlertSubscription!
 
+    """Subscribe to alerts for multiple (location × alertType) combinations in a single call.
+    Returns the list of created subscriptions. Duplicates are skipped silently."""
+    subscribeToAlertsBatch(input: SubscribeToAlertsBatchInput!): [AlertSubscription!]!
+
     """Update an existing alert subscription (channel, frequency, active)."""
     updateAlertSubscription(id: String!, input: UpdateAlertSubscriptionInput!): AlertSubscription!
 
@@ -217,6 +237,17 @@ export const mutationTypeDef = gql`
     channel: Channel!
     frequency: Frequency!
     """Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts)."""
+    minSeverity: Int
+  }
+
+  input SubscribeToAlertsBatchInput {
+    """One or more location IDs."""
+    locationIds: [String!]!
+    """One or more disaster/event types (glideNumbers). A subscription is created for every (location × alertType) pair."""
+    alertTypes: [String!]!
+    channel: Channel!
+    frequency: Frequency!
+    """Minimum event severity (1-5). Applied to all created subscriptions."""
     minSeverity: Int
   }
 
@@ -287,6 +318,11 @@ export const mutationTypeDef = gql`
 
   input CreateSignalInput {
     sourceId: String!
+    """Stable upstream identifier for idempotent ingestion. If a signal with
+    the same (sourceId, externalId) already exists, createSignal returns the
+    existing row instead of creating a duplicate. Recommended prefix scheme:
+    "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
+    externalId: String
     rawData: JSON!
     publishedAt: String!
     collectedAt: String
@@ -322,6 +358,8 @@ export const mutationTypeDef = gql`
     """Severity score (1–5). Aggregated from signal severities."""
     severity: Int
     populationAffected: String
+    """Estimated population displaced (BigInt as string)."""
+    populationDisplaced: String
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
     lat: Float
@@ -344,6 +382,8 @@ export const mutationTypeDef = gql`
     types: [String!]
     severity: Int
     populationAffected: String
+    """Estimated population displaced (BigInt as string)."""
+    populationDisplaced: String
     rank: Float
   }
 

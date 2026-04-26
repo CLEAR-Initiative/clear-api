@@ -36,6 +36,9 @@ interface CreateManualSignalInput {
 
 interface CreateSignalInput {
   sourceId: string;
+  /** Stable upstream id for idempotent ingestion. If set and a row with
+   *  the same (sourceId, externalId) exists, the existing row is returned. */
+  externalId?: string;
   rawData: Record<string, unknown>;
   publishedAt: string;
   collectedAt?: string;
@@ -132,6 +135,22 @@ export const signalResolvers = {
         });
       }
 
+      // Idempotent ingestion: if an externalId is provided and a signal
+      // already exists for (sourceId, externalId), return it as-is. This
+      // makes the mutation safe to retry and prevents duplicate rows when
+      // the upstream poller's Redis seen-set has expired.
+      if (input.externalId) {
+        const existing = await context.prisma.signals.findUnique({
+          where: {
+            sourceId_externalId: {
+              sourceId: input.sourceId,
+              externalId: input.externalId,
+            },
+          },
+        });
+        if (existing) return existing;
+      }
+
       // Resolve lat/lng to a level-4 point location if no explicit locationId is provided
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
@@ -144,22 +163,44 @@ export const signalResolvers = {
         locationId = pointLoc.id;
       }
 
-      return context.prisma.signals.create({
-        data: {
-          sourceId: input.sourceId,
-          rawData: input.rawData as InputJsonValue,
-          publishedAt: new Date(input.publishedAt),
-          collectedAt: input.collectedAt ? new Date(input.collectedAt) : new Date(),
-          url: input.url,
-          title: input.title,
-          description: input.description,
-          severity: input.severity,
-          media: input.media ?? [],
-          originId: input.originId,
-          destinationId: input.destinationId,
-          locationId,
-        },
-      });
+      try {
+        return await context.prisma.signals.create({
+          data: {
+            sourceId: input.sourceId,
+            externalId: input.externalId,
+            rawData: input.rawData as InputJsonValue,
+            publishedAt: new Date(input.publishedAt),
+            collectedAt: input.collectedAt ? new Date(input.collectedAt) : new Date(),
+            url: input.url,
+            title: input.title,
+            description: input.description,
+            severity: input.severity,
+            media: input.media ?? [],
+            originId: input.originId,
+            destinationId: input.destinationId,
+            locationId,
+          },
+        });
+      } catch (err: unknown) {
+        // P2002 = unique constraint violation. If it fires for
+        // (sourceId, externalId), a concurrent writer got there first —
+        // fall back to returning that row so the caller is idempotent.
+        if (
+          typeof err === "object" && err !== null && "code" in err &&
+          (err as { code: unknown }).code === "P2002" && input.externalId
+        ) {
+          const existing = await context.prisma.signals.findUnique({
+            where: {
+              sourceId_externalId: {
+                sourceId: input.sourceId,
+                externalId: input.externalId,
+              },
+            },
+          });
+          if (existing) return existing;
+        }
+        throw err;
+      }
     },
 
     createManualSignal: async (

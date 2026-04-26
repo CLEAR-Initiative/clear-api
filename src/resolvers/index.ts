@@ -17,6 +17,7 @@ import { feedbackResolvers } from "./feedback.resolver.js";
 import { invitationResolvers } from "./invitation.resolver.js";
 import { subscriptionResolvers } from "./subscription.resolver.js";
 import { situationResolvers } from "./situation.resolver.js";
+import { locationMetadataResolvers } from "./locationMetadata.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -37,4 +38,5 @@ export const resolvers: IResolvers[] = [
   invitationResolvers,
   subscriptionResolvers,
   situationResolvers,
+  locationMetadataResolvers,
 ];

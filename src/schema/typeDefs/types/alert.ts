@@ -8,6 +8,11 @@ export const alertTypeDef = gql`
     archived
   }
 
+  """Result of the archiveStaleAlerts bulk mutation."""
+  type ArchiveStaleAlertsResult {
+    alertsArchived: Int!
+  }
+
   """An alert created from an event, distributed to subscribed users."""
   type Alert {
     id: String!

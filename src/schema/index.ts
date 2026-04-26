@@ -17,6 +17,7 @@ import { organisationTypeDef } from "./typeDefs/types/organisation.js";
 import { teamTypeDef } from "./typeDefs/types/team.js";
 import { invitationTypeDef } from "./typeDefs/types/invitation.js";
 import { situationTypeDef } from "./typeDefs/types/situation.js";
+import { locationMetadataTypeDef } from "./typeDefs/types/locationMetadata.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -38,4 +39,5 @@ export const typeDefs = [
   teamTypeDef,
   invitationTypeDef,
   situationTypeDef,
+  locationMetadataTypeDef,
 ];

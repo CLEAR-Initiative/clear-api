@@ -25,5 +25,9 @@ export const locationTypeDef = gql`
     ancestors: [Location!]!
     """Population residing within this location's geometry. Null for point locations or when not yet computed."""
     population: String
+    """Per-type metadata (IOM DTM, INFORM, etc). Pass a type argument to filter.
+    By default only the current value is returned (validTo is null).
+    Pass current: false to include the full history."""
+    metadata(type: String, current: Boolean): [LocationMetadata!]!
   }
 `;

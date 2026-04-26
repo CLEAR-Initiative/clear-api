@@ -260,10 +260,46 @@ model locations {
   userAlertSubscriptions userAlertSubscriptions[]
   teamScopes             teamLocations[]
   situations             situations[]             @relation("SituationLocation")
+  metadata               locationMetadata[]
 
   @@index([level])
   @@index([parentId])
   @@index([ancestorIds(ops: ArrayOps)], type: Gin)
+}
+
+/// Arbitrary per-location metadata keyed by type (e.g. "iom_dtm_displacement",
+/// "acaps_inform"). The `data` column is JSON so each source can store its
+/// own shape.
+///
+/// History is preserved via the (validFrom, validTo) pair:
+///   - validTo IS NULL  → the row is the CURRENT value for (location, type).
+///   - validTo is set   → the row has been superseded (closed out) and is
+///     part of the audit trail.
+///
+/// A natural partial-unique "one current row per (location, type)" is
+/// enforced by the upsert resolver (close-old-then-insert-new inside a tx).
+/// Enforcing it at the DB level would require a partial unique index which
+/// Prisma doesn't model declaratively — the invariant is protected by code.
+model locationMetadata {
+  id         String    @id @default(cuid())
+  locationId String    @map("location_id")
+  location   locations @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  type String // e.g. "iom_dtm_displacement"
+  data Json
+
+  /// When this value became current. Defaults to row creation time.
+  validFrom DateTime @default(now()) @map("valid_from")
+  /// When this value was superseded. Null means still current.
+  validTo DateTime? @map("valid_to")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId, type])
+  @@index([locationId, type, validTo])
+  @@index([type, validTo])
+  @@map("location_metadata")
 }
 
 // ─── Data Mining ─────────────────────────────────────────────────────────────
@@ -311,6 +347,13 @@ model signals {
   sourceId String      @map("source_id")
   source   dataSources @relation(fields: [sourceId], references: [id])
 
+  /// Stable external identifier from the upstream source, e.g.
+  ///   "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}".
+  /// Nullable so pre-existing signals don't break the uniqueness check —
+  /// Postgres treats multiple NULLs as distinct under a UNIQUE constraint.
+  /// Any insert with a non-null externalId is deduped against existing rows.
+  externalId String? @map("external_id")
+
   rawData     Json     @map("raw_data")
   publishedAt DateTime @map("published_at")
   collectedAt DateTime @default(now()) @map("collected_at")
@@ -333,6 +376,10 @@ model signals {
   userFeedbacks   userFeedbacks[]
   userComments    userComments[]
   signalEvents    signalEvents[]
+
+  @@unique([sourceId, externalId])
+  @@index([sourceId])
+  @@index([publishedAt])
 }
 
 model events {
@@ -360,6 +407,11 @@ model events {
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
   populationAffected    BigInt?                 @map("population_affected")
+  /// Population displaced by this event. Resolution order in the pipeline:
+  /// (1) max across signal-level displacement data, (2) IOM DTM value cached
+  /// in `locationMetadata(type="iom_dtm_displacement")` for the event's
+  /// admin-2 location, (3) default fallback (1670).
+  populationDisplaced   BigInt?                 @map("population_displaced")
   rank                  Float
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]
@@ -375,6 +427,16 @@ model disasterTypes {
   disasterClass String @map("disaster_class")
   glideNumber   String @map("glide_number")
 
+  /// Top-level category (e.g. "natural hazard", "conflict", "crisis").
+  level1 String @default("") @map("level_1")
+  /// Mid-level group (e.g. "protests", "battles", "flood").
+  level2 String @default("") @map("level_2")
+  /// Identifier system for glideNumber: "glide_number" or "clear_id".
+  idType String @default("glide_number") @map("id_type")
+
+  @@index([level1])
+  @@index([level2])
+  @@index([glideNumber])
   @@map("disaster_types")
 }
 
@@ -385,6 +447,10 @@ model alerts {
 
   event      events       @relation(fields: [eventId], references: [id])
   userAlerts userAlerts[]
+
+  /// One alert per event. Status transitions (draft → published → archived)
+  /// update this row in place; they do not create new ones.
+  @@unique([eventId])
 }
 
 model situations {
@@ -561,6 +627,8 @@ model signalEvents {
   signal signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
   event  events  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
+  /// A signal can only be linked to a given event once.
+  @@unique([signalId, eventId])
   @@map("signal_to_events")
 }
 
