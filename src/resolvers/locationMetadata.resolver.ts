@@ -136,38 +136,46 @@ export const locationMetadataResolvers = {
 
       const now = new Date();
 
-      // Two steps inside one transaction:
+      // Two steps inside one transaction (callback form so we can pass a
+      // generous timeout — array form is capped at the default 5s, which a
+      // 200-row IOM DTM batch routinely exceeds against a remote DB):
       //   1. Close every currently-open row matching any (locationId, type)
-      //      in the batch (in one updateMany per unique type, or per input —
-      //      we use one OR clause for efficiency).
-      //   2. Insert all new rows.
+      //      in the batch (one updateMany with an OR clause).
+      //   2. Insert all new rows in a createMany (one round-trip instead of N).
       const closeClauses = valid.map((i) => ({
         locationId: i.locationId,
         type: i.type,
         validTo: null,
       }));
 
-      const results = await context.prisma.$transaction([
-        context.prisma.locationMetadata.updateMany({
-          where: { OR: closeClauses },
-          data: { validTo: now },
-        }),
-        ...valid.map((i) =>
-          context.prisma.locationMetadata.create({
-            data: {
-              locationId: i.locationId,
-              type: i.type,
-              data: i.data as InputJsonValue,
+      const newRowsData = valid.map((i) => ({
+        locationId: i.locationId,
+        type: i.type,
+        data: i.data as InputJsonValue,
+        validFrom: now,
+      }));
+
+      const created = await context.prisma.$transaction(
+        async (tx) => {
+          await tx.locationMetadata.updateMany({
+            where: { OR: closeClauses },
+            data: { validTo: now },
+          });
+          await tx.locationMetadata.createMany({ data: newRowsData });
+          // Return the rows just created. Identifiable by validFrom = now
+          // (set above) — safer than relying on insertion order.
+          return tx.locationMetadata.findMany({
+            where: {
+              type: { in: [...new Set(valid.map((i) => i.type))] },
+              locationId: { in: valid.map((i) => i.locationId) },
               validFrom: now,
             },
-          }),
-        ),
-      ]);
-      // Drop the first element (the updateMany count payload) and return the
-      // created rows.
-      return results.slice(1) as Awaited<ReturnType<
-        typeof context.prisma.locationMetadata.create
-      >>[];
+          });
+        },
+        { timeout: 60_000, maxWait: 10_000 },
+      );
+
+      return created;
     },
 
     /**
