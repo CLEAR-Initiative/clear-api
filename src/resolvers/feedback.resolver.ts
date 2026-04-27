@@ -7,7 +7,7 @@ import { requireAuth } from "../utils/auth-guard.js";
 interface AddFeedbackInput {
   eventId?: string;
   signalId?: string;
-  situationId?: string;
+  crisisId?: string;
   rating: number;
   text?: string;
 }
@@ -15,7 +15,7 @@ interface AddFeedbackInput {
 interface AddCommentInput {
   eventId?: string;
   signalId?: string;
-  situationId?: string;
+  crisisId?: string;
   comment: string;
   tagUserIds?: string[];
 }
@@ -23,16 +23,16 @@ interface AddCommentInput {
 function exactlyOneTarget(
   eventId: string | undefined,
   signalId: string | undefined,
-  situationId: string | undefined,
+  crisisId: string | undefined,
 ): void {
-  const provided = [eventId, signalId, situationId].filter(Boolean).length;
+  const provided = [eventId, signalId, crisisId].filter(Boolean).length;
   if (provided === 0) {
-    throw new GraphQLError("Provide one of eventId, signalId, or situationId", {
+    throw new GraphQLError("Provide one of eventId, signalId, or crisisId", {
       extensions: { code: "BAD_USER_INPUT" },
     });
   }
   if (provided > 1) {
-    throw new GraphQLError("Provide only one of eventId, signalId, or situationId", {
+    throw new GraphQLError("Provide only one of eventId, signalId, or crisisId", {
       extensions: { code: "BAD_USER_INPUT" },
     });
   }
@@ -54,9 +54,9 @@ export const feedbackResolvers = {
       context: Context,
     ) => {
       const user = requireAuth(context);
-      const { eventId, signalId, situationId, rating, text } = args.input;
+      const { eventId, signalId, crisisId, rating, text } = args.input;
 
-      exactlyOneTarget(eventId, signalId, situationId);
+      exactlyOneTarget(eventId, signalId, crisisId);
       if (rating < 1 || rating > 5) {
         throw new GraphQLError("Rating must be between 1 and 5", {
           extensions: { code: "BAD_USER_INPUT" },
@@ -68,7 +68,7 @@ export const feedbackResolvers = {
           userId: user.id,
           eventId: eventId ?? null,
           signalId: signalId ?? null,
-          situationId: situationId ?? null,
+          crisisId: crisisId ?? null,
           rating,
           text: text ?? null,
         },
@@ -106,16 +106,16 @@ export const feedbackResolvers = {
       context: Context,
     ) => {
       const user = requireAuth(context);
-      const { eventId, signalId, situationId, comment, tagUserIds } = args.input;
+      const { eventId, signalId, crisisId, comment, tagUserIds } = args.input;
 
-      exactlyOneTarget(eventId, signalId, situationId);
+      exactlyOneTarget(eventId, signalId, crisisId);
 
       const created = await context.prisma.userComments.create({
         data: {
           userId: user.id,
           eventId: eventId ?? null,
           signalId: signalId ?? null,
-          situationId: situationId ?? null,
+          crisisId: crisisId ?? null,
           comment,
           isCommentReply: false,
         },
@@ -156,7 +156,7 @@ export const feedbackResolvers = {
           userId: user.id,
           eventId: parentComment.eventId,
           signalId: parentComment.signalId,
-          situationId: parentComment.situationId,
+          crisisId: parentComment.crisisId,
           comment,
           isCommentReply: true,
           repliedToCommentId,
@@ -241,9 +241,9 @@ export const feedbackResolvers = {
       if (!parent.signalId) return null;
       return prisma.signals.findUnique({ where: { id: parent.signalId } });
     },
-    situation: (parent: { situationId: string | null }, _args: unknown, { prisma }: Context) => {
-      if (!parent.situationId) return null;
-      return prisma.situations.findUnique({ where: { id: parent.situationId } });
+    crisis: (parent: { crisisId: string | null }, _args: unknown, { prisma }: Context) => {
+      if (!parent.crisisId) return null;
+      return prisma.crises.findUnique({ where: { id: parent.crisisId } });
     },
   },
 
@@ -259,9 +259,9 @@ export const feedbackResolvers = {
       if (!parent.signalId) return null;
       return prisma.signals.findUnique({ where: { id: parent.signalId } });
     },
-    situation: (parent: { situationId: string | null }, _args: unknown, { prisma }: Context) => {
-      if (!parent.situationId) return null;
-      return prisma.situations.findUnique({ where: { id: parent.situationId } });
+    crisis: (parent: { crisisId: string | null }, _args: unknown, { prisma }: Context) => {
+      if (!parent.crisisId) return null;
+      return prisma.crises.findUnique({ where: { id: parent.crisisId } });
     },
     tags: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.commentTags.findMany({ where: { commentId: parent.id } });

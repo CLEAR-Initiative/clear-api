@@ -24,6 +24,7 @@ interface CreateEventInput {
   severity?: number;
   populationAffected?: string;
   populationDisplaced?: string;
+  casualties?: number;
   rank: number;
   signalIds: string[];
   lat?: number;
@@ -45,6 +46,7 @@ interface UpdateEventInput {
   severity?: number;
   populationAffected?: string;
   populationDisplaced?: string;
+  casualties?: number;
   rank?: number;
   signalIds?: string[];
 }
@@ -198,6 +200,7 @@ export const eventResolvers = {
           populationDisplaced: input.populationDisplaced
             ? BigInt(input.populationDisplaced)
             : undefined,
+          casualties: input.casualties,
           rank: input.rank,
         },
       });
@@ -285,6 +288,7 @@ export const eventResolvers = {
           populationDisplaced: input.populationDisplaced !== undefined
             ? BigInt(input.populationDisplaced)
             : undefined,
+          casualties: input.casualties ?? undefined,
           rank: input.rank ?? undefined,
         },
       });

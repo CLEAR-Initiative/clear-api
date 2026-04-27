@@ -1,7 +1,7 @@
 import { gql } from "graphql-tag";
 
 export const eventTypeDef = gql`
-  """An event grouping related signals into a coherent situation."""
+  """An event grouping related signals into a coherent narrative."""
   type Event {
     id: String!
     title: String
@@ -28,6 +28,8 @@ export const eventTypeDef = gql`
     populationAffected: String
     """Estimated population displaced by the event (BigInt as string)."""
     populationDisplaced: String
+    """Aggregated casualties for the event (max across constituent signals)."""
+    casualties: Int
     rank: Float!
     """Signals linked to this event."""
     signals: [Signal!]!

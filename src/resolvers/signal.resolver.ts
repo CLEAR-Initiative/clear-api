@@ -46,6 +46,8 @@ interface CreateSignalInput {
   title?: string;
   description?: string;
   severity?: number;
+  /** Reported casualties (e.g. ACLED `fatalities`, parsed from Dataminr text). */
+  casualties?: number;
   /** Media URLs from source (stored directly, no S3 upload) */
   media?: string[];
   originId?: string;
@@ -175,6 +177,7 @@ export const signalResolvers = {
             title: input.title,
             description: input.description,
             severity: input.severity,
+            casualties: input.casualties,
             media: input.media ?? [],
             originId: input.originId,
             destinationId: input.destinationId,
