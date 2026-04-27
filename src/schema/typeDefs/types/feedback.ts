@@ -1,13 +1,13 @@
 import { gql } from "graphql-tag";
 
 export const feedbackTypeDef = gql`
-  """User feedback on a signal, event, or situation — rating and optional text."""
+  """User feedback on a signal, event, or crisis — rating and optional text."""
   type UserFeedback {
     id: String!
     user: User!
     event: Event
     signal: Signal
-    situation: Situation
+    crisis: Crisis
     """Rating from 1 to 5."""
     rating: Int!
     """Optional textual feedback."""
@@ -16,13 +16,13 @@ export const feedbackTypeDef = gql`
     updatedAt: DateTime!
   }
 
-  """A user comment on a signal, event, or situation, with reply support."""
+  """A user comment on a signal, event, or crisis, with reply support."""
   type UserComment {
     id: String!
     user: User!
     event: Event
     signal: Signal
-    situation: Situation
+    crisis: Crisis
     comment: String!
     """Whether this comment is a reply to another comment."""
     isCommentReply: Boolean!

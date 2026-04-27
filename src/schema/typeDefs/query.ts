@@ -114,11 +114,11 @@ export const queryTypeDef = gql`
     """List all alert subscriptions for a location (admin only)."""
     alertSubscriptionsByLocation(locationId: String!): [AlertSubscription!]!
 
-    # ─── Situations ────────────────────────────────────────────────────────────
-    """List all situations."""
-    situations: [Situation!]!
+    # ─── Crises ────────────────────────────────────────────────────────────────
+    """List all crises."""
+    crises: [Crisis!]!
 
-    """Look up a situation by ID."""
-    situation(id: String!): Situation
+    """Look up a crisis by ID."""
+    crisis(id: String!): Crisis
   }
 `;

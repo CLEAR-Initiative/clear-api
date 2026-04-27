@@ -16,7 +16,7 @@ import { disasterTypeTypeDef } from "./typeDefs/types/disasterType.js";
 import { organisationTypeDef } from "./typeDefs/types/organisation.js";
 import { teamTypeDef } from "./typeDefs/types/team.js";
 import { invitationTypeDef } from "./typeDefs/types/invitation.js";
-import { situationTypeDef } from "./typeDefs/types/situation.js";
+import { crisisTypeDef } from "./typeDefs/types/crisis.js";
 import { locationMetadataTypeDef } from "./typeDefs/types/locationMetadata.js";
 
 export const typeDefs = [
@@ -38,6 +38,6 @@ export const typeDefs = [
   organisationTypeDef,
   teamTypeDef,
   invitationTypeDef,
-  situationTypeDef,
+  crisisTypeDef,
   locationMetadataTypeDef,
 ];
