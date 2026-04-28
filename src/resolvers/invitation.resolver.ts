@@ -12,12 +12,17 @@ import { auth } from "../lib/auth.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
+interface TeamAssignmentInput {
+  teamId: string;
+  teamRole: string;
+}
+
 interface InviteUserInput {
   email: string;
   organisationId: string;
-  teamId?: string;
   role?: string;
-  teamRole?: string;
+  /** Required, non-empty. One row per team the invitee will be added to. */
+  teams: TeamAssignmentInput[];
 }
 
 interface AcceptInviteInput {
@@ -92,10 +97,30 @@ export const invitationResolvers = {
         include: {
           organisation: { select: { name: true } },
           team: { select: { name: true } },
+          teams: {
+            include: { team: { select: { id: true, name: true } } },
+          },
         },
       });
 
       if (!invite) return null;
+
+      // Build the multi-team payload. Falls back to the legacy single
+      // (teamId, teamRole) pair when the join is empty so old invites still
+      // render correctly on the accept page.
+      const teamAssignments = invite.teams.length > 0
+        ? invite.teams.map((t) => ({
+            teamId: t.team.id,
+            teamName: t.team.name,
+            teamRole: t.teamRole,
+          }))
+        : invite.team
+          ? [{
+              teamId: invite.teamId!,
+              teamName: invite.team.name,
+              teamRole: invite.teamRole ?? "viewer",
+            }]
+          : [];
 
       return {
         id: invite.id,
@@ -104,6 +129,7 @@ export const invitationResolvers = {
         teamName: invite.team?.name ?? null,
         role: invite.role,
         teamRole: invite.teamRole,
+        teams: teamAssignments,
         expiresAt: invite.expiresAt,
         status: invitationStatus(invite),
       };
@@ -117,7 +143,13 @@ export const invitationResolvers = {
       context: Context,
     ) => {
       const inviter = await requireOrgAdmin(context, args.input.organisationId);
-      const { email, organisationId, teamId, role = "member", teamRole = "viewer" } = args.input;
+      const { email, organisationId, role = "member", teams } = args.input;
+
+      if (!teams || teams.length === 0) {
+        throw new GraphQLError("Must specify at least one team", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
 
       // Validate org exists
       const org = await context.prisma.organisations.findUnique({
@@ -129,21 +161,26 @@ export const invitationResolvers = {
         });
       }
 
-      // Validate team if provided
-      let teamName: string | undefined;
-      if (teamId) {
-        const team = await context.prisma.teams.findUnique({
-          where: { id: teamId },
+      // Validate every requested team exists in this org. We dedupe teamIds
+      // so the same team listed twice doesn't double-count, and so the
+      // invitationTeams unique (invitationId, teamId) constraint is safe.
+      const teamIds = Array.from(new Set(teams.map((t) => t.teamId)));
+      const teamRecords = await context.prisma.teams.findMany({
+        where: { id: { in: teamIds }, organisationId },
+        select: { id: true, name: true },
+      });
+      if (teamRecords.length !== teamIds.length) {
+        throw new GraphQLError("One or more teams not found in this organisation", {
+          extensions: { code: "NOT_FOUND" },
         });
-        if (!team || team.organisationId !== organisationId) {
-          throw new GraphQLError("Team not found in this organisation", {
-            extensions: { code: "NOT_FOUND" },
-          });
-        }
-        teamName = team.name;
       }
+      // Build a teamId → teamRole map from the (deduped) input.
+      const roleByTeam = new Map(teams.map((t) => [t.teamId, t.teamRole]));
+      const teamNamesById = new Map(teamRecords.map((t) => [t.id, t.name]));
 
-      // Check if the user is already an org member
+      // Check if the user already exists / is already in the org. When they
+      // are, we fast-path: add them straight to any new teams without sending
+      // an invitation email (they don't need to "accept" anything).
       const existingUser = await context.prisma.user.findUnique({
         where: { email },
       });
@@ -156,30 +193,42 @@ export const invitationResolvers = {
         });
 
         if (existingMembership) {
-          // Already an org member — if teamId provided, add directly to team
-          if (teamId) {
-            const existingTeamMember = await context.prisma.teamMembers.findUnique({
-              where: { teamId_userId: { teamId, userId: existingUser.id } },
-            });
+          // Already an org member — figure out which of the requested teams
+          // they're not yet in, and add them directly.
+          const alreadyIn = await context.prisma.teamMembers.findMany({
+            where: { userId: existingUser.id, teamId: { in: teamIds } },
+            select: { teamId: true },
+          });
+          const alreadyInSet = new Set(alreadyIn.map((m) => m.teamId));
+          const toAdd = teamIds.filter((tid) => !alreadyInSet.has(tid));
 
-            if (existingTeamMember) {
-              throw new GraphQLError("User is already a member of this team", {
-                extensions: { code: "BAD_USER_INPUT" },
-              });
-            }
+          if (toAdd.length === 0) {
+            throw new GraphQLError(
+              "User is already a member of all requested teams",
+              { extensions: { code: "BAD_USER_INPUT" } },
+            );
+          }
 
-            // Add directly to team (no invite needed)
-            await context.prisma.teamMembers.create({
-              data: { teamId, userId: existingUser.id, role: teamRole },
-            });
+          await context.prisma.teamMembers.createMany({
+            data: toAdd.map((tid) => ({
+              teamId: tid,
+              userId: existingUser.id,
+              role: roleByTeam.get(tid) ?? "viewer",
+            })),
+          });
 
-            // Send notification email
+          // Best-effort notification — failures shouldn't block the add.
+          // Single email summarising the new teams the user has access to.
+          try {
             const emailProvider = await getEmailProvider();
+            const teamSummary = toAdd
+              .map((tid) => `${teamNamesById.get(tid)} (${roleByTeam.get(tid)})`)
+              .join(", ");
             const content = teamInviteNotification(
               inviter.name,
               org.name,
-              teamName!,
-              teamRole,
+              teamSummary,
+              roleByTeam.get(toAdd[0]!) ?? "viewer",
               `${env.FRONTEND_URL}/dashboard`,
             );
             await emailProvider.send({
@@ -188,25 +237,27 @@ export const invitationResolvers = {
               textBody: content.textBody,
               htmlBody: content.htmlBody,
             });
-
-            // Return a synthetic invitation record for consistency
-            return context.prisma.invitations.create({
-              data: {
-                email,
-                organisationId,
-                teamId,
-                role,
-                teamRole,
-                token: generateToken(),
-                expiresAt: new Date(),
-                acceptedAt: new Date(),
-                invitedById: inviter.id,
-              },
-            });
+          } catch (err) {
+            console.error("[inviteUser] team-add notification failed:", err);
           }
 
-          throw new GraphQLError("User is already a member of this organisation", {
-            extensions: { code: "BAD_USER_INPUT" },
+          // Return a synthetic accepted invitation record for caller consistency.
+          return context.prisma.invitations.create({
+            data: {
+              email,
+              organisationId,
+              role,
+              token: generateToken(),
+              expiresAt: new Date(),
+              acceptedAt: new Date(),
+              invitedById: inviter.id,
+              teams: {
+                create: toAdd.map((tid) => ({
+                  teamId: tid,
+                  teamRole: roleByTeam.get(tid) ?? "viewer",
+                })),
+              },
+            },
           });
         }
       }
@@ -222,12 +273,13 @@ export const invitationResolvers = {
       });
 
       if (existingInvite) {
-        throw new GraphQLError("A pending invitation already exists for this email. Use resendInvite to resend.", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
+        throw new GraphQLError(
+          "A pending invitation already exists for this email. Use resendInvite to resend.",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
       }
 
-      // Create invitation
+      // Create invitation + the per-team rows in one query.
       const token = generateToken();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
@@ -235,24 +287,31 @@ export const invitationResolvers = {
         data: {
           email,
           organisationId,
-          teamId: teamId ?? null,
           role,
-          teamRole: teamId ? teamRole : null,
           token,
           expiresAt,
           invitedById: inviter.id,
+          teams: {
+            create: teamIds.map((tid) => ({
+              teamId: tid,
+              teamRole: roleByTeam.get(tid) ?? "viewer",
+            })),
+          },
         },
       });
 
-      // Send invite email
+      // Send invite email — list every team for context.
       const inviteUrl = `${env.FRONTEND_URL}/accept-invite?token=${token}`;
+      const teamSummary = teamIds
+        .map((tid) => `${teamNamesById.get(tid)} (${roleByTeam.get(tid)})`)
+        .join(", ");
       const emailProvider = await getEmailProvider();
       const content = organisationInvite(
         inviter.name,
         org.name,
         role,
         inviteUrl,
-        teamName,
+        teamSummary,
       );
       await emailProvider.send({
         to: email,
@@ -333,26 +392,24 @@ export const invitationResolvers = {
         });
       }
 
-      // Add to team if specified
-      if (invitation.teamId) {
-        const existingTeamMember = await context.prisma.teamMembers.findUnique({
-          where: {
-            teamId_userId: {
-              teamId: invitation.teamId,
-              userId: existingUser.id,
-            },
-          },
-        });
+      // Add to every team listed in the invitation. Falls back to the legacy
+      // single `teamId` for invitations created before the join existed.
+      const invitationTeams = await context.prisma.invitationTeams.findMany({
+        where: { invitationId: invitation.id },
+        select: { teamId: true, teamRole: true },
+      });
+      const teamAssignments = invitationTeams.length > 0
+        ? invitationTeams
+        : invitation.teamId
+          ? [{ teamId: invitation.teamId, teamRole: invitation.teamRole ?? "viewer" }]
+          : [];
 
-        if (!existingTeamMember) {
-          await context.prisma.teamMembers.create({
-            data: {
-              teamId: invitation.teamId,
-              userId: existingUser.id,
-              role: invitation.teamRole ?? "viewer",
-            },
-          });
-        }
+      for (const a of teamAssignments) {
+        await context.prisma.teamMembers.upsert({
+          where: { teamId_userId: { teamId: a.teamId, userId: existingUser.id } },
+          create: { teamId: a.teamId, userId: existingUser.id, role: a.teamRole },
+          update: {},
+        });
       }
 
       // Mark invitation as accepted
@@ -453,11 +510,30 @@ export const invitationResolvers = {
       if (!parent.teamId) return null;
       return prisma.teams.findUnique({ where: { id: parent.teamId } });
     },
+    teams: async (parent: { id: string; teamId: string | null; teamRole: string | null }, _args: unknown, { prisma }: Context) => {
+      const rows = await prisma.invitationTeams.findMany({
+        where: { invitationId: parent.id },
+        include: { team: true },
+      });
+      if (rows.length > 0) {
+        return rows.map((r) => ({ team: r.team, teamRole: r.teamRole }));
+      }
+      // Legacy fallback for pre-join-table invitations.
+      if (parent.teamId) {
+        const team = await prisma.teams.findUnique({ where: { id: parent.teamId } });
+        if (team) return [{ team, teamRole: parent.teamRole ?? "viewer" }];
+      }
+      return [];
+    },
     invitedBy: (parent: { invitedById: string }, _args: unknown, { prisma }: Context) => {
       return prisma.user.findUnique({ where: { id: parent.invitedById } });
     },
     status: (parent: { acceptedAt: Date | null; expiresAt: Date }) => {
       return invitationStatus(parent);
     },
+  },
+
+  InvitationTeam: {
+    // `team` and `teamRole` are returned directly by the parent resolver above.
   },
 };
