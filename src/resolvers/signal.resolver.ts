@@ -32,6 +32,7 @@ interface CreateManualSignalInput {
   destinationId?: string;
   lat?: number;
   lng?: number;
+  metadata?: Record<string, unknown>;
 }
 
 interface CreateSignalInput {
@@ -186,7 +187,7 @@ export const signalResolvers = {
         });
       } catch (err: unknown) {
         // P2002 = unique constraint violation. If it fires for
-        // (sourceId, externalId), a concurrent writer got there first —
+        // (sourceId, externalId), a concurrent writer got there first -
         // fall back to returning that row so the caller is idempotent.
         if (
           typeof err === "object" && err !== null && "code" in err &&
@@ -240,7 +241,7 @@ export const signalResolvers = {
         locationId = pointLoc.id;
       }
 
-      // Collect media URLs — from pre-uploaded URLs and/or direct file uploads
+      // Collect media URLs - from pre-uploaded URLs and/or direct file uploads
       const media: string[] = [...(input.mediaUrls ?? [])];
       if (input.media && input.media.length > 0) {
         const files = await Promise.all(input.media);
@@ -259,6 +260,7 @@ export const signalResolvers = {
             createdBy: user.id,
             title: input.title,
             description: input.description,
+            ...(input.metadata && { metadata: input.metadata }),
           } as InputJsonValue,
           publishedAt: new Date(),
           collectedAt: new Date(),
