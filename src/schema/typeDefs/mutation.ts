@@ -217,14 +217,14 @@ export const mutationTypeDef = gql`
     """Update an existing alert subscription (channel, frequency, active)."""
     updateAlertSubscription(id: String!, input: UpdateAlertSubscriptionInput!): AlertSubscription!
 
-    """Unsubscribe — deletes the subscription."""
+    """Unsubscribe - deletes the subscription."""
     unsubscribeFromAlerts(id: String!): Boolean!
 
     # ─── Crises ────────────────────────────────────────────────────────────────
     """Create a new crisis from a list of event IDs. Links all provided events to the new crisis."""
     createCrisisFromEvents(input: CreateCrisisFromEventsInput!): Crisis!
 
-    """Add an existing event to an existing crisis. Idempotent — returns the existing link if one already exists."""
+    """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists."""
     addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
   }
 
@@ -314,6 +314,9 @@ export const mutationTypeDef = gql`
     lat: Float
     """Longitude for automatic geo-resolution."""
     lng: Float
+    """Arbitrary internal metadata stored in rawData (e.g. notes, recommendAlert).
+    Not surfaced in the UI - use freely without schema changes."""
+    metadata: JSON
   }
 
   input CreateSignalInput {
