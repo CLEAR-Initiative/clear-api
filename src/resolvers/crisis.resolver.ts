@@ -4,7 +4,7 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { sendCeleryTask } from "../services/celery.js";
 
-interface CreateSituationFromEventsInput {
+interface CreateCrisisFromEventsInput {
   title?: string;
   summary?: string;
   severity: number;
@@ -13,7 +13,7 @@ interface CreateSituationFromEventsInput {
   eventIds: string[];
 }
 
-interface UpdateSituationPopulationInput {
+interface UpdateCrisisPopulationInput {
   populationAffected?: string | null;
   populationInArea?: string | null;
   title?: string | null;
@@ -105,65 +105,65 @@ async function collectDistrictIds(
 }
 
 /**
- * Dispatch the pipeline task that enriches a situation: computes
+ * Dispatch the pipeline task that enriches a crisis: computes
  * `populationInArea` from the given districts AND generates a narrative
  * (title + summary) via Claude across the linked events.
  */
-async function dispatchSituationEnrichmentTask(
-  situationId: string,
+async function dispatchCrisisEnrichmentTask(
+  crisisId: string,
   eventIds: string[],
   districtIds: string[],
   generateNarrative: boolean,
 ): Promise<void> {
   try {
-    await sendCeleryTask("src.tasks.situation.enrich_situation", {
-      situation_id: situationId,
+    await sendCeleryTask("src.tasks.crisis.enrich_crisis", {
+      crisis_id: crisisId,
       event_ids: eventIds,
       district_ids: districtIds,
       generate_narrative: generateNarrative,
     });
   } catch (err) {
     console.error(
-      `[situation] Failed to dispatch enrichment task for ${situationId}:`,
+      `[crisis] Failed to dispatch enrichment task for ${crisisId}:`,
       err,
     );
   }
 }
 
-export const situationResolvers = {
+export const crisisResolvers = {
   Query: {
-    situations: async (_parent: unknown, _args: unknown, context: Context) => {
+    crises: async (_parent: unknown, _args: unknown, context: Context) => {
       requireAuth(context);
-      return context.prisma.situations.findMany();
+      return context.prisma.crises.findMany();
     },
 
-    situation: async (
+    crisis: async (
       _parent: unknown,
       args: { id: string },
       context: Context,
     ) => {
       requireAuth(context);
-      const situation = await context.prisma.situations.findUnique({
+      const crisis = await context.prisma.crises.findUnique({
         where: { id: args.id },
       });
-      if (!situation) {
-        throw new GraphQLError("Situation not found", {
+      if (!crisis) {
+        throw new GraphQLError("Crisis not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      return situation;
+      return crisis;
     },
   },
 
   Mutation: {
     /**
-     * Create a new situation from a list of event IDs.
-     * Validates that all event IDs exist, then creates the situation and
-     * the event-situation join records in a single transaction.
+     * Create a new crisis from a list of event IDs.
+     * Validates that all event IDs exist, then creates the crisis and
+     * the event-crisis join records in a single transaction.
      */
-    createSituationFromEvents: async (
+    createCrisisFromEvents: async (
       _parent: unknown,
-      args: { input: CreateSituationFromEventsInput },
+      args: { input: CreateCrisisFromEventsInput },
       context: Context,
     ) => {
       requireRole(context, ["admin", "analyst"]);
@@ -195,10 +195,10 @@ export const situationResolvers = {
         input.eventIds,
       );
 
-      // Create situation + join rows in a transaction
+      // Create crisis + join rows in a transaction
       const collectedAt = new Date();
-      const situation = await context.prisma.$transaction(async (tx) => {
-        const created = await tx.situations.create({
+      const crisis = await context.prisma.$transaction(async (tx) => {
+        const created = await tx.crises.create({
           data: {
             title: input.title ?? undefined,
             summary: input.summary ?? undefined,
@@ -209,9 +209,9 @@ export const situationResolvers = {
           },
         });
 
-        await tx.eventSituations.createMany({
+        await tx.eventCrises.createMany({
           data: input.eventIds.map((eventId) => ({
-            situationId: created.id,
+            crisisId: created.id,
             eventId,
             collectedAt,
           })),
@@ -223,36 +223,36 @@ export const situationResolvers = {
       // Async: dispatch Celery task for populationInArea + narrative (if not provided)
       const districtIds = await collectDistrictIds(context.prisma, input.eventIds);
       const generateNarrative = !input.title || !input.summary;
-      void dispatchSituationEnrichmentTask(
-        situation.id,
+      void dispatchCrisisEnrichmentTask(
+        crisis.id,
         input.eventIds,
         districtIds,
         generateNarrative,
       );
 
-      return situation;
+      return crisis;
     },
 
     /**
-     * Add an event to an existing situation.
+     * Add an event to an existing crisis.
      * Idempotent — returns the existing link if one already exists.
      */
-    addEventToSituation: async (
+    addEventToCrisis: async (
       _parent: unknown,
-      args: { situationId: string; eventId: string },
+      args: { crisisId: string; eventId: string },
       context: Context,
     ) => {
       requireRole(context, ["admin", "analyst"]);
-      const { situationId, eventId } = args;
+      const { crisisId, eventId } = args;
 
       // Validate both exist
-      const [situation, event] = await Promise.all([
-        context.prisma.situations.findUnique({ where: { id: situationId } }),
+      const [crisis, event] = await Promise.all([
+        context.prisma.crises.findUnique({ where: { id: crisisId } }),
         context.prisma.events.findUnique({ where: { id: eventId } }),
       ]);
 
-      if (!situation) {
-        throw new GraphQLError("Situation not found", {
+      if (!crisis) {
+        throw new GraphQLError("Crisis not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
@@ -263,22 +263,22 @@ export const situationResolvers = {
       }
 
       // Check for existing link (idempotency)
-      const existing = await context.prisma.eventSituations.findFirst({
-        where: { situationId, eventId },
+      const existing = await context.prisma.eventCrises.findFirst({
+        where: { crisisId, eventId },
       });
       if (existing) return existing;
 
-      const link = await context.prisma.eventSituations.create({
+      const link = await context.prisma.eventCrises.create({
         data: {
-          situationId,
+          crisisId,
           eventId,
           collectedAt: new Date(),
         },
       });
 
-      // Recompute populations for the whole situation
-      const allLinks = await context.prisma.eventSituations.findMany({
-        where: { situationId },
+      // Recompute populations for the whole crisis
+      const allLinks = await context.prisma.eventCrises.findMany({
+        where: { crisisId },
         select: { eventId: true },
       });
       const allEventIds = allLinks.map((l) => l.eventId);
@@ -287,15 +287,15 @@ export const situationResolvers = {
         context.prisma,
         allEventIds,
       );
-      await context.prisma.situations.update({
-        where: { id: situationId },
+      await context.prisma.crises.update({
+        where: { id: crisisId },
         data: { populationAffected },
       });
 
       const districtIds = await collectDistrictIds(context.prisma, allEventIds);
       // Regenerate narrative on add — keeps title/summary coherent as events grow
-      void dispatchSituationEnrichmentTask(
-        situationId,
+      void dispatchCrisisEnrichmentTask(
+        crisisId,
         allEventIds,
         districtIds,
         true,
@@ -304,17 +304,17 @@ export const situationResolvers = {
       return link;
     },
 
-    updateSituationPopulation: async (
+    updateCrisisPopulation: async (
       _parent: unknown,
-      args: { id: string; input: UpdateSituationPopulationInput },
+      args: { id: string; input: UpdateCrisisPopulationInput },
       context: Context,
     ) => {
       requireRole(context, ["admin"]);
       const { id, input } = args;
 
-      const existing = await context.prisma.situations.findUnique({ where: { id } });
+      const existing = await context.prisma.crises.findUnique({ where: { id } });
       if (!existing) {
-        throw new GraphQLError("Situation not found", {
+        throw new GraphQLError("Crisis not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
@@ -338,11 +338,11 @@ export const situationResolvers = {
       if (input.title !== undefined) data.title = input.title;
       if (input.summary !== undefined) data.summary = input.summary;
 
-      return context.prisma.situations.update({ where: { id }, data });
+      return context.prisma.crises.update({ where: { id }, data });
     },
   },
 
-  Situation: {
+  Crisis: {
     generalLocation: (
       parent: { locationId: string | null },
       _args: unknown,
@@ -358,28 +358,28 @@ export const situationResolvers = {
       return parent.populationInArea?.toString() ?? null;
     },
     events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.eventSituations
+      return prisma.eventCrises
         .findMany({
-          where: { situationId: parent.id },
+          where: { crisisId: parent.id },
           include: { event: true },
         })
         .then((links) => links.map((l) => l.event));
     },
     feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { situationId: parent.id } });
+      return prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
     },
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { situationId: parent.id } });
+      return prisma.userComments.findMany({ where: { crisisId: parent.id } });
     },
   },
 
-  EventSituation: {
-    situation: (
-      parent: { situationId: string },
+  EventCrisis: {
+    crisis: (
+      parent: { crisisId: string },
       _args: unknown,
       { prisma }: Context,
     ) => {
-      return prisma.situations.findUnique({ where: { id: parent.situationId } });
+      return prisma.crises.findUnique({ where: { id: parent.crisisId } });
     },
     event: (
       parent: { eventId: string },

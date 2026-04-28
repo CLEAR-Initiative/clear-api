@@ -32,13 +32,13 @@ export const alertTypeDef = gql`
     viewedAt: DateTime
   }
 
-  """Tracks a user escalating an event, optionally to a situation."""
+  """Tracks a user escalating an event, optionally to a crisis."""
   type EventEscalation {
     id: String!
     user: User!
     event: Event!
-    """Whether this has been escalated to a situation."""
-    isSituation: Boolean!
+    """Whether this has been escalated to a crisis."""
+    isCrisis: Boolean!
     validFrom: DateTime!
     validTo: DateTime!
   }

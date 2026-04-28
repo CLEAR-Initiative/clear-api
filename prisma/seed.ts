@@ -727,7 +727,7 @@ async function seed() {
     data: {
       userId: analyst.id,
       eventId: evtDarfurConflict.id,
-      isSituation: false,
+      isCrisis: false,
       validTo: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
     },
   });

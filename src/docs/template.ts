@@ -238,7 +238,7 @@ export function renderDocsPage(schema: SchemaData): string {
           <thead><tr><th>Feature</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><a href="#type-signal">Signals</a></td><td>Access raw data items collected from data sources, with location links and metadata.</td></tr>
-            <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent situations, with location, population, and type data.</td></tr>
+            <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent narratives, with location, population, and type data.</td></tr>
             <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
             <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; with PostGIS geometry.</td></tr>

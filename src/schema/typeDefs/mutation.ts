@@ -89,8 +89,8 @@ export const mutationTypeDef = gql`
     """Set a location's cached population (admin/pipeline only)."""
     updateLocationPopulation(id: String!, population: String!): Location!
 
-    """Set a situation's populationAffected + populationInArea (admin/pipeline only)."""
-    updateSituationPopulation(id: String!, input: UpdateSituationPopulationInput!): Situation!
+    """Set a crisis's populationAffected + populationInArea (admin/pipeline only)."""
+    updateCrisisPopulation(id: String!, input: UpdateCrisisPopulationInput!): Crisis!
 
     """Create or update a location's metadata entry for a given type (admin/pipeline only).
     Upsert keyed by (locationId, type)."""
@@ -220,12 +220,12 @@ export const mutationTypeDef = gql`
     """Unsubscribe — deletes the subscription."""
     unsubscribeFromAlerts(id: String!): Boolean!
 
-    # ─── Situations ────────────────────────────────────────────────────────────
-    """Create a new situation from a list of event IDs. Links all provided events to the new situation."""
-    createSituationFromEvents(input: CreateSituationFromEventsInput!): Situation!
+    # ─── Crises ────────────────────────────────────────────────────────────────
+    """Create a new crisis from a list of event IDs. Links all provided events to the new crisis."""
+    createCrisisFromEvents(input: CreateCrisisFromEventsInput!): Crisis!
 
-    """Add an existing event to an existing situation. Idempotent — returns the existing link if one already exists."""
-    addEventToSituation(situationId: String!, eventId: String!): EventSituation!
+    """Add an existing event to an existing crisis. Idempotent — returns the existing link if one already exists."""
+    addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -331,6 +331,8 @@ export const mutationTypeDef = gql`
     description: String
     """Severity score (1–5). From data source or estimated by pipeline."""
     severity: Int
+    """Reported casualties for the signal."""
+    casualties: Int
     """Media URLs (source URLs for images, videos, etc.)."""
     media: [String!]
     originId: String
@@ -360,6 +362,8 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
+    """Aggregated casualties for the event (max across constituent signals)."""
+    casualties: Int
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
     lat: Float
@@ -384,6 +388,8 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
+    """Aggregated casualties for the event (max across constituent signals)."""
+    casualties: Int
     rank: Float
   }
 
@@ -451,10 +457,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddFeedbackInput {
-    """Provide exactly one of eventId, signalId, or situationId."""
+    """Provide exactly one of eventId, signalId, or crisisId."""
     eventId: String
     signalId: String
-    situationId: String
+    crisisId: String
     """Rating from 1 to 5."""
     rating: Int!
     """Optional textual feedback."""
@@ -462,10 +468,10 @@ export const mutationTypeDef = gql`
   }
 
   input AddCommentInput {
-    """Provide exactly one of eventId, signalId, or situationId."""
+    """Provide exactly one of eventId, signalId, or crisisId."""
     eventId: String
     signalId: String
-    situationId: String
+    crisisId: String
     comment: String!
     """User IDs to tag in the comment."""
     tagUserIds: [String!]
@@ -479,14 +485,14 @@ export const mutationTypeDef = gql`
     tagUserIds: [String!]
   }
 
-  input UpdateSituationPopulationInput {
+  input UpdateCrisisPopulationInput {
     """Population directly affected by the events (BigInt as string)."""
     populationAffected: String
     """Total population residing within the event admin areas (BigInt as string)."""
     populationInArea: String
-    """AI-generated situation title."""
+    """AI-generated crisis title."""
     title: String
-    """AI-generated situation summary."""
+    """AI-generated crisis summary."""
     summary: String
   }
 `;

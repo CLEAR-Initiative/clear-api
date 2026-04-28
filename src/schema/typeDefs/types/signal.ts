@@ -18,6 +18,9 @@ export const signalTypeDef = gql`
     description: String
     """Severity score (1–5). From data source or estimated by pipeline."""
     severity: Int
+    """Reported casualties for the signal. Sourced from ACLED's fatalities
+    field; for Dataminr, parsed from raw text via regex."""
+    casualties: Int
     """Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals)."""
     media: [String!]!
     """Whether this is seed/demo data."""
