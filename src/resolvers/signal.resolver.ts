@@ -2,7 +2,6 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
-import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { uploadFileToS3 } from "../services/s3.js";
@@ -60,17 +59,15 @@ interface CreateSignalInput {
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
-      const user = requireAuth(context);
+      requireAuth(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
+      // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
-        if (user.role !== "admin") {
-          throw new GraphQLError("teamId is required", {
-            extensions: { code: "BAD_USER_INPUT" },
-          });
-        }
         return context.prisma.signals.findMany({ where: dummyFilter });
       }
-      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      // teamId provided: apply that team's location filter without
+      // requiring the caller to be a member — the team scope is just a
+      // view filter now, not an access gate.
       const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.signals.findMany({ where: { ...filter, ...dummyFilter } });
     },
@@ -88,35 +85,8 @@ export const signalResolvers = {
       });
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
-      const signal = await context.prisma.signals.findUnique({ where: { id: args.id } });
-      if (!signal) return null;
-      if (user.role !== "admin") {
-        const teamMemberships = await context.prisma.teamMembers.findMany({
-          where: { userId: user.id },
-          select: { teamId: true },
-        });
-        if (teamMemberships.length === 0) {
-          throw new GraphQLError("No team membership found", {
-            extensions: { code: "FORBIDDEN" },
-          });
-        }
-        let accessible = false;
-        for (const { teamId } of teamMemberships) {
-          const filter = await buildLocationFilterForTeam(context.prisma, teamId);
-          if (!filter) { accessible = true; break; }
-          const found = await context.prisma.signals.findFirst({
-            where: { id: args.id, ...filter },
-          });
-          if (found) { accessible = true; break; }
-        }
-        if (!accessible) {
-          throw new GraphQLError("Signal not accessible from your teams", {
-            extensions: { code: "FORBIDDEN" },
-          });
-        }
-      }
-      return signal;
+      requireAuth(context);
+      return context.prisma.signals.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {

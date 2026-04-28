@@ -2,7 +2,6 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
-import { resolveTeamMembership } from "../utils/auth-guard.js";
 import { createPointLocation, createRegionFromPoints, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -54,17 +53,14 @@ interface UpdateEventInput {
 export const eventResolvers = {
   Query: {
     events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
-      const user = requireAuth(context);
+      requireAuth(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
+      // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
-        if (user.role !== "admin") {
-          throw new GraphQLError("teamId is required", {
-            extensions: { code: "BAD_USER_INPUT" },
-          });
-        }
         return context.prisma.events.findMany({ where: dummyFilter });
       }
-      await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+      // teamId provided: apply that team's location filter as a view filter
+      // (no membership check — see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter } });
     },
@@ -82,38 +78,8 @@ export const eventResolvers = {
       });
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
-      const event = await context.prisma.events.findUnique({ where: { id: args.id } });
-      if (!event) return null;
-      if (user.role !== "admin") {
-        // Events don't have a direct teamId; check via location-based team scope
-        // For now, require admin access for single event lookups without team context
-        const teamMemberships = await context.prisma.teamMembers.findMany({
-          where: { userId: user.id },
-          select: { teamId: true },
-        });
-        if (teamMemberships.length === 0) {
-          throw new GraphQLError("No team membership found", {
-            extensions: { code: "FORBIDDEN" },
-          });
-        }
-        // Check if the event falls within any of the user's team scopes
-        let accessible = false;
-        for (const { teamId } of teamMemberships) {
-          const filter = await buildEventLocationFilterForTeam(context.prisma, teamId);
-          if (!filter) { accessible = true; break; } // global monitoring team
-          const found = await context.prisma.events.findFirst({
-            where: { id: args.id, ...filter },
-          });
-          if (found) { accessible = true; break; }
-        }
-        if (!accessible) {
-          throw new GraphQLError("Event not accessible from your teams", {
-            extensions: { code: "FORBIDDEN" },
-          });
-        }
-      }
-      return event;
+      requireAuth(context);
+      return context.prisma.events.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
