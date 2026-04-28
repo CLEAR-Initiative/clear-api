@@ -262,11 +262,17 @@ export const mutationTypeDef = gql`
   input InviteUserInput {
     email: String!
     organisationId: String!
-    teamId: String
     """Organisation role: owner, admin, member (default: member)."""
     role: String
-    """Team role: lead, analyst, viewer (default: viewer). Only used if teamId is provided."""
-    teamRole: String
+    """Team assignments — at least one team is required. Each entry grants the
+    invitee membership in that team with the given role on acceptance."""
+    teams: [TeamAssignmentInput!]!
+  }
+
+  """One (team, role) assignment passed to inviteUser."""
+  input TeamAssignmentInput {
+    teamId: String!
+    teamRole: TeamMemberRole!
   }
 
   input AcceptInviteInput {

@@ -163,11 +163,12 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation    organisations   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  members         teamMembers[]
-  locations       teamLocations[]
-  defaultForUsers user[]          @relation("DefaultTeam")
-  invitations     invitations[]
+  organisation     organisations     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members          teamMembers[]
+  locations        teamLocations[]
+  defaultForUsers  user[]            @relation("DefaultTeam")
+  invitations      invitations[]
+  invitationTeams  invitationTeams[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -208,6 +209,9 @@ model invitations {
   id             String    @id @default(cuid())
   email          String
   organisationId String    @map("organisation_id")
+  /// Legacy single-team fields (kept for back-compat with rows created before
+  /// `invitationTeams` existed). New invites use the join table — these stay
+  /// null on multi-team invites.
   teamId         String?   @map("team_id")
   role           String    @default("member") // org role: owner | admin | member
   teamRole       String?   @map("team_role") // team role: lead | analyst | viewer
@@ -220,10 +224,30 @@ model invitations {
   organisation organisations @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   team         teams?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
   invitedBy    user          @relation("InvitedBy", fields: [invitedById], references: [id])
+  /// Multi-team assignments (each row is one (team, role) pair).
+  teams        invitationTeams[]
 
   @@index([email])
   @@index([organisationId])
   @@map("invitations")
+}
+
+/// One row per (invitation, team) — lets a single invitation grant access to
+/// multiple teams with different roles per team.
+model invitationTeams {
+  id           String @id @default(cuid())
+  invitationId String @map("invitation_id")
+  teamId       String @map("team_id")
+  /// Team role: lead | analyst | viewer. Stored as a string to mirror
+  /// teamMembers.role semantics; the GraphQL enum lives in the typedefs.
+  teamRole     String @map("team_role")
+
+  invitation invitations @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  team       teams       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, teamId])
+  @@index([teamId])
+  @@map("invitation_teams")
 }
 
 // ─── Geography ───────────────────────────────────────────────────────────────

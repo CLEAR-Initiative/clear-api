@@ -89,10 +89,21 @@ export const organisationResolvers = {
         });
       }
 
-      // Global admin creates the org but is NOT added as a member —
-      // they control everything via their global role.
-      return context.prisma.organisations.create({
-        data: { name, slug },
+      // Create the org and a same-named default team in a single transaction
+      // so an org can never exist without its default team. Subsequent invites
+      // / addOrgMember calls auto-route members into this team while it's the
+      // only one in the org.
+      return context.prisma.$transaction(async (tx) => {
+        const org = await tx.organisations.create({ data: { name, slug } });
+        await tx.teams.create({
+          data: {
+            organisationId: org.id,
+            name,
+            slug,
+            description: "Default team — created automatically with the organisation.",
+          },
+        });
+        return org;
       });
     },
 
@@ -163,12 +174,35 @@ export const organisationResolvers = {
         targetUserId = found.id;
       }
 
-      return context.prisma.organisationUsers.create({
-        data: {
-          userId: targetUserId,
-          organisationId: args.orgId,
-          role: args.role ?? "member",
-        },
+      // Org membership + auto-route into the default team run in one
+      // transaction so we never end up with an org member who silently failed
+      // to land in the only team (and vice versa).
+      return context.prisma.$transaction(async (tx) => {
+        const membership = await tx.organisationUsers.create({
+          data: {
+            userId: targetUserId,
+            organisationId: args.orgId,
+            role: args.role ?? "member",
+          },
+        });
+
+        // Auto-route into the org's only team while the org has just one team
+        // — usually the default team created with the org. Invitations carry
+        // their own team list and bypass this path.
+        const teams = await tx.teams.findMany({
+          where: { organisationId: args.orgId },
+          select: { id: true },
+          take: 2,
+        });
+        if (teams.length === 1) {
+          await tx.teamMembers.upsert({
+            where: { teamId_userId: { teamId: teams[0]!.id, userId: targetUserId } },
+            create: { teamId: teams[0]!.id, userId: targetUserId, role: "viewer" },
+            update: {},
+          });
+        }
+
+        return membership;
       });
     },
 
