@@ -9,9 +9,9 @@ const THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between verification requests
 
 export const authResolvers = {
   Query: {
-    me: (_parent: unknown, _args: unknown, { user }: Context) => {
+    me: async (_parent: unknown, _args: unknown, { user, prisma }: Context) => {
       if (!user) return null;
-      return user;
+      return prisma.user.findUnique({ where: { id: user.id } });
     },
   },
   Mutation: {
@@ -141,7 +141,7 @@ export const authResolvers = {
       });
 
       if (recent?.createdAt && Date.now() - recent.createdAt.getTime() < THROTTLE_MS) {
-        // Silently succeed — don't reveal throttle to client
+        // Silently succeed -  don't reveal throttle to client
         return true;
       }
 
@@ -170,7 +170,7 @@ export const authResolvers = {
         });
       } catch (error) {
         console.error("[AUTH] Failed to send password reset email:", error instanceof Error ? error.message : error);
-        // Don't throw — silently fail to prevent info leakage
+        // Don't throw -  silently fail to prevent info leakage
       }
 
       return true;
