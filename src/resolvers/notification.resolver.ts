@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification, alertDigest } from "../services/messaging/templates.js";
+import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
 
 interface CreateNotificationInput {
   userId: string;
@@ -29,18 +30,6 @@ interface AlertNotifyInput {
 interface AlertDigestInput {
   alertIds: string[];
   frequency: "daily" | "weekly" | "monthly";
-}
-
-function severityToLabel(severity: number | null | undefined): string | null {
-  const labels: Record<number, string> = { 1: "MINIMAL", 2: "LOW", 3: "MEDIUM", 4: "HIGH", 5: "CRITICAL" };
-  return severity != null ? (labels[severity] ?? null) : null;
-}
-
-function formatCount(n: bigint | number): string {
-  const v = typeof n === "bigint" ? Number(n) : n;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
-  return v.toLocaleString();
 }
 
 /**
@@ -156,8 +145,8 @@ export const notificationResolvers = {
         include: {
           event: {
             include: {
-              generalLocation: { select: { name: true, population: true } },
-              originLocation: { select: { name: true, population: true } },
+              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
             },
           },
         },
@@ -214,21 +203,15 @@ export const notificationResolvers = {
 
       if (emailUsers.length > 0) {
         const emailProvider = await getEmailProvider();
-        const location = event.generalLocation ?? event.originLocation ?? null;
-        const locationName = location?.name ?? null;
-        const population = location?.population ? formatCount(BigInt(location.population)) : null;
+        const primaryLoc = event.generalLocation ?? event.originLocation ?? null;
+        const emailLoc = await resolveEmailLocation(context.prisma, primaryLoc);
+        const locationName = emailLoc?.name ?? null;
+        const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
         const severityLabel = severityToLabel(event.severity);
         const affectedPeople = event.populationAffected != null
           ? formatCount(event.populationAffected)
           : null;
-
-        const disasterType = event.types[0]
-          ? await context.prisma.disasterTypes.findFirst({
-              where: { glideNumber: event.types[0] },
-              select: { level1: true },
-            })
-          : null;
-        const eventTypeLabel = disasterType?.level1 ?? event.types[0] ?? null;
+        const eventTypeLabel = await resolveEventTypeLabel(context.prisma, event.types);
 
         const emails = emailUsers.map((u) => {
           const content = alertNotification(u.name, title, event.description, alertUrl, {

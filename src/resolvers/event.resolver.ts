@@ -7,6 +7,7 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
+import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
 
 interface CreateEventInput {
   title?: string;
@@ -60,7 +61,7 @@ export const eventResolvers = {
         return context.prisma.events.findMany({ where: dummyFilter });
       }
       // teamId provided: apply that team's location filter as a view filter
-      // (no membership check — see signals resolver for rationale).
+      // (no membership check -  see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter } });
     },
@@ -98,13 +99,13 @@ export const eventResolvers = {
 
       if (!locationId && !originId && !destinationId) {
         if (input.lat != null && input.lng != null) {
-          // Single lat/lng provided — create a point location
+          // Single lat/lng provided -  create a point location
           const pointLoc = await createPointLocation(
             context.prisma, input.lat, input.lng, input.title ?? undefined,
           );
           locationId = pointLoc.id;
         } else if (input.signalIds.length > 0) {
-          // No explicit location — gather point geometries from linked signals
+          // No explicit location -  gather point geometries from linked signals
           const signalLocations = await context.prisma.signals.findMany({
             where: { id: { in: input.signalIds } },
             select: { locationId: true, originId: true, destinationId: true },
@@ -131,10 +132,10 @@ export const eventResolvers = {
             `;
 
             if (locPoints.length === 1) {
-              // Single point — reuse the signal's location directly
+              // Single point -  reuse the signal's location directly
               locationId = [...locIds][0]!;
             } else if (locPoints.length > 1) {
-              // Multiple points — create a convex hull region
+              // Multiple points -  create a convex hull region
               const region = await createRegionFromPoints(
                 context.prisma, locPoints, input.title ?? undefined,
               );
@@ -202,7 +203,7 @@ export const eventResolvers = {
         });
       }
 
-      // Update signal links — ADDITIVE + IDEMPOTENT semantics. Passing
+      // Update signal links -  ADDITIVE + IDEMPOTENT semantics. Passing
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
@@ -317,9 +318,9 @@ export const eventResolvers = {
         console.log(`[escalateEvent] Event ${event.id}: types=${JSON.stringify(event.types)}, locationIds=${JSON.stringify(eventLocationIds)}`);
 
         if (eventLocationIds.length === 0) {
-          console.log("[escalateEvent] No locations on event — skipping subscriber notifications");
+          console.log("[escalateEvent] No locations on event -  skipping subscriber notifications");
         } else if (event.types.length === 0) {
-          console.log("[escalateEvent] No types on event — skipping subscriber notifications");
+          console.log("[escalateEvent] No types on event -  skipping subscriber notifications");
         }
 
         if (eventLocationIds.length > 0 && event.types.length > 0) {
@@ -327,7 +328,7 @@ export const eventResolvers = {
           const allLocationIds = new Set(eventLocationIds);
           const locations = await context.prisma.locations.findMany({
             where: { id: { in: eventLocationIds } },
-            select: { id: true, name: true, ancestorIds: true },
+            select: { id: true, name: true, level: true, population: true, ancestorIds: true },
           });
           for (const loc of locations) {
             for (const aid of loc.ancestorIds) allLocationIds.add(aid);
@@ -358,6 +359,13 @@ export const eventResolvers = {
           if (uniqueUserIds.length > 0) {
             const title = event.title ?? event.types[0] ?? "Alert";
             const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+            const primaryLoc = locations[0] ?? null;
+            const emailLoc = await resolveEmailLocation(context.prisma, primaryLoc);
+            const severityLabel = severityToLabel(event.severity);
+            const eventTypeLabel = await resolveEventTypeLabel(context.prisma, event.types);
+            const locationName = emailLoc?.name ?? null;
+            const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
+            const affectedPeople = event.populationAffected != null ? formatCount(event.populationAffected) : null;
 
             // 1. Populate userAlerts
             await context.prisma.userAlerts.createMany({
@@ -397,7 +405,13 @@ export const eventResolvers = {
                   const emailProvider = await getEmailProvider();
                   await emailProvider.sendBulk(
                     emailUsers.map((u) => {
-                      const content = alertNotification(u.name, title, event.description, alertUrl);
+                      const content = alertNotification(u.name, title, event.description, alertUrl, {
+                        severity: severityLabel,
+                        eventType: eventTypeLabel,
+                        locationName,
+                        population,
+                        affectedPeople,
+                      });
                       return {
                         to: u.email,
                         subject: content.subject,
@@ -412,7 +426,7 @@ export const eventResolvers = {
                 }
               })();
             } else {
-              console.log("[escalateEvent] No users with email notifications enabled — skipping emails");
+              console.log("[escalateEvent] No users with email notifications enabled -  skipping emails");
             }
           }
         }

@@ -120,5 +120,24 @@ export const queryTypeDef = gql`
 
     """Look up a crisis by ID."""
     crisis(id: String!): Crisis
+
+    # ─── Paginated lists ───────────────────────────────────────────────────────
+    """Paginated alerts feed with severity / location / type / date filters and
+    explicit ordering. Use this instead of \`alerts(...)\` when the UI needs
+    pages or a totalCount."""
+    alertsPage(input: AlertsPageInput): AlertsPage!
+
+    """Paginated events feed (same filter shape as alertsPage, plus event-only
+    options). Honours teamId as a location-scope filter."""
+    eventsPage(input: EventsPageInput): EventsPage!
+
+    """Paginated signals feed with source-based filtering."""
+    signalsPage(input: SignalsPageInput): SignalsPage!
+
+    # ─── Stats ─────────────────────────────────────────────────────────────────
+    """Cross-entity stats query — returns a total plus optional buckets grouped
+    by type / severity / day / week / month. Filter shape mirrors the page
+    queries so a "current view" can compute its own counts."""
+    entityStats(input: EntityStatsInput!): EntityStats!
   }
 `;
