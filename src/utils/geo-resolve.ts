@@ -41,11 +41,17 @@ export async function resolveLatLngToLocation(
 
 /**
  * Create a level-4 point location for an exact lat/lng, parented to the
- * nearest resolved district/state. If an existing level-4 point is within
- * 500m, reuse it instead of creating a duplicate.
+ * smallest admin polygon that contains the point.
+ *
+ * NOTE: We deliberately do NOT dedupe against nearby existing A4 rows. Two
+ * incidents 200 m apart can sit on opposite sides of a district border, so
+ * reusing a nearby A4 would inherit that A4's parent A2 and silently
+ * misassign the new incident to the wrong district. Each call resolves its
+ * own containing polygon and creates a fresh A4 — accept the row growth in
+ * exchange for correct administrative attribution.
  *
  * @param name  Human-readable name (e.g., Dataminr location name or generated)
- * @returns     The created or reused location row
+ * @returns     The created location row
  */
 export async function createPointLocation(
   prisma: PrismaClient,
@@ -53,18 +59,6 @@ export async function createPointLocation(
   lng: number,
   name?: string,
 ): Promise<ResolvedLocation> {
-  // Check for an existing level-4 point within 500m to avoid duplicates
-  const existing = await prisma.$queryRaw<ResolvedLocation[]>`
-    SELECT id, name, level
-    FROM "locations"
-    WHERE level = 4
-      AND "geometry" IS NOT NULL
-      AND ST_DWithin("geometry", ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography, 500)
-    ORDER BY ST_Distance("geometry", ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography) ASC
-    LIMIT 1
-  `;
-  if (existing.length > 0) return existing[0]!;
-
   // Resolve parent location (most granular existing: district > state > country)
   const parent = await resolveLatLngToLocation(prisma, lat, lng);
   const parentId = parent?.id ?? null;
