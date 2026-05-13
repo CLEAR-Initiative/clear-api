@@ -314,20 +314,16 @@ export function alertNotification(
   extras?: AlertNotificationExtras,
 ): EmailContent {
   const displayName = userName || "there";
-  const { eventType, severity, dataSource, locationName, population, affectedPeople } = extras ?? {};
+  const { eventType, severity, dataSource, locationName, population } = extras ?? {};
 
   const textParts: string[] = [`Hi ${displayName},`, "", `New alert: ${alertTitle}`];
   if (locationName) textParts.push(locationName);
-  if (affectedPeople) textParts.push(`Estimated affected: ${affectedPeople}`);
   if (alertDescription) textParts.push("", alertDescription);
   textParts.push("", `View alert: ${alertUrl}`, "", "- The CLEAR Platform Team");
 
   const statBoxes: Array<{ value: string; label: string }> = [];
   if (population != null) {
     statBoxes.push({ value: population, label: `Population${locationName ? ` of ${locationName}` : ""}` });
-  }
-  if (affectedPeople != null) {
-    statBoxes.push({ value: affectedPeople, label: "Estimated Affected people" });
   }
 
   const statCellStyle = "border: 1px solid #E5E5E5; border-radius: 6px; padding: 16px; vertical-align: top;";
