@@ -2,7 +2,7 @@
  * Send a test alert notification (email + SMS) to the recipients you specify.
  *
  * Picks the latest *published* alert in the database, builds the same email
- * payload that `notifyAlertSubscribers` would produce, and a short SMS body —
+ * payload that `notifyAlertSubscribers` would produce, and a short SMS body,
  * then dispatches via the configured EMAIL_PROVIDER / SMS_PROVIDER. Useful
  * for sanity-checking provider config end-to-end without subscribing a real
  * user or waiting for the pipeline to escalate something.
@@ -26,6 +26,12 @@ import { prisma } from "../src/lib/prisma.js";
 import { env } from "../src/utils/env.js";
 import { getEmailProvider, getSMSProvider } from "../src/services/messaging/registry.js";
 import { alertNotification } from "../src/services/messaging/templates.js";
+import {
+  resolveEmailLocation,
+  resolveEventTypeLabel,
+  severityToLabel,
+  formatCount,
+} from "../src/utils/alert-email-helpers.js";
 
 interface Flags {
   email: string | null;
@@ -51,33 +57,18 @@ function parseFlags(): Flags {
   };
 }
 
-function severityToLabel(severity: number | null | undefined): string | null {
-  const labels: Record<number, string> = { 1: "MINIMAL", 2: "LOW", 3: "MEDIUM", 4: "HIGH", 5: "CRITICAL" };
-  return severity != null ? (labels[severity] ?? null) : null;
-}
-
-function formatCount(n: bigint | number): string {
-  const v = typeof n === "bigint" ? Number(n) : n;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
-  return v.toLocaleString();
-}
-
-/** Compose a short SMS body — phones don't render the HTML email template,
+/** Compose a short SMS body - phones don't render the HTML email template,
  * so we surface only the bits that fit in a couple of lines. */
 function buildSmsBody(
   alertTitle: string,
   alertUrl: string,
-  meta: { severity: string | null; locationName: string | null; affectedPeople: string | null },
+  meta: { severity: string | null; locationName: string | null },
 ): string {
   const parts: string[] = [];
   if (meta.severity) parts.push(`[${meta.severity}]`);
   parts.push(alertTitle);
-  const tail: string[] = [];
-  if (meta.locationName) tail.push(meta.locationName);
-  if (meta.affectedPeople) tail.push(`~${meta.affectedPeople} affected`);
   let body = parts.join(" ");
-  if (tail.length) body += `\n${tail.join(" · ")}`;
+  if (meta.locationName) body += `\n${meta.locationName}`;
   body += `\n${alertUrl}`;
   return body;
 }
@@ -91,17 +82,29 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── Pick the alert ────────────────────────────────────────────────────
-  // Default = latest published alert by event.firstSignalCreatedAt. The
-  // --alert-id override lets you re-run against a specific row.
+  // Pick the alert - default = latest published by event.firstSignalCreatedAt.
   const alert = flags.alertId
     ? await prisma.alerts.findUnique({
         where: { id: flags.alertId },
-        include: { event: true },
+        include: {
+          event: {
+            include: {
+              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+            },
+          },
+        },
       })
     : await prisma.alerts.findFirst({
         where: { status: "published" },
-        include: { event: true },
+        include: {
+          event: {
+            include: {
+              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+            },
+          },
+        },
         orderBy: { event: { firstSignalCreatedAt: "desc" } },
       });
 
@@ -115,32 +118,17 @@ async function main(): Promise<void> {
   }
 
   const event = alert.event;
-  console.log(`[TEST] Using alert ${alert.id} → event ${event.id}: ${event.title ?? "(untitled)"}`);
+  console.log(`[TEST] Using alert ${alert.id} - event ${event.id}: ${event.title ?? "(untitled)"}`);
 
-  // ── Build the same metadata the production notifier uses ──────────────
-  const [originLocation, generalLocation, disasterType] = await Promise.all([
-    event.originId
-      ? prisma.locations.findUnique({ where: { id: event.originId } })
-      : Promise.resolve(null),
-    event.locationId
-      ? prisma.locations.findUnique({ where: { id: event.locationId } })
-      : Promise.resolve(null),
-    event.types[0]
-      ? prisma.disasterTypes.findFirst({
-          where: { glideNumber: event.types[0] },
-          select: { level1: true },
-        })
-      : Promise.resolve(null),
+  const primaryLoc = event.generalLocation ?? event.originLocation ?? null;
+  const [emailLoc, eventTypeLabel] = await Promise.all([
+    resolveEmailLocation(prisma, primaryLoc),
+    resolveEventTypeLabel(prisma, event.types),
   ]);
 
-  const location = generalLocation ?? originLocation ?? null;
-  const locationName = location?.name ?? null;
-  const population = location?.population ? formatCount(BigInt(location.population)) : null;
+  const locationName = emailLoc?.name ?? null;
+  const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
   const severityLabel = severityToLabel(event.severity);
-  const affectedPeople = event.populationAffected != null
-    ? formatCount(event.populationAffected)
-    : null;
-  const eventTypeLabel = disasterType?.level1 ?? event.types[0] ?? null;
 
   const title = event.title ?? "Untitled alert";
   const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
@@ -155,21 +143,19 @@ async function main(): Promise<void> {
       eventType: eventTypeLabel,
       locationName,
       population,
-      affectedPeople,
     },
   );
 
-  const smsBody = buildSmsBody(title, alertUrl, { severity: severityLabel, locationName, affectedPeople });
+  const smsBody = buildSmsBody(title, alertUrl, { severity: severityLabel, locationName });
 
-  // ── Dispatch ──────────────────────────────────────────────────────────
   if (flags.dryRun) {
-    console.log("\n────────── EMAIL (dry-run) ──────────");
+    console.log("\n---------- EMAIL (dry-run) ----------");
     console.log(`Subject: ${emailContent.subject}`);
     console.log(`Text:\n${emailContent.textBody}`);
-    console.log("\n────────── SMS (dry-run) ──────────");
+    console.log("\n---------- SMS (dry-run) ----------");
     console.log(`To: ${flags.phone ?? "(no --phone)"}`);
     console.log(smsBody);
-    console.log("\n[TEST] Dry run — no messages sent.");
+    console.log("\n[TEST] Dry run - no messages sent.");
     return;
   }
 
@@ -187,9 +173,9 @@ async function main(): Promise<void> {
             textBody: emailContent.textBody,
             htmlBody: emailContent.htmlBody,
           });
-          console.log(`[EMAIL → ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
+          console.log(`[EMAIL -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
         } catch (err) {
-          console.error(`[EMAIL → ${recipient}] FAILED:`, err);
+          console.error(`[EMAIL -> ${recipient}] FAILED:`, err);
           process.exitCode = 3;
         }
       })(),
@@ -203,9 +189,9 @@ async function main(): Promise<void> {
         try {
           const provider = await getSMSProvider();
           const ok = await provider.send({ to: recipient, body: smsBody });
-          console.log(`[SMS → ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
+          console.log(`[SMS -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
         } catch (err) {
-          console.error(`[SMS → ${recipient}] FAILED:`, err);
+          console.error(`[SMS -> ${recipient}] FAILED:`, err);
           process.exitCode = 4;
         }
       })(),
