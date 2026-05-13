@@ -177,6 +177,10 @@ async function buildAlertsWhere(
 }
 
 // ─── orderBy mapping ─────────────────────────────────────────────────────
+// Each orderBy returns an array so we can append a deterministic tie-breaker
+// (final `id` sort). Without one, rows tied on the primary sort field can
+// appear on different pages between requests, surfacing as "newest items
+// scattered across pages" in the UI.
 type AlertOrderBy = "CREATED_DESC" | "CREATED_ASC" | "SEVERITY_DESC" | "SEVERITY_ASC";
 type EventOrderBy =
   | "LAST_SIGNAL_DESC"
@@ -187,49 +191,59 @@ type EventOrderBy =
   | "SEVERITY_ASC";
 type SignalOrderBy = "PUBLISHED_DESC" | "PUBLISHED_ASC" | "SEVERITY_DESC" | "SEVERITY_ASC";
 
-function alertsOrderBy(o?: AlertOrderBy | null): Prisma.alertsOrderByWithRelationInput {
+function alertsOrderBy(o?: AlertOrderBy | null): Prisma.alertsOrderByWithRelationInput[] {
+  // Severity ties resolve to newest-first within the tier, then to a stable
+  // id order so paging is deterministic.
   switch (o) {
     case "CREATED_ASC":
-      return { event: { firstSignalCreatedAt: "asc" } };
+      return [{ event: { firstSignalCreatedAt: "asc" } }, { id: "asc" }];
     case "SEVERITY_DESC":
-      return { event: { severity: "desc" } };
+      return [
+        { event: { severity: "desc" } },
+        { event: { firstSignalCreatedAt: "desc" } },
+        { id: "desc" },
+      ];
     case "SEVERITY_ASC":
-      return { event: { severity: "asc" } };
+      return [
+        { event: { severity: "asc" } },
+        { event: { firstSignalCreatedAt: "desc" } },
+        { id: "asc" },
+      ];
     case "CREATED_DESC":
     default:
-      return { event: { firstSignalCreatedAt: "desc" } };
+      return [{ event: { firstSignalCreatedAt: "desc" } }, { id: "desc" }];
   }
 }
 
-function eventsOrderBy(o?: EventOrderBy | null): Prisma.eventsOrderByWithRelationInput {
+function eventsOrderBy(o?: EventOrderBy | null): Prisma.eventsOrderByWithRelationInput[] {
   switch (o) {
     case "LAST_SIGNAL_ASC":
-      return { lastSignalCreatedAt: "asc" };
+      return [{ lastSignalCreatedAt: "asc" }, { id: "asc" }];
     case "CREATED_DESC":
-      return { firstSignalCreatedAt: "desc" };
+      return [{ firstSignalCreatedAt: "desc" }, { id: "desc" }];
     case "CREATED_ASC":
-      return { firstSignalCreatedAt: "asc" };
+      return [{ firstSignalCreatedAt: "asc" }, { id: "asc" }];
     case "SEVERITY_DESC":
-      return { severity: "desc" };
+      return [{ severity: "desc" }, { firstSignalCreatedAt: "desc" }, { id: "desc" }];
     case "SEVERITY_ASC":
-      return { severity: "asc" };
+      return [{ severity: "asc" }, { firstSignalCreatedAt: "desc" }, { id: "asc" }];
     case "LAST_SIGNAL_DESC":
     default:
-      return { lastSignalCreatedAt: "desc" };
+      return [{ lastSignalCreatedAt: "desc" }, { id: "desc" }];
   }
 }
 
-function signalsOrderBy(o?: SignalOrderBy | null): Prisma.signalsOrderByWithRelationInput {
+function signalsOrderBy(o?: SignalOrderBy | null): Prisma.signalsOrderByWithRelationInput[] {
   switch (o) {
     case "PUBLISHED_ASC":
-      return { publishedAt: "asc" };
+      return [{ publishedAt: "asc" }, { id: "asc" }];
     case "SEVERITY_DESC":
-      return { severity: "desc" };
+      return [{ severity: "desc" }, { publishedAt: "desc" }, { id: "desc" }];
     case "SEVERITY_ASC":
-      return { severity: "asc" };
+      return [{ severity: "asc" }, { publishedAt: "desc" }, { id: "asc" }];
     case "PUBLISHED_DESC":
     default:
-      return { publishedAt: "desc" };
+      return [{ publishedAt: "desc" }, { id: "desc" }];
   }
 }
 
