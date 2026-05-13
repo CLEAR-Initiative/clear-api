@@ -127,7 +127,7 @@ async function main(): Promise<void> {
   ]);
 
   const locationName = emailLoc?.name ?? null;
-  const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
+  const population = emailLoc?.population != null ? formatCount(emailLoc.population) : null;
   const severityLabel = severityToLabel(event.severity);
 
   const title = event.title ?? "Untitled alert";
