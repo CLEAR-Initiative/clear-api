@@ -359,7 +359,11 @@ export const eventResolvers = {
           if (uniqueUserIds.length > 0) {
             const title = event.title ?? event.types[0] ?? "Alert";
             const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
-            const primaryLoc = locations[0] ?? null;
+            const primaryLoc =
+              locations.find((l) => l.id === event.locationId) ??
+              locations.find((l) => l.id === event.originId) ??
+              locations.find((l) => l.id === event.destinationId) ??
+              null;
             const emailLoc = await resolveEmailLocation(context.prisma, primaryLoc);
             const severityLabel = severityToLabel(event.severity);
             const eventTypeLabel = await resolveEventTypeLabel(context.prisma, event.types);

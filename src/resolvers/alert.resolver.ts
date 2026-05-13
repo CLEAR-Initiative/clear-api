@@ -199,7 +199,11 @@ export const alertResolvers = {
           if (emailUsers.length > 0) {
             const emailList = emailUsers.map((u) => u.email).join(", ");
             console.log(`[createAlert] Sending emails to: ${emailList}`);
-            const primaryLoc = locations[0] ?? null;
+            const primaryLoc =
+              locations.find((l) => l.id === event.locationId) ??
+              locations.find((l) => l.id === event.originId) ??
+              locations.find((l) => l.id === event.destinationId) ??
+              null;
             const [emailLoc, eventTypeLabel] = await Promise.all([
               resolveEmailLocation(context.prisma, primaryLoc),
               resolveEventTypeLabel(context.prisma, event.types),
