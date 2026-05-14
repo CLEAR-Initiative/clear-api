@@ -7,6 +7,7 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
+import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -32,7 +33,7 @@ export const alertResolvers = {
         });
       }
       // teamId provided: apply that team's location filter as a view filter
-      // (no membership check — see signals resolver for rationale).
+      // (no membership check - see signals resolver for rationale).
       const eventLocationFilter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.alerts.findMany({
         where: {
@@ -107,7 +108,7 @@ export const alertResolvers = {
             },
           });
 
-      // Skip the notification fan-out when the alert already existed —
+      // Skip the notification fan-out when the alert already existed -
       // subscribers were notified on the original create, we don't want
       // to spam them on every retry.
       if (existingAlert) return alert;
@@ -122,9 +123,9 @@ export const alertResolvers = {
       console.log(`[createAlert] Event ${event.id}: types=${JSON.stringify(event.types)}, locationIds=${JSON.stringify(eventLocationIds)}`);
 
       if (eventLocationIds.length === 0) {
-        console.log("[createAlert] No locations on event — skipping subscriber notifications");
+        console.log("[createAlert] No locations on event - skipping subscriber notifications");
       } else if (event.types.length === 0) {
-        console.log("[createAlert] No types on event — skipping subscriber notifications");
+        console.log("[createAlert] No types on event - skipping subscriber notifications");
       }
 
       if (eventLocationIds.length > 0 && event.types.length > 0) {
@@ -133,7 +134,7 @@ export const alertResolvers = {
         const allLocationIds = new Set(eventLocationIds);
         const locations = await context.prisma.locations.findMany({
           where: { id: { in: eventLocationIds } },
-          select: { id: true, name: true, ancestorIds: true },
+          select: { id: true, name: true, level: true, population: true, ancestorIds: true },
         });
         for (const loc of locations) {
           for (const aid of loc.ancestorIds) allLocationIds.add(aid);
@@ -198,12 +199,28 @@ export const alertResolvers = {
           if (emailUsers.length > 0) {
             const emailList = emailUsers.map((u) => u.email).join(", ");
             console.log(`[createAlert] Sending emails to: ${emailList}`);
+            const primaryLoc =
+              locations.find((l) => l.id === event.locationId) ??
+              locations.find((l) => l.id === event.originId) ??
+              locations.find((l) => l.id === event.destinationId) ??
+              null;
+            const [emailLoc, eventTypeLabel] = await Promise.all([
+              resolveEmailLocation(context.prisma, primaryLoc),
+              resolveEventTypeLabel(context.prisma, event.types),
+            ]);
+            const emailExtras = {
+              severity: severityToLabel(event.severity),
+              eventType: eventTypeLabel,
+              locationName: emailLoc?.name ?? null,
+              population: emailLoc?.population ? formatCount(emailLoc.population) : null,
+              affectedPeople: event.populationAffected != null ? formatCount(event.populationAffected) : null,
+            };
             void (async () => {
               try {
                 const emailProvider = await getEmailProvider();
                 await emailProvider.sendBulk(
                   emailUsers.map((u) => {
-                    const content = alertNotification(u.name, title, event.description, alertUrl);
+                    const content = alertNotification(u.name, title, event.description, alertUrl, emailExtras);
                     return {
                       to: u.email,
                       subject: content.subject,
@@ -218,7 +235,7 @@ export const alertResolvers = {
               }
             })();
           } else {
-            console.log("[createAlert] No users with email notifications enabled — skipping emails");
+            console.log("[createAlert] No users with email notifications enabled - skipping emails");
           }
         }
       }
