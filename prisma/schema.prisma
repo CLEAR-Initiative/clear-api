@@ -266,6 +266,15 @@ model locations {
   /// Populated by a background worker for admin levels 0-2. Null for point locations.
   population  BigInt?
 
+  /// When the row was first inserted. Needed for debugging questions like
+  /// "when did Al Kurmuk's geometry get backfilled?" — previously locations
+  /// had no timestamps, making it impossible to correlate signal-ingestion
+  /// timing against admin polygon availability.
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Auto-updated by Prisma on every write. Useful for tracking when an
+  /// admin polygon was (re-)loaded vs created.
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   parent   locations?  @relation("LocationHierarchy", fields: [parentId], references: [id])
   children locations[] @relation("LocationHierarchy")
 
@@ -474,6 +483,14 @@ model alerts {
   id      String      @id @default(cuid())
   eventId String      @map("event_id")
   status  AlertStatus
+
+  /// When the alert row was first created. Needed for debugging "when did
+  /// this fire?" — previously alerts had no timestamp and we could only date
+  /// them by correlating to outbound email logs.
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Updated automatically by Prisma on every write — useful for tracking
+  /// status transitions (draft → published → archived).
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   event      events       @relation(fields: [eventId], references: [id])
   userAlerts userAlerts[]
