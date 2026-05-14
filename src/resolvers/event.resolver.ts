@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
-import { createPointLocation, createRegionFromPoints, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
@@ -132,14 +132,17 @@ export const eventResolvers = {
             `;
 
             if (locPoints.length === 1) {
-              // Single point -  reuse the signal's location directly
+              // Single point — reuse the signal's location directly.
               locationId = [...locIds][0]!;
             } else if (locPoints.length > 1) {
-              // Multiple points -  create a convex hull region
-              const region = await createRegionFromPoints(
-                context.prisma, locPoints, input.title ?? undefined,
+              // Multiple points — attribute the event to the deepest admin
+              // polygon containing them all (A2 if same district, A1 if same
+              // state, A0 otherwise). Keeps `locations` purely administrative
+              // instead of accreting a convex-hull region row per event.
+              const ancestor = await resolvePointsToCommonAncestor(
+                context.prisma, locPoints,
               );
-              locationId = region.id;
+              if (ancestor) locationId = ancestor.id;
             }
           }
         }

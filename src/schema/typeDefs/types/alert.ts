@@ -19,6 +19,10 @@ export const alertTypeDef = gql`
     """The event this alert was created from."""
     event: Event!
     status: AlertStatus!
+    """When the alert row was first created."""
+    createdAt: DateTime!
+    """Last time the alert row was updated (e.g. status transition)."""
+    updatedAt: DateTime!
     """Users who received this alert."""
     userAlerts: [UserAlert!]!
   }
