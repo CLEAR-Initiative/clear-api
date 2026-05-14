@@ -8,30 +8,40 @@ interface ResolvedLocation {
 }
 
 /**
- * Resolve a lat/lng point to the most granular existing location in the hierarchy.
+ * Resolve a lat/lng point to the most granular existing administrative location.
  * Returns the best match (district > state > country) without creating new entries.
+ *
+ * Excludes level-4 rows from consideration: those are themselves point/region
+ * locations (created by createPointLocation / createRegionFromPoints) and must
+ * not be eligible as parents. Without this filter, a previous signal at the
+ * same coordinates would be picked as the parent (because `ORDER BY level
+ * DESC` ranks L4 above A2), producing a parent chain of L4→L4→L4→A1 and
+ * polluting ancestorIds for the whole cascade.
  */
 export async function resolveLatLngToLocation(
   prisma: PrismaClient,
   lat: number,
   lng: number,
 ): Promise<ResolvedLocation | null> {
-  // Phase 1: Find polygon that contains the point (state/country level)
+  // Phase 1: smallest admin polygon (A2 > A1 > A0) that contains the point.
   const containRows = await prisma.$queryRaw<ResolvedLocation[]>`
     SELECT id, name, level
     FROM "locations"
     WHERE "geometry" IS NOT NULL
+      AND level < 4
       AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
     ORDER BY level DESC
     LIMIT 1
   `;
   if (containRows.length > 0) return containRows[0]!;
 
-  // Phase 2: Find nearest point location within 50km (district level)
+  // Phase 2: nearest admin polygon within 50km (handles points just outside
+  // any polygon — coastal/border slivers in OCHA boundary data).
   const nearbyRows = await prisma.$queryRaw<ResolvedLocation[]>`
     SELECT id, name, level
     FROM "locations"
     WHERE "geometry" IS NOT NULL
+      AND level < 4
       AND ST_DWithin("geometry", ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography, 50000)
     ORDER BY level DESC, ST_Distance("geometry", ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography) ASC
     LIMIT 1
@@ -80,86 +90,49 @@ export async function createPointLocation(
 }
 
 /**
- * Create a level-4 region location from multiple signal points.
- * Uses ST_ConvexHull to build a polygon around the points, or a single point
- * if there's only one. Parented to the most common parent among the points.
+ * Resolve a set of lat/lng points to the deepest admin polygon that contains
+ * all of them. Returns A2 when every point sits in the same district; falls
+ * through to A1 when they span multiple A2s in the same state, then A0.
+ *
+ * This replaces the older `createRegionFromPoints` convex-hull approach for
+ * the multi-signal `createEvent` path. Keeping the `locations` table purely
+ * administrative avoids both the row-growth problem (every multi-signal
+ * event used to insert a new level-4 hull row) and the parent-resolution
+ * pollution it caused for new points landing inside those hulls.
+ *
+ * Returns null when the points have no shared admin ancestor — should not
+ * happen for grouped signals in the same country, but the caller must
+ * tolerate it (the event simply gets created with no location attached,
+ * same as today's behaviour when no signals carry geometry).
  */
-export async function createRegionFromPoints(
+export async function resolvePointsToCommonAncestor(
   prisma: PrismaClient,
   points: Array<{ lat: number; lng: number }>,
-  name?: string,
-): Promise<ResolvedLocation> {
-  if (points.length === 0) {
-    throw new Error("Cannot create region from zero points");
-  }
-
-  // Single point — delegate to createPointLocation
+): Promise<ResolvedLocation | null> {
+  if (points.length === 0) return null;
   if (points.length === 1) {
-    return createPointLocation(prisma, points[0]!.lat, points[0]!.lng, name);
+    return resolveLatLngToLocation(prisma, points[0]!.lat, points[0]!.lng);
   }
 
-  // Build a convex hull from the points
+  // ST_Contains(polygon, MULTIPOINT) is true iff every component point is
+  // strictly inside the polygon — exactly the "contains all" semantics we
+  // want. ORDER BY level DESC picks the most granular polygon that qualifies.
   const pointsWkt = points.map((p) => `${p.lng} ${p.lat}`).join(",");
-  const multipointWkt = "MULTIPOINT(" + pointsWkt + ")";
+  const multipointWkt = `MULTIPOINT(${pointsWkt})`;
 
-  // Find the best parent by resolving the centroid
-  const avgLat = points.reduce((s, p) => s + p.lat, 0) / points.length;
-  const avgLng = points.reduce((s, p) => s + p.lng, 0) / points.length;
-  const parent = await resolveLatLngToLocation(prisma, avgLat, avgLng);
-  const parentId = parent?.id ?? null;
-
-  const ancestorIds = parentId ? await computeAncestorIds(prisma, parentId) : [];
-
-  const id = randomUUID();
-  const regionName = name ?? `Region ${avgLat.toFixed(2)}, ${avgLng.toFixed(2)}`;
-
-  // Find the nearest state-level (level 1) polygon to clip the region against
-  // Walk up ancestors to find a state, or use the parent directly if it's a state
-  let clipLocationId: string | null = null;
-  if (parent && parent.level <= 1) {
-    clipLocationId = parent.id;
-  } else if (parentId) {
-    // Parent is a district (level 2+), find the state ancestor
-    for (const aid of ancestorIds) {
-      const ancestor = await prisma.locations.findUnique({
-        where: { id: aid },
-        select: { id: true, level: true },
-      });
-      if (ancestor && ancestor.level === 1) {
-        clipLocationId = ancestor.id;
-        break;
-      }
-    }
-  }
-
-  if (clipLocationId) {
-    // Clip the convex hull to the state boundary using ST_Intersection
-    await prisma.$executeRaw`
-      INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
-      SELECT
-        ${id}, ${regionName}, 4, ${parentId}, ${ancestorIds}::text[],
-        ST_Intersection(
-          ST_ConvexHull(ST_GeomFromText(${multipointWkt}, 4326)),
-          "geometry"::geometry
-        )
-      FROM "locations"
-      WHERE id = ${clipLocationId}
-        AND "geometry" IS NOT NULL
-    `;
-  } else {
-    // No state boundary to clip against — use raw convex hull
-    await prisma.$executeRaw`
-      INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
-      VALUES (
-        ${id}, ${regionName}, 4, ${parentId}, ${ancestorIds},
-        ST_ConvexHull(ST_GeomFromText(${multipointWkt}, 4326))
+  const rows = await prisma.$queryRaw<ResolvedLocation[]>`
+    SELECT id, name, level
+    FROM "locations"
+    WHERE "geometry" IS NOT NULL
+      AND level <= 2
+      AND ST_Contains(
+        "geometry"::geometry,
+        ST_GeomFromText(${multipointWkt}, 4326)
       )
-    `;
-  }
-
-  console.log(`[createRegionFromPoints] Created "${regionName}" (level 4, ${points.length} points, clipped=${!!clipLocationId}) → parent: ${parent?.name ?? "none"}`);
-
-  return { id, name: regionName, level: 4 };
+    ORDER BY level DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
 }
 
 /**

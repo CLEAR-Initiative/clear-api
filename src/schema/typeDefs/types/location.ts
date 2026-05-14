@@ -29,5 +29,9 @@ export const locationTypeDef = gql`
     By default only the current value is returned (validTo is null).
     Pass current: false to include the full history."""
     metadata(type: String, current: Boolean): [LocationMetadata!]!
+    """When the row was first created."""
+    createdAt: DateTime!
+    """Last write — useful for tracking admin polygon (re-)loads."""
+    updatedAt: DateTime!
   }
 `;
