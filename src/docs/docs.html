@@ -1588,6 +1588,14 @@ invitee membership in that team with the given role on acceptance.</td>
     <td><code>AlertStatus!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the alert row was first created.</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Last time the alert row was updated (e.g. status transition).</td>
+  </tr><tr>
     <td><code>userAlerts</code></td>
     <td><code>[UserAlert!]!</code></td>
     <td>Users who received this alert.</td>
@@ -2165,6 +2173,14 @@ means org-only access (no team).</td>
     <td>Per-type metadata (IOM DTM, INFORM, etc). Pass a type argument to filter.
 By default only the current value is returned (validTo is null).
 Pass current: false to include the full history.<div class="field-args"><span class="arg"><code>type: String</code></span><span class="arg"><code>current: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the row was first created.</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Last write — useful for tracking admin polygon (re-)loads.</td>
   </tr></tbody></table><h3 id="type-locationmetadata"><code>LocationMetadata</code> <span class="type-badge">object</span></h3><p>Arbitrary per-location metadata keyed by type. History is preserved:
 writes close the current row (set validTo = now()) and insert a new one.
 The CURRENT value for a (location, type) is the row where validTo is null.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>

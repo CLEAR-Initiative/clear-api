@@ -96,7 +96,10 @@ export const signalResolvers = {
       args: { input: CreateSignalInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      // Any authenticated user can create a signal. The downstream pipeline
+      // gates (severity >= 4, staleness, trusted-source check on the manual
+      // path) prevent low-quality / stale entries from triggering alerts.
+      requireAuth(context);
       const { input } = args;
 
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -182,8 +185,10 @@ export const signalResolvers = {
       args: { input: CreateManualSignalInput },
       context: Context,
     ) => {
+      // Any authenticated user can file a manual signal. Downstream guards
+      // (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4, staleness gate)
+      // keep low-severity / stale entries from fanning out as alerts.
       const user = requireAuth(context);
-      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       // Validate source exists and is a trusted type
@@ -245,7 +250,10 @@ export const signalResolvers = {
         },
       });
 
-      // Queue pipeline processing via Celery (fire-and-forget)
+      // Queue pipeline processing via Celery (fire-and-forget).
+      // signal_published_at lets the pipeline apply the staleness gate; we
+      // pass the row's actual publishedAt so the kwarg is consistent if the
+      // schema later allows backdated publishedAt values.
       void sendCeleryTask("src.tasks.process.process_manual_signal", {
         signal_id: signal.id,
         source_type: dataSource.name,
@@ -253,6 +261,7 @@ export const signalResolvers = {
         description: input.description,
         severity: input.severity ?? null,
         user_id: user.id,
+        signal_published_at: signal.publishedAt.toISOString(),
       }).catch((err) => {
         console.error("[createManualSignal] Failed to queue pipeline task:", err);
       });
