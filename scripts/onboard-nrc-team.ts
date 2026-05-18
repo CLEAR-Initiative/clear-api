@@ -47,31 +47,22 @@ const ORG_ROLE = "member";
 const TEAM_ROLE = "viewer";
 
 const EMAILS = [
-  "alamin.kharif@nrc.no",
-  "amjad.elayyan@nrc.no",
-  "dimitra.paschalidou@nrc.no",
-  "fadwa.eltayeb@nrc.no",
-  "garang.garangkuei@nrc.no",
-  "hani.eltayib@nrc.no",
-  "hiba.j.yaghmour@nrc.no",
-  "kamel.alsharif@nrc.no",
-  "lara.lteif@nrc.no",
-  "mathilde.vu@nrc.no",
-  "ahmed.albraifkani@nrc.no",
-  "ahmed.maaji@nrc.no",
-  "anjili.yakubu@nrc.no",
-  "Giovanni.zanoletti@nrc.no",
-  "grace.oonge@nrc.no",
-  "mohammedzain.musa@nrc.no",
-  "noah.taylor@nrc.no",
-  "panagiotis.sikelis@nrc.no",
-  "gerson.bergeth@nrc.no",
+  "kamran.said@nrc.no",
+  "tarig.alfarash@nrc.no",
+  "matt.novak@nrc.no",
+  "matthew.taggart@nrc.no",
+  "steve.hallam@nrc.no",
 ];
 
 // ─── Flags ────────────────────────────────────────────────────────────────
 interface Flags {
   dryRun: boolean;
   invitedById: string | null;
+  // Process only NEW users (send invitation emails). Existing users are
+  // left completely untouched — no org/team membership changes, no
+  // notification-pref toggle, no subscriptions. Use this when you want to
+  // invite a cohort but defer all post-acceptance setup.
+  inviteOnly: boolean;
 }
 
 function parseFlags(): Flags {
@@ -84,6 +75,7 @@ function parseFlags(): Flags {
   return {
     dryRun: argv.includes("--dry-run"),
     invitedById: get("--invited-by"),
+    inviteOnly: argv.includes("--invite-only"),
   };
 }
 
@@ -180,6 +172,11 @@ async function main(): Promise<void> {
 
       if (!existingUser) {
         await handleNewUser(email, inviter, flags.dryRun, stats);
+      } else if (flags.inviteOnly) {
+        // --invite-only: don't touch existing users at all. No org/team
+        // changes, no notification toggle, no subscriptions.
+        console.log(`[${email}] skip — already on platform (--invite-only)`);
+        stats.invitesSkipped++;
       } else {
         await handleExistingUser(existingUser, alertTypes, level0Locations, flags.dryRun, stats);
       }
@@ -313,7 +310,7 @@ async function handleExistingUser(
     console.log(`[${user.email}] enable email notifications`);
   }
 
-  // 4) Subscribe to all (type × country) — only if user has zero subs
+  // 4) Subscribe to all (type × country) — only if user has zero subs.
   const existingSubCount = await prisma.userAlertSubscriptions.count({
     where: { userId: user.id },
   });
