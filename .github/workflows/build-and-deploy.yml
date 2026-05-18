@@ -1,0 +1,89 @@
+name: Build & deploy (dev / staging)
+
+# Push to dev → build → deploy to dev VM
+# Push to staging → build → deploy to staging VM
+#
+# The matching GitHub Environment provides the SSH host + key for that env so
+# secrets are scoped per-environment (no chance dev push deploys to staging).
+# `main` is left for the existing production Terraform-based pipeline.
+
+on:
+  push:
+    branches: [dev, staging]
+  workflow_dispatch: # manual re-deploy without a code change
+
+env:
+  REGISTRY: ghcr.io
+  # Owner must be lowercase — Docker rejects mixed-case refs even though GHCR
+  # is case-insensitive on the server side. Lowercased below via a step output.
+
+jobs:
+  build:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name + tags
+        id: meta
+        # Lowercase the repo owner (Docker requirement) and emit:
+        #   image_name        — <owner>/clear-api in lowercase
+        #   sha_tag           — <branch>-<sha7>, immutable for rollback/pinning
+        # The full <branch> tag is also pushed below as a moving target the
+        # env's compose file pulls.
+        run: |
+          OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image_name=${OWNER_LC}/clear-api" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${GITHUB_REF_NAME}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        # Same Dockerfile Railway uses on main → one image build, no drift
+        # between the Railway prod deploy and the Infomaniak dev/staging deploy.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64 # Infomaniak VMs are x86_64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.image_name }}:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.sha_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to ${{ github.ref_name }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Picks up the matching GitHub Environment — secrets like APP_VM_HOST
+    # / APP_VM_SSH_KEY are scoped per environment in repo settings.
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: SSH and roll the deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.APP_VM_HOST }}
+          username: ubuntu
+          key: ${{ secrets.APP_VM_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /srv/app
+            docker compose pull clear-api
+            docker compose up -d clear-api
+            docker image prune -f
+            docker compose ps clear-api
