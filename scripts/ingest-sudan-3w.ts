@@ -13,6 +13,7 @@
  */
 
 import "dotenv/config";
+import https from "node:https";
 import { prisma } from "../src/lib/prisma.js";
 
 const HAPI_BASE = "https://hapi.humdata.org/api/v2";
@@ -62,23 +63,40 @@ interface LocalityData {
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
 
+function httpsGet(url: string, headers: Record<string, string>): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const req = https.get(
+      { hostname: parsed.hostname, path: parsed.pathname + parsed.search, headers },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(`HAPI API error: ${res.statusCode} - ${body.slice(0, 200)}`));
+          } else {
+            resolve(body);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+  });
+}
+
 async function fetchSudan3W(): Promise<HapiRow[]> {
   const url = new URL(`${HAPI_BASE}/coordination-context/operational-presence`);
   url.searchParams.set("location_code", "SDN");
   url.searchParams.set("limit", "10000");
   url.searchParams.set("output_format", "json");
-  url.searchParams.set("app_identifier", HAPI_APP_ID);
 
   console.log(`Fetching: ${url.toString()}`);
-  const res = await fetch(url.toString(), {
-    headers: { "X-HDX-HAPI-APP-IDENTIFIER": HAPI_APP_ID },
+  const body = await httpsGet(url.toString(), {
+    "X-HDX-HAPI-APP-IDENTIFIER": HAPI_APP_ID,
+    "Accept": "application/json",
   });
 
-  if (!res.ok) {
-    throw new Error(`HAPI API error: ${res.status} ${res.statusText}`);
-  }
-
-  const json = (await res.json()) as HapiResponse;
+  const json = JSON.parse(body) as HapiResponse;
   console.log(`  Fetched ${json.data.length} rows`);
   return json.data;
 }
