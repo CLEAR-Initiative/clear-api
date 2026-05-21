@@ -82,6 +82,11 @@ function buildPayload(
   entry: LocalityEntry,
   meta: ProcessedMeta,
 ): UpsertPayload | null {
+  // The processor sets location_id only when it matched the name to a DB
+  // row. Entries with no location_id are deliberately skipped here — the
+  // pcode fallback in upsertBatch is for entries whose location_id was set
+  // but no longer resolves (stale id, location merged/renamed/deleted),
+  // NOT for entries the processor couldn't match in the first place.
   const locationId = entry.location_id;
   if (!locationId) return null;
 
@@ -154,10 +159,52 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
     select: { id: true },
   });
   const validIds = new Set(existing.map((l) => l.id));
+
+  // pcode fallback — for payloads whose locationId came from the processor
+  // but no longer resolves to a row (location was renamed / merged /
+  // deleted), try the locality's pcode (stored on data._source.pcode by
+  // buildPayload). Re-point the payload to the matching level-2 row when
+  // found. Payloads that already have a valid locationId skip this entirely.
+  const stale = payloads.filter((p) => !validIds.has(p.locationId));
+  const staleWithPcode = stale
+    .map((p) => {
+      const src = (p.data._source ?? {}) as Record<string, unknown>;
+      const pcode = typeof src.pcode === "string" ? src.pcode : null;
+      return pcode ? { payload: p, pcode } : null;
+    })
+    .filter((x): x is { payload: UpsertPayload; pcode: string } => x !== null);
+
+  if (staleWithPcode.length > 0) {
+    const pcodes = [...new Set(staleWithPcode.map((x) => x.pcode))];
+    const rescueRows = await prisma.locations.findMany({
+      where: { level: 2, pCode: { in: pcodes } },
+      select: { id: true, pCode: true },
+    });
+    const pcodeToId = new Map<string, string>();
+    for (const r of rescueRows) {
+      if (r.pCode) pcodeToId.set(r.pCode, r.id);
+    }
+    let rescued = 0;
+    for (const { payload, pcode } of staleWithPcode) {
+      const newId = pcodeToId.get(pcode);
+      if (!newId) continue;
+      // Mutate the payload's locationId in place and annotate _source so
+      // the persisted row records why its id differs from the JSON input.
+      payload.locationId = newId;
+      const src = payload.data._source as Record<string, unknown> | undefined;
+      if (src) src.resolved_via = "pcode_fallback";
+      validIds.add(newId);
+      rescued++;
+    }
+    if (rescued > 0) {
+      console.warn(`  [info] rescued ${rescued} payload(s) via pcode fallback`);
+    }
+  }
+
   const valid = payloads.filter((p) => validIds.has(p.locationId));
   if (valid.length < payloads.length) {
     console.warn(
-      `  [warn] skipping ${payloads.length - valid.length} payload(s) with unknown locationId`,
+      `  [warn] skipping ${payloads.length - valid.length} payload(s) with unknown locationId (no pcode rescue available)`,
     );
   }
   if (valid.length === 0) return 0;
