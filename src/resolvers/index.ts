@@ -18,6 +18,7 @@ import { invitationResolvers } from "./invitation.resolver.js";
 import { subscriptionResolvers } from "./subscription.resolver.js";
 import { crisisResolvers } from "./crisis.resolver.js";
 import { locationMetadataResolvers } from "./locationMetadata.resolver.js";
+import { nominatimCacheResolvers } from "./nominatimCache.resolver.js";
 import { paginationResolvers } from "./pagination.resolver.js";
 
 export const resolvers: IResolvers[] = [
@@ -40,5 +41,6 @@ export const resolvers: IResolvers[] = [
   subscriptionResolvers,
   crisisResolvers,
   locationMetadataResolvers,
+  nominatimCacheResolvers,
   paginationResolvers,
 ];

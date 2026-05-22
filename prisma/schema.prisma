@@ -266,6 +266,23 @@ model locations {
   /// Populated by a background worker for admin levels 0-2. Null for point locations.
   population  BigInt?
 
+  /// Provenance tag for the `geometry` field — describes HOW the point was
+  /// derived. Helps downstream consumers reason about precision:
+  ///   - 'gps'                — authentic GPS coordinate (from a sensor or
+  ///                            field officer's device)
+  ///   - 'centroid'           — computed from a polygon's centroid (A0-A2)
+  ///   - 'landmark-geocoded'  — resolved via the Nominatim geocoder from a
+  ///                            landmark name extracted from signal text
+  ///                            (e.g. "Nyala Airport")
+  ///   - 'source-gps'         — coordinate as supplied by an alert source
+  ///                            (Dataminr, ACLED, GDACS) when treated as
+  ///                            precise GPS
+  ///   - 'source-centroid'    — source coordinate detected as a district
+  ///                            centroid (fake precision); event attributed
+  ///                            to the containing admin unit
+  /// Null for legacy rows created before this field existed.
+  pointType  String? @map("point_type")
+
   /// When the row was first inserted. Needed for debugging questions like
   /// "when did Al Kurmuk's geometry get backfilled?" — previously locations
   /// had no timestamps, making it impossible to correlate signal-ingestion
@@ -410,6 +427,28 @@ model signals {
 
   locationId      String?         @map("location_id") // In case of signals without origin or destination
   generalLocation locations?      @relation("SignalLocation", fields: [locationId], references: [id])
+
+  /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
+  /// Additive enrichment for comparison against the source's coords —
+  /// never used for routing or alert decisions in this phase.
+  ///
+  /// Shape (when present):
+  ///   {
+  ///     "candidate":     "Nyala Airport",
+  ///     "kind":          "landmark" | "admin",
+  ///     "field":         "title" | "body",
+  ///     "lat":           12.0537,
+  ///     "lng":           24.9543,
+  ///     "country_code":  "sd",
+  ///     "osm_class":     "aeroway",
+  ///     "osm_type":      "aerodrome",
+  ///     "importance":    0.55,
+  ///     "display_name":  "Nyala Airport, South Darfur, Sudan"
+  ///   }
+  /// Null when the geoparser produced no usable result (no extractable
+  /// candidates, Nominatim miss, or anything below the confidence floor).
+  geoparsedData Json? @map("geoparsed_data")
+
   userFeedbacks   userFeedbacks[]
   userComments    userComments[]
   signalEvents    signalEvents[]
@@ -744,4 +783,53 @@ model notifications {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Nominatim geocoder cache ————————————————————————————————————————————————
+
+/// Persistent cache of Nominatim-protocol geocoder responses. The
+/// clear-pipeline geoparser checks this table before issuing any outbound
+/// API call; only cache misses hit the geocoder. Negative results
+/// (no_result, error) are cached too so we don't re-ask the same dead
+/// question.
+///
+/// Named for the protocol (Nominatim), not the current vendor (LocationIQ).
+/// Any Nominatim-compatible backend — LocationIQ, MapTiler's Nominatim,
+/// self-hosted Nominatim — produces the same response shape and uses this
+/// same cache transparently.
+///
+/// Lookup is by `queryHash` = SHA-256 of `<endpoint>:<normalised_query>`.
+/// Storing the raw `query` is for debugging and audit; resolution uses
+/// the hash for stability against whitespace / casing drift.
+///
+/// `expiresAt` is set to fetchedAt + 6 months by the writer. Reads should
+/// filter on `expiresAt > NOW()` so stale rows don't poison lookups. A
+/// periodic cleanup job (out of scope here) can DELETE WHERE expires_at <
+/// NOW() - INTERVAL '1 month' to reclaim space.
+model nominatim_cache {
+  id           String   @id @default(cuid())
+  /// SHA-256 hex digest of `<endpoint>:<normalised_query>`. Used as the
+  /// stable lookup key — insensitive to whitespace/casing variations as
+  /// long as the caller normalises before hashing.
+  queryHash    String   @unique @map("query_hash")
+  /// Raw query string for debugging only. Don't rely on it for lookups.
+  query        String
+  /// Nominatim endpoint that produced this response — typically 'search'
+  /// or 'reverse'. Lets us cache different lookups for the same query text.
+  endpoint     String
+  /// Raw Nominatim JSON response, stored as-is so we can change downstream
+  /// parsing rules without re-querying.
+  responseJson Json     @map("response_json")
+  /// 'ok'         — usable result returned
+  /// 'no_result'  — the geocoder returned an empty result set
+  /// 'error'      — the geocoder returned an error response (cached briefly
+  ///                so we don't hammer them while they're degraded)
+  status       String
+
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+  expiresAt DateTime                 @map("expires_at")
+
+  @@index([queryHash])
+  @@index([expiresAt])
+  @@map("nominatim_cache")
 }
