@@ -55,6 +55,8 @@ interface CreateSignalInput {
   locationId?: string;
   lat?: number;
   lng?: number;
+  /** Output of clear-pipeline's text-based geoparser, stored verbatim. */
+  geoparsedData?: Record<string, unknown>;
 }
 
 export const signalResolvers = {
@@ -156,6 +158,7 @@ export const signalResolvers = {
             originId: input.originId,
             destinationId: input.destinationId,
             locationId,
+            geoparsedData: input.geoparsedData as InputJsonValue | undefined,
           },
         });
       } catch (err: unknown) {

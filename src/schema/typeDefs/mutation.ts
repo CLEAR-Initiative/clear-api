@@ -103,6 +103,11 @@ export const mutationTypeDef = gql`
     """Delete a location's metadata entry for a given type (admin only)."""
     deleteLocationMetadata(locationId: String!, type: String!): Boolean!
 
+    # ─── Geocoder cache ──────────────────────────────────────────────────────
+    """Upsert a Nominatim geocoder cache entry (admin/pipeline only).
+    Replaces any existing row with the same queryHash, resetting the TTL."""
+    upsertNominatimCache(input: UpsertNominatimCacheInput!): NominatimCacheEntry!
+
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""
     createNotification(input: CreateNotificationInput!): Notification!
@@ -351,6 +356,10 @@ export const mutationTypeDef = gql`
     lat: Float
     """Longitude for automatic geo-resolution."""
     lng: Float
+    """Optional output of clear-pipeline's text-based geoparser. Additive
+    enrichment, stored verbatim for downstream comparison against the
+    source's coords. Schema documented on the signals model."""
+    geoparsedData: JSON
   }
 
   input CreateEventInput {
