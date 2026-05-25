@@ -46,6 +46,13 @@ export const mutationTypeDef = gql`
     """Update a signal's severity score."""
     updateSignalSeverity(id: String!, severity: Int!): Signal!
 
+    """Attach the clear-pipeline geoparser's result to an existing signal.
+    Used for the manual-signal flow, where the signal is created via
+    createManualSignal before the pipeline has a chance to run the geoparser.
+    Stores the structured candidate verbatim; does not change locationId.
+    Admin/pipeline only."""
+    updateSignalGeoparsedData(id: String!, geoparsedData: JSON!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -102,6 +109,16 @@ export const mutationTypeDef = gql`
 
     """Delete a location's metadata entry for a given type (admin only)."""
     deleteLocationMetadata(locationId: String!, type: String!): Boolean!
+
+    """Find an existing level-4 location matching a geoparsed candidate, or
+    create one. Used by the clear-pipeline geoparser to promote a landmark
+    hit (e.g., "Nyala Airport") into a reusable A4 instead of letting the
+    resolver invent a fresh point-location for every signal. When sourceLat
+    and sourceLng are provided, the resolver verifies that the candidate's
+    containing A2 matches the source coord's containing A2 — on mismatch it
+    aborts with abortedReason="different_a2" so the caller can fall back to
+    source coords. Admin/pipeline only."""
+    findOrCreateLandmarkL4(input: FindOrCreateLandmarkL4Input!): FindOrCreateLandmarkL4Result!
 
     # ─── Geocoder cache ──────────────────────────────────────────────────────
     """Upsert a Nominatim geocoder cache entry (admin/pipeline only).
