@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "../generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 
 interface ResolvedLocation {
   id: string;
@@ -133,6 +133,171 @@ export async function resolvePointsToCommonAncestor(
     LIMIT 1
   `;
   return rows[0] ?? null;
+}
+
+/** Outcome of the find-or-create flow for a landmark/place L4. */
+export type FindOrCreateLandmarkL4Result =
+  | {
+      locationId: string;
+      reused: boolean;
+      pointType: string | null;
+      abortedReason: null;
+    }
+  | {
+      locationId: null;
+      reused: false;
+      pointType: null;
+      /** "different_a2" — geoparsed candidate and source coord disagree
+       *  on the containing A2. Caller should fall back to source coords. */
+      abortedReason: "different_a2";
+    };
+
+/** Proximity threshold (metres) for reusing an existing non-landmark A4. */
+const ADMIN_REUSE_RADIUS_M = 100;
+
+/**
+ * Find an existing level-4 location that matches a geoparsed candidate, or
+ * create one. Used by the clear-pipeline geoparser path to promote a landmark
+ * hit ("Nyala Airport") into a real, reusable A4 row instead of leaving the
+ * resolver to invent a fresh point-location every time.
+ *
+ * Reuse rules (within the same containing A2):
+ *   - kind="landmark"  →  case-insensitive exact name match
+ *   - kind="admin"     →  any A4 within ADMIN_REUSE_RADIUS_M of the candidate
+ *
+ * Safety: when source coords are provided, we compare the candidate's
+ * containing A2 against the source coord's containing A2. A disagreement
+ * means the name is ambiguous across regions (e.g., a "Khartoum Airport"
+ * candidate vs a Darfur-coord source) and we abort the promotion so the
+ * caller falls back to source coords. If either A2 lookup is null we treat
+ * the check as inconclusive and proceed — the geoparser already passed
+ * country-code filtering, so the worst case is an A4 in the right country
+ * but slightly off in admin attribution.
+ *
+ * New rows are tagged `point_type = 'landmark-geocoded'` to keep provenance
+ * visible to downstream consumers.
+ */
+export async function findOrCreateLandmarkL4(
+  prisma: PrismaClient,
+  args: {
+    name: string;
+    lat: number;
+    lng: number;
+    kind: "landmark" | "admin";
+    sourceLat?: number | null;
+    sourceLng?: number | null;
+  },
+): Promise<FindOrCreateLandmarkL4Result> {
+  const { name, lat, lng, kind } = args;
+
+  // Resolve the candidate's smallest containing admin polygon. We need the
+  // A2 id specifically for the reuse scope; resolveLatLngToLocation may
+  // return A1/A0 if the point is outside any A2.
+  const candidateA2 = await resolveContainingA2(prisma, lat, lng);
+
+  // Same-A2 safety check against the source coords, if provided.
+  if (args.sourceLat != null && args.sourceLng != null) {
+    const sourceA2 = await resolveContainingA2(prisma, args.sourceLat, args.sourceLng);
+    if (candidateA2 && sourceA2 && candidateA2 !== sourceA2) {
+      return {
+        locationId: null,
+        reused: false,
+        pointType: null,
+        abortedReason: "different_a2",
+      };
+    }
+  }
+
+  // Reuse scope: when we know the candidate's A2, restrict the search to
+  // A4s whose parent chain contains it. When A2 is unknown (point falls
+  // outside any A2 polygon), search country-wide — rare path, and the
+  // Nominatim country-code filter already keeps us in the right country.
+  if (kind === "landmark") {
+    const existing = await prisma.$queryRaw<{ id: string; point_type: string | null }[]>`
+      SELECT id, point_type
+      FROM "locations"
+      WHERE level = 4
+        AND LOWER(name) = LOWER(${name})
+        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+      LIMIT 1
+    `;
+    if (existing.length > 0) {
+      return {
+        locationId: existing[0]!.id,
+        reused: true,
+        pointType: existing[0]!.point_type,
+        abortedReason: null,
+      };
+    }
+  } else {
+    const existing = await prisma.$queryRaw<{ id: string; point_type: string | null }[]>`
+      SELECT id, point_type
+      FROM "locations"
+      WHERE level = 4
+        AND "geometry" IS NOT NULL
+        AND ST_DWithin(
+          "geometry"::geography,
+          ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
+          ${ADMIN_REUSE_RADIUS_M}
+        )
+        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+      ORDER BY ST_Distance(
+        "geometry"::geography,
+        ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
+      ) ASC
+      LIMIT 1
+    `;
+    if (existing.length > 0) {
+      return {
+        locationId: existing[0]!.id,
+        reused: true,
+        pointType: existing[0]!.point_type,
+        abortedReason: null,
+      };
+    }
+  }
+
+  // No match — create a fresh A4 tagged as landmark-geocoded.
+  const parent = await resolveLatLngToLocation(prisma, lat, lng);
+  const parentId = parent?.id ?? null;
+  const ancestorIds = parentId ? await computeAncestorIds(prisma, parentId) : [];
+
+  const id = randomUUID();
+  await prisma.$executeRaw`
+    INSERT INTO "locations"
+      ("id", "name", "level", "parent_id", "ancestor_ids", "point_type", "geometry")
+    VALUES (
+      ${id}, ${name}, 4, ${parentId}, ${ancestorIds}, 'landmark-geocoded',
+      ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
+    )
+  `;
+
+  console.log(
+    `[findOrCreateLandmarkL4] Created "${name}" (level 4, landmark-geocoded) → parent: ${parent?.name ?? "none"}`,
+  );
+
+  return {
+    locationId: id,
+    reused: false,
+    pointType: "landmark-geocoded",
+    abortedReason: null,
+  };
+}
+
+/** Internal: find the level-2 location containing a point, or null. */
+async function resolveContainingA2(
+  prisma: PrismaClient,
+  lat: number,
+  lng: number,
+): Promise<string | null> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "locations"
+    WHERE level = 2
+      AND "geometry" IS NOT NULL
+      AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
+    LIMIT 1
+  `;
+  return rows[0]?.id ?? null;
 }
 
 /**

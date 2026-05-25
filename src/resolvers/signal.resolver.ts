@@ -294,6 +294,30 @@ export const signalResolvers = {
       });
     },
 
+    updateSignalGeoparsedData: async (
+      _parent: unknown,
+      args: { id: string; geoparsedData: Record<string, unknown> },
+      context: Context,
+    ) => {
+      // Admin/pipeline only — invoked by the manual-signal processing task
+      // after running the geoparser on the freshly created signal.
+      requireRole(context, ["admin"]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.signals.update({
+        where: { id: args.id },
+        data: { geoparsedData: args.geoparsedData as InputJsonValue },
+      });
+    },
+
     deleteSignal: async (
       _parent: unknown,
       args: { id: string },
