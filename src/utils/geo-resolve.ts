@@ -230,11 +230,20 @@ export async function findOrCreateLandmarkL4(
       };
     }
   } else {
+    // Admin reuse: name match (case-insensitive) + proximity (≤100m) + same
+    // A2. The name match is what stops legacy signal-title L4s from being
+    // reused: those were created with the signal's headline as the name
+    // (e.g. "Drone strike on hospital") and happen to sit near city centroids
+    // because that's where Dataminr's source coords cluster. Without the
+    // name filter, our "Khartoum" candidate would proximity-match any of
+    // them and we'd attribute the new signal to a leftover signal-title L4
+    // — visually identical to "we never created a city-named L4."
     const existing = await prisma.$queryRaw<{ id: string; point_type: string | null }[]>`
       SELECT id, point_type
       FROM "locations"
       WHERE level = 4
         AND "geometry" IS NOT NULL
+        AND LOWER(name) = LOWER(${name})
         AND ST_DWithin(
           "geometry"::geography,
           ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
