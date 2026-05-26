@@ -304,6 +304,112 @@ export const crisisResolvers = {
       return link;
     },
 
+    /**
+     * Remove an event from a crisis and refresh the crisis state.
+     * If the event being removed is the LAST one, deletes the crisis
+     * entirely (FK cascades clean up the join row, feedback, and comments)
+     * and returns null. Otherwise returns the updated crisis with a fresh
+     * populationAffected and a regenerated narrative.
+     */
+    removeEventFromCrisis: async (
+      _parent: unknown,
+      args: { crisisId: string; eventId: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+      const { crisisId, eventId } = args;
+
+      const crisis = await context.prisma.crises.findUnique({
+        where: { id: crisisId },
+      });
+      if (!crisis) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const link = await context.prisma.eventCrises.findFirst({
+        where: { crisisId, eventId },
+        select: { eventId: true, crisisId: true },
+      });
+      if (!link) {
+        throw new GraphQLError("Event is not linked to this crisis", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const linkCount = await context.prisma.eventCrises.count({
+        where: { crisisId },
+      });
+
+      // Last event — auto-delete the crisis rather than leave it in a
+      // degenerate empty state. Cascades handle eventCrises / userFeedbacks
+      // / userComments. Return null to signal the crisis no longer exists.
+      if (linkCount <= 1) {
+        await context.prisma.crises.delete({ where: { id: crisisId } });
+        return null;
+      }
+
+      await context.prisma.eventCrises.deleteMany({
+        where: { crisisId, eventId },
+      });
+
+      // Recompute populationAffected over the remaining events
+      const remainingLinks = await context.prisma.eventCrises.findMany({
+        where: { crisisId },
+        select: { eventId: true },
+      });
+      const remainingEventIds = remainingLinks.map((l) => l.eventId);
+
+      const populationAffected = await sumEventPopulationAffected(
+        context.prisma,
+        remainingEventIds,
+      );
+      const updated = await context.prisma.crises.update({
+        where: { id: crisisId },
+        data: { populationAffected },
+      });
+
+      // Regenerate the narrative so title/summary reflect the new event set.
+      // Same fire-and-forget pattern as addEventToCrisis — clients see the
+      // pre-update title/summary until the enrichment task completes.
+      const districtIds = await collectDistrictIds(context.prisma, remainingEventIds);
+      void dispatchCrisisEnrichmentTask(
+        crisisId,
+        remainingEventIds,
+        districtIds,
+        true,
+      );
+
+      return updated;
+    },
+
+    /**
+     * Delete a crisis. Any authenticated user can call this — crises are
+     * lightweight aggregations users curate, not a sensitive admin object.
+     * Relies on the FK cascade rules to clean up eventCrises join rows,
+     * user feedback, and user comments.
+     */
+    deleteCrisis: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      await context.prisma.crises.delete({ where: { id: args.id } });
+      return true;
+    },
+
     updateCrisisPopulation: async (
       _parent: unknown,
       args: { id: string; input: UpdateCrisisPopulationInput },
