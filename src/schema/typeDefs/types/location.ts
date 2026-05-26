@@ -25,6 +25,14 @@ export const locationTypeDef = gql`
     ancestors: [Location!]!
     """Population residing within this location's geometry. Null for point locations or when not yet computed."""
     population: String
+    """Provenance of this location's geometry. Notable values:
+      - 'landmark-geocoded': L4 created by the pipeline geoparser from a
+        landmark/place name resolved via Nominatim. The location's \`name\`
+        field is meaningful for display (e.g., 'Nyala Airport').
+      - 'gps' / 'source-gps' / 'centroid' / 'source-centroid': see schema
+        documentation on the Prisma model.
+      - null: legacy rows (most signal-title L4s from \`createPointLocation\`)."""
+    pointType: String
     """Per-type metadata (IOM DTM, INFORM, etc). Pass a type argument to filter.
     By default only the current value is returned (validTo is null).
     Pass current: false to include the full history."""
