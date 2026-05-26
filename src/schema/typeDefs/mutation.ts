@@ -248,6 +248,18 @@ export const mutationTypeDef = gql`
 
     """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists."""
     addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
+
+    """Remove an event from a crisis. Recomputes populationAffected from the
+    remaining events and dispatches the enrichment task so title/summary get
+    regenerated to reflect the new event set. If the event being removed is
+    the LAST event, deletes the crisis entirely and returns null. Otherwise
+    returns the updated crisis (title/summary still show pre-removal values
+    until the async enrichment task completes)."""
+    removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
+
+    """Delete a crisis. Cascades the eventCrises join rows, user feedback,
+    and user comments via the FK constraints. Any authenticated user."""
+    deleteCrisis(id: String!): Boolean!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
