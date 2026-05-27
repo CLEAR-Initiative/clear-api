@@ -18,6 +18,9 @@ interface UpdateCrisisPopulationInput {
   populationInArea?: string | null;
   title?: string | null;
   summary?: string | null;
+  /** LLM-generated forward scenarios. Shape:
+   *  { most_likely, best_case, worst_case, description }. */
+  scenarios?: Record<string, unknown> | null;
 }
 
 /**
@@ -385,6 +388,75 @@ export const crisisResolvers = {
     },
 
     /**
+     * Append S3 keys to a crisis's attachments list. Idempotent — keys
+     * already present in the list are skipped, so the UI can retry a
+     * mutation without producing duplicates. Order is stable: new keys
+     * append in the order received, after the existing list.
+     */
+    addCrisisAttachments: async (
+      _parent: unknown,
+      args: { id: string; keys: string[] },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+        select: { attachments: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const current = existing.attachments ?? [];
+      const seen = new Set(current);
+      const next = [...current];
+      for (const k of args.keys) {
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        next.push(k);
+      }
+
+      return context.prisma.crises.update({
+        where: { id: args.id },
+        data: { attachments: next },
+      });
+    },
+
+    /**
+     * Remove an S3 key from a crisis's attachments list. Does not delete
+     * the underlying S3 object — that's a separate cleanup concern. Returns
+     * the updated crisis even if the key wasn't in the list (idempotent).
+     */
+    removeCrisisAttachment: async (
+      _parent: unknown,
+      args: { id: string; key: string },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+        select: { attachments: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const current: string[] = existing.attachments ?? [];
+      const next = current.filter((k: string) => k !== args.key);
+
+      return context.prisma.crises.update({
+        where: { id: args.id },
+        data: { attachments: next },
+      });
+    },
+
+    /**
      * Delete a crisis. Any authenticated user can call this — crises are
      * lightweight aggregations users curate, not a sensitive admin object.
      * Relies on the FK cascade rules to clean up eventCrises join rows,
@@ -430,6 +502,7 @@ export const crisisResolvers = {
         populationInArea?: bigint | null;
         title?: string | null;
         summary?: string | null;
+        scenarios?: InputJsonValue | null;
       } = {};
       if (input.populationAffected !== undefined) {
         data.populationAffected = input.populationAffected === null
@@ -443,6 +516,11 @@ export const crisisResolvers = {
       }
       if (input.title !== undefined) data.title = input.title;
       if (input.summary !== undefined) data.summary = input.summary;
+      if (input.scenarios !== undefined) {
+        data.scenarios = input.scenarios === null
+          ? null
+          : (input.scenarios as InputJsonValue);
+      }
 
       return context.prisma.crises.update({ where: { id }, data });
     },
@@ -476,6 +554,17 @@ export const crisisResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userComments.findMany({ where: { crisisId: parent.id } });
+    },
+    // Convert S3 keys to presigned URLs at read time. External URLs
+    // (http/https) are passed through unchanged. Mirrors signals.media.
+    attachments: async (parent: { attachments: string[] | null | undefined }) => {
+      if (!parent.attachments || parent.attachments.length === 0) return [];
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return Promise.all(
+        parent.attachments.map((entry) =>
+          entry.startsWith("http") ? entry : getPresignedUrl(entry),
+        ),
+      );
     },
   },
 
