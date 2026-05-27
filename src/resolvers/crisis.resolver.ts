@@ -427,18 +427,22 @@ export const crisisResolvers = {
     },
 
     /**
-     * Set the LLM-generated NRC SAF clarification text inside the crisis's
+     * Set the LLM-generated NRC SAF needs analysis inside the crisis's
      * `needs` JSONB. Uses a Postgres `||` merge so other keys on `needs`
-     * are preserved (e.g. user-provided sector breakdowns set at creation
-     * time stay untouched). Admin/pipeline only.
+     * are preserved (e.g. user-provided keys set at creation time stay
+     * untouched). Admin/pipeline only.
      */
-    updateCrisisNeedsClarification: async (
+    setCrisisNeedsAnalysis: async (
       _parent: unknown,
-      args: { id: string; clarification: string },
+      args: {
+        id: string;
+        generalSummary: string;
+        sector: Record<string, unknown>;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin"]);
-      const { id, clarification } = args;
+      const { id, generalSummary, sector } = args;
 
       const existing = await context.prisma.crises.findUnique({
         where: { id },
@@ -450,13 +454,18 @@ export const crisisResolvers = {
         });
       }
 
-      // JSONB merge: `needs || jsonb_build_object('clarification', $1)`
-      // overwrites just the `clarification` key, leaves the rest intact.
-      // COALESCE guards against any legacy row with null needs.
+      // JSONB merge: builds an object with the two new keys and unions it
+      // into `needs`. The Postgres `||` operator preserves any keys
+      // already present on `needs` (e.g. sector breakdowns the user set at
+      // creation time), only overwriting `generalSummary` and `sector`.
+      const sectorJson = JSON.stringify(sector);
       await context.prisma.$executeRaw`
         UPDATE "crises"
         SET "needs" = COALESCE("needs", '{}'::jsonb)
-          || jsonb_build_object('clarification', ${clarification}::text)
+          || jsonb_build_object(
+            'generalSummary', ${generalSummary}::text,
+            'sector', ${sectorJson}::jsonb
+          )
         WHERE "id" = ${id}
       `;
 
