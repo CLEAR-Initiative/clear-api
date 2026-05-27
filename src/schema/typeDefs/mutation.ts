@@ -271,10 +271,14 @@ export const mutationTypeDef = gql`
     Returns the updated crisis."""
     removeCrisisAttachment(id: String!, key: String!): Crisis!
 
-    """Set the LLM-generated NRC SAF clarification text inside the crisis's
-    needs JSONB. Merges a clarification key/value into the existing object
-    so other keys on needs are preserved. Admin/pipeline only."""
-    updateCrisisNeedsClarification(id: String!, clarification: String!): Crisis!
+    """Set the LLM-generated NRC SAF needs analysis inside the crisis's
+    needs JSONB. Merges generalSummary and sector keys into the existing
+    object so other keys on needs are preserved. Admin/pipeline only."""
+    setCrisisNeedsAnalysis(
+      id: String!,
+      generalSummary: String!,
+      sector: JSON!,
+    ): Crisis!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
