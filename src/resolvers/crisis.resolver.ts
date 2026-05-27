@@ -1,5 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
+import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { sendCeleryTask } from "../services/celery.js";
@@ -497,12 +498,17 @@ export const crisisResolvers = {
         });
       }
 
+      // Prisma nullable JSON fields require the typed-null sentinel rather
+      // than a plain `null` in update inputs — `Prisma.DbNull` writes SQL
+      // NULL to the column (vs `Prisma.JsonNull` which writes the JSON
+      // literal `null`). We want SQL NULL since "no scenarios generated
+      // yet" is the field's natural absent state.
       const data: {
         populationAffected?: bigint | null;
         populationInArea?: bigint | null;
         title?: string | null;
         summary?: string | null;
-        scenarios?: InputJsonValue | null;
+        scenarios?: InputJsonValue | typeof Prisma.DbNull;
       } = {};
       if (input.populationAffected !== undefined) {
         data.populationAffected = input.populationAffected === null
@@ -518,7 +524,7 @@ export const crisisResolvers = {
       if (input.summary !== undefined) data.summary = input.summary;
       if (input.scenarios !== undefined) {
         data.scenarios = input.scenarios === null
-          ? null
+          ? Prisma.DbNull
           : (input.scenarios as InputJsonValue);
       }
 
