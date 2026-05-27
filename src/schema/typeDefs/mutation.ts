@@ -260,6 +260,16 @@ export const mutationTypeDef = gql`
     """Delete a crisis. Cascades the eventCrises join rows, user feedback,
     and user comments via the FK constraints. Any authenticated user."""
     deleteCrisis(id: String!): Boolean!
+
+    """Append S3 keys to a crisis's attachments list. Idempotent — keys
+    already present in the list are skipped silently. Returns the updated
+    crisis with the new list."""
+    addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
+
+    """Remove an S3 key from a crisis's attachments list. Does NOT delete
+    the underlying S3 object (operators can clean those up separately).
+    Returns the updated crisis."""
+    removeCrisisAttachment(id: String!, key: String!): Crisis!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -541,5 +551,8 @@ export const mutationTypeDef = gql`
     title: String
     """AI-generated crisis summary."""
     summary: String
+    """LLM-generated forward scenarios. Shape:
+       { most_likely, best_case, worst_case, description }."""
+    scenarios: JSON
   }
 `;
