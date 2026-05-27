@@ -427,6 +427,43 @@ export const crisisResolvers = {
     },
 
     /**
+     * Set the LLM-generated NRC SAF clarification text inside the crisis's
+     * `needs` JSONB. Uses a Postgres `||` merge so other keys on `needs`
+     * are preserved (e.g. user-provided sector breakdowns set at creation
+     * time stay untouched). Admin/pipeline only.
+     */
+    updateCrisisNeedsClarification: async (
+      _parent: unknown,
+      args: { id: string; clarification: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const { id, clarification } = args;
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // JSONB merge: `needs || jsonb_build_object('clarification', $1)`
+      // overwrites just the `clarification` key, leaves the rest intact.
+      // COALESCE guards against any legacy row with null needs.
+      await context.prisma.$executeRaw`
+        UPDATE "crises"
+        SET "needs" = COALESCE("needs", '{}'::jsonb)
+          || jsonb_build_object('clarification', ${clarification}::text)
+        WHERE "id" = ${id}
+      `;
+
+      return context.prisma.crises.findUniqueOrThrow({ where: { id } });
+    },
+
+    /**
      * Remove an S3 key from a crisis's attachments list. Does not delete
      * the underlying S3 object — that's a separate cleanup concern. Returns
      * the updated crisis even if the key wasn't in the list (idempotent).
