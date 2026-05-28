@@ -14,8 +14,8 @@
  *   bun run scripts/msna/import-msna.ts --input scripts/msna/outputs/msna_2026-05-19.json
  *
  * Ported from the Python original (import_msna.py). Behaviour-for-behaviour
- * 1:1 — same payload shape, same batch size, same dry-run-by-default
- * semantics — except writes go through Prisma directly instead of the
+ * 1:1 - same payload shape, same batch size, same dry-run-by-default
+ * semantics - except writes go through Prisma directly instead of the
  * GraphQL endpoint since this script now lives inside clear-api.
  */
 
@@ -32,7 +32,7 @@ const OUTPUT_DIR = join(SCRIPT_DIR, "outputs");
 const METADATA_TYPE = "msna_severity_082025";
 const BATCH_SIZE = 50;
 
-// Types owned by OTHER importers — this script must never touch them, even
+// Types owned by OTHER importers - this script must never touch them, even
 // by accident. `iom_dtm_displacement` is maintained by the IOM DTM backfill
 // (see clear-pipeline/src/tasks/dtm.py); a misconfigured METADATA_TYPE or a
 // hand-edited JSON payload pointing at it would silently corrupt that data
@@ -40,7 +40,7 @@ const BATCH_SIZE = 50;
 const PROTECTED_TYPES = new Set<string>(["iom_dtm_displacement"]);
 if (PROTECTED_TYPES.has(METADATA_TYPE)) {
   throw new Error(
-    `METADATA_TYPE='${METADATA_TYPE}' is in PROTECTED_TYPES — this script ` +
+    `METADATA_TYPE='${METADATA_TYPE}' is in PROTECTED_TYPES - this script ` +
       `would overwrite rows owned by another importer. Aborting at startup.`,
   );
 }
@@ -62,6 +62,7 @@ interface LocalityEntry {
   match_method?: string;
   match_note?: string;
   sectors?: Record<string, unknown>;
+  raw?: Record<string, Record<string, number | null>>;
 }
 
 interface ProcessedFile {
@@ -83,7 +84,7 @@ function buildPayload(
   meta: ProcessedMeta,
 ): UpsertPayload | null {
   // The processor sets location_id only when it matched the name to a DB
-  // row. Entries with no location_id are deliberately skipped here — the
+  // row. Entries with no location_id are deliberately skipped here - the
   // pcode fallback in upsertBatch is for entries whose location_id was set
   // but no longer resolves (stale id, location merged/renamed/deleted),
   // NOT for entries the processor couldn't match in the first place.
@@ -114,6 +115,7 @@ function buildPayload(
     data: {
       as_of: asOf,
       sectors: entry.sectors ?? {},
+      raw: entry.raw ?? {},
       _source: source,
     },
   };
@@ -133,7 +135,7 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
   // Defensive: refuse to touch any row whose type is owned by another
   // importer. The WHERE clause below already filters by `type`, so a
   // protected-type payload couldn't close an `iom_dtm_displacement` row in
-  // practice — but it WOULD insert a new one. Fail fast instead.
+  // practice - but it WOULD insert a new one. Fail fast instead.
   for (const p of payloads) {
     if (PROTECTED_TYPES.has(p.type)) {
       throw new Error(
@@ -144,7 +146,7 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
     if (p.type !== METADATA_TYPE) {
       // Belt-and-braces: every payload built by buildPayload() carries
       // METADATA_TYPE. Anything else means the JSON file or the builder was
-      // tampered with — bail rather than silently writing surprising rows.
+      // tampered with - bail rather than silently writing surprising rows.
       throw new Error(
         `Unexpected payload type '${p.type}' (expected '${METADATA_TYPE}') ` +
           `for locationId=${p.locationId}. Aborting.`,
@@ -160,7 +162,7 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
   });
   const validIds = new Set(existing.map((l) => l.id));
 
-  // pcode fallback — for payloads whose locationId came from the processor
+  // pcode fallback - for payloads whose locationId came from the processor
   // but no longer resolves to a row (location was renamed / merged /
   // deleted), try the locality's pcode (stored on data._source.pcode by
   // buildPayload). Re-point the payload to the matching level-2 row when
@@ -222,7 +224,7 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
     validFrom: now,
   }));
 
-  // Callback-form transaction so we can pass a generous timeout — the
+  // Callback-form transaction so we can pass a generous timeout - the
   // 5s default isn't always enough for a 50-row batch against a remote DB.
   await prisma.$transaction(
     async (tx) => {

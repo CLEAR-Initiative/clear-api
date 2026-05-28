@@ -111,6 +111,7 @@ def build_payload(locality_name: str, entry: dict, meta: dict) -> dict | None:
         "data": {
             "as_of":   as_of,
             "sectors": entry.get("sectors", {}),
+            "raw":     entry.get("raw", {}),
             "_source": source,
         },
     }
