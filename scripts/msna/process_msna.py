@@ -389,6 +389,67 @@ def _ffill(row: tuple) -> list:
     return out
 
 
+def load_all_raw_data(xlsx_path: Path) -> dict[str, dict[str, dict]]:
+    """
+    Returns {locality_name: {sheet_name: {col_label: value}}} for all columns
+    in every sheet referenced by COLUMN_DEFS. Column 0 (locality name) is
+    excluded. col_label is built from the 2-row merged header
+    ("{r1_ffilled} | {r2}"); duplicate labels within a sheet get a _2, _3 …
+    suffix. Values are parsed as percentages (float) where possible, else None.
+    """
+    target_sheets = list(dict.fromkeys(v[0] for v in COLUMN_DEFS.values()))
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    result: dict[str, dict] = {}
+
+    for sheet_name in target_sheets:
+        if sheet_name not in wb.sheetnames:
+            print(f"  WARNING: sheet '{sheet_name}' not found (raw)", file=sys.stderr)
+            continue
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 3:
+            continue
+
+        r1_filled = _ffill(rows[0])
+        r2 = list(rows[1])
+
+        # Build column labels from 2-row merged header
+        raw_keys: list[str] = []
+        for i, r1_val in enumerate(r1_filled):
+            r1s = str(r1_val).strip() if r1_val is not None else ""
+            r2s = str(r2[i]).strip() if i < len(r2) and r2[i] is not None else ""
+            if r1s and r2s:
+                raw_keys.append(f"{r1s} | {r2s}")
+            elif r1s:
+                raw_keys.append(r1s)
+            else:
+                raw_keys.append(f"col_{i}")
+
+        # Deduplicate: append _2, _3, ... to later occurrences of the same label
+        seen: dict[str, int] = {}
+        col_keys: list[str] = []
+        for k in raw_keys:
+            if k not in seen:
+                seen[k] = 1
+                col_keys.append(k)
+            else:
+                seen[k] += 1
+                col_keys.append(f"{k}_{seen[k]}")
+
+        for row in rows[2:]:
+            locality = str(row[0]).strip() if row[0] else None
+            if not locality or locality.lower() in ("none", "locality", "population group"):
+                continue
+            sheet_data: dict[str, float | None] = {}
+            for i in range(1, len(col_keys)):  # col 0 is locality name, skip
+                val = row[i] if i < len(row) else None
+                sheet_data[col_keys[i]] = parse_percent(val)
+            result.setdefault(locality, {})[sheet_name] = sheet_data
+
+    wb.close()
+    return result
+
+
 def load_all_indicators(xlsx_path: Path) -> dict[str, dict]:
     """
     Returns {locality_name: {indicator_key: float_value}} for all localities
@@ -547,6 +608,7 @@ def match_locality(msna_name: str, api_locs: dict) -> dict | None:
 
 def process(xlsx_path: Path, api_locs: dict | None) -> dict:
     raw_data = load_all_indicators(xlsx_path)
+    all_raw = load_all_raw_data(xlsx_path)
     localities_out = {}
     unmatched = []
 
@@ -610,6 +672,10 @@ def process(xlsx_path: Path, api_locs: dict | None) -> dict:
                 }
 
         entry["sectors"] = sectors
+
+        if locality_name in all_raw:
+            entry["raw"] = all_raw[locality_name]
+
         localities_out[locality_name] = entry
 
     matched = sum(1 for v in localities_out.values() if v.get("pcode") is not None)
