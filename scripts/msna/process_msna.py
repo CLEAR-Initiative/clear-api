@@ -15,7 +15,6 @@ Scoring: https://www.notion.so/Severity-Scoring-Logic-3585043895cf807a9214d0e16d
 """
 
 import argparse
-import functools
 import json
 import re
 import sys
@@ -38,9 +37,7 @@ FORMULA_SOURCE = "https://www.notion.so/Severity-Scoring-Logic-3585043895cf807a9
 
 FORMULA_DOCS: dict = {
     "FSL": {
-        "primary_formula":    "(poor_FCS * 0.70 + borderline_FCS * 0.30) * 0.40 + (rcsi_phase3 + rcsi_phase4) * 0.30 + (lcsi_crisis + lcsi_emergency) * 0.30",
-        "fallback_formula":   "poor_FCS * 0.70 + borderline_FCS * 0.30",
-        "fallback_condition": "Applied when rCSI or LCSI phase columns are absent for a locality",
+        "formula": "(poor_FCS * 0.70 + borderline_FCS * 0.30) * 0.40 + (rcsi_phase3 + rcsi_phase4) * 0.30 + (lcsi_crisis + lcsi_emergency) * 0.30",
         "standard": "IPC Technical Manual v3.1 - three-pillar convergence: food consumption (FCS), coping strategies (rCSI), livelihoods (LCSI)",
         "indicators": {
             "poor_FCS": {
@@ -87,8 +84,6 @@ FORMULA_DOCS: dict = {
     },
     "WASH": {
         "formula": "(100 - improved_water) * 0.25 + insuff_water * 0.15 + open_defecation * 0.20 + unimproved_sanitation * 0.15 + (100 - soap_handwashing) * 0.25",
-        "fallback_formula": "(100 - improved_water) * 0.50 + open_defecation * 0.30 + unimproved_sanitation * 0.20",
-        "fallback_condition": "Applied when water quantity or soap columns are absent for a locality",
         "standard": "JMP 2023 - three-pillar monitoring: water quality+quantity, sanitation, hygiene. Sphere 2018 minimum 15L/person/day.",
         "indicators": {
             "improved_water": {
@@ -154,8 +149,6 @@ FORMULA_DOCS: dict = {
     },
     "Shelter": {
         "formula": "(100 - solid_shelter) * 0.40 + (makeshift + tent + no_shelter) * 0.25 + overcrowded * 0.20 + (nfi_bedding + nfi_cooking) / 2 * 0.15",
-        "fallback_formula": "(100 - solid_shelter) * 0.60 + (makeshift + tent + no_shelter) * 0.40",
-        "fallback_condition": "Applied when overcrowding or NFI columns are absent for a locality",
         "standard": "Sphere 2018 - minimum 3.5m2/person floor area; core NFI items include sleeping materials and cooking equipment",
         "indicators": {
             "solid_shelter": {
@@ -336,48 +329,27 @@ COLUMN_DEFS = {
 # ─── Scoring formulas ─────────────────────────────────────────────────────────
 # Source: Severity Scoring Logic.md §2
 
-def score_fsl(row: dict, use_fallback: bool = False) -> tuple[float, dict]:
-    # Step 1: food consumption component (controlled by dataset-level use_fallback flag)
-    if use_fallback:
-        poor       = row["fsl_poor_fcs"]
-        borderline = row["fsl_borderline_fcs"]
-        fcs_score  = (poor or 0) * 0.70 + (borderline or 0) * 0.30
-        fcs_inputs = {"poor_FCS": poor, "borderline_FCS": borderline}
-    else:
-        poor = row["fsl_poor_fcs"]
-        sev  = row["fsl_sev_food_insecure"]
-        mod  = row["fsl_mod_food_insecure"]
-        fcs_score  = (poor or 0) * 0.50 + (sev or 0) * 0.30 + (mod or 0) * 0.20
-        fcs_inputs = {
-            "poor_FCS":                 poor,
-            "moderately_food_insecure": mod,
-            "severely_food_insecure":   sev,
-        }
+def score_fsl(row: dict) -> tuple[float, dict]:
+    poor       = row["fsl_poor_fcs"]
+    borderline = row["fsl_borderline_fcs"]
+    rcsi_p3    = row["fsl_rcsi_phase3"]
+    rcsi_p4    = row["fsl_rcsi_phase4"]
+    lcsi_cr    = row["fsl_lcsi_crisis"]
+    lcsi_em    = row["fsl_lcsi_emergency"]
 
-    # Step 2: incorporate rCSI + LCSI pillars when available (IPC three-pillar)
-    rcsi_p3 = row.get("fsl_rcsi_phase3")
-    rcsi_p4 = row.get("fsl_rcsi_phase4")
-    lcsi_cr = row.get("fsl_lcsi_crisis")
-    lcsi_em = row.get("fsl_lcsi_emergency")
+    fcs_score  = (poor or 0) * 0.70 + (borderline or 0) * 0.30
+    rcsi_score = (rcsi_p3 or 0) + (rcsi_p4 or 0)
+    lcsi_score = (lcsi_cr or 0) + (lcsi_em or 0)
+    score = fcs_score * 0.40 + rcsi_score * 0.30 + lcsi_score * 0.30
 
-    has_rcsi = rcsi_p3 is not None and rcsi_p4 is not None
-    has_lcsi = lcsi_cr is not None and lcsi_em is not None
-
-    if has_rcsi and has_lcsi:
-        rcsi_score = (rcsi_p3 or 0) + (rcsi_p4 or 0)
-        lcsi_score = (lcsi_cr or 0) + (lcsi_em or 0)
-        score = fcs_score * 0.40 + rcsi_score * 0.30 + lcsi_score * 0.30
-        inputs = {
-            **fcs_inputs,
-            "rcsi_phase3_crisis":    rcsi_p3,
-            "rcsi_phase4_emergency": rcsi_p4,
-            "lcsi_crisis":           lcsi_cr,
-            "lcsi_emergency":        lcsi_em,
-        }
-    else:
-        score  = fcs_score
-        inputs = fcs_inputs
-
+    inputs = {
+        "poor_FCS":              poor,
+        "borderline_FCS":        borderline,
+        "rcsi_phase3_crisis":    rcsi_p3,
+        "rcsi_phase4_emergency": rcsi_p4,
+        "lcsi_crisis":           lcsi_cr,
+        "lcsi_emergency":        lcsi_em,
+    }
     return round(score, 2), inputs
 
 
@@ -385,38 +357,23 @@ def score_wash(row: dict) -> tuple[float, dict]:
     improved  = row["wash_improved_water"]
     open_def  = row["wash_open_defecation"]
     unimp_san = row["wash_unimp_sanitation"]
-    insuff    = row.get("wash_insuff_water")
-    soap      = row.get("wash_soap_hwashing")
+    insuff    = row["wash_insuff_water"]
+    soap      = row["wash_soap_hwashing"]
 
-    has_qty  = insuff is not None
-    has_soap = soap is not None
-
-    if has_qty and has_soap:
-        inputs = {
-            "improved_water":        improved,
-            "insuff_water":          insuff,
-            "open_defecation":       open_def,
-            "unimproved_sanitation": unimp_san,
-            "soap_handwashing":      soap,
-        }
-        score = (
-            (100 - (improved  or 0)) * 0.25
-            + (insuff          or 0) * 0.15
-            + (open_def        or 0) * 0.20
-            + (unimp_san       or 0) * 0.15
-            + (100 - (soap    or 0)) * 0.25
-        )
-    else:
-        inputs = {
-            "improved_water":        improved,
-            "open_defecation":       open_def,
-            "unimproved_sanitation": unimp_san,
-        }
-        score = (
-            (100 - (improved  or 0)) * 0.50
-            + (open_def        or 0) * 0.30
-            + (unimp_san       or 0) * 0.20
-        )
+    inputs = {
+        "improved_water":        improved,
+        "insuff_water":          insuff,
+        "open_defecation":       open_def,
+        "unimproved_sanitation": unimp_san,
+        "soap_handwashing":      soap,
+    }
+    score = (
+        (100 - (improved or 0)) * 0.25
+        + (insuff         or 0) * 0.15
+        + (open_def       or 0) * 0.20
+        + (unimp_san      or 0) * 0.15
+        + (100 - (soap   or 0)) * 0.25
+    )
     return round(score, 2), inputs
 
 
@@ -443,43 +400,28 @@ def score_shelter(row: dict) -> tuple[float, dict]:
     makeshift   = row["shelter_makeshift"]
     tent        = row["shelter_tent"]
     no_shelt    = row["shelter_none"]
-    overcrowded = row.get("shelter_overcrowded")
-    nfi_bedding = row.get("shelter_nfi_bedding")
-    nfi_cooking = row.get("shelter_nfi_cooking")
-
-    has_space = overcrowded is not None
-    has_nfi   = nfi_bedding is not None and nfi_cooking is not None
+    overcrowded = row["shelter_overcrowded"]
+    nfi_bedding = row["shelter_nfi_bedding"]
+    nfi_cooking = row["shelter_nfi_cooking"]
 
     acute_types = (makeshift or 0) + (tent or 0) + (no_shelt or 0)
+    nfi_avg     = ((nfi_bedding or 0) + (nfi_cooking or 0)) / 2.0
 
-    if has_space and has_nfi:
-        nfi_avg = ((nfi_bedding or 0) + (nfi_cooking or 0)) / 2.0
-        inputs = {
-            "solid_shelter":      solid,
-            "makeshift":          makeshift,
-            "tent":               tent,
-            "no_shelter":         no_shelt,
-            "overcrowded":        overcrowded,
-            "nfi_lacking_bedding": nfi_bedding,
-            "nfi_lacking_cooking": nfi_cooking,
-        }
-        score = (
-            (100 - (solid or 0)) * 0.40
-            + acute_types        * 0.25
-            + (overcrowded or 0) * 0.20
-            + nfi_avg            * 0.15
-        )
-    else:
-        inputs = {
-            "solid_shelter": solid,
-            "makeshift":     makeshift,
-            "tent":          tent,
-            "no_shelter":    no_shelt,
-        }
-        score = (
-            (100 - (solid or 0)) * 0.60
-            + acute_types        * 0.40
-        )
+    inputs = {
+        "solid_shelter":       solid,
+        "makeshift":           makeshift,
+        "tent":                tent,
+        "no_shelter":          no_shelt,
+        "overcrowded":         overcrowded,
+        "nfi_lacking_bedding": nfi_bedding,
+        "nfi_lacking_cooking": nfi_cooking,
+    }
+    score = (
+        (100 - (solid or 0)) * 0.40
+        + acute_types        * 0.25
+        + (overcrowded or 0) * 0.20
+        + nfi_avg            * 0.15
+    )
     return round(score, 2), inputs
 
 
@@ -762,19 +704,7 @@ def process(xlsx_path: Path, api_locs: dict | None) -> dict:
     localities_out = {}
     unmatched = []
 
-    # FSL: one formula for the whole dataset.
-    # Use primary only if every locality has food security status data (cols 79+80).
-    # Otherwise fall back to FCS-only formula for all.
-    fsl_use_fallback = not all(
-        raw_data[loc].get("fsl_sev_food_insecure") is not None
-        and raw_data[loc].get("fsl_mod_food_insecure") is not None
-        for loc in raw_data
-    )
-    fsl_formula_applied = "fallback_fcs_borderline" if fsl_use_fallback else "primary"
-    sector_scorers = {
-        **SECTOR_SCORERS,
-        "FSL": functools.partial(score_fsl, use_fallback=fsl_use_fallback),
-    }
+    sector_scorers = SECTOR_SCORERS
 
     for locality_name in sorted(raw_data):
         indicators = raw_data[locality_name]
@@ -841,7 +771,6 @@ def process(xlsx_path: Path, api_locs: dict | None) -> dict:
             "scoring_version":     "prototype-v2",
             "formula_source":      FORMULA_SOURCE,
             "note":                "Thresholds and formulas are prototype-stage and unvalidated.",
-            "fsl_formula_applied": fsl_formula_applied,
             "formulas":            FORMULA_DOCS,
         },
         "summary": {
