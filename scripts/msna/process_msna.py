@@ -38,56 +38,88 @@ FORMULA_SOURCE = "https://www.notion.so/Severity-Scoring-Logic-3585043895cf807a9
 
 FORMULA_DOCS: dict = {
     "FSL": {
-        "primary_formula":    "poor_FCS * 0.50 + severely_food_insecure * 0.30 + moderately_food_insecure * 0.20",
+        "primary_formula":    "(poor_FCS * 0.70 + borderline_FCS * 0.30) * 0.40 + (rcsi_phase3 + rcsi_phase4) * 0.30 + (lcsi_crisis + lcsi_emergency) * 0.30",
         "fallback_formula":   "poor_FCS * 0.70 + borderline_FCS * 0.30",
-        "fallback_condition": "Applied per row when food security status columns (col 79, 80) are not populated in the source table",
+        "fallback_condition": "Applied when rCSI or LCSI phase columns are absent for a locality",
+        "standard": "IPC Technical Manual v3.1 - three-pillar convergence: food consumption (FCS), coping strategies (rCSI), livelihoods (LCSI)",
         "indicators": {
             "poor_FCS": {
                 "sheet": "FSL", "col": 59,
                 "question": "What is the food consumption status of this household?",
                 "response": "Poor",
-                "weight_primary": 0.50, "weight_fallback": 0.70,
+                "weight": 0.40 * 0.70,
             },
             "borderline_FCS": {
                 "sheet": "FSL", "col": 58,
                 "question": "What is the food consumption status of this household?",
                 "response": "Borderline",
-                "weight_primary": None, "weight_fallback": 0.30,
+                "weight": 0.40 * 0.30,
             },
-            "moderately_food_insecure": {
-                "sheet": "FSL", "col": 79,
-                "question": "What is the food security status of this household?",
-                "response": "Moderately Food Insecure",
-                "weight_primary": 0.20, "weight_fallback": None,
+            "rcsi_phase3_crisis": {
+                "sheet": "FSL", "col": 63,
+                "question": "What is the reduced coping strategy status of this household?",
+                "response": "Phase 3 (Crisis, rCSI 10-18)",
+                "weight": 0.30,
+                "note": "Combined with phase4; summed % represents Crisis-or-above coping",
             },
-            "severely_food_insecure": {
-                "sheet": "FSL", "col": 80,
-                "question": "What is the food security status of this household?",
-                "response": "Severely Food Insecure",
-                "weight_primary": 0.30, "weight_fallback": None,
+            "rcsi_phase4_emergency": {
+                "sheet": "FSL", "col": 64,
+                "question": "What is the reduced coping strategy status of this household?",
+                "response": "Phase 4 (Emergency, rCSI ≥ 19)",
+                "weight": 0.30,
+                "note": "Combined with phase3; summed % represents Crisis-or-above coping",
+            },
+            "lcsi_crisis": {
+                "sheet": "FSL", "col": 72,
+                "question": "What is the livelihood coping status of this household?",
+                "response": "Crisis coping strategies",
+                "weight": 0.30,
+                "note": "Combined with lcsi_emergency; summed % represents Crisis-or-above livelihood coping",
+            },
+            "lcsi_emergency": {
+                "sheet": "FSL", "col": 73,
+                "question": "What is the livelihood coping status of this household?",
+                "response": "Emergencies coping strategies",
+                "weight": 0.30,
+                "note": "Combined with lcsi_crisis; summed % represents Crisis-or-above livelihood coping",
             },
         },
     },
     "WASH": {
-        "formula": "(100 - improved_water) * 0.50 + open_defecation * 0.30 + unimproved_sanitation * 0.20",
+        "formula": "(100 - improved_water) * 0.25 + insuff_water * 0.15 + open_defecation * 0.20 + unimproved_sanitation * 0.15 + (100 - soap_handwashing) * 0.25",
+        "fallback_formula": "(100 - improved_water) * 0.50 + open_defecation * 0.30 + unimproved_sanitation * 0.20",
+        "fallback_condition": "Applied when water quantity or soap columns are absent for a locality",
+        "standard": "JMP 2023 - three-pillar monitoring: water quality+quantity, sanitation, hygiene. Sphere 2018 minimum 15L/person/day.",
         "indicators": {
             "improved_water": {
                 "sheet": "WASH", "col": 15,
                 "question": "Access to improved drinking water",
                 "response": "Improved water source",
-                "weight": 0.50, "note": "Inverted: score uses (100 - value)",
+                "weight": 0.25, "note": "Inverted: score uses (100 - value)",
+            },
+            "insuff_water": {
+                "sheet": "WASH", "col": 27,
+                "question": "Which of the following needs is your household able to meet with available water?",
+                "response": "5. Not enough water to meet any of the above needs",
+                "weight": 0.15,
             },
             "open_defecation": {
                 "sheet": "WASH", "col": 82,
                 "question": "Type of sanitation facility used",
                 "response": "None of the above, open defecation",
-                "weight": 0.30,
+                "weight": 0.20,
             },
             "unimproved_sanitation": {
                 "sheet": "WASH", "col": 85,
                 "question": "Access to improved sanitation",
                 "response": "Unimproved sanitation type",
-                "weight": 0.20,
+                "weight": 0.15,
+            },
+            "soap_handwashing": {
+                "sheet": "WASH", "col": 151,
+                "question": "(Observe): Is soap available at the place for handwashing?",
+                "response": "Yes",
+                "weight": 0.25, "note": "Inverted: score uses (100 - value); JMP Basic hygiene requires soap at station",
             },
         },
     },
@@ -121,33 +153,56 @@ FORMULA_DOCS: dict = {
         },
     },
     "Shelter": {
-        "formula": "(100 - solid_shelter) * 0.60 + (makeshift + tent + no_shelter) * 0.40",
+        "formula": "(100 - solid_shelter) * 0.40 + (makeshift + tent + no_shelter) * 0.25 + overcrowded * 0.20 + (nfi_bedding + nfi_cooking) / 2 * 0.15",
+        "fallback_formula": "(100 - solid_shelter) * 0.60 + (makeshift + tent + no_shelter) * 0.40",
+        "fallback_condition": "Applied when overcrowding or NFI columns are absent for a locality",
+        "standard": "Sphere 2018 - minimum 3.5m2/person floor area; core NFI items include sleeping materials and cooking equipment",
         "indicators": {
             "solid_shelter": {
                 "sheet": "Shelter", "col": 1,
                 "question": "Type of shelter or dwelling",
                 "response": "Solid / finished house",
-                "weight": 0.60,
+                "weight": 0.40,
                 "note": "Inverted: score uses (100 - value); solid/finished houses only, apartments excluded",
             },
             "tent": {
                 "sheet": "Shelter", "col": 6,
                 "question": "Type of shelter or dwelling",
                 "response": "Tent",
-                "weight_combined": 0.40,
-                "note": "Summed with makeshift + no_shelter; emergency and transitional shelter excluded",
+                "weight_combined": 0.25,
+                "note": "Summed with makeshift + no_shelter",
             },
             "makeshift": {
                 "sheet": "Shelter", "col": 7,
                 "question": "Type of shelter or dwelling",
                 "response": "Makeshift shelter",
-                "weight_combined": 0.40,
+                "weight_combined": 0.25,
             },
             "no_shelter": {
                 "sheet": "Shelter", "col": 10,
                 "question": "Type of shelter or dwelling",
                 "response": "No shelter (sleeping in the open)",
-                "weight_combined": 0.40,
+                "weight_combined": 0.25,
+            },
+            "overcrowded": {
+                "sheet": "Shelter", "col": 20,
+                "question": "What issues are present in your current shelter?",
+                "response": "9. Overcrowding (less than 3.5 m2 per household member)",
+                "weight": 0.20,
+            },
+            "nfi_bedding": {
+                "sheet": "Shelter", "col": 38,
+                "question": "Please explain why your household cannot sleep / the issues",
+                "response": "1. Insufficient essential household items for sleeping (bedding, mattresses/mats, bednets)",
+                "weight": 0.15 * 0.50,
+                "note": "Averaged with nfi_cooking for combined NFI weight of 0.15",
+            },
+            "nfi_cooking": {
+                "sheet": "Shelter", "col": 51,
+                "question": "Please explain why your household cannot cook / the issues",
+                "response": "1. Insufficient essential household items for cooking (utensils, kitchen sets, eating sets)",
+                "weight": 0.15 * 0.50,
+                "note": "Averaged with nfi_bedding for combined NFI weight of 0.15",
             },
         },
     },
@@ -254,6 +309,21 @@ COLUMN_DEFS = {
     "shelter_tent":           ("Shelter",    6, "type of shelter",             "Tent"),
     "shelter_makeshift":      ("Shelter",    7, "type of shelter",             "Makeshift"),
     "shelter_none":           ("Shelter",   10, "type of shelter",             "No shelter"),
+    # FSL - rCSI phase breakdown (IPC three-pillar)
+    "fsl_rcsi_phase3":     ("FSL",      63, "reduce coping stratergy",               "Phase 3"),
+    "fsl_rcsi_phase4":     ("FSL",      64, "reduce coping stratergy",               "Phase 4"),
+    # FSL - LCSI livelihood coping (IPC three-pillar)
+    "fsl_lcsi_crisis":     ("FSL",      72, "livelihood coping status",              "Crisis coping"),
+    "fsl_lcsi_emergency":  ("FSL",      73, "livelihood coping status",              "Emergencies coping"),
+    # WASH - water quantity (Sphere 15L/person/day minimum)
+    "wash_insuff_water":   ("WASH",     27, "needs is your household able to meet",  "Not enough water"),
+    # WASH - soap at handwashing station (JMP Basic hygiene)
+    "wash_soap_hwashing":  ("WASH",    151, "soap available at the place",           "Yes"),
+    # Shelter - overcrowding (Sphere 3.5m2/person)
+    "shelter_overcrowded": ("Shelter",  20, "what issues, if any, are present",      "Overcrowding"),
+    # Shelter - NFI gaps (Sphere core relief items)
+    "shelter_nfi_bedding": ("Shelter",  38, "explain why your household can't sleep","Insufficient essential household items for sleeping"),
+    "shelter_nfi_cooking": ("Shelter",  51, "explain why your household can't cook", "Insufficient essential household items for cooking"),
     # Protection - General_Protection_CP_GBV sheet
     # prot_not_missing_docs is the "Not missing" % - inverted in score_protection to get missing%
     "prot_movement_restricted": ("General_Protection_CP_GBV", 10, "faced restrictions",                    "Yes"),
@@ -267,37 +337,86 @@ COLUMN_DEFS = {
 # Source: Severity Scoring Logic.md §2
 
 def score_fsl(row: dict, use_fallback: bool = False) -> tuple[float, dict]:
-    poor = row["fsl_poor_fcs"]
-    if not use_fallback:
-        sev = row["fsl_sev_food_insecure"]
-        mod = row["fsl_mod_food_insecure"]
-        inputs = {
+    # Step 1: food consumption component (controlled by dataset-level use_fallback flag)
+    if use_fallback:
+        poor       = row["fsl_poor_fcs"]
+        borderline = row["fsl_borderline_fcs"]
+        fcs_score  = (poor or 0) * 0.70 + (borderline or 0) * 0.30
+        fcs_inputs = {"poor_FCS": poor, "borderline_FCS": borderline}
+    else:
+        poor = row["fsl_poor_fcs"]
+        sev  = row["fsl_sev_food_insecure"]
+        mod  = row["fsl_mod_food_insecure"]
+        fcs_score  = (poor or 0) * 0.50 + (sev or 0) * 0.30 + (mod or 0) * 0.20
+        fcs_inputs = {
             "poor_FCS":                 poor,
             "moderately_food_insecure": mod,
             "severely_food_insecure":   sev,
         }
-        score = (poor or 0) * 0.50 + (sev or 0) * 0.30 + (mod or 0) * 0.20
-    else:
-        borderline = row["fsl_borderline_fcs"]
+
+    # Step 2: incorporate rCSI + LCSI pillars when available (IPC three-pillar)
+    rcsi_p3 = row.get("fsl_rcsi_phase3")
+    rcsi_p4 = row.get("fsl_rcsi_phase4")
+    lcsi_cr = row.get("fsl_lcsi_crisis")
+    lcsi_em = row.get("fsl_lcsi_emergency")
+
+    has_rcsi = rcsi_p3 is not None and rcsi_p4 is not None
+    has_lcsi = lcsi_cr is not None and lcsi_em is not None
+
+    if has_rcsi and has_lcsi:
+        rcsi_score = (rcsi_p3 or 0) + (rcsi_p4 or 0)
+        lcsi_score = (lcsi_cr or 0) + (lcsi_em or 0)
+        score = fcs_score * 0.40 + rcsi_score * 0.30 + lcsi_score * 0.30
         inputs = {
-            "poor_FCS":       poor,
-            "borderline_FCS": borderline,
+            **fcs_inputs,
+            "rcsi_phase3_crisis":    rcsi_p3,
+            "rcsi_phase4_emergency": rcsi_p4,
+            "lcsi_crisis":           lcsi_cr,
+            "lcsi_emergency":        lcsi_em,
         }
-        score = (poor or 0) * 0.70 + (borderline or 0) * 0.30
+    else:
+        score  = fcs_score
+        inputs = fcs_inputs
+
     return round(score, 2), inputs
 
 
 def score_wash(row: dict) -> tuple[float, dict]:
-    inputs = {
-        "improved_water":        row["wash_improved_water"],
-        "open_defecation":       row["wash_open_defecation"],
-        "unimproved_sanitation": row["wash_unimp_sanitation"],
-    }
-    score = (
-        (100 - inputs["improved_water"]) * 0.50
-        + inputs["open_defecation"]      * 0.30
-        + inputs["unimproved_sanitation"] * 0.20
-    )
+    improved  = row["wash_improved_water"]
+    open_def  = row["wash_open_defecation"]
+    unimp_san = row["wash_unimp_sanitation"]
+    insuff    = row.get("wash_insuff_water")
+    soap      = row.get("wash_soap_hwashing")
+
+    has_qty  = insuff is not None
+    has_soap = soap is not None
+
+    if has_qty and has_soap:
+        inputs = {
+            "improved_water":        improved,
+            "insuff_water":          insuff,
+            "open_defecation":       open_def,
+            "unimproved_sanitation": unimp_san,
+            "soap_handwashing":      soap,
+        }
+        score = (
+            (100 - (improved  or 0)) * 0.25
+            + (insuff          or 0) * 0.15
+            + (open_def        or 0) * 0.20
+            + (unimp_san       or 0) * 0.15
+            + (100 - (soap    or 0)) * 0.25
+        )
+    else:
+        inputs = {
+            "improved_water":        improved,
+            "open_defecation":       open_def,
+            "unimproved_sanitation": unimp_san,
+        }
+        score = (
+            (100 - (improved  or 0)) * 0.50
+            + (open_def        or 0) * 0.30
+            + (unimp_san       or 0) * 0.20
+        )
     return round(score, 2), inputs
 
 
@@ -320,16 +439,47 @@ def score_education(row: dict) -> tuple[float, dict]:
 
 
 def score_shelter(row: dict) -> tuple[float, dict]:
-    inputs = {
-        "solid_shelter": row["shelter_solid"],
-        "makeshift":     row["shelter_makeshift"],
-        "tent":          row["shelter_tent"],
-        "no_shelter":    row["shelter_none"],
-    }
-    score = (
-        (100 - inputs["solid_shelter"]) * 0.60
-        + (inputs["makeshift"] + inputs["tent"] + inputs["no_shelter"]) * 0.40
-    )
+    solid       = row["shelter_solid"]
+    makeshift   = row["shelter_makeshift"]
+    tent        = row["shelter_tent"]
+    no_shelt    = row["shelter_none"]
+    overcrowded = row.get("shelter_overcrowded")
+    nfi_bedding = row.get("shelter_nfi_bedding")
+    nfi_cooking = row.get("shelter_nfi_cooking")
+
+    has_space = overcrowded is not None
+    has_nfi   = nfi_bedding is not None and nfi_cooking is not None
+
+    acute_types = (makeshift or 0) + (tent or 0) + (no_shelt or 0)
+
+    if has_space and has_nfi:
+        nfi_avg = ((nfi_bedding or 0) + (nfi_cooking or 0)) / 2.0
+        inputs = {
+            "solid_shelter":      solid,
+            "makeshift":          makeshift,
+            "tent":               tent,
+            "no_shelter":         no_shelt,
+            "overcrowded":        overcrowded,
+            "nfi_lacking_bedding": nfi_bedding,
+            "nfi_lacking_cooking": nfi_cooking,
+        }
+        score = (
+            (100 - (solid or 0)) * 0.40
+            + acute_types        * 0.25
+            + (overcrowded or 0) * 0.20
+            + nfi_avg            * 0.15
+        )
+    else:
+        inputs = {
+            "solid_shelter": solid,
+            "makeshift":     makeshift,
+            "tent":          tent,
+            "no_shelter":    no_shelt,
+        }
+        score = (
+            (100 - (solid or 0)) * 0.60
+            + acute_types        * 0.40
+        )
     return round(score, 2), inputs
 
 
@@ -688,7 +838,7 @@ def process(xlsx_path: Path, api_locs: dict | None) -> dict:
             "data_collection":     "07 August 2025 to 31 August 2025",
             "led_by":              "IOM DTM, with OCHA, REACH, ICCG, and AAWG",
             "coverage":            "188 localities across all 18 Sudan states",
-            "scoring_version":     "prototype-v1",
+            "scoring_version":     "prototype-v2",
             "formula_source":      FORMULA_SOURCE,
             "note":                "Thresholds and formulas are prototype-stage and unvalidated.",
             "fsl_formula_applied": fsl_formula_applied,
