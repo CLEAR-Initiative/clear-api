@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-05-29T15:09:42.796690+00:00",
+    "generated_at": "2026-05-29T15:18:42.487803+00:00",
     "source_file": "IOM_MSNA_Admin2_Output_Tables.xlsx",
     "source_title": "IOM/DTM - Multi-Sector Needs Assessment - Sudan 2025",
     "data_collection": "07 August 2025 to 31 August 2025",
@@ -269,12 +269,15 @@
   },
   "summary": {
     "total_localities": 186,
-    "matched_to_pcode": "skipped",
+    "matched_to_pcode": 186,
     "unmatched_count": 0
   },
   "unmatched_localities": [],
   "localities": {
     "Abassiya": {
+      "pcode": "SD07090",
+      "location_id": "ce6cd3e0-cfc9-44d3-bd84-35e192466418",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 39.92,
@@ -1025,6 +1028,9 @@
       }
     },
     "Abu Hamad": {
+      "pcode": "SD16008",
+      "location_id": "e695ea2b-ed3a-49c3-a8bb-4e1bbdb4f8ae",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.03,
@@ -1775,6 +1781,9 @@
       }
     },
     "Abu Hujar": {
+      "pcode": "SD14037",
+      "location_id": "923b9632-b9d3-420f-adc6-5706b3ac6ba6",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 60.73,
@@ -2525,6 +2534,9 @@
       }
     },
     "Abu Jabrah": {
+      "pcode": "SD05140",
+      "location_id": "1416bf06-2637-4ca7-a014-86f8419d9390",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 67.9,
@@ -3275,6 +3287,9 @@
       }
     },
     "Abu Jubayhah": {
+      "pcode": "SD07088",
+      "location_id": "a7651cf9-e4f7-40ee-98bc-cf4b6c3f800c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 52.61,
@@ -4025,6 +4040,9 @@
       }
     },
     "Abu Karinka": {
+      "pcode": "SD05155",
+      "location_id": "acaf08e1-094a-4716-8f32-073fdebaec0c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 55.52,
@@ -4775,6 +4793,9 @@
       }
     },
     "Abu Kershola": {
+      "pcode": "SD07104",
+      "location_id": "c8402cfd-771c-420d-a4ce-76fb55e21409",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 63.6,
@@ -5525,6 +5546,9 @@
       }
     },
     "Abu Zabad": {
+      "pcode": "SD18028",
+      "location_id": "0b673693-73dd-458c-a2ca-31f1671702af",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.22,
@@ -6275,6 +6299,9 @@
       }
     },
     "Abyei": {
+      "pcode": "SD18087",
+      "location_id": "545f7b2b-4777-46a7-9a61-b45ec5f9a162",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.49,
@@ -7025,6 +7052,9 @@
       }
     },
     "Ad Dabbah": {
+      "pcode": "SD17019",
+      "location_id": "7f0911eb-166b-4571-8ac0-b4eab8d11273",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.17,
@@ -7775,6 +7805,9 @@
       }
     },
     "Ad Dali": {
+      "pcode": "SD14039",
+      "location_id": "611a2996-3cdb-4414-b610-2b56d9a3db71",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 19.4,
@@ -8525,6 +8558,9 @@
       }
     },
     "Ad Damar": {
+      "pcode": "SD16011",
+      "location_id": "72267116-3d75-4c99-b596-a1c1d49e675e",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.28,
@@ -9275,6 +9311,9 @@
       }
     },
     "Ad Dinder": {
+      "pcode": "SD14040",
+      "location_id": "565a432b-6f16-4021-90f0-5098e1512881",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 27.17,
@@ -10025,6 +10064,9 @@
       }
     },
     "Ad Diwaim": {
+      "pcode": "SD09044",
+      "location_id": "d3d81d53-615c-4786-8bfd-f16ac4bce695",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 27.66,
@@ -10775,6 +10817,9 @@
       }
     },
     "Ad Du'ayn": {
+      "pcode": "SD05142",
+      "location_id": "0749b976-4b9f-4908-9475-d4609e2e889d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 38.87,
@@ -11525,6 +11570,9 @@
       }
     },
     "Adila": {
+      "pcode": "SD05139",
+      "location_id": "78ea53cf-7288-444f-b046-d35910da08d7",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 13.42,
@@ -12275,6 +12323,9 @@
       }
     },
     "Ag Geneina": {
+      "pcode": "SD04115",
+      "location_id": "c60abe6f-664a-4a96-a556-6071cc5eabf1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 17.69,
@@ -13025,6 +13076,9 @@
       }
     },
     "Agig": {
+      "pcode": "SD10072",
+      "location_id": "a9511a48-10a8-4cdc-84e7-f37e16332467",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 15.12,
@@ -13775,6 +13829,9 @@
       }
     },
     "Aj Jabalain": {
+      "pcode": "SD09051",
+      "location_id": "0894c816-5cbf-45ed-af40-98f26ae31bbc",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 32.0,
@@ -14525,6 +14582,9 @@
       }
     },
     "Al Buhaira": {
+      "pcode": "SD16014",
+      "location_id": "66e773bb-76ec-4881-951c-a27d34250320",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 29.84,
@@ -15275,6 +15335,9 @@
       }
     },
     "Al Buram": {
+      "pcode": "SD07099",
+      "location_id": "1adbb365-700a-447e-943f-de4112cbca96",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 49.72,
@@ -16025,6 +16088,9 @@
       }
     },
     "Al Burgaig": {
+      "pcode": "SD17016",
+      "location_id": "8a3a5cef-e2fb-488b-afcd-8bac7d6ae45f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.11,
@@ -16775,6 +16841,9 @@
       }
     },
     "Al Butanah": {
+      "pcode": "SD12073",
+      "location_id": "e81edf11-b2d1-47d5-a3c0-5ebf5987ce42",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 1.93,
@@ -17525,6 +17594,9 @@
       }
     },
     "Al Dibab": {
+      "pcode": "SD18103",
+      "location_id": "a781bde9-c278-4038-afe2-d1d1fa4bb911",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.83,
@@ -18275,6 +18347,9 @@
       }
     },
     "Al Fao": {
+      "pcode": "SD12074",
+      "location_id": "85278564-0d1e-42d4-9274-2abea429332a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.62,
@@ -19025,6 +19100,9 @@
       }
     },
     "Al Fashaga": {
+      "pcode": "SD12075",
+      "location_id": "621e3c7b-6b6b-4384-995b-acd10dc618bb",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.58,
@@ -19775,6 +19853,9 @@
       }
     },
     "Al Fasher": {
+      "pcode": "SD02114",
+      "location_id": "611b1540-b9fc-45bc-b933-fb8cb67614d3",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 58.07,
@@ -20525,6 +20606,9 @@
       }
     },
     "Al Firdous": {
+      "pcode": "SD05152",
+      "location_id": "b8728785-7122-43f1-844d-32f14f9108bd",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 15.87,
@@ -21275,6 +21359,9 @@
       }
     },
     "Al Galabat Al Gharbyah - Kassab": {
+      "pcode": "SD12078",
+      "location_id": "5ec36b65-e945-4583-805d-0cd240c86a40",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.3,
@@ -22025,6 +22112,9 @@
       }
     },
     "Al Ganab": {
+      "pcode": "SD10069",
+      "location_id": "d43f5c43-0abb-4758-8194-d95bada93b3c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 12.16,
@@ -22775,6 +22865,9 @@
       }
     },
     "Al Gitaina": {
+      "pcode": "SD09050",
+      "location_id": "bf23f4b1-eab6-48ad-b7e4-2043953dc9f7",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 13.43,
@@ -23525,6 +23618,9 @@
       }
     },
     "Al Golid": {
+      "pcode": "SD17018",
+      "location_id": "7474bbc0-9d6a-4f25-8b31-30de69ab6c4d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 19.84,
@@ -24275,6 +24371,9 @@
       }
     },
     "Al Hasahisa": {
+      "pcode": "SD15034",
+      "location_id": "c6a8630b-3a3d-4979-bdfd-3f7bb5832b97",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 3.29,
@@ -25025,6 +25124,9 @@
       }
     },
     "Al Idia": {
+      "pcode": "SD18104",
+      "location_id": "e82acf3d-17d0-49f1-afd0-1f547f36294d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 50.23,
@@ -25775,6 +25877,9 @@
       }
     },
     "Al Kamlin": {
+      "pcode": "SD15035",
+      "location_id": "2e19464e-46c9-4cd6-aefa-920e886f6591",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 7.81,
@@ -26525,6 +26630,9 @@
       }
     },
     "Al Khiwai": {
+      "pcode": "SD18105",
+      "location_id": "3e30db02-1852-453e-aa27-94dd555ac550",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 45.68,
@@ -27275,6 +27383,9 @@
       }
     },
     "Al Koma": {
+      "pcode": "SD02116",
+      "location_id": "692a6617-00d0-499f-81f1-c20556e283a0",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 29.49,
@@ -28025,6 +28136,9 @@
       }
     },
     "Al Kurmuk": {
+      "pcode": "SD08106",
+      "location_id": "cf27ccf5-543c-4f38-b5e6-529ca2fbe6a4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 75.39,
@@ -28775,6 +28889,9 @@
       }
     },
     "Al Lagowa": {
+      "pcode": "SD18102",
+      "location_id": "0f1d3eb4-6379-424f-b824-cab862075fdd",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 39.95,
@@ -29525,6 +29642,9 @@
       }
     },
     "Al Lait": {
+      "pcode": "SD02169",
+      "location_id": "afe929fb-47dc-4574-9583-d889d1dced95",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 89.0,
@@ -30275,6 +30395,9 @@
       }
     },
     "Al Leri": {
+      "pcode": "SD07105",
+      "location_id": "5ae12ec2-e387-4b3b-a544-147e8b0a6e20",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.7,
@@ -31025,6 +31148,9 @@
       }
     },
     "Al Mafaza": {
+      "pcode": "SD12082",
+      "location_id": "74ff711c-7795-4601-ab78-1dbc23e0e8c4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 34.0,
@@ -31775,6 +31901,9 @@
       }
     },
     "Al Malha": {
+      "pcode": "SD02117",
+      "location_id": "7a72f76b-ef0f-4f50-b8c7-1184738531f6",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.53,
@@ -32525,6 +32654,9 @@
       }
     },
     "Al Manaqil": {
+      "pcode": "SD15036",
+      "location_id": "102d0be0-af53-4e17-b877-7cc5896cc363",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 10.24,
@@ -33275,6 +33407,9 @@
       }
     },
     "Al Matama": {
+      "pcode": "SD16009",
+      "location_id": "ffa12264-61cc-4dcb-9f36-5a8d7938fbff",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.25,
@@ -34025,6 +34160,9 @@
       }
     },
     "Al Meiram": {
+      "pcode": "SD18106",
+      "location_id": "b2729d48-a3ab-480d-a7d3-1d7e917357ce",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.46,
@@ -34775,6 +34913,9 @@
       }
     },
     "Al Quoz": {
+      "pcode": "SD07094",
+      "location_id": "8a91393b-94b5-45ca-b9ab-058d5073ca37",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 51.12,
@@ -35525,6 +35666,9 @@
       }
     },
     "Al Qurashi": {
+      "pcode": "SD15037",
+      "location_id": "fa9431f5-1936-47cb-add3-6ea02e3a590f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 14.9,
@@ -36275,6 +36419,9 @@
       }
     },
     "Al Qureisha": {
+      "pcode": "SD12076",
+      "location_id": "af9b7dce-a570-4300-a7fa-1a8e93e86c7b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 5.15,
@@ -37025,6 +37172,9 @@
       }
     },
     "Al Radoum": {
+      "pcode": "SD03141",
+      "location_id": "adbca9e6-7c32-490a-9439-a618d51c57c2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.95,
@@ -37775,6 +37925,9 @@
       }
     },
     "Al Wihda": {
+      "pcode": "SD03150",
+      "location_id": "3d4a1726-99e7-4d29-a9bb-1f6bf509b019",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 54.76,
@@ -38525,6 +38678,9 @@
       }
     },
     "An Nuhud": {
+      "pcode": "SD18022",
+      "location_id": "9ee2d2bf-719f-48ef-98f9-ac56d1ebf495",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 25.5,
@@ -39275,6 +39431,10 @@
       }
     },
     "Ar Rahad": {
+      "pcode": "SD13030",
+      "location_id": "db52a4ec-09b4-4885-9f90-7b1344e3903c",
+      "match_method": "provisional_manual",
+      "match_note": "Two OCHA COD localities share this name: SD13030 (North Kordofan) and SD12084 (Gedaref). MSNA Demography sheet records 62.4% urban for this locality. SD13030 is a major city and railway hub - the second largest locality in North Kordofan (~26,000 population, 2012 census) - consistent with a 62.4% urban profile. SD12084 is the Rahad agricultural irrigation scheme area in Gedaref, expected to be predominantly rural (cf. Gedaref siblings: Al Butanah 0%, Al Fashaga 31%, Galabat Ash-Shargiah 30% urban). Provisional assignment to SD13030 pending confirmation from IOM Sudan DTM.",
       "sectors": {
         "FSL": {
           "score": 30.85,
@@ -40025,6 +40185,9 @@
       }
     },
     "Ar Rashad": {
+      "pcode": "SD07093",
+      "location_id": "5facffc1-5189-46df-9062-64135849f7d4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.92,
@@ -40775,6 +40938,9 @@
       }
     },
     "Ar Reif Ash Shargi": {
+      "pcode": "SD07097",
+      "location_id": "2134cb9e-2096-40ad-b7f7-062349032274",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 49.56,
@@ -41525,6 +41691,9 @@
       }
     },
     "Ar Rusayris": {
+      "pcode": "SD08107",
+      "location_id": "910bc43d-6b01-4126-a52a-dca624b7314a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 39.09,
@@ -42275,6 +42444,9 @@
       }
     },
     "As Salam - SD": {
+      "pcode": "SD03166",
+      "location_id": "47c6ff1f-26e4-4873-8752-5beaad63dbba",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 32.3,
@@ -43025,6 +43197,9 @@
       }
     },
     "As Salam - WK": {
+      "pcode": "SD18086",
+      "location_id": "681ffd45-7301-432e-9347-394b3a282f2c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.61,
@@ -43775,6 +43950,9 @@
       }
     },
     "As Salam / Ar Rawat": {
+      "pcode": "SD09049",
+      "location_id": "24d897ed-f91f-402f-bd12-5b22b7f63280",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.8,
@@ -44525,6 +44703,9 @@
       }
     },
     "As Serief": {
+      "pcode": "SD02118",
+      "location_id": "4a68fde5-deaf-4df2-b66a-412c8e3ed4ed",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 54.16,
@@ -45275,6 +45456,9 @@
       }
     },
     "As Suki": {
+      "pcode": "SD14041",
+      "location_id": "a9eadec7-e012-430b-a971-07331ba88d35",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 15.55,
@@ -46025,6 +46209,9 @@
       }
     },
     "As Sunta": {
+      "pcode": "SD03156",
+      "location_id": "169d4046-8de4-41ca-a4bb-427865824292",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 47.67,
@@ -46775,6 +46962,9 @@
       }
     },
     "As Sunut": {
+      "pcode": "SD18092",
+      "location_id": "0062562d-73fd-4baf-99c2-7262279cca49",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 13.71,
@@ -47525,6 +47715,9 @@
       }
     },
     "Assalaya": {
+      "pcode": "SD05163",
+      "location_id": "bdcb96ad-b798-4b03-a39a-2931355d5066",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.44,
@@ -48275,6 +48468,9 @@
       }
     },
     "At Tadamon - BN": {
+      "pcode": "SD08108",
+      "location_id": "74ab8dd2-e604-4527-bd6b-5581c4cbabf3",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 44.29,
@@ -49025,6 +49221,9 @@
       }
     },
     "At Tadamon - SK": {
+      "pcode": "SD07106",
+      "location_id": "0872bbbd-2f9e-4fed-82eb-fc599bb81353",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 27.44,
@@ -49775,6 +49974,9 @@
       }
     },
     "At Tawisha": {
+      "pcode": "SD02119",
+      "location_id": "ffdc8cce-f5df-481c-b25d-d0c99150c904",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 63.19,
@@ -50525,6 +50727,9 @@
       }
     },
     "At Tina": {
+      "pcode": "SD02171",
+      "location_id": "61d200df-cd82-4ce8-b470-86f765bf1e3c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 10.05,
@@ -51275,6 +51480,9 @@
       }
     },
     "Atbara": {
+      "pcode": "SD16012",
+      "location_id": "59d9c28c-7b99-46ac-b17b-02a157b795bf",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 13.43,
@@ -52025,6 +52233,9 @@
       }
     },
     "Azum": {
+      "pcode": "SD06110",
+      "location_id": "0fd07c95-8eda-4276-be47-40c6760911d8",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 42.14,
@@ -52775,6 +52986,9 @@
       }
     },
     "Babanusa": {
+      "pcode": "SD18100",
+      "location_id": "e175a1a6-dc11-4093-975a-e5874b672371",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 22.58,
@@ -53525,6 +53739,9 @@
       }
     },
     "Bahr Al Arab": {
+      "pcode": "SD05160",
+      "location_id": "f4f59e70-13b5-4dfc-89fb-3a1e8a051bdf",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.99,
@@ -54275,6 +54492,9 @@
       }
     },
     "Bahri": {
+      "pcode": "SD01003",
+      "location_id": "89d22461-4d90-4962-a8d6-20c0ed54b9e1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 23.3,
@@ -55025,6 +55245,9 @@
       }
     },
     "Bara": {
+      "pcode": "SD13026",
+      "location_id": "4b6540de-7708-45ae-8b70-51e74e2edcc4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.87,
@@ -55775,6 +55998,9 @@
       }
     },
     "Barbar": {
+      "pcode": "SD16013",
+      "location_id": "3cb21a4d-3ee1-4474-85d6-1f23d0a9dbf1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 11.39,
@@ -56525,6 +56751,9 @@
       }
     },
     "Basundah": {
+      "pcode": "SD12077",
+      "location_id": "1a531b7d-edf2-4070-899f-017119f4db4b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.62,
@@ -57275,6 +57504,9 @@
       }
     },
     "Baw": {
+      "pcode": "SD08104",
+      "location_id": "5bbf9247-e545-4ce2-88a6-9ed4cb6576ee",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 45.37,
@@ -58025,6 +58257,9 @@
       }
     },
     "Beida": {
+      "pcode": "SD04111",
+      "location_id": "fe19d5e0-73c6-49e2-b2e1-c6fbe1f6d61a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.96,
@@ -58775,6 +59010,9 @@
       }
     },
     "Beliel": {
+      "pcode": "SD03162",
+      "location_id": "37571338-e602-4850-9971-8217ac88e2d5",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 53.63,
@@ -59525,6 +59763,9 @@
       }
     },
     "Bendasi": {
+      "pcode": "SD06112",
+      "location_id": "acbaab42-e79a-4e7c-8bf1-d05a8fcdba34",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 42.59,
@@ -60275,6 +60516,9 @@
       }
     },
     "Buram": {
+      "pcode": "SD03161",
+      "location_id": "6c5134cf-5cf2-4b51-8b7a-9af41bf3e27f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 40.17,
@@ -61025,6 +61269,9 @@
       }
     },
     "Damso": {
+      "pcode": "SD03172",
+      "location_id": "f4da4e25-73f9-411d-be36-af4d3bf6cca2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 3.33,
@@ -61775,6 +62022,9 @@
       }
     },
     "Dar As Salam": {
+      "pcode": "SD02113",
+      "location_id": "58331ab4-64ab-4689-ac91-2a72454d9dc3",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.96,
@@ -62525,6 +62775,9 @@
       }
     },
     "Delami": {
+      "pcode": "SD07107",
+      "location_id": "9249154b-744e-45e5-8c5f-3da7705ae9ea",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 55.74,
@@ -63275,6 +63528,9 @@
       }
     },
     "Delgo": {
+      "pcode": "SD17015",
+      "location_id": "a6392ba2-4d94-4bbe-83e6-54762b17842d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 18.09,
@@ -64025,6 +64281,9 @@
       }
     },
     "Dilling": {
+      "pcode": "SD07095",
+      "location_id": "82bb15f9-547c-4306-9a6b-454bd600adb6",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 58.1,
@@ -64775,6 +65034,9 @@
       }
     },
     "Dongola": {
+      "pcode": "SD17017",
+      "location_id": "87814c03-cd70-4deb-a0d7-9dc33c6ac8c2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.84,
@@ -65525,6 +65787,9 @@
       }
     },
     "Dordieb": {
+      "pcode": "SD10063",
+      "location_id": "df7750d0-ac4e-41ca-a02c-8de22d416460",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 34.56,
@@ -66275,6 +66540,9 @@
       }
     },
     "Ed Al Fursan": {
+      "pcode": "SD03143",
+      "location_id": "f2282ba5-2930-433d-9e33-8bbe1c9768b2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 49.67,
@@ -67025,6 +67293,9 @@
       }
     },
     "Ed Damazine": {
+      "pcode": "SD08105",
+      "location_id": "cf4abe7c-7c6e-4dcb-9b2c-18ffbe6d13e1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 35.96,
@@ -67775,6 +68046,9 @@
       }
     },
     "Foro Baranga": {
+      "pcode": "SD04121",
+      "location_id": "e25ab631-a0b0-4591-b1d8-011653871b60",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.5,
@@ -68525,6 +68799,9 @@
       }
     },
     "Gala'a Al Nahal": {
+      "pcode": "SD12079",
+      "location_id": "76e7999b-75b7-4a3e-91c3-4921e1dc7f8d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 20.1,
@@ -69275,6 +69552,9 @@
       }
     },
     "Galabat Ash-Shargiah": {
+      "pcode": "SD12083",
+      "location_id": "7b56e3f4-6939-4522-a277-ef6ef73d1cc2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 28.07,
@@ -70025,6 +70305,9 @@
       }
     },
     "Gebrat Al Sheikh": {
+      "pcode": "SD13027",
+      "location_id": "847fcb78-64a8-4909-8eff-9c6e745f5bbf",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 40.08,
@@ -70775,6 +71058,9 @@
       }
     },
     "Geisan": {
+      "pcode": "SD08109",
+      "location_id": "6ed76045-063f-4a0a-af4f-b5cb1f95c9fc",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 42.62,
@@ -71525,6 +71811,9 @@
       }
     },
     "Gereida": {
+      "pcode": "SD03153",
+      "location_id": "376be849-ce94-473a-9b2d-d039a3ae1d73",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 33.29,
@@ -72275,6 +72564,9 @@
       }
     },
     "Ghadeer": {
+      "pcode": "SD07108",
+      "location_id": "8708e54c-5994-4c3d-95da-78d1a69ce42c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 50.9,
@@ -73025,6 +73317,9 @@
       }
     },
     "Gharb Bara": {
+      "pcode": "SD13029",
+      "location_id": "d9824846-2301-49fe-a720-f2d5ab8385cd",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 57.6,
@@ -73775,6 +74070,9 @@
       }
     },
     "Gharb Jabal Marrah": {
+      "pcode": "SD06131",
+      "location_id": "4bed6595-0fea-4a78-bc45-a08e698b0d71",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.27,
@@ -74525,6 +74823,9 @@
       }
     },
     "Ghubaish": {
+      "pcode": "SD18021",
+      "location_id": "debff5c8-b677-4497-a42e-ab6c06e77556",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.54,
@@ -75275,6 +75576,9 @@
       }
     },
     "Guli": {
+      "pcode": "SD09052",
+      "location_id": "df813b0c-ff3d-4d18-8c71-2d3353a5024d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.16,
@@ -76025,6 +76329,9 @@
       }
     },
     "Habila - SK": {
+      "pcode": "SD07103",
+      "location_id": "b8e58a4d-5111-48ee-960c-e5a23199221b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 68.95,
@@ -76775,6 +77082,9 @@
       }
     },
     "Habila - WD": {
+      "pcode": "SD04122",
+      "location_id": "6e7424b0-3db7-45d2-b6a5-c2106421bf83",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 25.31,
@@ -77525,6 +77835,9 @@
       }
     },
     "Hala'ib": {
+      "pcode": "SD10066",
+      "location_id": "39f68664-74cc-4207-a54d-c9056c7c338b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.63,
@@ -78275,6 +78588,9 @@
       }
     },
     "Halfa": {
+      "pcode": "SD17014",
+      "location_id": "049c88d6-9c02-4751-abac-b7b91f8ed990",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.82,
@@ -79025,6 +79341,9 @@
       }
     },
     "Haya": {
+      "pcode": "SD10070",
+      "location_id": "e0be2880-b10d-4cea-bc93-2de4391f48ee",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.43,
@@ -79775,6 +80094,9 @@
       }
     },
     "Heiban": {
+      "pcode": "SD07096",
+      "location_id": "fb482aa2-3237-469b-8743-d123231851fe",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 35.2,
@@ -80525,6 +80847,9 @@
       }
     },
     "Janub Al Jazirah": {
+      "pcode": "SD15031",
+      "location_id": "fc342284-4da8-42ab-94c7-4fc73a28b9a4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 8.18,
@@ -81275,6 +81600,9 @@
       }
     },
     "Jebel Awlia": {
+      "pcode": "SD01001",
+      "location_id": "596c8de2-2560-41ce-a523-5765d5966d4b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.92,
@@ -82025,6 +82353,9 @@
       }
     },
     "Jebel Moon": {
+      "pcode": "SD04123",
+      "location_id": "5e3ef1d8-b8e5-4f53-a45f-995ff876ad59",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.19,
@@ -82775,6 +83106,9 @@
       }
     },
     "Jubayt Elma'aadin": {
+      "pcode": "SD10067",
+      "location_id": "582912a1-dc2c-473b-919c-5abeb28beeeb",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.74,
@@ -83525,6 +83859,9 @@
       }
     },
     "Kadugli": {
+      "pcode": "SD07098",
+      "location_id": "0f65acc6-5cb6-4187-af6c-d390ac2484a4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 37.33,
@@ -84275,6 +84612,9 @@
       }
     },
     "Karrari": {
+      "pcode": "SD01005",
+      "location_id": "4f0e372a-2798-4777-a3f1-c8d2cfe0135e",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 23.43,
@@ -85025,6 +85365,9 @@
       }
     },
     "Kas": {
+      "pcode": "SD03144",
+      "location_id": "df2404dc-28c5-434e-8ed0-4585da58d54d",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 44.07,
@@ -85775,6 +86118,9 @@
       }
     },
     "Kateila": {
+      "pcode": "SD03159",
+      "location_id": "af8f4e43-65f8-4e99-b2bf-314d7f05d6f5",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.24,
@@ -86525,6 +86871,9 @@
       }
     },
     "Kebkabiya": {
+      "pcode": "SD02124",
+      "location_id": "a2267722-8bef-4752-8fa4-98b49b57c2bd",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 52.02,
@@ -87275,6 +87624,9 @@
       }
     },
     "Keilak": {
+      "pcode": "SD18085",
+      "location_id": "51cf55d0-f8a2-44a5-9d14-8fd4669d98e8",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.48,
@@ -88025,6 +88377,9 @@
       }
     },
     "Kelemando": {
+      "pcode": "SD02126",
+      "location_id": "ba6cc052-6710-4bd3-abf9-d4c1ca9a0e04",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.01,
@@ -88775,6 +89130,9 @@
       }
     },
     "Kereneik": {
+      "pcode": "SD04125",
+      "location_id": "c70d85ef-7f15-4771-ae17-0555c3e3633e",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.64,
@@ -89525,6 +89883,9 @@
       }
     },
     "Kernoi": {
+      "pcode": "SD02168",
+      "location_id": "b03c47ef-f315-4458-9fb9-3a6dd9c0a593",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.26,
@@ -90275,6 +90636,9 @@
       }
     },
     "Khartoum": {
+      "pcode": "SD01007",
+      "location_id": "ba011556-4c11-4cd9-8780-3d65e7c0e5bb",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 11.54,
@@ -91025,6 +91389,9 @@
       }
     },
     "Kosti": {
+      "pcode": "SD09047",
+      "location_id": "1a931407-d9db-4b2d-8227-73552405416b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 27.04,
@@ -91775,6 +92142,9 @@
       }
     },
     "Kubum": {
+      "pcode": "SD03157",
+      "location_id": "93792855-2d48-4557-ae9d-effc1563944a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 46.44,
@@ -92525,6 +92895,9 @@
       }
     },
     "Kulbus": {
+      "pcode": "SD04127",
+      "location_id": "c4fd7e59-5dcc-403b-b748-de7a8cc2f2d1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 11.89,
@@ -93275,6 +93648,9 @@
       }
     },
     "Kutum": {
+      "pcode": "SD02128",
+      "location_id": "83418fa7-18a9-45bc-a4f4-2cce107febe1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 37.24,
@@ -94025,6 +94401,9 @@
       }
     },
     "Madeinat Al Gedaref": {
+      "pcode": "SD12080",
+      "location_id": "53ef8349-d50b-46f3-9ae2-f9fdb90b9af0",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.54,
@@ -94775,6 +95154,9 @@
       }
     },
     "Madeinat Kassala": {
+      "pcode": "SD11053",
+      "location_id": "1bca4b08-2173-42df-9bf5-44b7b89eed61",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 4.93,
@@ -95525,6 +95907,9 @@
       }
     },
     "Medani Al Kubra": {
+      "pcode": "SD15030",
+      "location_id": "41c9c506-bb92-435e-b776-d830ad5003ef",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 8.51,
@@ -96275,6 +96660,9 @@
       }
     },
     "Melit": {
+      "pcode": "SD02129",
+      "location_id": "bbc585ae-a4be-46a9-a541-ff06ae7eb2f8",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 43.94,
@@ -97025,6 +97413,9 @@
       }
     },
     "Mershing": {
+      "pcode": "SD03145",
+      "location_id": "a51726d0-92d7-48f2-8f50-b728e93af0ca",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 59.01,
@@ -97775,6 +98166,9 @@
       }
     },
     "Merwoe": {
+      "pcode": "SD17020",
+      "location_id": "604edfe3-bfae-4466-9882-0c268bca120a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.21,
@@ -98525,6 +98919,9 @@
       }
     },
     "Mukjar": {
+      "pcode": "SD06130",
+      "location_id": "3d0b4264-df59-4b64-865d-06bd8cc32ccf",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.07,
@@ -99275,6 +99672,9 @@
       }
     },
     "Nitega": {
+      "pcode": "SD03151",
+      "location_id": "c10b56d1-9d93-45ad-8f25-1078b6b4da4b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 38.66,
@@ -100025,6 +100425,9 @@
       }
     },
     "Nyala Janoub": {
+      "pcode": "SD03167",
+      "location_id": "c3a3489f-c680-437a-b031-a878607d94f5",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 22.03,
@@ -100775,6 +101178,9 @@
       }
     },
     "Nyala Shimal": {
+      "pcode": "SD03164",
+      "location_id": "4371f148-ce1e-4802-85ca-3a5a568233dc",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 18.08,
@@ -101525,6 +101931,9 @@
       }
     },
     "Port Sudan": {
+      "pcode": "SD10064",
+      "location_id": "273214ba-891d-4fde-be9c-5e7ef410e9a3",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 25.89,
@@ -102275,6 +102684,9 @@
       }
     },
     "Rabak": {
+      "pcode": "SD09046",
+      "location_id": "b3f36e2b-4da6-4c62-9b51-da82fd925f50",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 17.46,
@@ -103025,6 +103437,9 @@
       }
     },
     "Rehaid Albirdi": {
+      "pcode": "SD03158",
+      "location_id": "79b7ff48-bdd9-4494-a23e-c5c5ff0022f1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.07,
@@ -103775,6 +104190,9 @@
       }
     },
     "Reifi Aroma": {
+      "pcode": "SD11055",
+      "location_id": "d268611c-c562-4fc9-9e1c-ddbdd995dab7",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 14.16,
@@ -104525,6 +104943,9 @@
       }
     },
     "Reifi Gharb Kassala": {
+      "pcode": "SD11054",
+      "location_id": "593c3c81-7ebb-4e93-9dec-1bdc7117794f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 21.49,
@@ -105275,6 +105696,9 @@
       }
     },
     "Reifi Hamashkureib": {
+      "pcode": "SD11058",
+      "location_id": "36f6c3be-4290-4e1d-be97-a0505ebe113a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 18.61,
@@ -106025,6 +106449,9 @@
       }
     },
     "Reifi Kassla": {
+      "pcode": "SD11056",
+      "location_id": "002e5e82-4190-4ebb-a071-4ea77ab62835",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 23.13,
@@ -106775,6 +107202,9 @@
       }
     },
     "Reifi Khashm Elgirba": {
+      "pcode": "SD11060",
+      "location_id": "43cf68cd-ec04-4aa0-990b-b21d4e2206d5",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 4.7,
@@ -107525,6 +107955,9 @@
       }
     },
     "Reifi Nahr Atbara": {
+      "pcode": "SD11062",
+      "location_id": "41e4e4ba-a6bc-4e2e-a589-f350bdadb34f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 15.28,
@@ -108275,6 +108708,9 @@
       }
     },
     "Reifi Shamal Ad Delta": {
+      "pcode": "SD11057",
+      "location_id": "0896c05b-cc47-41b7-bd46-f78d0f6e9728",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 8.09,
@@ -109025,6 +109461,9 @@
       }
     },
     "Reifi Telkok": {
+      "pcode": "SD11059",
+      "location_id": "77856478-f8fa-4e1d-9d4d-ebb02b615737",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 6.28,
@@ -109775,6 +110214,9 @@
       }
     },
     "Reifi Wad Elhilaiw": {
+      "pcode": "SD11061",
+      "location_id": "7b01c8bc-43bf-463c-8216-f0a344094666",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 33.56,
@@ -110525,6 +110967,9 @@
       }
     },
     "Saraf Omra": {
+      "pcode": "SD02133",
+      "location_id": "2949c1c0-fba7-4144-9cb8-98e9e51ce099",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 52.09,
@@ -111275,6 +111720,9 @@
       }
     },
     "Sawakin": {
+      "pcode": "SD10068",
+      "location_id": "387a6766-d001-47bf-b547-bf9ab6f16a8b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 2.35,
@@ -112025,6 +112473,9 @@
       }
     },
     "Sennar": {
+      "pcode": "SD14038",
+      "location_id": "00f044ec-42a5-47e1-903a-af9879b9f38c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 41.27,
@@ -112775,6 +113226,9 @@
       }
     },
     "Shamal Jabal Marrah": {
+      "pcode": "SD06132",
+      "location_id": "3d126489-5569-4d15-bef1-7a56f4e6aafe",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 23.6,
@@ -113525,6 +113979,9 @@
       }
     },
     "Sharg Aj Jabal": {
+      "pcode": "SD03147",
+      "location_id": "64ee3b19-e432-4065-83e1-6c547bdc0095",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 34.55,
@@ -114275,6 +114732,9 @@
       }
     },
     "Sharg Al Jazirah": {
+      "pcode": "SD15033",
+      "location_id": "794c41a1-1aa6-4898-bb45-ec6508d2b63a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 7.98,
@@ -115025,6 +115485,9 @@
       }
     },
     "Sharg An Neel": {
+      "pcode": "SD01004",
+      "location_id": "2312f350-9456-4a2f-9215-9297b5549da1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 25.22,
@@ -115775,6 +116238,9 @@
       }
     },
     "Sharg Sennar": {
+      "pcode": "SD14042",
+      "location_id": "905344cc-b5b0-4656-929e-65eff7269553",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 26.59,
@@ -116525,6 +116991,9 @@
       }
     },
     "Shattaya": {
+      "pcode": "SD03154",
+      "location_id": "f1136cec-f719-4747-9381-73174b2cc9ec",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 48.2,
@@ -117275,6 +117744,9 @@
       }
     },
     "Sheikan": {
+      "pcode": "SD13024",
+      "location_id": "84373c87-b74c-4050-8036-635a951139a4",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 37.58,
@@ -118025,6 +118497,9 @@
       }
     },
     "Shendi": {
+      "pcode": "SD16010",
+      "location_id": "d53fc806-4e77-4b7c-a0f7-50b9d5895c25",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.72,
@@ -118775,6 +119250,9 @@
       }
     },
     "Shia'ria": {
+      "pcode": "SD05148",
+      "location_id": "c018bf48-521c-4d46-8952-f60aede7ddf8",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 46.87,
@@ -119525,6 +120003,9 @@
       }
     },
     "Sinja": {
+      "pcode": "SD14043",
+      "location_id": "9bd2bb64-f88d-4d68-926e-92ec4bdc875c",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 31.66,
@@ -120275,6 +120756,9 @@
       }
     },
     "Sinkat": {
+      "pcode": "SD10071",
+      "location_id": "5d31cdb4-a2de-46e6-bf8a-560b5e79e79b",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 13.07,
@@ -121025,6 +121509,9 @@
       }
     },
     "Sirba": {
+      "pcode": "SD04134",
+      "location_id": "9db07a5d-d6aa-46c9-9ad0-8e01a95803ca",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 29.48,
@@ -121775,6 +122262,9 @@
       }
     },
     "Soudari": {
+      "pcode": "SD13025",
+      "location_id": "b2cdb295-a37a-40e9-86ab-0cf327c81c8a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.6,
@@ -122525,6 +123015,9 @@
       }
     },
     "Talawdi": {
+      "pcode": "SD07089",
+      "location_id": "59d76c92-2c22-4213-8d66-aabc3ce1f8ec",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.49,
@@ -123275,6 +123768,9 @@
       }
     },
     "Tawila": {
+      "pcode": "SD02170",
+      "location_id": "2a770b21-1b0c-446a-ae35-7a01907da449",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 52.16,
@@ -124025,6 +124521,9 @@
       }
     },
     "Tawkar": {
+      "pcode": "SD10065",
+      "location_id": "8a05656d-2b58-42d8-a5c9-2999d5d150a1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.65,
@@ -124775,6 +125274,9 @@
       }
     },
     "Tendalti": {
+      "pcode": "SD09048",
+      "location_id": "9496158a-dbc0-4935-b383-254c620cf800",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 24.4,
@@ -125525,6 +126027,9 @@
       }
     },
     "Tulus": {
+      "pcode": "SD03149",
+      "location_id": "8514216b-f371-4164-afc5-8767f64c26fa",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 29.51,
@@ -126275,6 +126780,9 @@
       }
     },
     "Um Algura": {
+      "pcode": "SD15032",
+      "location_id": "fd53d3e7-feb7-450a-9615-6f5a62a906ce",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 18.09,
@@ -127025,6 +127533,9 @@
       }
     },
     "Um Bada": {
+      "pcode": "SD01002",
+      "location_id": "dacbd6f1-729a-422a-8592-0efd7a1ba2b3",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 25.5,
@@ -127775,6 +128286,9 @@
       }
     },
     "Um Baru": {
+      "pcode": "SD02120",
+      "location_id": "7a0bfde6-69de-48fb-b6cb-c9bf0e0156a5",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 30.96,
@@ -128525,6 +129039,9 @@
       }
     },
     "Um Dafoug": {
+      "pcode": "SD03146",
+      "location_id": "008560d8-4479-42fb-af5a-88116d3656b0",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.34,
@@ -129275,6 +129792,9 @@
       }
     },
     "Um Dam Haj Ahmed": {
+      "pcode": "SD13028",
+      "location_id": "d122e259-acdd-45ae-a5c1-b7c2d73c6e6f",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 10.89,
@@ -130025,6 +130545,9 @@
       }
     },
     "Um Dukhun": {
+      "pcode": "SD06135",
+      "location_id": "05c300f9-c7ba-4415-90e0-5849dee11b61",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 28.41,
@@ -130775,6 +131298,9 @@
       }
     },
     "Um Durein": {
+      "pcode": "SD07091",
+      "location_id": "924e7457-a917-4ac2-bcb1-15e3ac4338c6",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 41.38,
@@ -131525,6 +132051,9 @@
       }
     },
     "Um Durman": {
+      "pcode": "SD01006",
+      "location_id": "f1fd7405-22de-44a5-add3-021c8b80aa90",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 16.66,
@@ -132275,6 +132804,9 @@
       }
     },
     "Um Kadadah": {
+      "pcode": "SD02136",
+      "location_id": "1e038c39-2cce-4da8-a5cf-ccdb5e3d581a",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 36.84,
@@ -133025,6 +133557,9 @@
       }
     },
     "Um Rawaba": {
+      "pcode": "SD13023",
+      "location_id": "cd67c667-8665-4ef3-942c-bdf2c30d1673",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 23.41,
@@ -133775,6 +134310,9 @@
       }
     },
     "Um Rimta": {
+      "pcode": "SD09045",
+      "location_id": "3c803f79-bd70-48d9-b468-301c33779eb2",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 12.07,
@@ -134525,6 +135063,9 @@
       }
     },
     "Wad Al Mahi": {
+      "pcode": "SD08110",
+      "location_id": "05409afb-a72f-485a-8b4c-b99d90fe9725",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 18.48,
@@ -135275,6 +135816,9 @@
       }
     },
     "Wad Bandah": {
+      "pcode": "SD18029",
+      "location_id": "a368fbf9-64c6-4a16-80b8-a053dedc1d6e",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 32.95,
@@ -136025,6 +136569,9 @@
       }
     },
     "Wadi Salih": {
+      "pcode": "SD06137",
+      "location_id": "78fd6677-fa85-4319-9a85-d8c4ae91c4fb",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 27.42,
@@ -136775,6 +137322,9 @@
       }
     },
     "Wasat Al Gedaref": {
+      "pcode": "SD12081",
+      "location_id": "80dc3e00-9c8b-43e0-9af1-18f0b5b193c8",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 1.84,
@@ -137525,6 +138075,9 @@
       }
     },
     "Wasat Jabal Marrah": {
+      "pcode": "SD06139",
+      "location_id": "74b8cc31-4771-4437-972e-d504835cedd1",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 34.95,
@@ -138275,6 +138828,9 @@
       }
     },
     "Yassin": {
+      "pcode": "SD05165",
+      "location_id": "8cee039a-cfb9-4403-8d13-78543be18f0e",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 43.33,
@@ -139025,6 +139581,9 @@
       }
     },
     "Zalingi": {
+      "pcode": "SD06138",
+      "location_id": "249daf60-1ad8-4aa2-a8c2-efc5ca377b22",
+      "match_method": "exact",
       "sectors": {
         "FSL": {
           "score": 35.45,
