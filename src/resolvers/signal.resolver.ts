@@ -55,6 +55,8 @@ interface CreateSignalInput {
   locationId?: string;
   lat?: number;
   lng?: number;
+  /** Output of clear-pipeline's text-based geoparser, stored verbatim. */
+  geoparsedData?: Record<string, unknown>;
 }
 
 export const signalResolvers = {
@@ -156,6 +158,7 @@ export const signalResolvers = {
             originId: input.originId,
             destinationId: input.destinationId,
             locationId,
+            geoparsedData: input.geoparsedData as InputJsonValue | undefined,
           },
         });
       } catch (err: unknown) {
@@ -288,6 +291,30 @@ export const signalResolvers = {
       return context.prisma.signals.update({
         where: { id: args.id },
         data: { severity: args.severity },
+      });
+    },
+
+    updateSignalGeoparsedData: async (
+      _parent: unknown,
+      args: { id: string; geoparsedData: Record<string, unknown> },
+      context: Context,
+    ) => {
+      // Admin/pipeline only — invoked by the manual-signal processing task
+      // after running the geoparser on the freshly created signal.
+      requireRole(context, ["admin"]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.signals.update({
+        where: { id: args.id },
+        data: { geoparsedData: args.geoparsedData as InputJsonValue },
       });
     },
 

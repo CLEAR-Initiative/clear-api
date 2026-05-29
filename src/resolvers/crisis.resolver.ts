@@ -1,5 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
+import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { sendCeleryTask } from "../services/celery.js";
@@ -18,6 +19,9 @@ interface UpdateCrisisPopulationInput {
   populationInArea?: string | null;
   title?: string | null;
   summary?: string | null;
+  /** LLM-generated forward scenarios. Shape:
+   *  { most_likely, best_case, worst_case, description }. */
+  scenarios?: Record<string, unknown> | null;
 }
 
 /**
@@ -304,6 +308,227 @@ export const crisisResolvers = {
       return link;
     },
 
+    /**
+     * Remove an event from a crisis and refresh the crisis state.
+     * If the event being removed is the LAST one, deletes the crisis
+     * entirely (FK cascades clean up the join row, feedback, and comments)
+     * and returns null. Otherwise returns the updated crisis with a fresh
+     * populationAffected and a regenerated narrative.
+     */
+    removeEventFromCrisis: async (
+      _parent: unknown,
+      args: { crisisId: string; eventId: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+      const { crisisId, eventId } = args;
+
+      const crisis = await context.prisma.crises.findUnique({
+        where: { id: crisisId },
+      });
+      if (!crisis) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const link = await context.prisma.eventCrises.findFirst({
+        where: { crisisId, eventId },
+        select: { eventId: true, crisisId: true },
+      });
+      if (!link) {
+        throw new GraphQLError("Event is not linked to this crisis", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const linkCount = await context.prisma.eventCrises.count({
+        where: { crisisId },
+      });
+
+      // Last event — auto-delete the crisis rather than leave it in a
+      // degenerate empty state. Cascades handle eventCrises / userFeedbacks
+      // / userComments. Return null to signal the crisis no longer exists.
+      if (linkCount <= 1) {
+        await context.prisma.crises.delete({ where: { id: crisisId } });
+        return null;
+      }
+
+      await context.prisma.eventCrises.deleteMany({
+        where: { crisisId, eventId },
+      });
+
+      // Recompute populationAffected over the remaining events
+      const remainingLinks = await context.prisma.eventCrises.findMany({
+        where: { crisisId },
+        select: { eventId: true },
+      });
+      const remainingEventIds = remainingLinks.map((l) => l.eventId);
+
+      const populationAffected = await sumEventPopulationAffected(
+        context.prisma,
+        remainingEventIds,
+      );
+      const updated = await context.prisma.crises.update({
+        where: { id: crisisId },
+        data: { populationAffected },
+      });
+
+      // Regenerate the narrative so title/summary reflect the new event set.
+      // Same fire-and-forget pattern as addEventToCrisis — clients see the
+      // pre-update title/summary until the enrichment task completes.
+      const districtIds = await collectDistrictIds(context.prisma, remainingEventIds);
+      void dispatchCrisisEnrichmentTask(
+        crisisId,
+        remainingEventIds,
+        districtIds,
+        true,
+      );
+
+      return updated;
+    },
+
+    /**
+     * Append S3 keys to a crisis's attachments list. Idempotent — keys
+     * already present in the list are skipped, so the UI can retry a
+     * mutation without producing duplicates. Order is stable: new keys
+     * append in the order received, after the existing list.
+     */
+    addCrisisAttachments: async (
+      _parent: unknown,
+      args: { id: string; keys: string[] },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+        select: { attachments: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const current = existing.attachments ?? [];
+      const seen = new Set(current);
+      const next = [...current];
+      for (const k of args.keys) {
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        next.push(k);
+      }
+
+      return context.prisma.crises.update({
+        where: { id: args.id },
+        data: { attachments: next },
+      });
+    },
+
+    /**
+     * Set the LLM-generated NRC SAF needs analysis inside the crisis's
+     * `needs` JSONB. Uses a Postgres `||` merge so other keys on `needs`
+     * are preserved (e.g. user-provided keys set at creation time stay
+     * untouched). Admin/pipeline only.
+     */
+    setCrisisNeedsAnalysis: async (
+      _parent: unknown,
+      args: {
+        id: string;
+        generalSummary: string;
+        sector: Record<string, unknown>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const { id, generalSummary, sector } = args;
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // JSONB merge: builds an object with the two new keys and unions it
+      // into `needs`. The Postgres `||` operator preserves any keys
+      // already present on `needs` (e.g. sector breakdowns the user set at
+      // creation time), only overwriting `generalSummary` and `sector`.
+      const sectorJson = JSON.stringify(sector);
+      await context.prisma.$executeRaw`
+        UPDATE "crises"
+        SET "needs" = COALESCE("needs", '{}'::jsonb)
+          || jsonb_build_object(
+            'generalSummary', ${generalSummary}::text,
+            'sector', ${sectorJson}::jsonb
+          )
+        WHERE "id" = ${id}
+      `;
+
+      return context.prisma.crises.findUniqueOrThrow({ where: { id } });
+    },
+
+    /**
+     * Remove an S3 key from a crisis's attachments list. Does not delete
+     * the underlying S3 object — that's a separate cleanup concern. Returns
+     * the updated crisis even if the key wasn't in the list (idempotent).
+     */
+    removeCrisisAttachment: async (
+      _parent: unknown,
+      args: { id: string; key: string },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+        select: { attachments: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const current: string[] = existing.attachments ?? [];
+      const next = current.filter((k: string) => k !== args.key);
+
+      return context.prisma.crises.update({
+        where: { id: args.id },
+        data: { attachments: next },
+      });
+    },
+
+    /**
+     * Delete a crisis. Any authenticated user can call this — crises are
+     * lightweight aggregations users curate, not a sensitive admin object.
+     * Relies on the FK cascade rules to clean up eventCrises join rows,
+     * user feedback, and user comments.
+     */
+    deleteCrisis: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireAuth(context);
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      await context.prisma.crises.delete({ where: { id: args.id } });
+      return true;
+    },
+
     updateCrisisPopulation: async (
       _parent: unknown,
       args: { id: string; input: UpdateCrisisPopulationInput },
@@ -319,11 +544,17 @@ export const crisisResolvers = {
         });
       }
 
+      // Prisma nullable JSON fields require the typed-null sentinel rather
+      // than a plain `null` in update inputs — `Prisma.DbNull` writes SQL
+      // NULL to the column (vs `Prisma.JsonNull` which writes the JSON
+      // literal `null`). We want SQL NULL since "no scenarios generated
+      // yet" is the field's natural absent state.
       const data: {
         populationAffected?: bigint | null;
         populationInArea?: bigint | null;
         title?: string | null;
         summary?: string | null;
+        scenarios?: InputJsonValue | typeof Prisma.DbNull;
       } = {};
       if (input.populationAffected !== undefined) {
         data.populationAffected = input.populationAffected === null
@@ -337,6 +568,11 @@ export const crisisResolvers = {
       }
       if (input.title !== undefined) data.title = input.title;
       if (input.summary !== undefined) data.summary = input.summary;
+      if (input.scenarios !== undefined) {
+        data.scenarios = input.scenarios === null
+          ? Prisma.DbNull
+          : (input.scenarios as InputJsonValue);
+      }
 
       return context.prisma.crises.update({ where: { id }, data });
     },
@@ -370,6 +606,17 @@ export const crisisResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userComments.findMany({ where: { crisisId: parent.id } });
+    },
+    // Convert S3 keys to presigned URLs at read time. External URLs
+    // (http/https) are passed through unchanged. Mirrors signals.media.
+    attachments: async (parent: { attachments: string[] | null | undefined }) => {
+      if (!parent.attachments || parent.attachments.length === 0) return [];
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return Promise.all(
+        parent.attachments.map((entry) =>
+          entry.startsWith("http") ? entry : getPresignedUrl(entry),
+        ),
+      );
     },
   },
 

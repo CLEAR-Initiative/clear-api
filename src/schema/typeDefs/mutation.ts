@@ -46,6 +46,13 @@ export const mutationTypeDef = gql`
     """Update a signal's severity score."""
     updateSignalSeverity(id: String!, severity: Int!): Signal!
 
+    """Attach the clear-pipeline geoparser's result to an existing signal.
+    Used for the manual-signal flow, where the signal is created via
+    createManualSignal before the pipeline has a chance to run the geoparser.
+    Stores the structured candidate verbatim; does not change locationId.
+    Admin/pipeline only."""
+    updateSignalGeoparsedData(id: String!, geoparsedData: JSON!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -102,6 +109,21 @@ export const mutationTypeDef = gql`
 
     """Delete a location's metadata entry for a given type (admin only)."""
     deleteLocationMetadata(locationId: String!, type: String!): Boolean!
+
+    """Find an existing level-4 location matching a geoparsed candidate, or
+    create one. Used by the clear-pipeline geoparser to promote a landmark
+    hit (e.g., "Nyala Airport") into a reusable A4 instead of letting the
+    resolver invent a fresh point-location for every signal. When sourceLat
+    and sourceLng are provided, the resolver verifies that the candidate's
+    containing A2 matches the source coord's containing A2 — on mismatch it
+    aborts with abortedReason="different_a2" so the caller can fall back to
+    source coords. Admin/pipeline only."""
+    findOrCreateLandmarkL4(input: FindOrCreateLandmarkL4Input!): FindOrCreateLandmarkL4Result!
+
+    # ─── Geocoder cache ──────────────────────────────────────────────────────
+    """Upsert a Nominatim geocoder cache entry (admin/pipeline only).
+    Replaces any existing row with the same queryHash, resetting the TTL."""
+    upsertNominatimCache(input: UpsertNominatimCacheInput!): NominatimCacheEntry!
 
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""
@@ -226,6 +248,37 @@ export const mutationTypeDef = gql`
 
     """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists."""
     addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
+
+    """Remove an event from a crisis. Recomputes populationAffected from the
+    remaining events and dispatches the enrichment task so title/summary get
+    regenerated to reflect the new event set. If the event being removed is
+    the LAST event, deletes the crisis entirely and returns null. Otherwise
+    returns the updated crisis (title/summary still show pre-removal values
+    until the async enrichment task completes)."""
+    removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
+
+    """Delete a crisis. Cascades the eventCrises join rows, user feedback,
+    and user comments via the FK constraints. Any authenticated user."""
+    deleteCrisis(id: String!): Boolean!
+
+    """Append S3 keys to a crisis's attachments list. Idempotent — keys
+    already present in the list are skipped silently. Returns the updated
+    crisis with the new list."""
+    addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
+
+    """Remove an S3 key from a crisis's attachments list. Does NOT delete
+    the underlying S3 object (operators can clean those up separately).
+    Returns the updated crisis."""
+    removeCrisisAttachment(id: String!, key: String!): Crisis!
+
+    """Set the LLM-generated NRC SAF needs analysis inside the crisis's
+    needs JSONB. Merges generalSummary and sector keys into the existing
+    object so other keys on needs are preserved. Admin/pipeline only."""
+    setCrisisNeedsAnalysis(
+      id: String!,
+      generalSummary: String!,
+      sector: JSON!,
+    ): Crisis!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -351,6 +404,10 @@ export const mutationTypeDef = gql`
     lat: Float
     """Longitude for automatic geo-resolution."""
     lng: Float
+    """Optional output of clear-pipeline's text-based geoparser. Additive
+    enrichment, stored verbatim for downstream comparison against the
+    source's coords. Schema documented on the signals model."""
+    geoparsedData: JSON
   }
 
   input CreateEventInput {
@@ -503,5 +560,8 @@ export const mutationTypeDef = gql`
     title: String
     """AI-generated crisis summary."""
     summary: String
+    """LLM-generated forward scenarios. Shape:
+       { most_likely, best_case, worst_case, description }."""
+    scenarios: JSON
   }
 `;

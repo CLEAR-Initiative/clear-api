@@ -139,5 +139,10 @@ export const queryTypeDef = gql`
     by type / severity / day / week / month. Filter shape mirrors the page
     queries so a "current view" can compute its own counts."""
     entityStats(input: EntityStatsInput!): EntityStats!
+
+    # ─── Geocoder cache ──────────────────────────────────────────────────────
+    """Look up a cached Nominatim geocoder response by query hash. Returns
+    null when the entry is missing or expired (admin/pipeline only)."""
+    nominatimCacheEntry(queryHash: String!): NominatimCacheEntry
   }
 `;

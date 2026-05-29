@@ -85,5 +85,5 @@ jobs:
             cd /srv/app
             docker compose pull clear-api
             docker compose up -d clear-api
-            docker image prune -f
+            docker image prune -a -f
             docker compose ps clear-api

@@ -3,7 +3,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
-import { computeAncestorIds } from "../utils/geo-resolve.js";
+import { computeAncestorIds, findOrCreateLandmarkL4 } from "../utils/geo-resolve.js";
 
 interface CreateLocationInput {
   geoId?: number;
@@ -192,6 +192,41 @@ export const locationResolvers = {
       return context.prisma.locations.update({
         where: { id: args.id },
         data: { population: BigInt(args.population) },
+      });
+    },
+
+    findOrCreateLandmarkL4: async (
+      _parent: unknown,
+      args: {
+        input: {
+          name: string;
+          lat: number;
+          lng: number;
+          kind: string;
+          sourceLat?: number | null;
+          sourceLng?: number | null;
+        };
+      },
+      context: Context,
+    ) => {
+      // Admin/pipeline only — this is internal infrastructure, not user-facing.
+      requireRole(context, ["admin"]);
+      const { input } = args;
+
+      if (input.kind !== "landmark" && input.kind !== "admin") {
+        throw new GraphQLError(
+          `Invalid kind "${input.kind}" — expected 'landmark' or 'admin'`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
+      return findOrCreateLandmarkL4(context.prisma, {
+        name: input.name,
+        lat: input.lat,
+        lng: input.lng,
+        kind: input.kind,
+        sourceLat: input.sourceLat ?? null,
+        sourceLng: input.sourceLng ?? null,
       });
     },
   },
