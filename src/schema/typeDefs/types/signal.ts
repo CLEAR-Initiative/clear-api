@@ -9,8 +9,6 @@ export const signalTypeDef = gql`
     """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
     deduplicate ingestion — (source, externalId) is unique."""
     externalId: String
-    """Original signal payload as JSON."""
-    rawData: JSON!
     publishedAt: DateTime!
     collectedAt: DateTime!
     url: String
