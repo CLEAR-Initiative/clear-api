@@ -306,11 +306,17 @@ async function main(): Promise<void> {
     const sample = payloads[0]!;
     const sampleSource = (sample.data._source ?? {}) as Record<string, unknown>;
     const sampleSectors = (sample.data.sectors ?? {}) as Record<string, unknown>;
+    const sampleRaw = (sample.data.raw ?? {}) as Record<string, Record<string, unknown>>;
+    const rawColCount = Object.values(sampleRaw).reduce(
+      (sum, cols) => sum + (cols && typeof cols === "object" ? Object.keys(cols).length : 0),
+      0,
+    );
     console.log("Sample payload (first locality):");
     console.log(`  locationId:         ${sample.locationId}`);
     console.log(`  type:               ${sample.type}`);
     console.log(`  data.as_of:         ${String(sample.data.as_of ?? "")}`);
     console.log(`  data.sectors:       ${JSON.stringify(Object.keys(sampleSectors))}`);
+    console.log(`  data.raw:           ${Object.keys(sampleRaw).length} sectors / ${rawColCount} columns total`);
     console.log(`  data._source.pcode: ${String(sampleSource.pcode ?? "")}`);
     console.log();
     console.log(`Would upsert ${payloads.length} records in batches of ${BATCH_SIZE}.`);

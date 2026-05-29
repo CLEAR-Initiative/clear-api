@@ -162,11 +162,14 @@ def main():
 
     if not args.execute:
         sample = payloads[0]
+        raw_block = sample["data"].get("raw") or {}
+        raw_col_count = sum(len(cols) for cols in raw_block.values() if isinstance(cols, dict))
         print("Sample payload (first locality):")
         print(f"  locationId:         {sample['locationId']}")
         print(f"  type:               {sample['type']}")
         print(f"  data.as_of:         {sample['data']['as_of']}")
         print(f"  data.sectors:       {list(sample['data']['sectors'].keys())}")
+        print(f"  data.raw:           {len(raw_block)} sectors / {raw_col_count} columns total")
         print(f"  data._source.pcode: {sample['data']['_source']['pcode']}")
         print()
         print(f"Would upsert {len(payloads)} records in batches of {BATCH_SIZE}.")
