@@ -37,195 +37,232 @@ FORMULA_SOURCE = "https://www.notion.so/Severity-Scoring-Logic-3585043895cf807a9
 
 FORMULA_DOCS: dict = {
     "FSL": {
-        "formula": "(poor_FCS * 0.70 + borderline_FCS * 0.30) * 0.40 + (rcsi_phase3 + rcsi_phase4) * 0.30 + (lcsi_crisis + lcsi_emergency) * 0.30",
-        "standard": "IPC Technical Manual v3.1 - three-pillar convergence: food consumption (FCS), coping strategies (rCSI), livelihoods (LCSI)",
+        "formula": "((poor_FCS * 0.70 + borderline_FCS * 0.30) + (rcsi_phase3 + rcsi_phase4) + (lcsi_crisis + lcsi_emergency)) / 3",
+        "standard": "IPC Technical Manual v3.1 (https://www.ipcinfo.org/fileadmin/user_upload/ipcinfo/manual/IPC_Technical_Manual_3_Final.pdf) - three-pillar convergence of evidence: food consumption (FCS), coping strategies (rCSI), livelihoods (LCSI). WFP CARI (https://vamresources.manuals.wfp.org/docs/the-consolidated-approach-for-reporting-indicators-of-food-security-cari).",
+        "weighting_rationale": "Three pillars weighted equally (1/3 each): IPC gives all three equal standing in convergence of evidence - no standard justifies weighting one pillar above another. Within FCS, Poor outweighs Borderline (70/30): Poor FCS (<21) is definitively inadequate diet; Borderline (21-35) is at-risk but not failing - qualitatively different states. rCSI and LCSI are summed as crisis-or-above totals (Phase 3 + Phase 4, Crisis + Emergency) before entering the formula - all crisis-level coping is treated equally regardless of severity tier.",
+        "weight_note": "Composite scoring is not specified by IPC - IPC uses analyst-driven convergence, not a formula. Weights are a prototype design choice pending expert validation.",
         "indicators": {
             "poor_FCS": {
                 "sheet": "FSL", "col": 59,
                 "question": "What is the food consumption status of this household?",
                 "response": "Poor",
-                "weight": 0.40 * 0.70,
+                "effective_weight": round(0.70 / 3, 4),
+                "weight_rationale": "0.70 within FCS pillar (1/3 of total): Poor FCS is definitively food insecure - dietary intake is unacceptably inadequate.",
             },
             "borderline_FCS": {
                 "sheet": "FSL", "col": 58,
                 "question": "What is the food consumption status of this household?",
                 "response": "Borderline",
-                "weight": 0.40 * 0.30,
+                "effective_weight": round(0.30 / 3, 4),
+                "weight_rationale": "0.30 within FCS pillar (1/3 of total): Borderline FCS is at risk but diet not yet unacceptably poor - less severe than Poor.",
             },
             "rcsi_phase3_crisis": {
                 "sheet": "FSL", "col": 63,
                 "question": "What is the reduced coping strategy status of this household?",
                 "response": "Phase 3 (Crisis, rCSI 10-18)",
-                "weight": 0.30,
-                "note": "Combined with phase4; summed % represents Crisis-or-above coping",
+                "effective_weight": round(1 / 3, 4),
+                "weight_rationale": "Summed with rcsi_phase4 as crisis-or-above total; combined total carries 1/3 pillar weight. rCSI phase thresholds from WFP VAM (https://vamresources.manuals.wfp.org/docs/reduced-coping-strategies-index).",
             },
             "rcsi_phase4_emergency": {
                 "sheet": "FSL", "col": 64,
                 "question": "What is the reduced coping strategy status of this household?",
-                "response": "Phase 4 (Emergency, rCSI ≥ 19)",
-                "weight": 0.30,
-                "note": "Combined with phase3; summed % represents Crisis-or-above coping",
+                "response": "Phase 4 (Emergency, rCSI >= 19)",
+                "effective_weight": round(1 / 3, 4),
+                "weight_rationale": "Summed with rcsi_phase3 as crisis-or-above total; combined total carries 1/3 pillar weight.",
             },
             "lcsi_crisis": {
                 "sheet": "FSL", "col": 72,
                 "question": "What is the livelihood coping status of this household?",
                 "response": "Crisis coping strategies",
-                "weight": 0.30,
-                "note": "Combined with lcsi_emergency; summed % represents Crisis-or-above livelihood coping",
+                "effective_weight": round(1 / 3, 4),
+                "weight_rationale": "Summed with lcsi_emergency as crisis-or-above total; combined total carries 1/3 pillar weight.",
             },
             "lcsi_emergency": {
                 "sheet": "FSL", "col": 73,
                 "question": "What is the livelihood coping status of this household?",
                 "response": "Emergencies coping strategies",
-                "weight": 0.30,
-                "note": "Combined with lcsi_crisis; summed % represents Crisis-or-above livelihood coping",
+                "effective_weight": round(1 / 3, 4),
+                "weight_rationale": "Summed with lcsi_crisis as crisis-or-above total; combined total carries 1/3 pillar weight.",
             },
         },
     },
     "WASH": {
-        "formula": "(100 - improved_water) * 0.25 + insuff_water * 0.15 + open_defecation * 0.20 + unimproved_sanitation * 0.15 + (100 - soap_handwashing) * 0.25",
-        "standard": "JMP 2023 - three-pillar monitoring: water quality+quantity, sanitation, hygiene. Sphere 2018 minimum 15L/person/day.",
+        "formula": "(100 - improved_water) / 6 + insuff_water / 6 + open_defecation / 6 + unimproved_sanitation / 6 + (100 - soap_handwashing) / 3",
+        "standard": "JMP 2023 methodology (https://washdata.org/topics/methods) - three independent pillars: Water, Sanitation, Hygiene. Sphere 2018 minimum 15L/person/day water quantity.",
+        "weighting_rationale": "Three JMP pillars weighted equally (1/3 each): JMP explicitly monitors and reports Water, Sanitation, and Hygiene as separate equal pillars - no standard justifies weighting one above another. Within Water and Sanitation, two indicators each are split equally (1/6 per indicator). Hygiene has one indicator which carries the full 1/3 pillar weight. Consequence: hygiene (soap observation) carries twice the weight of any single water or sanitation indicator - a known limitation of having fewer hygiene indicators in this MSNA.",
+        "weight_note": "JMP does not produce a composite WASH score - it reports each pillar independently. This formula is a prototype design choice pending expert validation.",
         "indicators": {
             "improved_water": {
                 "sheet": "WASH", "col": 15,
                 "question": "Access to improved drinking water",
                 "response": "Improved water source",
-                "weight": 0.25, "note": "Inverted: score uses (100 - value)",
+                "pillar": "Water",
+                "effective_weight": round(1 / 6, 4),
+                "weight_rationale": "1/6: equal share of Water pillar (1/3) split between two water indicators.",
+                "note": "Inverted: score uses (100 - value)",
             },
             "insuff_water": {
                 "sheet": "WASH", "col": 27,
                 "question": "Which of the following needs is your household able to meet with available water?",
                 "response": "5. Not enough water to meet any of the above needs",
-                "weight": 0.15,
+                "pillar": "Water",
+                "effective_weight": round(1 / 6, 4),
+                "weight_rationale": "1/6: equal share of Water pillar (1/3) split between two water indicators. Sphere 2018 minimum 15L/person/day.",
             },
             "open_defecation": {
                 "sheet": "WASH", "col": 82,
                 "question": "Type of sanitation facility used",
                 "response": "None of the above, open defecation",
-                "weight": 0.20,
+                "pillar": "Sanitation",
+                "effective_weight": round(1 / 6, 4),
+                "weight_rationale": "1/6: equal share of Sanitation pillar (1/3) split between two sanitation indicators.",
             },
             "unimproved_sanitation": {
                 "sheet": "WASH", "col": 85,
                 "question": "Access to improved sanitation",
                 "response": "Unimproved sanitation type",
-                "weight": 0.15,
+                "pillar": "Sanitation",
+                "effective_weight": round(1 / 6, 4),
+                "weight_rationale": "1/6: equal share of Sanitation pillar (1/3) split between two sanitation indicators.",
             },
             "soap_handwashing": {
                 "sheet": "WASH", "col": 151,
                 "question": "(Observe): Is soap available at the place for handwashing?",
                 "response": "Yes",
-                "weight": 0.25, "note": "Inverted: score uses (100 - value); JMP Basic hygiene requires soap at station",
+                "pillar": "Hygiene",
+                "effective_weight": round(1 / 3, 4),
+                "weight_rationale": "1/3: sole indicator for Hygiene pillar carries full pillar weight. JMP Basic hygiene requires soap and water at handwashing station (https://washdata.org/monitoring/hygiene).",
+                "note": "Inverted: score uses (100 - value)",
             },
         },
     },
     "Health": {
         "formula": "unable_to_access_care * 0.70 + facility_over_60min * 0.30",
+        "weighting_rationale": "Unable to access care (0.70) outweighs distance (0.30): unable_to_access_care is an actual unmet need - the household had a health problem and could not obtain care. facility_over_60min is a proximity barrier - a household may still access care despite the distance. These are qualitatively different: realized deprivation vs potential barrier.",
+        "weight_note": "No published standard specifies weights for a composite health access score. The 70/30 split reflects the outcome vs barrier distinction and is a prototype design choice pending expert validation.",
         "indicators": {
             "unable_to_access_care": {
                 "sheet": "Health", "col": 12,
                 "question": "Were households able to obtain health care?",
                 "response": "No",
-                "weight": 0.70,
-                "note": "Denominator is households that reported a health problem (col 6), not all households",
+                "effective_weight": 0.70,
+                "weight_rationale": "0.70: realized unmet need - household required care and could not access it.",
+                "note": "Denominator is households that reported a health problem (col 6), not all households.",
             },
             "facility_over_60min": {
                 "sheet": "Health", "col": 4,
                 "question": "Travel time to nearest functional health facility",
                 "response": "More than 60 minutes",
-                "weight": 0.30,
+                "effective_weight": 0.30,
+                "weight_rationale": "0.30: proximity barrier - travel time is a potential constraint, not a confirmed access failure.",
             },
         },
     },
     "Education": {
         "formula": "children_not_attending * 1.00",
+        "weighting_rationale": "Single indicator - full weight by definition. No weighting decision required.",
+        "weight_note": "Education sector has one indicator in this MSNA. Score equals the indicator value directly.",
         "indicators": {
             "children_not_attending": {
                 "sheet": "Education", "col": 8,
                 "question": "Did child attend formal school >= 4 days/week in past 6 months? (ages 5-18)",
                 "response": "No",
-                "weight": 1.00,
+                "effective_weight": 1.00,
+                "weight_rationale": "Sole indicator for this sector.",
             },
         },
     },
     "Shelter": {
-        "formula": "(100 - solid_shelter) * 0.40 + (makeshift + tent + no_shelter) * 0.25 + overcrowded * 0.20 + (nfi_bedding + nfi_cooking) / 2 * 0.15",
-        "standard": "Sphere 2018 - minimum 3.5m2/person floor area; core NFI items include sleeping materials and cooking equipment",
+        "formula": "(100 - solid_shelter) * 0.25 + (makeshift + tent + no_shelter) * 0.25 + overcrowded * 0.25 + ((nfi_bedding + nfi_cooking) / 2) * 0.25",
+        "standard": "Sphere Handbook 2018 (https://spherestandards.org/wp-content/uploads/Sphere-Handbook-2018-EN.pdf) - minimum 3.5m2/person floor area; core NFI items include sleeping materials and cooking equipment.",
+        "weighting_rationale": "Four dimensions weighted equally (0.25 each): no published standard specifies weights for a composite shelter score. Equal weighting is the neutral prior in the absence of evidence. The four dimensions represent distinct Sphere-grounded concerns: (1) structure quality - what type of dwelling; (2) acute inadequacy - tents, makeshift, none; (3) space - Sphere 3.5m2 minimum; (4) core NFI - sleeping and cooking items. Known limitation: solid_shelter and acute_types are correlated (makeshift/tent/no shelter are a subset of not-solid-shelter), which partially double-counts structure inadequacy.",
+        "weight_note": "Sphere specifies minimum thresholds per item independently - it does not define a composite score or weights. Equal weighting is a prototype design choice pending expert validation.",
         "indicators": {
             "solid_shelter": {
                 "sheet": "Shelter", "col": 1,
                 "question": "Type of shelter or dwelling",
                 "response": "Solid / finished house",
-                "weight": 0.40,
-                "note": "Inverted: score uses (100 - value); solid/finished houses only, apartments excluded",
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight across four shelter dimensions. Solid/finished houses only; apartments excluded.",
+                "note": "Inverted: score uses (100 - value)",
             },
             "tent": {
                 "sheet": "Shelter", "col": 6,
                 "question": "Type of shelter or dwelling",
                 "response": "Tent",
-                "weight_combined": 0.25,
-                "note": "Summed with makeshift + no_shelter",
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25 combined weight for acute shelter types (makeshift + tent + no_shelter) - summed before applying weight.",
             },
             "makeshift": {
                 "sheet": "Shelter", "col": 7,
                 "question": "Type of shelter or dwelling",
                 "response": "Makeshift shelter",
-                "weight_combined": 0.25,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25 combined weight for acute shelter types - summed with tent and no_shelter before applying weight.",
             },
             "no_shelter": {
                 "sheet": "Shelter", "col": 10,
                 "question": "Type of shelter or dwelling",
                 "response": "No shelter (sleeping in the open)",
-                "weight_combined": 0.25,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25 combined weight for acute shelter types - summed with makeshift and tent before applying weight.",
             },
             "overcrowded": {
                 "sheet": "Shelter", "col": 20,
                 "question": "What issues are present in your current shelter?",
                 "response": "9. Overcrowding (less than 3.5 m2 per household member)",
-                "weight": 0.20,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight. Sphere 2018 minimum 3.5m2/person in emergency settings.",
             },
             "nfi_bedding": {
                 "sheet": "Shelter", "col": 38,
                 "question": "Please explain why your household cannot sleep / the issues",
                 "response": "1. Insufficient essential household items for sleeping (bedding, mattresses/mats, bednets)",
-                "weight": 0.15 * 0.50,
-                "note": "Averaged with nfi_cooking for combined NFI weight of 0.15",
+                "effective_weight": 0.125,
+                "weight_rationale": "0.125: half of 0.25 NFI dimension weight, averaged with nfi_cooking. Sphere 2018 core NFI item.",
             },
             "nfi_cooking": {
                 "sheet": "Shelter", "col": 51,
                 "question": "Please explain why your household cannot cook / the issues",
                 "response": "1. Insufficient essential household items for cooking (utensils, kitchen sets, eating sets)",
-                "weight": 0.15 * 0.50,
-                "note": "Averaged with nfi_bedding for combined NFI weight of 0.15",
+                "effective_weight": 0.125,
+                "weight_rationale": "0.125: half of 0.25 NFI dimension weight, averaged with nfi_bedding. Sphere 2018 core NFI item.",
             },
         },
     },
     "Protection": {
-        "formula": "movement_restrictions * 0.40 + missing_civil_docs * 0.30 + psychological_distress * 0.20 + unaccompanied_children * 0.10",
+        "formula": "(movement_restrictions + missing_civil_docs + psychological_distress + unaccompanied_children) / 4",
+        "weighting_rationale": "Four indicators weighted equally (0.25 each): movement restrictions, civil documentation, psychological distress, and unaccompanied children measure independent protection dimensions with no published cross-dimension weighting. Equal weighting is the neutral prior.",
+        "weight_note": "No published standard specifies weights for a composite multi-sector protection score. Equal weighting is a prototype design choice pending expert validation.",
         "indicators": {
             "movement_restrictions": {
                 "sheet": "General_Protection_CP_GBV", "col": 10,
                 "question": "In the last 3 months, have any members of your household faced restrictions when trying to move?",
                 "response": "Yes",
-                "weight": 0.40,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight across four independent protection dimensions.",
             },
             "missing_civil_docs": {
                 "sheet": "General_Protection_CP_GBV", "col": 24,
                 "question": "Are any household members missing their civil documentation (passport, birth certificate, national ID, etc.)?",
                 "response": "Not missing",
-                "weight": 0.30,
-                "note": "Derived: score uses (100 - col 24). Col 24 gives % with no missing docs; inverted to give % missing at least one document.",
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight. Derived: score uses (100 - col 24) to convert % not-missing to % missing at least one document.",
+                "note": "Inverted: col 24 gives % with no missing docs; score uses (100 - value) to get % missing at least one document.",
             },
             "psychological_distress": {
                 "sheet": "General_Protection_CP_GBV", "col": 55,
                 "question": "Have any members of your household experienced any signs of psychological distress?",
                 "response": "Yes",
-                "weight": 0.20,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight across four independent protection dimensions.",
             },
             "unaccompanied_children": {
                 "sheet": "General_Protection_CP_GBV", "col": 76,
                 "question": "Are there children under 18 now living in this household without both of their parents?",
                 "response": "Yes",
-                "weight": 0.10,
+                "effective_weight": 0.25,
+                "weight_rationale": "0.25: equal weight across four independent protection dimensions.",
             },
         },
     },
@@ -340,7 +377,7 @@ def score_fsl(row: dict) -> tuple[float, dict]:
     fcs_score  = (poor or 0) * 0.70 + (borderline or 0) * 0.30
     rcsi_score = (rcsi_p3 or 0) + (rcsi_p4 or 0)
     lcsi_score = (lcsi_cr or 0) + (lcsi_em or 0)
-    score = fcs_score * 0.40 + rcsi_score * 0.30 + lcsi_score * 0.30
+    score = (fcs_score + rcsi_score + lcsi_score) / 3
 
     inputs = {
         "poor_FCS":              poor,
@@ -367,12 +404,14 @@ def score_wash(row: dict) -> tuple[float, dict]:
         "unimproved_sanitation": unimp_san,
         "soap_handwashing":      soap,
     }
+    # JMP three pillars equal (1/3 each): Water = quality/6 + quantity/6,
+    # Sanitation = OD/6 + unimproved/6, Hygiene = soap/3
     score = (
-        (100 - (improved or 0)) * 0.25
-        + (insuff         or 0) * 0.15
-        + (open_def       or 0) * 0.20
-        + (unimp_san      or 0) * 0.15
-        + (100 - (soap   or 0)) * 0.25
+        (100 - (improved or 0)) / 6
+        + (insuff         or 0) / 6
+        + (open_def       or 0) / 6
+        + (unimp_san      or 0) / 6
+        + (100 - (soap   or 0)) / 3
     )
     return round(score, 2), inputs
 
@@ -417,10 +456,10 @@ def score_shelter(row: dict) -> tuple[float, dict]:
         "nfi_lacking_cooking": nfi_cooking,
     }
     score = (
-        (100 - (solid or 0)) * 0.40
+        (100 - (solid or 0)) * 0.25
         + acute_types        * 0.25
-        + (overcrowded or 0) * 0.20
-        + nfi_avg            * 0.15
+        + (overcrowded or 0) * 0.25
+        + nfi_avg            * 0.25
     )
     return round(score, 2), inputs
 
@@ -439,10 +478,10 @@ def score_protection(row: dict) -> tuple[float, dict]:
         "unaccompanied_children": unaccomp,
     }
     score = (
-        (movement     or 0) * 0.40
-        + (missing_docs or 0) * 0.30
-        + (distress     or 0) * 0.20
-        + (unaccomp     or 0) * 0.10
+        (movement     or 0) * 0.25
+        + (missing_docs or 0) * 0.25
+        + (distress     or 0) * 0.25
+        + (unaccomp     or 0) * 0.25
     )
     return round(score, 2), inputs
 
@@ -768,7 +807,7 @@ def process(xlsx_path: Path, api_locs: dict | None) -> dict:
             "data_collection":     "07 August 2025 to 31 August 2025",
             "led_by":              "IOM DTM, with OCHA, REACH, ICCG, and AAWG",
             "coverage":            "188 localities across all 18 Sudan states",
-            "scoring_version":     "prototype-v2",
+            "scoring_version":     "prototype-v3",
             "formula_source":      FORMULA_SOURCE,
             "note":                "Thresholds and formulas are prototype-stage and unvalidated.",
             "formulas":            FORMULA_DOCS,
