@@ -84,6 +84,9 @@ jobs:
             set -e
             cd /srv/app
             docker compose pull clear-api
-            docker compose up -d clear-api
+            # --force-recreate ensures the container picks up the freshly
+            # pulled image (compose sometimes skips recreation when only the
+            # image SHA changed, leaving the old container running).
+            docker compose up -d --force-recreate clear-api
             docker image prune -a -f
             docker compose ps clear-api
