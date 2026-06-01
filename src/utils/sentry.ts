@@ -26,3 +26,25 @@ if (dsn) {
 }
 
 export { Sentry };
+
+/**
+ * Apollo Server plugin that ships unhandled GraphQL errors to Sentry.
+ * Apollo catches errors internally before Sentry's global handler sees them,
+ * so without this plugin the only errors that report are ones thrown outside
+ * the resolver chain (auth middleware, etc.).
+ */
+export const sentryApolloPlugin = {
+  async requestDidStart() {
+    return {
+      async didEncounterErrors(ctx: { errors: readonly unknown[]; request: { query?: string; operationName?: string } }) {
+        if (!dsn) return; // SDK not initialised — skip cheaply
+        for (const err of ctx.errors) {
+          Sentry.captureException(err, {
+            tags: { graphql_operation: ctx.request.operationName ?? "anonymous" },
+            extra: { query: ctx.request.query },
+          });
+        }
+      },
+    };
+  },
+};
