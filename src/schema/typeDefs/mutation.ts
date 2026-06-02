@@ -287,7 +287,7 @@ export const mutationTypeDef = gql`
     object so other keys on needs are preserved. Admin/pipeline only."""
     setCrisisNeedsAnalysis(
       id: String!,
-      generalSummary: String!,
+      generalSummary: [String!]!,
       sector: JSON!,
     ): Crisis!
   }
