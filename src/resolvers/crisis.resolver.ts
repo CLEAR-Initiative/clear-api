@@ -436,7 +436,7 @@ export const crisisResolvers = {
       _parent: unknown,
       args: {
         id: string;
-        generalSummary: string;
+        generalSummary: string[];
         sector: Record<string, unknown>;
       },
       context: Context,
@@ -458,12 +458,15 @@ export const crisisResolvers = {
       // into `needs`. The Postgres `||` operator preserves any keys
       // already present on `needs` (e.g. sector breakdowns the user set at
       // creation time), only overwriting `generalSummary` and `sector`.
+      // `generalSummary` is a JSON array of bullet strings — stringify and
+      // cast to jsonb so the array round-trips losslessly through SQL.
+      const generalSummaryJson = JSON.stringify(generalSummary);
       const sectorJson = JSON.stringify(sector);
       await context.prisma.$executeRaw`
         UPDATE "crises"
         SET "needs" = COALESCE("needs", '{}'::jsonb)
           || jsonb_build_object(
-            'generalSummary', ${generalSummary}::text,
+            'generalSummary', ${generalSummaryJson}::jsonb,
             'sector', ${sectorJson}::jsonb
           )
         WHERE "id" = ${id}
