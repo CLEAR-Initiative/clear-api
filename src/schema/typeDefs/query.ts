@@ -144,5 +144,17 @@ export const queryTypeDef = gql`
     """Look up a cached Nominatim geocoder response by query hash. Returns
     null when the entry is missing or expired (admin/pipeline only)."""
     nominatimCacheEntry(queryHash: String!): NominatimCacheEntry
+
+    # ─── Analytics / audit ───────────────────────────────────────────────────
+    """Paginated activity log. Admin only. Newest first."""
+    activityLogs(
+      filter: ActivityLogFilterInput
+      limit: Int = 50
+      offset: Int = 0
+    ): [ActivityLog!]!
+
+    """Aggregated activity counts + per-user + per-day breakdown for the
+    admin dashboard. Admin only. Default window: last 30 days."""
+    activityStats(from: DateTime, to: DateTime): ActivityStats!
   }
 `;

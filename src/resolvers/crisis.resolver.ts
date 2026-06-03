@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 import { sendCeleryTask } from "../services/celery.js";
 
 interface CreateCrisisFromEventsInput {
@@ -233,6 +234,22 @@ export const crisisResolvers = {
         districtIds,
         generateNarrative,
       );
+
+      const actor = context.user;
+      if (actor) {
+        void logActivity(context.prisma, {
+          userId: actor.id,
+          action: "crisis.create",
+          resourceType: "crisis",
+          resourceId: crisis.id,
+          metadata: {
+            title: crisis.title,
+            severity: crisis.severity,
+            eventCount: input.eventIds.length,
+            userProvidedTitle: Boolean(input.title),
+          },
+        });
+      }
 
       return crisis;
     },

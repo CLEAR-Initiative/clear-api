@@ -1,6 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireAuth } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ export const feedbackResolvers = {
         });
       }
 
-      return context.prisma.userFeedbacks.create({
+      const feedback = await context.prisma.userFeedbacks.create({
         data: {
           userId: user.id,
           eventId: eventId ?? null,
@@ -73,6 +74,23 @@ export const feedbackResolvers = {
           text: text ?? null,
         },
       });
+
+      const target = eventId ? "event" : signalId ? "signal" : "crisis";
+      const targetId = eventId ?? signalId ?? crisisId ?? null;
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "feedback.create",
+        resourceType: "feedback",
+        resourceId: feedback.id,
+        metadata: {
+          rating,
+          target,
+          targetId,
+          hasText: Boolean(text),
+        },
+      });
+
+      return feedback;
     },
 
     deleteFeedback: async (
