@@ -20,6 +20,7 @@ import { crisisTypeDef } from "./typeDefs/types/crisis.js";
 import { locationMetadataTypeDef } from "./typeDefs/types/locationMetadata.js";
 import { nominatimCacheTypeDef } from "./typeDefs/types/nominatimCache.js";
 import { paginationTypeDef } from "./typeDefs/types/pagination.js";
+import { activityLogTypeDef } from "./typeDefs/types/activityLog.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -44,4 +45,5 @@ export const typeDefs = [
   locationMetadataTypeDef,
   nominatimCacheTypeDef,
   paginationTypeDef,
+  activityLogTypeDef,
 ];

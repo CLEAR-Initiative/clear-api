@@ -2,6 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { uploadFileToS3 } from "../services/s3.js";
@@ -267,6 +268,18 @@ export const signalResolvers = {
         signal_published_at: signal.publishedAt.toISOString(),
       }).catch((err) => {
         console.error("[createManualSignal] Failed to queue pipeline task:", err);
+      });
+
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "signal.create_manual",
+        resourceType: "signal",
+        resourceId: signal.id,
+        metadata: {
+          title: input.title,
+          sourceName: dataSource.name,
+          severity: input.severity ?? null,
+        },
       });
 
       return signal;
