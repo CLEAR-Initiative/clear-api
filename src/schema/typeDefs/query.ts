@@ -144,5 +144,11 @@ export const queryTypeDef = gql`
     """Look up a cached Nominatim geocoder response by query hash. Returns
     null when the entry is missing or expired (admin/pipeline only)."""
     nominatimCacheEntry(queryHash: String!): NominatimCacheEntry
+
+    # ─── Pipeline config ───────────────────────────────────────────────────────
+    """The countries the CLEAR pipeline publishes a Situation Analysis for, with
+    each Country's bounding box. The scheduled publisher reads this to know which
+    countries to run. Requires authentication."""
+    pipelineCountries: [PipelineCountry!]!
   }
 `;
