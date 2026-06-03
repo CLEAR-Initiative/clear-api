@@ -69,7 +69,7 @@ export const locationMetadataResolvers = {
       args: { input: UpsertLocationMetadataInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", "pipeline"]);
       const { input } = args;
 
       const location = await context.prisma.locations.findUnique({

@@ -84,6 +84,12 @@ export const mutationTypeDef = gql`
     """Create a new location."""
     createLocation(input: CreateLocationInput!): Location!
 
+    """Idempotently resolve a level-0 Country location by exact name, creating it
+    with a bounding-box MULTIPOLYGON geometry if absent (admin/pipeline only).
+    bbox is [minLng, minLat, maxLng, maxLat]. Returns the (found or created)
+    Country — doubles as the pipeline's name→id resolution."""
+    ensureCountryLocation(name: String!, bbox: [Float!]!): Location!
+
     """Update an existing location."""
     updateLocation(id: String!, input: UpdateLocationInput!): Location!
 

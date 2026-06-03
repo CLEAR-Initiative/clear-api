@@ -23,6 +23,39 @@ interface UpdateLocationInput {
   parentId?: string;
 }
 
+/**
+ * Build a closed MULTIPOLYGON WKT ring from a `[minLng, minLat, maxLng, maxLat]`
+ * bounding box. A polygon (NOT POINT(0 0)) is required so later spatial
+ * event/crisis queries against the country geometry return results.
+ *
+ * Pure + exported so the geometry contract is unit-testable without a DB.
+ * Throws on a malformed bbox so a bad call fails loudly rather than writing a
+ * degenerate geometry.
+ */
+export function bboxToMultipolygonWkt(bbox: number[]): string {
+  if (
+    !Array.isArray(bbox) ||
+    bbox.length !== 4 ||
+    bbox.some((n) => typeof n !== "number" || Number.isNaN(n))
+  ) {
+    throw new GraphQLError("bbox must be [minLng, minLat, maxLng, maxLat]", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  if (minLng >= maxLng || minLat >= maxLat) {
+    throw new GraphQLError(
+      "bbox min must be strictly less than max on both axes",
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+  // Closed ring, lng-lat order, counter-clockwise from the SW corner.
+  return (
+    `MULTIPOLYGON(((${minLng} ${minLat}, ${maxLng} ${minLat}, ` +
+    `${maxLng} ${maxLat}, ${minLng} ${maxLat}, ${minLng} ${minLat})))`
+  );
+}
+
 /* ── Helper: fetch geometry GeoJSON for a location via raw SQL ── */
 interface LocationGeoRow {
   geometry_geojson: string | null;
@@ -87,6 +120,48 @@ export const locationResolvers = {
       await context.prisma.$executeRaw`
         INSERT INTO "locations" ("id", "geonames_id", "osm_id", "p_code", "name", "level", "parent_id", "ancestor_ids", "geometry")
         VALUES (${id}, ${geoId}, ${osmId}, ${pCode}, ${input.name}, ${input.level}, ${parentId}, ${ancestorIds}, ST_GeomFromText('POINT(0 0)', 4326))
+      `;
+
+      return context.prisma.locations.findUniqueOrThrow({ where: { id } });
+    },
+
+    /**
+     * Idempotent find-or-create of the level-0 Country location, by exact name.
+     * Doubles as the pipeline's name→id resolution: returns the existing
+     * Country if one exists, otherwise creates it with a bounding-box
+     * MULTIPOLYGON geometry (NOT POINT(0 0)) so later spatial queries work.
+     *
+     * Accepts `admin` or `pipeline` (the least-privilege machine identity).
+     */
+    ensureCountryLocation: async (
+      _parent: unknown,
+      args: { name: string; bbox: number[] },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const name = args.name.trim();
+      if (!name) {
+        throw new GraphQLError("name is required", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      // Exact-name lookup of the level-0 Country. Found → return as-is
+      // (idempotent: same name → same id, geometry untouched).
+      const existing = await context.prisma.locations.findFirst({
+        where: { name, level: 0 },
+        orderBy: { id: "asc" },
+      });
+      if (existing) return existing;
+
+      // Absent → create with bbox polygon geometry. `bboxToMultipolygonWkt`
+      // validates the bbox and throws BAD_USER_INPUT on a bad shape.
+      const wkt = bboxToMultipolygonWkt(args.bbox);
+      const id = randomUUID();
+      const noAncestors: string[] = [];
+      await context.prisma.$executeRaw`
+        INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
+        VALUES (${id}, ${name}, 0, ${null}, ${noAncestors}, ST_GeomFromText(${wkt}, 4326))
       `;
 
       return context.prisma.locations.findUniqueOrThrow({ where: { id } });
