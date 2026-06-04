@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma.js";
 import { env } from "../utils/env.js";
+import { logActivity } from "../utils/activity-log.js";
 
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
@@ -19,6 +20,29 @@ export const auth = betterAuth({
     cookieCache: {
       enabled: true,
       maxAge: 5 * 60, // 5 min cache to reduce DB hits
+    },
+  },
+  databaseHooks: {
+    session: {
+      create: {
+        // Fires after Better Auth inserts a new session row — the cleanest
+        // signal of a successful login. We capture the session's ip and
+        // user-agent here because the resolver-layer activity log doesn't
+        // see request headers.
+        after: async (session) => {
+          await logActivity(prisma, {
+            userId: session.userId,
+            action: "auth.login",
+            resourceType: "session",
+            resourceId: session.id,
+            ipAddress: session.ipAddress ?? null,
+            userAgent: session.userAgent ?? null,
+          });
+        },
+      },
+      // We don't hook delete: sessions expire naturally and the only
+      // explicit deletion is /api/auth/sign-out, which is logged via the
+      // resolver flow when applicable.
     },
   },
   user: {
