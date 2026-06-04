@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface UpdateProfileInput {
   name?: string;
@@ -13,11 +13,13 @@ interface UpdateProfileInput {
 
 export const userResolvers = {
   Query: {
-    users: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.user.findMany();
+    users: (_parent: unknown, _args: unknown, context: Context) => {
+      requireRole(context, ["admin"]);
+      return context.prisma.user.findMany();
     },
-    user: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.user.findUnique({ where: { id: args.id } });
+    user: (_parent: unknown, args: { id: string }, context: Context) => {
+      requireRole(context, ["admin"]);
+      return context.prisma.user.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
