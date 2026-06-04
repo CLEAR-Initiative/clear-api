@@ -2,6 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -185,6 +186,22 @@ export const eventResolvers = {
             eventId: event.id,
             collectedAt: new Date(),
           })),
+        });
+      }
+
+      const actor = context.user;
+      if (actor) {
+        void logActivity(context.prisma, {
+          userId: actor.id,
+          action: "event.create",
+          resourceType: "event",
+          resourceId: event.id,
+          metadata: {
+            title: event.title,
+            types: event.types,
+            severity: event.severity,
+            signalCount: input.signalIds.length,
+          },
         });
       }
 
