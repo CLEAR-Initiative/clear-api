@@ -156,5 +156,20 @@ export const queryTypeDef = gql`
     """Aggregated activity counts + per-user + per-day breakdown for the
     admin dashboard. Admin only. Default window: last 30 days."""
     activityStats(from: DateTime, to: DateTime): ActivityStats!
+
+    """Point-in-time user-engagement summary: DAU, WAU, MAU, and the
+    DAU/MAU stickiness ratio. Derived from auth.login activity. Admin
+    only. \`asOf\` defaults to NOW(); pass a historical timestamp to
+    compute as-of that date."""
+    userEngagement(asOf: DateTime): UserEngagementMetrics!
+
+    """Daily Active Users time series — one point per UTC date in the
+    window. Admin only. Days with zero logins are omitted; the dashboard
+    can backfill them client-side when plotting."""
+    dauSeries(from: DateTime!, to: DateTime!): [DauPoint!]!
+
+    """Monthly Active Users time series — one point per UTC calendar
+    month in the window. Admin only."""
+    mauSeries(from: DateTime!, to: DateTime!): [MauPoint!]!
   }
 `;
