@@ -61,6 +61,35 @@ interface ActivityLogFilterInput {
   to?: Date | string | null;
 }
 
+/** Action name used to scope all DAU/WAU/MAU queries. Must stay in sync
+ *  with the `auth.login` entry in `ActivityAction`. */
+const LOGIN_ACTION = "auth.login";
+
+/** Trailing-window sizes (in milliseconds) for the engagement metrics. */
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
+const THIRTY_DAYS_MS = 30 * ONE_DAY_MS;
+
+/**
+ * Count distinct users who logged in within `[since, asOf]`. Uses raw SQL
+ * because Prisma's groupBy can't do COUNT(DISTINCT user_id) cleanly. The
+ * `(action, created_at)` index covers the WHERE clause.
+ */
+async function countDistinctLoginUsers(
+  prisma: Context["prisma"],
+  since: Date,
+  asOf: Date,
+): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(DISTINCT "user_id")::bigint AS count
+    FROM "activity_logs"
+    WHERE "action" = ${LOGIN_ACTION}
+      AND "created_at" >= ${since}
+      AND "created_at" <= ${asOf}
+  `;
+  return Number(rows[0]?.count ?? 0n);
+}
+
 export const activityLogResolvers = {
   Query: {
     activityLogs: async (
@@ -174,6 +203,92 @@ export const activityLogResolvers = {
         .map(([date, counts]) => ({ date, total: counts.total, counts }));
 
       return { from, to, totals, byUser, byDay };
+    },
+
+    userEngagement: async (
+      _parent: unknown,
+      args: { asOf?: Date | string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const asOf = args.asOf ? new Date(args.asOf) : new Date();
+      const dauSince = new Date(asOf.getTime() - ONE_DAY_MS);
+      const wauSince = new Date(asOf.getTime() - SEVEN_DAYS_MS);
+      const mauSince = new Date(asOf.getTime() - THIRTY_DAYS_MS);
+
+      // Three independent index scans — the same WHERE shape with
+      // different time bounds. Fine for dashboard cadence (this query
+      // is unlikely to fire more than once per minute per viewer).
+      const [dau, wau, mau] = await Promise.all([
+        countDistinctLoginUsers(context.prisma, dauSince, asOf),
+        countDistinctLoginUsers(context.prisma, wauSince, asOf),
+        countDistinctLoginUsers(context.prisma, mauSince, asOf),
+      ]);
+
+      // DAU/MAU ratio as a percentage. Clamp the denominator to avoid a
+      // division-by-zero NaN sneaking into the GraphQL response.
+      const dauMauRatio = mau > 0 ? (dau / mau) * 100 : 0;
+
+      return { asOf, dau, wau, mau, dauMauRatio };
+    },
+
+    dauSeries: async (
+      _parent: unknown,
+      args: { from: Date | string; to: Date | string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const from = new Date(args.from);
+      const to = new Date(args.to);
+
+      // GROUP BY (login day, user) → COUNT DISTINCT in one pass. We cast
+      // the truncated timestamp to ::date so the JS driver hands back a
+      // string we can ship straight to the GraphQL `String!` field.
+      const rows = await context.prisma.$queryRaw<
+        Array<{ date: Date; unique_users: bigint }>
+      >`
+        SELECT DATE_TRUNC('day', "created_at" AT TIME ZONE 'UTC')::date AS date,
+               COUNT(DISTINCT "user_id")::bigint AS unique_users
+        FROM "activity_logs"
+        WHERE "action" = ${LOGIN_ACTION}
+          AND "created_at" >= ${from}
+          AND "created_at" <= ${to}
+        GROUP BY date
+        ORDER BY date ASC
+      `;
+
+      return rows.map((r) => ({
+        date: r.date.toISOString().slice(0, 10), // YYYY-MM-DD
+        uniqueUsers: Number(r.unique_users),
+      }));
+    },
+
+    mauSeries: async (
+      _parent: unknown,
+      args: { from: Date | string; to: Date | string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const from = new Date(args.from);
+      const to = new Date(args.to);
+
+      const rows = await context.prisma.$queryRaw<
+        Array<{ month: Date; unique_users: bigint }>
+      >`
+        SELECT DATE_TRUNC('month', "created_at" AT TIME ZONE 'UTC')::date AS month,
+               COUNT(DISTINCT "user_id")::bigint AS unique_users
+        FROM "activity_logs"
+        WHERE "action" = ${LOGIN_ACTION}
+          AND "created_at" >= ${from}
+          AND "created_at" <= ${to}
+        GROUP BY month
+        ORDER BY month ASC
+      `;
+
+      return rows.map((r) => ({
+        month: r.month.toISOString().slice(0, 7), // YYYY-MM
+        uniqueUsers: Number(r.unique_users),
+      }));
     },
   },
 

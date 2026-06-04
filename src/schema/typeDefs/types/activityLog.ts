@@ -75,4 +75,39 @@ export const activityLogTypeDef = gql`
     from: DateTime
     to: DateTime
   }
+
+  """Point-in-time engagement summary derived from auth.login activity.
+  All three windows are trailing from \`asOf\` (inclusive)."""
+  type UserEngagementMetrics {
+    """Reference moment the windows are anchored to. Defaults to NOW()
+    when the caller doesn't specify it."""
+    asOf: DateTime!
+    """Unique users with at least one login in the trailing 24 hours."""
+    dau: Int!
+    """Unique users with at least one login in the trailing 7 days."""
+    wau: Int!
+    """Unique users with at least one login in the trailing 30 days."""
+    mau: Int!
+    """Stickiness ratio (DAU / MAU) as a percentage. Industry benchmark:
+    ≥20% indicates a frequently-returning user base. Returns 0 when MAU
+    is 0 so the field is safe to chart without null-handling."""
+    dauMauRatio: Float!
+  }
+
+  """One day in a DAU time series."""
+  type DauPoint {
+    """ISO date (YYYY-MM-DD, UTC)."""
+    date: String!
+    """Number of distinct users who logged in on this date."""
+    uniqueUsers: Int!
+  }
+
+  """One month in a MAU time series."""
+  type MauPoint {
+    """ISO month (YYYY-MM, UTC)."""
+    month: String!
+    """Number of distinct users who logged in at least once during the
+    calendar month."""
+    uniqueUsers: Int!
+  }
 `;
