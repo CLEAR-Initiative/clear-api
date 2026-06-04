@@ -21,6 +21,7 @@ import { locationMetadataResolvers } from "./locationMetadata.resolver.js";
 import { nominatimCacheResolvers } from "./nominatimCache.resolver.js";
 import { paginationResolvers } from "./pagination.resolver.js";
 import { activityLogResolvers } from "./activityLog.resolver.js";
+import { pipelineCountryResolvers } from "./pipelineCountry.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -45,4 +46,5 @@ export const resolvers: IResolvers[] = [
   nominatimCacheResolvers,
   paginationResolvers,
   activityLogResolvers,
+  pipelineCountryResolvers,
 ];

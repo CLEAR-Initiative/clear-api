@@ -466,7 +466,7 @@ export const paginationResolvers = {
       // Fast path for groupBy=none — reuse the Prisma `count()` machinery so
       // we don't have to round-trip through raw SQL.
       if (groupBy === "none") {
-        let total = 0;
+        let total: number;
         if (input.entity === "alert") {
           const where = await buildAlertsWhere(context.prisma, input as AlertsFilter);
           total = await context.prisma.alerts.count({ where });
