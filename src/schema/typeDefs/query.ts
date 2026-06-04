@@ -171,5 +171,10 @@ export const queryTypeDef = gql`
     """Monthly Active Users time series — one point per UTC calendar
     month in the window. Admin only."""
     mauSeries(from: DateTime!, to: DateTime!): [MauPoint!]!
+    # ─── Pipeline config ───────────────────────────────────────────────────────
+    """The countries the CLEAR pipeline publishes a Situation Analysis for, with
+    each Country's bounding box. The scheduled publisher reads this to know which
+    countries to run. Requires authentication."""
+    pipelineCountries: [PipelineCountry!]!
   }
 `;
