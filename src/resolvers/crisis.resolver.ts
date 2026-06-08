@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 import { sendCeleryTask } from "../services/celery.js";
 
 interface CreateCrisisFromEventsInput {
@@ -234,6 +235,22 @@ export const crisisResolvers = {
         generateNarrative,
       );
 
+      const actor = context.user;
+      if (actor) {
+        void logActivity(context.prisma, {
+          userId: actor.id,
+          action: "crisis.create",
+          resourceType: "crisis",
+          resourceId: crisis.id,
+          metadata: {
+            title: crisis.title,
+            severity: crisis.severity,
+            eventCount: input.eventIds.length,
+            userProvidedTitle: Boolean(input.title),
+          },
+        });
+      }
+
       return crisis;
     },
 
@@ -436,7 +453,7 @@ export const crisisResolvers = {
       _parent: unknown,
       args: {
         id: string;
-        generalSummary: string;
+        generalSummary: string[];
         sector: Record<string, unknown>;
       },
       context: Context,
@@ -458,12 +475,15 @@ export const crisisResolvers = {
       // into `needs`. The Postgres `||` operator preserves any keys
       // already present on `needs` (e.g. sector breakdowns the user set at
       // creation time), only overwriting `generalSummary` and `sector`.
+      // `generalSummary` is a JSON array of bullet strings — stringify and
+      // cast to jsonb so the array round-trips losslessly through SQL.
+      const generalSummaryJson = JSON.stringify(generalSummary);
       const sectorJson = JSON.stringify(sector);
       await context.prisma.$executeRaw`
         UPDATE "crises"
         SET "needs" = COALESCE("needs", '{}'::jsonb)
           || jsonb_build_object(
-            'generalSummary', ${generalSummary}::text,
+            'generalSummary', ${generalSummaryJson}::jsonb,
             'sector', ${sectorJson}::jsonb
           )
         WHERE "id" = ${id}
@@ -500,6 +520,104 @@ export const crisisResolvers = {
       return context.prisma.crises.update({
         where: { id: args.id },
         data: { attachments: next },
+      });
+    },
+
+    /**
+     * Edit a crisis's title. Any authenticated user — users routinely
+     * rename auto-generated titles to fit their reporting style.
+     *
+     * Audit log (transactional with the title update): a row is appended
+     * to `userFeedbacks` with `rating=0` (sentinel for system/audit
+     * entries — real user feedback uses 1-5) and `text` carrying the
+     * old → new diff prefixed with `[title-edit]`. The presence of any
+     * such row also functions as the title lock: `updateCrisisPopulation`
+     * checks for it and skips its own title update if any exists, so an
+     * event add/remove can't clobber the user's wording.
+     */
+    updateCrisisTitle: async (
+      _parent: unknown,
+      args: { id: string; title: string },
+      context: Context,
+    ) => {
+      const user = requireAuth(context);
+      const { id, title } = args;
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id },
+        select: { id: true, title: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const auditText =
+        `[title-edit] ${existing.title ?? "(empty)"} → ${title || "(empty)"}`;
+
+      const [updated] = await context.prisma.$transaction([
+        context.prisma.crises.update({
+          where: { id },
+          data: { title },
+        }),
+        context.prisma.userFeedbacks.create({
+          data: {
+            userId: user.id,
+            crisisId: id,
+            rating: 0, // sentinel: system audit entry, not actual user feedback
+            text: auditText,
+          },
+        }),
+      ]);
+
+      return updated;
+    },
+
+    /**
+     * Edit a crisis's description (the human-facing prose). The crisis's
+     * `summary` column stores JSON of the form `{ description, tldr }` —
+     * we parse the existing value, swap the description, and re-serialise
+     * so the LLM-generated `tldr` bullets stay intact across user edits.
+     *
+     * Legacy crises whose summary is plain string (pre-JSON refactor) get
+     * promoted to the new shape on first edit: `{ description, tldr: [] }`.
+     */
+    updateCrisisDescription: async (
+      _parent: unknown,
+      args: { id: string; description: string },
+      context: Context,
+    ) => {
+      requireAuth(context);
+      const { id, description } = args;
+
+      const existing = await context.prisma.crises.findUnique({
+        where: { id },
+        select: { id: true, summary: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Preserve tldr (and any future structured siblings) when present.
+      let nextSummary: Record<string, unknown> = { description, tldr: [] };
+      if (existing.summary) {
+        try {
+          const parsed: unknown = JSON.parse(existing.summary);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            nextSummary = { ...(parsed as Record<string, unknown>), description };
+          }
+        } catch {
+          // Legacy plain-string summary — falls through to the default
+          // structured shape with the user's new description.
+        }
+      }
+
+      return context.prisma.crises.update({
+        where: { id },
+        data: { summary: JSON.stringify(nextSummary) },
       });
     },
 
@@ -566,7 +684,36 @@ export const crisisResolvers = {
           ? null
           : BigInt(input.populationInArea);
       }
-      if (input.title !== undefined) data.title = input.title;
+      // Title lock: if the user has manually edited the title (via
+      // `updateCrisisTitle`), the enrichment pipeline must NOT overwrite
+      // it on subsequent event add/remove cycles. We silently drop the
+      // title from the update set rather than throwing — the pipeline
+      // shouldn't have to know about the lock, and refusing the whole
+      // mutation would also block populationInArea / summary / scenarios
+      // updates that are still useful.
+      //
+      // Source of truth: a `userFeedbacks` row with rating=0 and a
+      // `[title-edit]` text prefix is written by `updateCrisisTitle` for
+      // each manual edit. The presence of any such row locks the title.
+      if (input.title !== undefined) {
+        const titleEditAudit = await context.prisma.userFeedbacks.findFirst({
+          where: {
+            crisisId: id,
+            rating: 0,
+            text: { startsWith: "[title-edit]" },
+          },
+          select: { id: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        });
+        if (titleEditAudit) {
+          console.log(
+            `[updateCrisisPopulation] Skipping title update for crisis=${id} ` +
+              `— manually edited by user at ${titleEditAudit.createdAt.toISOString()}`,
+          );
+        } else {
+          data.title = input.title;
+        }
+      }
       if (input.summary !== undefined) data.summary = input.summary;
       if (input.scenarios !== undefined) {
         data.scenarios = input.scenarios === null

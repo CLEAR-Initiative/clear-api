@@ -81,6 +81,48 @@ model user {
   userComments          userComments[]
   commentTags           commentTags[]
   invitationsSent       invitations[]           @relation("InvitedBy")
+  activityLogs          activityLogs[]
+}
+
+/// Append-only audit / analytics log. Every meaningful user-initiated
+/// action (login, manual signal / event / alert / crisis / feedback
+/// creation, etc.) writes one row here. The admin dashboard reads it to
+/// surface activity stats and per-user usage. Logging is best-effort:
+/// the `logActivity()` helper swallows any error so a write failure can
+/// never break the original action.
+model activityLogs {
+  id String @id @default(cuid())
+
+  userId String @map("user_id")
+
+  /// Namespaced verb identifier, e.g. `auth.login`, `signal.create_manual`,
+  /// `event.create`, `alert.create`, `crisis.create`, `feedback.create`.
+  /// Use dot-separated `<resource>.<verb>[_<qualifier>]` so the dashboard
+  /// can filter by prefix.
+  action String
+
+  /// Coarse resource bucket — `signal`, `event`, `alert`, `crisis`,
+  /// `feedback`, `session`. Redundant with `action` but cheap to filter on.
+  resourceType String? @map("resource_type")
+
+  /// The created/affected row's id. Null for actions like login.
+  resourceId String? @map("resource_id")
+
+  /// Free-form per-action context (title, severity, signal source, etc.).
+  /// Keep small — anything load-bearing belongs in a typed column.
+  metadata Json?
+
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+  @@map("activity_logs")
 }
 
 model session {

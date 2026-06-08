@@ -84,6 +84,12 @@ export const mutationTypeDef = gql`
     """Create a new location."""
     createLocation(input: CreateLocationInput!): Location!
 
+    """Idempotently resolve a level-0 Country location by exact name, creating it
+    with a bounding-box MULTIPOLYGON geometry if absent (admin/pipeline only).
+    bbox is [minLng, minLat, maxLng, maxLat]. Returns the (found or created)
+    Country — doubles as the pipeline's name→id resolution."""
+    ensureCountryLocation(name: String!, bbox: [Float!]!): Location!
+
     """Update an existing location."""
     updateLocation(id: String!, input: UpdateLocationInput!): Location!
 
@@ -257,6 +263,17 @@ export const mutationTypeDef = gql`
     until the async enrichment task completes)."""
     removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
 
+    """Edit a crisis's title in place. Any authenticated user. Pass an empty
+    string to clear the field."""
+    updateCrisisTitle(id: String!, title: String!): Crisis!
+
+    """Edit the human-facing description on a crisis. The crisis's summary
+    column stores JSON of the form description+tldr — this mutation updates
+    just the description key and preserves any existing tldr bullets (which
+    the LLM enrichment task generates). Any authenticated user. Pass an
+    empty string to clear the description without disturbing the tldr."""
+    updateCrisisDescription(id: String!, description: String!): Crisis!
+
     """Delete a crisis. Cascades the eventCrises join rows, user feedback,
     and user comments via the FK constraints. Any authenticated user."""
     deleteCrisis(id: String!): Boolean!
@@ -276,7 +293,7 @@ export const mutationTypeDef = gql`
     object so other keys on needs are preserved. Admin/pipeline only."""
     setCrisisNeedsAnalysis(
       id: String!,
-      generalSummary: String!,
+      generalSummary: [String!]!,
       sector: JSON!,
     ): Crisis!
   }

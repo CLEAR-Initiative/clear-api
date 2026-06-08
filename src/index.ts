@@ -1,4 +1,8 @@
 import "dotenv/config";
+// Sentry must be imported BEFORE anything that may throw — its init runs as a
+// side effect of module load, attaching the global error handler. If imported
+// later, errors raised during earlier imports go uncaught.
+import { sentryApolloPlugin } from "./utils/sentry.js";
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@as-integrations/express5";
 import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
@@ -24,7 +28,7 @@ const httpServer = http.createServer(app);
 const server = new ApolloServer<Context>({
   typeDefs,
   resolvers,
-  plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+  plugins: [ApolloServerPluginDrainHttpServer({ httpServer }), sentryApolloPlugin],
   introspection: env.NODE_ENV !== "production",
   csrfPrevention: false,
 });

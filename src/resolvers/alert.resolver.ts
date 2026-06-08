@@ -2,6 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -112,6 +113,23 @@ export const alertResolvers = {
       // subscribers were notified on the original create, we don't want
       // to spam them on every retry.
       if (existingAlert) return alert;
+
+      // First-time creation only — record one activity entry per alert,
+      // not one per retry/escalation.
+      const actor = context.user;
+      if (actor) {
+        void logActivity(context.prisma, {
+          userId: actor.id,
+          action: "alert.create",
+          resourceType: "alert",
+          resourceId: alert.id,
+          metadata: {
+            eventId: event.id,
+            status: alert.status,
+            severity: event.severity,
+          },
+        });
+      }
 
       // Fan out notifications to immediate subscribers
       const eventLocationIds = [
