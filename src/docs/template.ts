@@ -204,6 +204,16 @@ export function renderDocsPage(schema: SchemaData): string {
     <!-- Left sidebar -->
     <aside class="sidebar">
       <div class="sidebar-section">
+        <div class="sidebar-heading">Start Here</div>
+        <a href="#guide" class="sidebar-link">Build Your First Integration</a>
+        <a href="#guide-model" class="sidebar-link depth-2">The mental model</a>
+        <a href="#guide-setup" class="sidebar-link depth-2">Get set up</a>
+        <a href="#guide-first-request" class="sidebar-link depth-2">Your first request</a>
+        <a href="#guide-real-query" class="sidebar-link depth-2">Pull real data</a>
+        <a href="#guide-by-location" class="sidebar-link depth-2">Slice by location</a>
+        <a href="#guide-next" class="sidebar-link depth-2">Where to go next</a>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-heading">Get Started</div>
         <a href="#introduction" class="sidebar-link">Introduction</a>
         <a href="#quick-start" class="sidebar-link">Quick Start</a>
@@ -224,6 +234,105 @@ export function renderDocsPage(schema: SchemaData): string {
 
     <!-- Main content -->
     <main class="content">
+      <div id="section-guide">
+        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; START HERE &rsaquo; <strong>Build Your First Integration</strong></p>
+        <h1 id="guide">Build Your First Integration</h1>
+        <p class="subtitle">From zero knowledge to live humanitarian data in about ten minutes &mdash; the mental model, your first authenticated request, and two real queries.</p>
+
+        <p>This is the front door. If you&rsquo;ve never touched the CLEAR API before, read this page top to bottom. By the end you&rsquo;ll understand how the data is shaped and you&rsquo;ll have pulled real records with your own API key. Everything else in these docs &mdash; the <a href="#queries">Queries</a>, <a href="#mutations">Mutations</a>, and <a href="#types">Types</a> reference &mdash; is there to look things up <em>after</em> you understand the shape of the system.</p>
+
+        <h2 id="guide-model">1. The mental model</h2>
+        <p>CLEAR is a five-tier graph. Raw observations flow in at the bottom and are progressively grouped, classified, and escalated into human-readable advisories. Almost every query you write touches one of these five tiers:</p>
+
+        <table class="feature-table">
+          <thead><tr><th>Tier</th><th>What it represents</th></tr></thead>
+          <tbody>
+            <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
+            <tr><td><a href="#type-signal">Signal</a></td><td>A single raw observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer.</td></tr>
+            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
+            <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
+            <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
+          </tbody>
+        </table>
+
+        <p>Two things to internalise. First, the tiers build <em>upward</em>: a <a href="#type-signal">Signal</a> links to the <a href="#type-event">Event</a> it belongs to, which links to any <a href="#type-alert">Alert</a> raised from it. Second, <em>everything is geolocated</em> &mdash; signals, events, and alerts all reference the <a href="#type-location">Location</a> hierarchy. That&rsquo;s why the &ldquo;by location&rdquo; queries are the most powerful way to slice the data.</p>
+
+        <div class="notice notice-info">
+          New to GraphQL? You send one <code>POST</code> request to <code>/graphql</code> with a query naming exactly the fields you want, and you get back exactly those fields &mdash; no over-fetching, no guessing at response shapes. The <a href="/graphql" target="_blank">GraphQL Sandbox</a> autocompletes every field as you type, which is the fastest way to explore.
+        </div>
+
+        <h2 id="guide-setup">2. Get set up</h2>
+        <p>You need an account and an API key. Both live in the Developer Portal.</p>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Create an account</h4>
+              <p>Sign up at the <a href="/portal">Developer Portal</a>. It takes about ten seconds.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Generate an API key</h4>
+              <p>In the portal, open <a href="/portal#api-keys">API Keys</a> and create one. Copy it immediately &mdash; the full key is shown only once.</p>
+            </div>
+          </div>
+        </div>
+        <div class="notice notice-warning">
+          Treat your key like a password. Keep it in an environment variable or secrets manager &mdash; never in client-side code or version control.
+        </div>
+
+        <h2 id="guide-first-request">3. Your first request</h2>
+        <p>The <code>me</code> query is the simplest authenticated call: it returns the account your key belongs to. Run it first to confirm your key works before you touch real data. Replace <code>YOUR_API_KEY</code> with the key you just generated:</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"query":"{ me { id email role } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>A successful response echoes your own user back:</p>
+        <pre><code>{
+  "data": {
+    "me": {
+      "id": "aBc123XyZ",
+      "email": "you@example.com",
+      "role": "viewer"
+    }
+  }
+}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>If <code>me</code> comes back <code>null</code>, your key isn&rsquo;t being read &mdash; double-check the <code>Authorization</code> header and that the key hasn&rsquo;t been revoked in the portal.</p>
+
+        <h2 id="guide-real-query">4. Pull real data</h2>
+        <p>Now something useful. Locations are the backbone of the graph, so start there: this lists every country CLEAR tracks (hierarchy level <code>0</code>), with each one&rsquo;s id, name, and resident population.</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
+        <div class="notice notice-info">
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state/province, <code>2</code> = city, and so on. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+        </div>
+
+        <h2 id="guide-by-location">5. Slice by location</h2>
+        <p>This is where it gets powerful. <code>eventsByLocation</code> returns every event whose origin, destination, or general location falls within a location <em>and all of its descendants</em> &mdash; so one country id gives you everything happening anywhere inside that country. Drop in the <code>id</code> from the previous step:</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the raw observations underneath, or its <code>alerts</code> to see what was escalated from it.</p>
+        <div class="notice notice-info">
+          The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
+        </div>
+
+        <h2 id="guide-next">Where to go next</h2>
+        <p>You now know the shape of the graph and how to authenticate, query, and slice by location. From here:</p>
+        <ul>
+          <li>Browse the full <a href="#queries">Queries</a> and <a href="#types">Types</a> reference below &mdash; it&rsquo;s auto-generated from the live schema, so it&rsquo;s always current.</li>
+          <li>Open the <a href="/graphql" target="_blank">GraphQL Sandbox</a> to build queries interactively with field autocomplete.</li>
+          <li>Read the <a href="#authentication">Authentication</a> section for the browser/cookie flow if you&rsquo;re building a web app rather than a server integration.</li>
+          <li>Manage your keys anytime in the <a href="/portal">Developer Portal</a>.</li>
+        </ul>
+      </div>
+
       <div id="section-introduction">
         <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
         <h1 id="introduction">Introduction</h1>
@@ -328,6 +437,7 @@ const data = await fetch('/graphql', {
     <!-- Right TOC -->
     <aside class="toc">
       <div class="toc-heading">On This Page</div>
+      <a href="#guide">Build Your First Integration</a>
       <a href="#introduction">Introduction</a>
       <a href="#features">What You Can Do</a>
       <a href="#quick-start">Quick Start</a>
