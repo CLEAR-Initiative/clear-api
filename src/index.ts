@@ -39,8 +39,9 @@ await server.start();
 // CORS — global, with credentials for cookie-based sessions
 app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
 
-// Static assets (favicon, icons). Resolved from the repo root in both dev
-// (cwd = repo) and prod (`bun start` runs from repo root).
+// Static assets (favicon, icons), served from <cwd>/public. cwd is the repo
+// root in dev and /app in the production image (WORKDIR /app) — the Dockerfile
+// copies public/ there so this resolves in both environments.
 app.use(express.static(join(process.cwd(), "public"), { maxAge: "1d" }));
 // Satisfy browsers' implicit /favicon.ico request when no .ico file exists.
 app.get("/favicon.ico", (_req, res) => res.redirect(301, "/favicon.svg"));
