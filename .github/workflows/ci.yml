@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev, staging]
   push:
-    branches: [main, develop]
+    branches: [main, dev, staging]
 
 jobs:
   check:
@@ -19,4 +19,7 @@ jobs:
       - run: bunx prisma generate
       - run: bun run lint
       - run: bun run typecheck
+      # Fail if the committed generated docs drifted from its source template.
+      - name: Docs HTML is in sync with template
+        run: bun run build:docs && git diff --exit-code src/docs/docs.html
       # - run: bun run test
