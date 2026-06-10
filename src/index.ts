@@ -8,6 +8,7 @@ import { expressMiddleware } from "@as-integrations/express5";
 import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
 import express from "express";
 import http from "node:http";
+import { join } from "node:path";
 import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
 import { typeDefs } from "./schema/index.js";
@@ -37,6 +38,12 @@ await server.start();
 
 // CORS — global, with credentials for cookie-based sessions
 app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
+
+// Static assets (favicon, icons). Resolved from the repo root in both dev
+// (cwd = repo) and prod (`bun start` runs from repo root).
+app.use(express.static(join(process.cwd(), "public"), { maxAge: "1d" }));
+// Satisfy browsers' implicit /favicon.ico request when no .ico file exists.
+app.get("/favicon.ico", (_req, res) => res.redirect(301, "/favicon.svg"));
 
 // Better Auth handler — MUST be before express.json()
 app.all("/api/auth/*splat", toNodeHandler(auth));
