@@ -9,6 +9,7 @@ interface UpdateProfileInput {
   enableInAppNotification?: boolean;
   enableEmailNotification?: boolean;
   enableSMSNotification?: boolean;
+  language?: string;
 }
 
 export const userResolvers = {
@@ -58,6 +59,17 @@ export const userResolvers = {
 
       if (input.enableEmailNotification !== undefined) {
         data.emailNotification = input.enableEmailNotification;
+      }
+
+      if (input.language !== undefined) {
+        const trimmed = input.language.trim();
+        if (!/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(trimmed)) {
+          throw new GraphQLError(
+            "language must be a BCP-47 / ISO 639-1 code (e.g. \"en\", \"ar\", \"en-US\")",
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+        data.language = trimmed;
       }
 
       if (input.enableSMSNotification !== undefined) {

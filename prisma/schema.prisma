@@ -57,6 +57,7 @@ model user {
   image         String?
   role          String  @default("viewer")
   isActive      Boolean @default(true) @map("is_active")
+  language      String  @default("en")
 
   inAppNotification Boolean @default(false) @map("in_app_notification")
   emailNotification Boolean @default(false) @map("email_notification")
