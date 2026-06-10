@@ -126,6 +126,16 @@
     <!-- Left sidebar -->
     <aside class="sidebar">
       <div class="sidebar-section">
+        <div class="sidebar-heading">Start Here</div>
+        <a href="#guide" class="sidebar-link">Build Your First Integration</a>
+        <a href="#guide-model" class="sidebar-link depth-2">The mental model</a>
+        <a href="#guide-setup" class="sidebar-link depth-2">Get set up</a>
+        <a href="#guide-first-request" class="sidebar-link depth-2">Your first request</a>
+        <a href="#guide-real-query" class="sidebar-link depth-2">Pull real data</a>
+        <a href="#guide-by-location" class="sidebar-link depth-2">Slice by location</a>
+        <a href="#guide-next" class="sidebar-link depth-2">Where to go next</a>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-heading">Get Started</div>
         <a href="#introduction" class="sidebar-link">Introduction</a>
         <a href="#quick-start" class="sidebar-link">Quick Start</a>
@@ -140,12 +150,111 @@
         <a href="#queries" class="sidebar-link">Queries</a>
         <a href="#mutations" class="sidebar-link">Mutations</a>
         <a href="#types" class="sidebar-link">Types</a>
-        <a href="#type-datetime" class="sidebar-link depth-2">DateTime</a><a href="#type-geojson" class="sidebar-link depth-2">GeoJSON</a><a href="#type-json" class="sidebar-link depth-2">JSON</a><a href="#type-upload" class="sidebar-link depth-2">Upload</a><a href="#type-alertorderby" class="sidebar-link depth-2">AlertOrderBy</a><a href="#type-alertstatus" class="sidebar-link depth-2">AlertStatus</a><a href="#type-channel" class="sidebar-link depth-2">Channel</a><a href="#type-detectionstatus" class="sidebar-link depth-2">DetectionStatus</a><a href="#type-entitykind" class="sidebar-link depth-2">EntityKind</a><a href="#type-eventorderby" class="sidebar-link depth-2">EventOrderBy</a><a href="#type-frequency" class="sidebar-link depth-2">Frequency</a><a href="#type-invitationstatus" class="sidebar-link depth-2">InvitationStatus</a><a href="#type-notificationstatus" class="sidebar-link depth-2">NotificationStatus</a><a href="#type-orgmemberrole" class="sidebar-link depth-2">OrgMemberRole</a><a href="#type-signalorderby" class="sidebar-link depth-2">SignalOrderBy</a><a href="#type-statsgroupby" class="sidebar-link depth-2">StatsGroupBy</a><a href="#type-teammemberrole" class="sidebar-link depth-2">TeamMemberRole</a><a href="#type-acceptinviteinput" class="sidebar-link depth-2">AcceptInviteInput</a><a href="#type-addcommentinput" class="sidebar-link depth-2">AddCommentInput</a><a href="#type-addfeedbackinput" class="sidebar-link depth-2">AddFeedbackInput</a><a href="#type-alertdigestinput" class="sidebar-link depth-2">AlertDigestInput</a><a href="#type-alertnotifyinput" class="sidebar-link depth-2">AlertNotifyInput</a><a href="#type-alertspageinput" class="sidebar-link depth-2">AlertsPageInput</a><a href="#type-createalertinput" class="sidebar-link depth-2">CreateAlertInput</a><a href="#type-createapikeyinput" class="sidebar-link depth-2">CreateApiKeyInput</a><a href="#type-createbulknotificationsinput" class="sidebar-link depth-2">CreateBulkNotificationsInput</a><a href="#type-createcrisisfromeventsinput" class="sidebar-link depth-2">CreateCrisisFromEventsInput</a><a href="#type-createdatasourceinput" class="sidebar-link depth-2">CreateDataSourceInput</a><a href="#type-createeventinput" class="sidebar-link depth-2">CreateEventInput</a><a href="#type-createlocationinput" class="sidebar-link depth-2">CreateLocationInput</a><a href="#type-createmanualsignalinput" class="sidebar-link depth-2">CreateManualSignalInput</a><a href="#type-createnotificationinput" class="sidebar-link depth-2">CreateNotificationInput</a><a href="#type-createorganisationinput" class="sidebar-link depth-2">CreateOrganisationInput</a><a href="#type-createsignalinput" class="sidebar-link depth-2">CreateSignalInput</a><a href="#type-createteaminput" class="sidebar-link depth-2">CreateTeamInput</a><a href="#type-entitystatsinput" class="sidebar-link depth-2">EntityStatsInput</a><a href="#type-eventspageinput" class="sidebar-link depth-2">EventsPageInput</a><a href="#type-inviteuserinput" class="sidebar-link depth-2">InviteUserInput</a><a href="#type-replytocommentinput" class="sidebar-link depth-2">ReplyToCommentInput</a><a href="#type-signalspageinput" class="sidebar-link depth-2">SignalsPageInput</a><a href="#type-subscribetoalertsbatchinput" class="sidebar-link depth-2">SubscribeToAlertsBatchInput</a><a href="#type-subscribetoalertsinput" class="sidebar-link depth-2">SubscribeToAlertsInput</a><a href="#type-teamassignmentinput" class="sidebar-link depth-2">TeamAssignmentInput</a><a href="#type-updatealertinput" class="sidebar-link depth-2">UpdateAlertInput</a><a href="#type-updatealertsubscriptioninput" class="sidebar-link depth-2">UpdateAlertSubscriptionInput</a><a href="#type-updatecrisispopulationinput" class="sidebar-link depth-2">UpdateCrisisPopulationInput</a><a href="#type-updatedatasourceinput" class="sidebar-link depth-2">UpdateDataSourceInput</a><a href="#type-updateeventinput" class="sidebar-link depth-2">UpdateEventInput</a><a href="#type-updatelocationinput" class="sidebar-link depth-2">UpdateLocationInput</a><a href="#type-updateorganisationinput" class="sidebar-link depth-2">UpdateOrganisationInput</a><a href="#type-updateprofileinput" class="sidebar-link depth-2">UpdateProfileInput</a><a href="#type-updateteaminput" class="sidebar-link depth-2">UpdateTeamInput</a><a href="#type-upsertlocationmetadatainput" class="sidebar-link depth-2">UpsertLocationMetadataInput</a><a href="#type-alert" class="sidebar-link depth-2">Alert</a><a href="#type-alertspage" class="sidebar-link depth-2">AlertsPage</a><a href="#type-alertsubscription" class="sidebar-link depth-2">AlertSubscription</a><a href="#type-apikey" class="sidebar-link depth-2">ApiKey</a><a href="#type-archivestalealertsresult" class="sidebar-link depth-2">ArchiveStaleAlertsResult</a><a href="#type-commenttag" class="sidebar-link depth-2">CommentTag</a><a href="#type-createapikeypayload" class="sidebar-link depth-2">CreateApiKeyPayload</a><a href="#type-crisis" class="sidebar-link depth-2">Crisis</a><a href="#type-datasource" class="sidebar-link depth-2">DataSource</a><a href="#type-disasterlevel1" class="sidebar-link depth-2">DisasterLevel1</a><a href="#type-disasterlevel2" class="sidebar-link depth-2">DisasterLevel2</a><a href="#type-disastertype" class="sidebar-link depth-2">DisasterType</a><a href="#type-entitystats" class="sidebar-link depth-2">EntityStats</a><a href="#type-event" class="sidebar-link depth-2">Event</a><a href="#type-eventcrisis" class="sidebar-link depth-2">EventCrisis</a><a href="#type-eventescalation" class="sidebar-link depth-2">EventEscalation</a><a href="#type-eventspage" class="sidebar-link depth-2">EventsPage</a><a href="#type-featureflag" class="sidebar-link depth-2">FeatureFlag</a><a href="#type-invitation" class="sidebar-link depth-2">Invitation</a><a href="#type-invitationinfo" class="sidebar-link depth-2">InvitationInfo</a><a href="#type-invitationinfoteam" class="sidebar-link depth-2">InvitationInfoTeam</a><a href="#type-invitationteam" class="sidebar-link depth-2">InvitationTeam</a><a href="#type-location" class="sidebar-link depth-2">Location</a><a href="#type-locationmetadata" class="sidebar-link depth-2">LocationMetadata</a><a href="#type-notification" class="sidebar-link depth-2">Notification</a><a href="#type-organisation" class="sidebar-link depth-2">Organisation</a><a href="#type-organisationuser" class="sidebar-link depth-2">OrganisationUser</a><a href="#type-orgmember" class="sidebar-link depth-2">OrgMember</a><a href="#type-signal" class="sidebar-link depth-2">Signal</a><a href="#type-signalspage" class="sidebar-link depth-2">SignalsPage</a><a href="#type-statsbucket" class="sidebar-link depth-2">StatsBucket</a><a href="#type-team" class="sidebar-link depth-2">Team</a><a href="#type-teammember" class="sidebar-link depth-2">TeamMember</a><a href="#type-user" class="sidebar-link depth-2">User</a><a href="#type-useralert" class="sidebar-link depth-2">UserAlert</a><a href="#type-usercomment" class="sidebar-link depth-2">UserComment</a><a href="#type-userfeedback" class="sidebar-link depth-2">UserFeedback</a>
+        <a href="#type-datetime" class="sidebar-link depth-2">DateTime</a><a href="#type-geojson" class="sidebar-link depth-2">GeoJSON</a><a href="#type-json" class="sidebar-link depth-2">JSON</a><a href="#type-upload" class="sidebar-link depth-2">Upload</a><a href="#type-alertorderby" class="sidebar-link depth-2">AlertOrderBy</a><a href="#type-alertstatus" class="sidebar-link depth-2">AlertStatus</a><a href="#type-channel" class="sidebar-link depth-2">Channel</a><a href="#type-detectionstatus" class="sidebar-link depth-2">DetectionStatus</a><a href="#type-entitykind" class="sidebar-link depth-2">EntityKind</a><a href="#type-eventorderby" class="sidebar-link depth-2">EventOrderBy</a><a href="#type-frequency" class="sidebar-link depth-2">Frequency</a><a href="#type-invitationstatus" class="sidebar-link depth-2">InvitationStatus</a><a href="#type-notificationstatus" class="sidebar-link depth-2">NotificationStatus</a><a href="#type-orgmemberrole" class="sidebar-link depth-2">OrgMemberRole</a><a href="#type-signalorderby" class="sidebar-link depth-2">SignalOrderBy</a><a href="#type-statsgroupby" class="sidebar-link depth-2">StatsGroupBy</a><a href="#type-teammemberrole" class="sidebar-link depth-2">TeamMemberRole</a><a href="#type-acceptinviteinput" class="sidebar-link depth-2">AcceptInviteInput</a><a href="#type-activitylogfilterinput" class="sidebar-link depth-2">ActivityLogFilterInput</a><a href="#type-addcommentinput" class="sidebar-link depth-2">AddCommentInput</a><a href="#type-addfeedbackinput" class="sidebar-link depth-2">AddFeedbackInput</a><a href="#type-alertdigestinput" class="sidebar-link depth-2">AlertDigestInput</a><a href="#type-alertnotifyinput" class="sidebar-link depth-2">AlertNotifyInput</a><a href="#type-alertspageinput" class="sidebar-link depth-2">AlertsPageInput</a><a href="#type-createalertinput" class="sidebar-link depth-2">CreateAlertInput</a><a href="#type-createapikeyinput" class="sidebar-link depth-2">CreateApiKeyInput</a><a href="#type-createbulknotificationsinput" class="sidebar-link depth-2">CreateBulkNotificationsInput</a><a href="#type-createcrisisfromeventsinput" class="sidebar-link depth-2">CreateCrisisFromEventsInput</a><a href="#type-createdatasourceinput" class="sidebar-link depth-2">CreateDataSourceInput</a><a href="#type-createeventinput" class="sidebar-link depth-2">CreateEventInput</a><a href="#type-createlocationinput" class="sidebar-link depth-2">CreateLocationInput</a><a href="#type-createmanualsignalinput" class="sidebar-link depth-2">CreateManualSignalInput</a><a href="#type-createnotificationinput" class="sidebar-link depth-2">CreateNotificationInput</a><a href="#type-createorganisationinput" class="sidebar-link depth-2">CreateOrganisationInput</a><a href="#type-createsignalinput" class="sidebar-link depth-2">CreateSignalInput</a><a href="#type-createteaminput" class="sidebar-link depth-2">CreateTeamInput</a><a href="#type-entitystatsinput" class="sidebar-link depth-2">EntityStatsInput</a><a href="#type-eventspageinput" class="sidebar-link depth-2">EventsPageInput</a><a href="#type-findorcreatelandmarkl4input" class="sidebar-link depth-2">FindOrCreateLandmarkL4Input</a><a href="#type-inviteuserinput" class="sidebar-link depth-2">InviteUserInput</a><a href="#type-replytocommentinput" class="sidebar-link depth-2">ReplyToCommentInput</a><a href="#type-signalspageinput" class="sidebar-link depth-2">SignalsPageInput</a><a href="#type-subscribetoalertsbatchinput" class="sidebar-link depth-2">SubscribeToAlertsBatchInput</a><a href="#type-subscribetoalertsinput" class="sidebar-link depth-2">SubscribeToAlertsInput</a><a href="#type-teamassignmentinput" class="sidebar-link depth-2">TeamAssignmentInput</a><a href="#type-updatealertinput" class="sidebar-link depth-2">UpdateAlertInput</a><a href="#type-updatealertsubscriptioninput" class="sidebar-link depth-2">UpdateAlertSubscriptionInput</a><a href="#type-updatecrisispopulationinput" class="sidebar-link depth-2">UpdateCrisisPopulationInput</a><a href="#type-updatedatasourceinput" class="sidebar-link depth-2">UpdateDataSourceInput</a><a href="#type-updateeventinput" class="sidebar-link depth-2">UpdateEventInput</a><a href="#type-updatelocationinput" class="sidebar-link depth-2">UpdateLocationInput</a><a href="#type-updateorganisationinput" class="sidebar-link depth-2">UpdateOrganisationInput</a><a href="#type-updateprofileinput" class="sidebar-link depth-2">UpdateProfileInput</a><a href="#type-updateteaminput" class="sidebar-link depth-2">UpdateTeamInput</a><a href="#type-upsertlocationmetadatainput" class="sidebar-link depth-2">UpsertLocationMetadataInput</a><a href="#type-upsertnominatimcacheinput" class="sidebar-link depth-2">UpsertNominatimCacheInput</a><a href="#type-activitycountsbyaction" class="sidebar-link depth-2">ActivityCountsByAction</a><a href="#type-activitylog" class="sidebar-link depth-2">ActivityLog</a><a href="#type-activitystats" class="sidebar-link depth-2">ActivityStats</a><a href="#type-alert" class="sidebar-link depth-2">Alert</a><a href="#type-alertspage" class="sidebar-link depth-2">AlertsPage</a><a href="#type-alertsubscription" class="sidebar-link depth-2">AlertSubscription</a><a href="#type-apikey" class="sidebar-link depth-2">ApiKey</a><a href="#type-archivestalealertsresult" class="sidebar-link depth-2">ArchiveStaleAlertsResult</a><a href="#type-commenttag" class="sidebar-link depth-2">CommentTag</a><a href="#type-createapikeypayload" class="sidebar-link depth-2">CreateApiKeyPayload</a><a href="#type-crisis" class="sidebar-link depth-2">Crisis</a><a href="#type-dailyactivitycount" class="sidebar-link depth-2">DailyActivityCount</a><a href="#type-datasource" class="sidebar-link depth-2">DataSource</a><a href="#type-daupoint" class="sidebar-link depth-2">DauPoint</a><a href="#type-disasterlevel1" class="sidebar-link depth-2">DisasterLevel1</a><a href="#type-disasterlevel2" class="sidebar-link depth-2">DisasterLevel2</a><a href="#type-disastertype" class="sidebar-link depth-2">DisasterType</a><a href="#type-entitystats" class="sidebar-link depth-2">EntityStats</a><a href="#type-event" class="sidebar-link depth-2">Event</a><a href="#type-eventcrisis" class="sidebar-link depth-2">EventCrisis</a><a href="#type-eventescalation" class="sidebar-link depth-2">EventEscalation</a><a href="#type-eventspage" class="sidebar-link depth-2">EventsPage</a><a href="#type-featureflag" class="sidebar-link depth-2">FeatureFlag</a><a href="#type-findorcreatelandmarkl4result" class="sidebar-link depth-2">FindOrCreateLandmarkL4Result</a><a href="#type-invitation" class="sidebar-link depth-2">Invitation</a><a href="#type-invitationinfo" class="sidebar-link depth-2">InvitationInfo</a><a href="#type-invitationinfoteam" class="sidebar-link depth-2">InvitationInfoTeam</a><a href="#type-invitationteam" class="sidebar-link depth-2">InvitationTeam</a><a href="#type-location" class="sidebar-link depth-2">Location</a><a href="#type-locationmetadata" class="sidebar-link depth-2">LocationMetadata</a><a href="#type-maupoint" class="sidebar-link depth-2">MauPoint</a><a href="#type-nominatimcacheentry" class="sidebar-link depth-2">NominatimCacheEntry</a><a href="#type-notification" class="sidebar-link depth-2">Notification</a><a href="#type-organisation" class="sidebar-link depth-2">Organisation</a><a href="#type-organisationuser" class="sidebar-link depth-2">OrganisationUser</a><a href="#type-orgmember" class="sidebar-link depth-2">OrgMember</a><a href="#type-pipelinecountry" class="sidebar-link depth-2">PipelineCountry</a><a href="#type-signal" class="sidebar-link depth-2">Signal</a><a href="#type-signalspage" class="sidebar-link depth-2">SignalsPage</a><a href="#type-statsbucket" class="sidebar-link depth-2">StatsBucket</a><a href="#type-team" class="sidebar-link depth-2">Team</a><a href="#type-teammember" class="sidebar-link depth-2">TeamMember</a><a href="#type-user" class="sidebar-link depth-2">User</a><a href="#type-useractivitysummary" class="sidebar-link depth-2">UserActivitySummary</a><a href="#type-useralert" class="sidebar-link depth-2">UserAlert</a><a href="#type-usercomment" class="sidebar-link depth-2">UserComment</a><a href="#type-userengagementmetrics" class="sidebar-link depth-2">UserEngagementMetrics</a><a href="#type-userfeedback" class="sidebar-link depth-2">UserFeedback</a>
       </div>
     </aside>
 
     <!-- Main content -->
     <main class="content">
+      <div id="section-guide">
+        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; START HERE &rsaquo; <strong>Build Your First Integration</strong></p>
+        <h1 id="guide">Build Your First Integration</h1>
+        <p class="subtitle">From zero knowledge to live humanitarian data in about ten minutes &mdash; the mental model, your first authenticated request, and two real queries.</p>
+
+        <p>This is the front door. If you&rsquo;ve never touched the CLEAR API before, read this page top to bottom. By the end you&rsquo;ll understand how the data is shaped and you&rsquo;ll have pulled real records with your own API key. Everything else in these docs &mdash; the <a href="#queries">Queries</a>, <a href="#mutations">Mutations</a>, and <a href="#types">Types</a> reference &mdash; is there to look things up <em>after</em> you understand the shape of the system.</p>
+
+        <h2 id="guide-model">1. The mental model</h2>
+        <p>CLEAR is a five-tier graph. Raw observations flow in at the bottom and are progressively grouped, classified, and escalated into human-readable advisories. Almost every query you write touches one of these five tiers:</p>
+
+        <table class="feature-table">
+          <thead><tr><th>Tier</th><th>What it represents</th></tr></thead>
+          <tbody>
+            <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
+            <tr><td><a href="#type-signal">Signal</a></td><td>A single raw observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer.</td></tr>
+            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
+            <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
+            <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
+          </tbody>
+        </table>
+
+        <p>Two things to internalise. First, the tiers build <em>upward</em>: a <a href="#type-signal">Signal</a> links to the <a href="#type-event">Event</a> it belongs to, which links to any <a href="#type-alert">Alert</a> raised from it. Second, <em>everything is geolocated</em> &mdash; signals, events, and alerts all reference the <a href="#type-location">Location</a> hierarchy. That&rsquo;s why the &ldquo;by location&rdquo; queries are the most powerful way to slice the data.</p>
+
+        <div class="notice notice-info">
+          New to GraphQL? You send one <code>POST</code> request to <code>/graphql</code> with a query naming exactly the fields you want, and you get back exactly those fields &mdash; no over-fetching, no guessing at response shapes. The <a href="/graphql" target="_blank">GraphQL Sandbox</a> autocompletes every field as you type, which is the fastest way to explore.
+        </div>
+
+        <h2 id="guide-setup">2. Get set up</h2>
+        <p>You need an account and an API key. Both live in the Developer Portal.</p>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Create an account</h4>
+              <p>Sign up at the <a href="/portal">Developer Portal</a>. It takes about ten seconds.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Generate an API key</h4>
+              <p>In the portal, open <a href="/portal#api-keys">API Keys</a> and create one. Copy it immediately &mdash; the full key is shown only once.</p>
+            </div>
+          </div>
+        </div>
+        <div class="notice notice-warning">
+          Treat your key like a password. Keep it in an environment variable or secrets manager &mdash; never in client-side code or version control.
+        </div>
+
+        <h2 id="guide-first-request">3. Your first request</h2>
+        <p>The <code>me</code> query is the simplest authenticated call: it returns the account your key belongs to. Run it first to confirm your key works before you touch real data. Replace <code>YOUR_API_KEY</code> with the key you just generated:</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ me { id email role } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>A successful response echoes your own user back:</p>
+        <pre><code>{
+  "data": {
+    "me": {
+      "id": "aBc123XyZ",
+      "email": "you@example.com",
+      "role": "viewer"
+    }
+  }
+}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>If <code>me</code> comes back <code>null</code>, your key isn&rsquo;t being read &mdash; double-check the <code>Authorization</code> header and that the key hasn&rsquo;t been revoked in the portal.</p>
+
+        <h2 id="guide-real-query">4. Pull real data</h2>
+        <p>Now something useful. Locations are the backbone of the graph, so start there: this lists every country CLEAR tracks (hierarchy level <code>0</code>), with each one&rsquo;s id, name, and resident population.</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
+        <div class="notice notice-info">
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state/province, <code>2</code> = city, and so on. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+        </div>
+
+        <h2 id="guide-by-location">5. Slice by location</h2>
+        <p>This is where it gets powerful. <code>eventsByLocation</code> returns every event whose origin, destination, or general location falls within a location <em>and all of its descendants</em> &mdash; so one country id gives you everything happening anywhere inside that country. Drop in the <code>id</code> from the previous step:</p>
+        <pre><code>curl -X POST https://api.clearinitiative.io/graphql \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the raw observations underneath, or its <code>alerts</code> to see what was escalated from it.</p>
+        <div class="notice notice-info">
+          The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
+        </div>
+
+        <h2 id="guide-next">Where to go next</h2>
+        <p>You now know the shape of the graph and how to authenticate, query, and slice by location. From here:</p>
+        <ul>
+          <li>Browse the full <a href="#queries">Queries</a> and <a href="#types">Types</a> reference below &mdash; it&rsquo;s auto-generated from the live schema, so it&rsquo;s always current.</li>
+          <li>Open the <a href="/graphql" target="_blank">GraphQL Sandbox</a> to build queries interactively with field autocomplete.</li>
+          <li>Read the <a href="#authentication">Authentication</a> section for the browser/cookie flow if you&rsquo;re building a web app rather than a server integration.</li>
+          <li>Manage your keys anytime in the <a href="/portal">Developer Portal</a>.</li>
+        </ul>
+      </div>
+
       <div id="section-introduction">
         <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
         <h1 id="introduction">Introduction</h1>
@@ -415,6 +524,44 @@ options). Honours teamId as a location-scope filter.<div class="field-args"><spa
     <td>Cross-entity stats query — returns a total plus optional buckets grouped
 by type / severity / day / week / month. Filter shape mirrors the page
 queries so a &quot;current view&quot; can compute its own counts.<div class="field-args"><span class="arg"><code>input: EntityStatsInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>nominatimCacheEntry</code></td>
+    <td><code>NominatimCacheEntry</code></td>
+    <td>Look up a cached Nominatim geocoder response by query hash. Returns
+null when the entry is missing or expired (admin/pipeline only).<div class="field-args"><span class="arg"><code>queryHash: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>activityLogs</code></td>
+    <td><code>[ActivityLog!]!</code></td>
+    <td>Paginated activity log. Admin only. Newest first.<div class="field-args"><span class="arg"><code>filter: ActivityLogFilterInput</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>activityStats</code></td>
+    <td><code>ActivityStats!</code></td>
+    <td>Aggregated activity counts + per-user + per-day breakdown for the
+admin dashboard. Admin only. Default window: last 30 days.<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
+  </tr><tr>
+    <td><code>userEngagement</code></td>
+    <td><code>UserEngagementMetrics!</code></td>
+    <td>Point-in-time user-engagement summary: DAU, WAU, MAU, and the
+DAU/MAU stickiness ratio. Derived from auth.login activity. Admin
+only. `asOf` defaults to NOW(); pass a historical timestamp to
+compute as-of that date.<div class="field-args"><span class="arg"><code>asOf: DateTime</code></span></div></td>
+  </tr><tr>
+    <td><code>dauSeries</code></td>
+    <td><code>[DauPoint!]!</code></td>
+    <td>Daily Active Users time series — one point per UTC date in the
+window. Admin only. Days with zero logins are omitted; the dashboard
+can backfill them client-side when plotting.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
+  </tr><tr>
+    <td><code>mauSeries</code></td>
+    <td><code>[MauPoint!]!</code></td>
+    <td>Monthly Active Users time series — one point per UTC calendar
+month in the window. Admin only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
+  </tr><tr>
+    <td><code>pipelineCountries</code></td>
+    <td><code>[PipelineCountry!]!</code></td>
+    <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
+each Country's bounding box. The scheduled publisher reads this to know which
+countries to run. Requires authentication.</td>
   </tr></tbody>
     </table>
         
@@ -473,6 +620,14 @@ Persists the signal and sends it to the pipeline for event grouping and auto-esc
     <td><code>Signal!</code></td>
     <td>Update a signal's severity score.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>severity: Int!</code></span></div></td>
   </tr><tr>
+    <td><code>updateSignalGeoparsedData</code></td>
+    <td><code>Signal!</code></td>
+    <td>Attach the clear-pipeline geoparser's result to an existing signal.
+Used for the manual-signal flow, where the signal is created via
+createManualSignal before the pipeline has a chance to run the geoparser.
+Stores the structured candidate verbatim; does not change locationId.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>geoparsedData: JSON!</code></span></div></td>
+  </tr><tr>
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
@@ -510,6 +665,13 @@ If the event already has a published alert, just records the user escalation.<di
     <td><code>Location!</code></td>
     <td>Create a new location.<div class="field-args"><span class="arg"><code>input: CreateLocationInput!</code></span></div></td>
   </tr><tr>
+    <td><code>ensureCountryLocation</code></td>
+    <td><code>Location!</code></td>
+    <td>Idempotently resolve a level-0 Country location by exact name, creating it
+with a bounding-box MULTIPOLYGON geometry if absent (admin/pipeline only).
+bbox is [minLng, minLat, maxLng, maxLat]. Returns the (found or created)
+Country — doubles as the pipeline's name→id resolution.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>bbox: [Float!]!</code></span></div></td>
+  </tr><tr>
     <td><code>updateLocation</code></td>
     <td><code>Location!</code></td>
     <td>Update an existing location.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateLocationInput!</code></span></div></td>
@@ -543,6 +705,22 @@ Returns the resulting rows. Rows whose locationId doesn't exist are skipped sile
     <td><code>deleteLocationMetadata</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a location's metadata entry for a given type (admin only).<div class="field-args"><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>type: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>findOrCreateLandmarkL4</code></td>
+    <td><code>FindOrCreateLandmarkL4Result!</code></td>
+    <td>Find an existing level-4 location matching a geoparsed candidate, or
+create one. Used by the clear-pipeline geoparser to promote a landmark
+hit (e.g., &quot;Nyala Airport&quot;) into a reusable A4 instead of letting the
+resolver invent a fresh point-location for every signal. When sourceLat
+and sourceLng are provided, the resolver verifies that the candidate's
+containing A2 matches the source coord's containing A2 — on mismatch it
+aborts with abortedReason=&quot;different_a2&quot; so the caller can fall back to
+source coords. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
+  </tr><tr>
+    <td><code>upsertNominatimCache</code></td>
+    <td><code>NominatimCacheEntry!</code></td>
+    <td>Upsert a Nominatim geocoder cache entry (admin/pipeline only).
+Replaces any existing row with the same queryHash, resetting the TTL.<div class="field-args"><span class="arg"><code>input: UpsertNominatimCacheInput!</code></span></div></td>
   </tr><tr>
     <td><code>createNotification</code></td>
     <td><code>Notification!</code></td>
@@ -696,6 +874,51 @@ Returns the list of created subscriptions. Duplicates are skipped silently.<div 
     <td><code>addEventToCrisis</code></td>
     <td><code>EventCrisis!</code></td>
     <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>removeEventFromCrisis</code></td>
+    <td><code>Crisis</code></td>
+    <td>Remove an event from a crisis. Recomputes populationAffected from the
+remaining events and dispatches the enrichment task so title/summary get
+regenerated to reflect the new event set. If the event being removed is
+the LAST event, deletes the crisis entirely and returns null. Otherwise
+returns the updated crisis (title/summary still show pre-removal values
+until the async enrichment task completes).<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateCrisisTitle</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Edit a crisis's title in place. Any authenticated user. Pass an empty
+string to clear the field.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>title: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>updateCrisisDescription</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Edit the human-facing description on a crisis. The crisis's summary
+column stores JSON of the form description+tldr — this mutation updates
+just the description key and preserves any existing tldr bullets (which
+the LLM enrichment task generates). Any authenticated user. Pass an
+empty string to clear the description without disturbing the tldr.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>description: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>deleteCrisis</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a crisis. Cascades the eventCrises join rows, user feedback,
+and user comments via the FK constraints. Any authenticated user.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>addCrisisAttachments</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Append S3 keys to a crisis's attachments list. Idempotent — keys
+already present in the list are skipped silently. Returns the updated
+crisis with the new list.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
+  </tr><tr>
+    <td><code>removeCrisisAttachment</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Remove an S3 key from a crisis's attachments list. Does NOT delete
+the underlying S3 object (operators can clean those up separately).
+Returns the updated crisis.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>setCrisisNeedsAnalysis</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Set the LLM-generated NRC SAF needs analysis inside the crisis's
+needs JSONB. Merges generalSummary and sector keys into the existing
+object so other keys on needs are preserved. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>generalSummary: [String!]!</code></span><span class="arg"><code>sector: JSON!</code></span></div></td>
   </tr></tbody>
     </table>
 
@@ -715,6 +938,31 @@ Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
   </tr><tr>
     <td><code>password</code></td>
     <td><code>String!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-activitylogfilterinput"><code>ActivityLogFilterInput</code> <span class="type-badge">input</span></h3><p>Filter for the paginated activityLogs query.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>userId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actionPrefix</code></td>
+    <td><code>String</code></td>
+    <td>Action prefix match — e.g. 'crisis.' returns all crisis-related rows.</td>
+  </tr><tr>
+    <td><code>action</code></td>
+    <td><code>String</code></td>
+    <td>Exact action match.</td>
+  </tr><tr>
+    <td><code>resourceType</code></td>
+    <td><code>String</code></td>
+    <td>Coarse resource bucket — 'signal' / 'event' / 'alert' / 'crisis' /
+'feedback' / 'session'.</td>
+  </tr><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-addcommentinput"><code>AddCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
@@ -1146,6 +1394,12 @@ existing row instead of creating a duplicate. Recommended prefix scheme:
     <td><code>lng</code></td>
     <td><code>Float</code></td>
     <td>Longitude for automatic geo-resolution.</td>
+  </tr><tr>
+    <td><code>geoparsedData</code></td>
+    <td><code>JSON</code></td>
+    <td>Optional output of clear-pipeline's text-based geoparser. Additive
+enrichment, stored verbatim for downstream comparison against the
+source's coords. Schema documented on the signals model.</td>
   </tr></tbody></table><h3 id="type-createteaminput"><code>CreateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>organisationId</code></td>
     <td><code>String!</code></td>
@@ -1246,6 +1500,35 @@ existing row instead of creating a duplicate. Recommended prefix scheme:
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-findorcreatelandmarkl4input"><code>FindOrCreateLandmarkL4Input</code> <span class="type-badge">input</span></h3><p>Input for findOrCreateLandmarkL4. Drives geoparser-based L4 promotion
+in the signal-ingestion pipeline.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Display name to use when creating a new L4 (e.g., 'Nyala Airport').
+Reuse for kind='landmark' is keyed on a case-insensitive match of this
+field within the candidate's containing A2.</td>
+  </tr><tr>
+    <td><code>lat</code></td>
+    <td><code>Float!</code></td>
+    <td>Candidate latitude (from the geocoder).</td>
+  </tr><tr>
+    <td><code>lng</code></td>
+    <td><code>Float!</code></td>
+    <td>Candidate longitude (from the geocoder).</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>'landmark' or 'admin'. Drives the reuse strategy: landmarks reuse by
+exact name, admins reuse by proximity (≤100m) within the same A2.</td>
+  </tr><tr>
+    <td><code>sourceLat</code></td>
+    <td><code>Float</code></td>
+    <td>Source coordinate's latitude. When provided, the resolver verifies the
+candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
+  </tr><tr>
+    <td><code>sourceLng</code></td>
+    <td><code>Float</code></td>
+    <td>Source coordinate's longitude. See sourceLat.</td>
   </tr></tbody></table><h3 id="type-inviteuserinput"><code>InviteUserInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -1403,6 +1686,11 @@ invitee membership in that team with the given role on acceptance.</td>
     <td><code>summary</code></td>
     <td><code>String</code></td>
     <td>AI-generated crisis summary.</td>
+  </tr><tr>
+    <td><code>scenarios</code></td>
+    <td><code>JSON</code></td>
+    <td>LLM-generated forward scenarios. Shape:
+{ most_likely, best_case, worst_case, description }.</td>
   </tr></tbody></table><h3 id="type-updatedatasourceinput"><code>UpdateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
@@ -1551,6 +1839,10 @@ invitee membership in that team with the given role on acceptance.</td>
     <td><code>enableSMSNotification</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String</code></td>
+    <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
   </tr></tbody></table><h3 id="type-updateteaminput"><code>UpdateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
@@ -1575,6 +1867,122 @@ invitee membership in that team with the given role on acceptance.</td>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
     <td>JSON payload for this type.</td>
+  </tr></tbody></table><h3 id="type-upsertnominatimcacheinput"><code>UpsertNominatimCacheInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>queryHash</code></td>
+    <td><code>String!</code></td>
+    <td>SHA-256 hex digest of `&lt;endpoint&gt;:&lt;normalised_query&gt;`. The caller is
+responsible for computing this — the server doesn't re-hash.</td>
+  </tr><tr>
+    <td><code>query</code></td>
+    <td><code>String!</code></td>
+    <td>Raw query string for debugging / audit.</td>
+  </tr><tr>
+    <td><code>endpoint</code></td>
+    <td><code>String!</code></td>
+    <td>The Nominatim endpoint that produced this response.</td>
+  </tr><tr>
+    <td><code>responseJson</code></td>
+    <td><code>JSON!</code></td>
+    <td>Raw JSON response to cache. Stored verbatim.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>'ok' for a usable result, 'no_result' for an empty result set,
+'error' when the geocoder returned an error response. Negative results
+are cached so we don't re-ask the same dead question.</td>
+  </tr><tr>
+    <td><code>ttlSeconds</code></td>
+    <td><code>Int!</code></td>
+    <td>How long this entry should remain valid, in seconds. The server
+computes `expires_at = NOW() + ttl_seconds`.</td>
+  </tr></tbody></table><h3 id="type-activitycountsbyaction"><code>ActivityCountsByAction</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>login</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signalCreateManual</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventCreate</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alertCreate</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>crisisCreate</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>feedbackCreate</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-activitylog"><code>ActivityLog</code> <span class="type-badge">object</span></h3><p>A single user-initiated action recorded for analytics.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>action</code></td>
+    <td><code>String!</code></td>
+    <td>Namespaced action verb — e.g. 'auth.login', 'signal.create_manual',
+'event.create', 'alert.create', 'crisis.create', 'feedback.create'.</td>
+  </tr><tr>
+    <td><code>resourceType</code></td>
+    <td><code>String</code></td>
+    <td>Coarse resource bucket — 'signal' / 'event' / 'alert' / 'crisis' /
+'feedback' / 'session'.</td>
+  </tr><tr>
+    <td><code>resourceId</code></td>
+    <td><code>String</code></td>
+    <td>The created/affected row's id. Null for actions like login.</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Per-action context (title, severity, etc.). Shape varies by action.</td>
+  </tr><tr>
+    <td><code>ipAddress</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>userAgent</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-activitystats"><code>ActivityStats</code> <span class="type-badge">object</span></h3><p>Aggregate counts and time-series for the admin dashboard.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Window the stats cover, in ISO-8601. Mirrored back to the client so
+a paginated dashboard can know what range its numbers are based on.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>totals</code></td>
+    <td><code>ActivityCountsByAction!</code></td>
+    <td>Total event counts across the window, keyed by action.</td>
+  </tr><tr>
+    <td><code>byUser</code></td>
+    <td><code>[UserActivitySummary!]!</code></td>
+    <td>Per-user breakdown, ordered by total activity (desc), limited to
+the top 50 most-active users in the window.</td>
+  </tr><tr>
+    <td><code>byDay</code></td>
+    <td><code>[DailyActivityCount!]!</code></td>
+    <td>Daily activity counts across the window (UTC dates).</td>
   </tr></tbody></table><h3 id="type-alert"><code>Alert</code> <span class="type-badge">object</span></h3><p>An alert created from an event, distributed to subscribed users.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -1721,6 +2129,12 @@ key that will never be retrievable again.</p><table class="ref-table"><thead><tr
     <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>scenarios</code></td>
+    <td><code>JSON</code></td>
+    <td>Forward-looking scenarios generated by the LLM enrichment task.
+Shape: { most_likely, best_case, worst_case, description }. Null until
+the enrichment task runs.</td>
+  </tr><tr>
     <td><code>severity</code></td>
     <td><code>Float!</code></td>
     <td>Severity score (aggregated from linked events).</td>
@@ -1741,6 +2155,12 @@ key that will never be retrievable again.</p><table class="ref-table"><thead><tr
     <td><code>String</code></td>
     <td>Total population residing within the admin areas of linked events (BigInt as string).</td>
   </tr><tr>
+    <td><code>attachments</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Supporting documents uploaded by users (reports, photos, PDFs).
+Returned as presigned URLs — the underlying storage is S3 keys, which
+the resolver converts at read time so links stay short-lived.</td>
+  </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
     <td>Events that are part of this crisis.</td>
@@ -1752,6 +2172,18 @@ key that will never be retrievable again.</p><table class="ref-table"><thead><tr
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
     <td>User comments on this crisis.</td>
+  </tr></tbody></table><h3 id="type-dailyactivitycount"><code>DailyActivityCount</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>date</code></td>
+    <td><code>String!</code></td>
+    <td>YYYY-MM-DD in UTC.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>counts</code></td>
+    <td><code>ActivityCountsByAction!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-datasource"><code>DataSource</code> <span class="type-badge">object</span></h3><p>An external data source that feeds signals into the system.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -1788,6 +2220,14 @@ key that will never be retrievable again.</p><table class="ref-table"><thead><tr
     <td><code>signals</code></td>
     <td><code>[Signal!]!</code></td>
     <td>Signals collected from this data source.</td>
+  </tr></tbody></table><h3 id="type-daupoint"><code>DauPoint</code> <span class="type-badge">object</span></h3><p>One day in a DAU time series.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>date</code></td>
+    <td><code>String!</code></td>
+    <td>ISO date (YYYY-MM-DD, UTC).</td>
+  </tr><tr>
+    <td><code>uniqueUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of distinct users who logged in on this date.</td>
   </tr></tbody></table><h3 id="type-disasterlevel1"><code>DisasterLevel1</code> <span class="type-badge">object</span></h3><p>A level-1 category with its level-2 groups.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -2013,6 +2453,25 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-findorcreatelandmarkl4result"><code>FindOrCreateLandmarkL4Result</code> <span class="type-badge">object</span></h3><p>Outcome of findOrCreateLandmarkL4.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>The resolved L4 id. Null when the same-A2 safety check aborts.</td>
+  </tr><tr>
+    <td><code>reused</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the call resolved to an existing L4, false when a new one
+was created. Meaningless when locationId is null.</td>
+  </tr><tr>
+    <td><code>pointType</code></td>
+    <td><code>String</code></td>
+    <td>Provenance tag of the resolved L4 ('landmark-geocoded', 'gps', etc).
+Null when the call aborted without producing a row.</td>
+  </tr><tr>
+    <td><code>abortedReason</code></td>
+    <td><code>String</code></td>
+    <td>Set to 'different_a2' when the candidate and source coords resolve to
+different containing A2s. Null on success.</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -2168,6 +2627,16 @@ means org-only access (no team).</td>
     <td><code>String</code></td>
     <td>Population residing within this location's geometry. Null for point locations or when not yet computed.</td>
   </tr><tr>
+    <td><code>pointType</code></td>
+    <td><code>String</code></td>
+    <td>Provenance of this location's geometry. Notable values:
+- 'landmark-geocoded': L4 created by the pipeline geoparser from a
+  landmark/place name resolved via Nominatim. The location's `name`
+  field is meaningful for display (e.g., 'Nyala Airport').
+- 'gps' / 'source-gps' / 'centroid' / 'source-centroid': see schema
+  documentation on the Prisma model.
+- null: legacy rows (most signal-title L4s from `createPointLocation`).</td>
+  </tr><tr>
     <td><code>metadata</code></td>
     <td><code>[LocationMetadata!]!</code></td>
     <td>Per-type metadata (IOM DTM, INFORM, etc). Pass a type argument to filter.
@@ -2213,6 +2682,47 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td>—</td>
   </tr><tr>
     <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-maupoint"><code>MauPoint</code> <span class="type-badge">object</span></h3><p>One month in a MAU time series.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>month</code></td>
+    <td><code>String!</code></td>
+    <td>ISO month (YYYY-MM, UTC).</td>
+  </tr><tr>
+    <td><code>uniqueUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of distinct users who logged in at least once during the
+calendar month.</td>
+  </tr></tbody></table><h3 id="type-nominatimcacheentry"><code>NominatimCacheEntry</code> <span class="type-badge">object</span></h3><p>A cached Nominatim-protocol geocoder response.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>queryHash</code></td>
+    <td><code>String!</code></td>
+    <td>SHA-256 hex digest of `&lt;endpoint&gt;:&lt;normalised_query&gt;`.</td>
+  </tr><tr>
+    <td><code>query</code></td>
+    <td><code>String!</code></td>
+    <td>Raw query string (for debugging only).</td>
+  </tr><tr>
+    <td><code>endpoint</code></td>
+    <td><code>String!</code></td>
+    <td>The Nominatim endpoint that produced this response (e.g. 'search', 'reverse').</td>
+  </tr><tr>
+    <td><code>responseJson</code></td>
+    <td><code>JSON!</code></td>
+    <td>Raw JSON response from the geocoder.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>Lookup outcome: 'ok' / 'no_result' / 'error'.</td>
+  </tr><tr>
+    <td><code>fetchedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>expiresAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-notification"><code>Notification</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -2323,6 +2833,16 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>When this membership was created.</td>
+  </tr></tbody></table><h3 id="type-pipelinecountry"><code>PipelineCountry</code> <span class="type-badge">object</span></h3><p>A country the CLEAR pipeline publishes a Situation Analysis for, with the
+bounding box used to create its level-0 Country location. bbox order matches
+ensureCountryLocation: [minLng, minLat, maxLng, maxLat].</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bbox</code></td>
+    <td><code>[Float!]!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-signal"><code>Signal</code> <span class="type-badge">object</span></h3><p>A signal derived from a data source.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -2336,10 +2856,6 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>String</code></td>
     <td>Stable upstream identifier (e.g. &quot;dataminr:{alertId}&quot;). Used to
 deduplicate ingestion — (source, externalId) is unique.</td>
-  </tr><tr>
-    <td><code>rawData</code></td>
-    <td><code>JSON!</code></td>
-    <td>Original signal payload as JSON.</td>
   </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>DateTime!</code></td>
@@ -2507,6 +3023,10 @@ string, or ISO date/week/month.</td>
     <td><code>Boolean!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String!</code></td>
+    <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;). Defaults to &quot;en&quot;.</td>
+  </tr><tr>
     <td><code>enableInAppNotification</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
@@ -2558,6 +3078,18 @@ string, or ISO date/week/month.</td>
     <td><code>escalations</code></td>
     <td><code>[EventEscalation!]!</code></td>
     <td>Events/alerts escalated by this user.</td>
+  </tr></tbody></table><h3 id="type-useractivitysummary"><code>UserActivitySummary</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>counts</code></td>
+    <td><code>ActivityCountsByAction!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-useralert"><code>UserAlert</code> <span class="type-badge">object</span></h3><p>Tracks an alert delivered to a user — view status.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -2618,6 +3150,30 @@ string, or ISO date/week/month.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-userengagementmetrics"><code>UserEngagementMetrics</code> <span class="type-badge">object</span></h3><p>Point-in-time engagement summary derived from auth.login activity.
+All three windows are trailing from `asOf` (inclusive).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>asOf</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Reference moment the windows are anchored to. Defaults to NOW()
+when the caller doesn't specify it.</td>
+  </tr><tr>
+    <td><code>dau</code></td>
+    <td><code>Int!</code></td>
+    <td>Unique users with at least one login in the trailing 24 hours.</td>
+  </tr><tr>
+    <td><code>wau</code></td>
+    <td><code>Int!</code></td>
+    <td>Unique users with at least one login in the trailing 7 days.</td>
+  </tr><tr>
+    <td><code>mau</code></td>
+    <td><code>Int!</code></td>
+    <td>Unique users with at least one login in the trailing 30 days.</td>
+  </tr><tr>
+    <td><code>dauMauRatio</code></td>
+    <td><code>Float!</code></td>
+    <td>Stickiness ratio (DAU / MAU) as a percentage. Industry benchmark:
+≥20% indicates a frequently-returning user base. Returns 0 when MAU
+is 0 so the field is safe to chart without null-handling.</td>
   </tr></tbody></table><h3 id="type-userfeedback"><code>UserFeedback</code> <span class="type-badge">object</span></h3><p>User feedback on a signal, event, or crisis — rating and optional text.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -2661,6 +3217,7 @@ string, or ISO date/week/month.</td>
     <!-- Right TOC -->
     <aside class="toc">
       <div class="toc-heading">On This Page</div>
+      <a href="#guide">Build Your First Integration</a>
       <a href="#introduction">Introduction</a>
       <a href="#features">What You Can Do</a>
       <a href="#quick-start">Quick Start</a>
