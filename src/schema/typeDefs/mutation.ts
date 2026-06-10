@@ -358,6 +358,8 @@ export const mutationTypeDef = gql`
     enableInAppNotification: Boolean
     enableEmailNotification: Boolean
     enableSMSNotification: Boolean
+    """Preferred UI language code (BCP-47 / ISO 639-1, e.g. "en", "ar")."""
+    language: String
   }
 
   input CreateAlertInput {

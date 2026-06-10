@@ -12,6 +12,8 @@ export const userTypeDef = gql`
     """User role: viewer, editor, or admin."""
     role: String!
     isActive: Boolean!
+    """Preferred UI language code (BCP-47 / ISO 639-1, e.g. "en", "ar"). Defaults to "en"."""
+    language: String!
     enableInAppNotification: Boolean!
     enableEmailNotification: Boolean!
     enableSMSNotification: Boolean!
