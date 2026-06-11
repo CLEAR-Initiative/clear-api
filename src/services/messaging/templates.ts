@@ -301,6 +301,12 @@ export interface AlertNotificationExtras {
   locationName?: string | null;
   population?: string | null;
   affectedPeople?: string | null;
+  /** Closest level-2 ancestor of the event, rendered as `DISTRICT: <name>`. */
+  districtName?: string | null;
+  /** Names of every signal's location, deduped, capped (see helpers). */
+  signalLocations?: string[] | null;
+  /** Count of signal locations dropped past the cap, shown as "+N more". */
+  signalLocationsOverflow?: number;
 }
 
 /**
@@ -314,16 +320,44 @@ export function alertNotification(
   extras?: AlertNotificationExtras,
 ): EmailContent {
   const displayName = userName || "there";
-  const { eventType, severity, dataSource, locationName, population } = extras ?? {};
+  const {
+    eventType,
+    severity,
+    dataSource,
+    locationName,
+    population,
+    districtName,
+    signalLocations,
+    signalLocationsOverflow,
+  } = extras ?? {};
 
+  // Format the signal-location list once — the same string is used by the
+  // plain-text body and the HTML below.
+  const signalLocationsList = (signalLocations ?? []).filter(Boolean);
+  const overflow = Math.max(0, signalLocationsOverflow ?? 0);
+  const locationsLine =
+    signalLocationsList.length > 0
+      ? `${signalLocationsList.join(", ")}${overflow > 0 ? ` +${overflow} more` : ""}`
+      : null;
+
+  // Plain-text rendering: stack DISTRICT and LOCATIONS as labelled lines.
+  // Fall back to the bare `locationName` only when neither structured field
+  // is provided (back-compat for callers that haven't been updated).
   const textParts: string[] = [`Hi ${displayName},`, "", `New alert: ${alertTitle}`];
-  if (locationName) textParts.push(locationName);
+  if (districtName) textParts.push(`DISTRICT: ${districtName}`);
+  if (locationsLine) textParts.push(`LOCATIONS: ${locationsLine}`);
+  if (!districtName && !locationsLine && locationName) textParts.push(locationName);
   if (alertDescription) textParts.push("", alertDescription);
   textParts.push("", `View alert: ${alertUrl}`, "", "- The CLEAR Platform Team");
 
+  // Stat box prefers the district label (matches what's shown above).
   const statBoxes: Array<{ value: string; label: string }> = [];
+  const populationLabelTarget = districtName ?? locationName ?? null;
   if (population != null) {
-    statBoxes.push({ value: population, label: `Population${locationName ? ` of ${locationName}` : ""}` });
+    statBoxes.push({
+      value: population,
+      label: `Population${populationLabelTarget ? ` of ${populationLabelTarget}` : ""}`,
+    });
   }
 
   const statCellStyle = "border: 1px solid #E5E5E5; border-radius: 6px; padding: 16px; vertical-align: top;";
@@ -382,7 +416,33 @@ export function alertNotification(
           </tr>
 
           <!-- Location -->
-          ${locationName ? `<tr><td style="padding: 8px 32px 0;"><p style="margin: 0; font-size: 14px; color: #737373;">${locationName}</p></td></tr>` : ""}
+          ${(() => {
+            const labelStyle =
+              "font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; color: #171717;";
+            const valueStyle = "color: #525252;";
+            const lineStyle = "margin: 0 0 4px; font-size: 14px; line-height: 1.5;";
+            const lines: string[] = [];
+            if (districtName) {
+              lines.push(
+                `<p style="${lineStyle}"><span style="${labelStyle}">District:</span> <span style="${valueStyle}">${districtName}</span></p>`,
+              );
+            }
+            if (locationsLine) {
+              lines.push(
+                `<p style="${lineStyle}"><span style="${labelStyle}">Locations:</span> <span style="${valueStyle}">${locationsLine}</span></p>`,
+              );
+            }
+            // Back-compat: callers that only pass the legacy `locationName`
+            // (e.g. test-alert-notification) still render the single grey row.
+            if (lines.length === 0 && locationName) {
+              lines.push(
+                `<p style="margin: 0; font-size: 14px; color: #737373;">${locationName}</p>`,
+              );
+            }
+            return lines.length > 0
+              ? `<tr><td style="padding: 8px 32px 0;">${lines.join("")}</td></tr>`
+              : "";
+          })()}
 
           <!-- Stats -->
           ${statsHtml ? `<tr><td style="padding: 20px 32px 0;">${statsHtml}</td></tr>` : ""}
