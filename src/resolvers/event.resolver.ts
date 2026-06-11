@@ -8,7 +8,13 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
-import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
+import {
+  severityToLabel,
+  formatCount,
+  resolveEmailLocation,
+  resolveEventTypeLabel,
+  fetchEventSignalLocations,
+} from "../utils/alert-email-helpers.js";
 
 interface CreateEventInput {
   title?: string;
@@ -384,12 +390,18 @@ export const eventResolvers = {
               locations.find((l) => l.id === event.originId) ??
               locations.find((l) => l.id === event.destinationId) ??
               null;
-            const emailLoc = await resolveEmailLocation(context.prisma, primaryLoc);
+            const [emailLoc, eventTypeLabel, signalLocs] = await Promise.all([
+              resolveEmailLocation(context.prisma, primaryLoc),
+              resolveEventTypeLabel(context.prisma, event.types),
+              fetchEventSignalLocations(context.prisma, event.id),
+            ]);
             const severityLabel = severityToLabel(event.severity);
-            const eventTypeLabel = await resolveEventTypeLabel(context.prisma, event.types);
             const locationName = emailLoc?.name ?? null;
             const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
             const affectedPeople = event.populationAffected != null ? formatCount(event.populationAffected) : null;
+            // The event's primary location is already an A2 district, so its
+            // name doubles as the DISTRICT label.
+            const districtName = primaryLoc?.name ?? null;
 
             // 1. Populate userAlerts
             await context.prisma.userAlerts.createMany({
@@ -435,6 +447,9 @@ export const eventResolvers = {
                         locationName,
                         population,
                         affectedPeople,
+                        districtName,
+                        signalLocations: signalLocs.names,
+                        signalLocationsOverflow: signalLocs.overflow,
                       });
                       return {
                         to: u.email,
