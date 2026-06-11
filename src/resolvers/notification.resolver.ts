@@ -5,7 +5,13 @@ import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification, alertDigest } from "../services/messaging/templates.js";
-import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
+import {
+  severityToLabel,
+  formatCount,
+  resolveEmailLocation,
+  resolveEventTypeLabel,
+  fetchEventSignalLocations,
+} from "../utils/alert-email-helpers.js";
 
 interface CreateNotificationInput {
   userId: string;
@@ -204,14 +210,19 @@ export const notificationResolvers = {
       if (emailUsers.length > 0) {
         const emailProvider = await getEmailProvider();
         const primaryLoc = event.generalLocation ?? event.originLocation ?? null;
-        const emailLoc = await resolveEmailLocation(context.prisma, primaryLoc);
+        const [emailLoc, eventTypeLabel, signalLocs] = await Promise.all([
+          resolveEmailLocation(context.prisma, primaryLoc),
+          resolveEventTypeLabel(context.prisma, event.types),
+          fetchEventSignalLocations(context.prisma, event.id),
+        ]);
         const locationName = emailLoc?.name ?? null;
         const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
         const severityLabel = severityToLabel(event.severity);
         const affectedPeople = event.populationAffected != null
           ? formatCount(event.populationAffected)
           : null;
-        const eventTypeLabel = await resolveEventTypeLabel(context.prisma, event.types);
+        // Event's primary location is already an A2 district.
+        const districtName = primaryLoc?.name ?? null;
 
         const emails = emailUsers.map((u) => {
           const content = alertNotification(u.name, title, event.description, alertUrl, {
@@ -220,6 +231,9 @@ export const notificationResolvers = {
             locationName,
             population,
             affectedPeople,
+            districtName,
+            signalLocations: signalLocs.names,
+            signalLocationsOverflow: signalLocs.overflow,
           });
           return {
             to: u.email,

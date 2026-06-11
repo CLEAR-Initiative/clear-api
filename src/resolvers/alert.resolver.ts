@@ -8,7 +8,13 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
-import { severityToLabel, formatCount, resolveEmailLocation, resolveEventTypeLabel } from "../utils/alert-email-helpers.js";
+import {
+  severityToLabel,
+  formatCount,
+  resolveEmailLocation,
+  resolveEventTypeLabel,
+  fetchEventSignalLocations,
+} from "../utils/alert-email-helpers.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -222,9 +228,10 @@ export const alertResolvers = {
               locations.find((l) => l.id === event.originId) ??
               locations.find((l) => l.id === event.destinationId) ??
               null;
-            const [emailLoc, eventTypeLabel] = await Promise.all([
+            const [emailLoc, eventTypeLabel, signalLocs] = await Promise.all([
               resolveEmailLocation(context.prisma, primaryLoc),
               resolveEventTypeLabel(context.prisma, event.types),
+              fetchEventSignalLocations(context.prisma, event.id),
             ]);
             const emailExtras = {
               severity: severityToLabel(event.severity),
@@ -232,6 +239,10 @@ export const alertResolvers = {
               locationName: emailLoc?.name ?? null,
               population: emailLoc?.population ? formatCount(emailLoc.population) : null,
               affectedPeople: event.populationAffected != null ? formatCount(event.populationAffected) : null,
+              // Event's primary location is already an A2 district.
+              districtName: primaryLoc?.name ?? null,
+              signalLocations: signalLocs.names,
+              signalLocationsOverflow: signalLocs.overflow,
             };
             void (async () => {
               try {

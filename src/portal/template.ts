@@ -9,22 +9,29 @@ export function renderPortal({ userEmail }: PortalOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Portal</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --color-bg: #0f1117;
-      --color-surface: #1a1d27;
-      --color-border: #2e3347;
-      --color-accent: #6366f1;
-      --color-accent-hover: #4f52d4;
-      --color-text: #e2e8f0;
-      --color-muted: #8892a4;
+      --color-bg: #0a0a0b;
+      --color-surface: #141417;
+      --color-border: #26262b;
+      --color-accent: #f2612a;
+      --color-accent-hover: #ff6a33;
+      --color-text: #f5f5f6;
+      --color-muted: #9a9ca3;
+      --color-label: #75777e;
+      --on-accent: #0a0a0b;
       --color-success: #22c55e;
       --color-danger: #ef4444;
       --color-warning: #f59e0b;
-      --color-code-bg: #12141c;
-      --radius: 8px;
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
+      --color-code-bg: #0e0e10;
+      --radius: 10px;
+      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,8 +41,10 @@ export function renderPortal({ userEmail }: PortalOptions): string {
 
     /* Nav */
     .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .nav-brand { font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; }
-    .nav-brand span { color: var(--color-accent); }
+    .nav-brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem; color: var(--color-text); }
+    .nav-brand a { color: inherit; text-decoration: none; }
+    .nav-brand .c { color: var(--color-accent); }
+    .nav-brand .by { color: var(--color-label); font-weight: 500; font-size: 0.8rem; font-style: italic; }
     .nav-user { font-size: 0.8rem; color: var(--color-muted); display: flex; align-items: center; gap: 1rem; }
     .nav-user button { background: none; border: 1px solid var(--color-border); color: var(--color-muted); padding: 0.3rem 0.75rem; border-radius: var(--radius); cursor: pointer; font-size: 0.75rem; }
     .nav-user button:hover { border-color: var(--color-danger); color: var(--color-danger); }
@@ -59,17 +68,17 @@ export function renderPortal({ userEmail }: PortalOptions): string {
 
     /* Code blocks */
     pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
-    code { font-family: var(--font-mono); font-size: 0.85rem; color: #a5f3fc; }
+    code { font-family: var(--font-mono); font-size: 0.85rem; color: #cdd1d6; }
     p code, li code { background: var(--color-code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
 
     /* Copy button */
     .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; background: var(--color-border); border: none; border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 0.75rem; font-family: var(--font); }
-    .copy-btn:hover { background: var(--color-accent); color: #fff; }
+    .copy-btn:hover { background: var(--color-accent); color: var(--on-accent); }
 
     /* Steps */
     .steps { margin-top: 1rem; }
     .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
-    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: #fff; }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
     .step-content h3 { margin: 0 0 0.25rem; color: var(--color-text); }
     .step-content p { margin: 0.25rem 0; }
 
@@ -84,7 +93,7 @@ export function renderPortal({ userEmail }: PortalOptions): string {
 
     /* Buttons */
     .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-size: 0.875rem; transition: all 0.15s; font-family: var(--font); }
-    .btn-primary { background: var(--color-accent); color: #fff; }
+    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
     .btn-primary:hover { background: var(--color-accent-hover); }
     .btn-danger { background: transparent; border: 1px solid var(--color-danger); color: var(--color-danger); }
     .btn-danger:hover { background: var(--color-danger); color: #fff; }
@@ -118,7 +127,7 @@ export function renderPortal({ userEmail }: PortalOptions): string {
 </head>
 <body>
   <nav class="nav">
-    <div class="nav-brand"><span>&#9670;</span> Developer Portal</div>
+    <div class="nav-brand"><a href="/"><span class="c">CLEAR</span> API</a> <span class="by">Developer Portal</span></div>
     <div class="nav-user">
       <a href="/docs" style="color:var(--color-muted);font-size:0.8rem;">Docs</a>
       <span>${escapeHtml(userEmail)}</span>
@@ -515,21 +524,26 @@ export function renderLoginPage(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Portal &mdash; Sign In</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { background: #1a1d27; border: 1px solid #2e3347; border-radius: 8px; padding: 2rem; width: 380px; }
+    body { font-family: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0a0a0b; color: #f5f5f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #141417; border: 1px solid #26262b; border-radius: 12px; padding: 2rem; width: 380px; }
     .card h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
-    .card p { font-size: 0.85rem; color: #8892a4; margin-bottom: 1.5rem; }
-    label { display: block; font-size: 0.8rem; color: #8892a4; margin-bottom: 0.25rem; }
-    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid #2e3347; background: #12141c; color: #e2e8f0; font-size: 0.875rem; margin-bottom: 1rem; font-family: inherit; }
-    input:focus { outline: none; border-color: #6366f1; }
-    button { width: 100%; padding: 0.6rem; background: #6366f1; color: #fff; border: none; border-radius: 6px; font-size: 0.875rem; cursor: pointer; font-family: inherit; font-weight: 500; }
-    button:hover { background: #4f52d4; }
+    .card p { font-size: 0.85rem; color: #9a9ca3; margin-bottom: 1.5rem; }
+    label { display: block; font-size: 0.8rem; color: #9a9ca3; margin-bottom: 0.25rem; }
+    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid #26262b; background: #0e0e10; color: #f5f5f6; font-size: 0.875rem; margin-bottom: 1rem; font-family: inherit; }
+    input:focus { outline: none; border-color: #f2612a; }
+    button { width: 100%; padding: 0.6rem; background: #f2612a; color: #0a0a0b; border: none; border-radius: 8px; font-size: 0.875rem; cursor: pointer; font-family: inherit; font-weight: 600; }
+    button:hover { background: #ff6a33; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
-    .toggle { text-align: center; font-size: 0.8rem; color: #8892a4; margin-top: 1.25rem; }
-    .toggle a { color: #6366f1; text-decoration: none; }
+    .toggle { text-align: center; font-size: 0.8rem; color: #9a9ca3; margin-top: 1.25rem; }
+    .toggle a { color: #f2612a; text-decoration: none; }
     .toggle a:hover { text-decoration: underline; }
   </style>
 </head>
