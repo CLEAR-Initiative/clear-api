@@ -6,15 +6,15 @@
  * locationMetadata row per admin-2 location, summing population per age
  * group across genders.
  *
- * Dataset: sdn_agesex_structures_2026_CN_100m_R2025A_v1
- *   - file naming: sdn_{m|f|t}_{age}_2026_CN_100m_R2025A_v1.tif
+ * Dataset: {iso3_lower}_agesex_structures_2026_CN_100m_R2025A_v1
+ *   - file naming: {iso3_lower}_{m|f|t}_{age}_2026_CN_100m_R2025A_v1.tif
  *   - age groups: 00 (0-12mo), 01 (1-4y), 05 (5-9y), 10..85 in 5-year bins, 90 (90+)
  *   - resolution: 100m, EPSG:4326 (WGS84), constrained estimate
  *
  * For each admin-2 polygon we compute a zonal sum on the male raster and
  * the female raster for each age group, then `total` is just male + female.
- * The country-wide totals (sdn_T_F_*, sdn_T_M_*) are not consumed — they're
- * already aggregated across age and don't help per-A2 aggregation.
+ * The country-wide totals ({iso}_T_F_*, {iso}_T_M_*) are not consumed —
+ * they're already aggregated across age and don't help per-A2 aggregation.
  *
  * Storage shape on `location_metadata.data`:
  *     {
@@ -26,9 +26,18 @@
  *     }
  *
  * Usage:
- *   bun run scripts/worldpop/import-age-sex.ts                       # dry run (default)
- *   bun run scripts/worldpop/import-age-sex.ts --execute             # write to DB
- *   bun run scripts/worldpop/import-age-sex.ts --input <folder>      # custom raster folder
+ *   bun run scripts/worldpop/import-age-sex.ts                       # SDN, dry run
+ *   bun run scripts/worldpop/import-age-sex.ts --iso3 AFG            # Afghanistan
+ *   bun run scripts/worldpop/import-age-sex.ts --execute              # write to DB
+ *   bun run scripts/worldpop/import-age-sex.ts --input <folder>       # custom raster folder
+ *
+ * Notes on country selection:
+ *   - --iso3 controls the default input folder, the per-file regex, and
+ *     the source provenance block written into locationMetadata.data.
+ *   - The A2 polygons summed against the rasters are filtered by spatial
+ *     intersection with the raster bounding box, so a mixed-country DB
+ *     (SDN + AFG) is safe: running --iso3 AFG never overwrites Sudan
+ *     rows with zeros, and vice versa.
  *
  * Requires:
  *   - bun add geotiff
@@ -47,10 +56,26 @@ import { prisma } from "../../src/lib/prisma.js";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const CLEAR_API_DIR = join(SCRIPT_DIR, "..", "..");
-const DEFAULT_INPUT = join(
-  CLEAR_API_DIR,
-  "sdn_agesex_structures_2026_CN_100m_R2025A_v1",
-);
+const DEFAULT_ISO3 = "SDN";
+
+/**
+ * WorldPop folder name convention: `{iso3_lower}_agesex_structures_2026_CN_100m_R2025A_v1`.
+ * Defaults to the in-repo folder when --iso3 isn't overridden.
+ */
+function defaultInputForIso3(iso3: string): string {
+  return join(CLEAR_API_DIR, `${iso3.toLowerCase()}_agesex_structures_2026_CN_100m_R2025A_v1`);
+}
+
+/**
+ * Per-file regex — must match the actual filenames in the chosen folder.
+ * WorldPop publishes lowercase m/f per-age tiles named with the lowercase
+ * ISO3 prefix; the uppercase T_F / T_M country-wide totals are deliberately
+ * not matched (see header).
+ */
+function fileRegexForIso3(iso3: string): RegExp {
+  const prefix = iso3.toLowerCase();
+  return new RegExp(`^${prefix}_(?<gender>[mf])_(?<age>\\d{2})_2026_CN_100m_R2025A_v1\\.tif$`);
+}
 
 // `location_metadata.type` value we own. Year is baked in so a future
 // WorldPop release writes to a different row without colliding.
@@ -77,11 +102,6 @@ const AGE_GROUPS = [
 ] as const;
 type AgeGroup = (typeof AGE_GROUPS)[number];
 type Gender = "m" | "f";
-
-// sdn_{m|f}_{age}_2026_CN_100m_R2025A_v1.tif
-// Lowercase m/f only — the uppercase T_F / T_M country-wide totals
-// aren't per-age and aren't consumed.
-const FILE_RE = /^sdn_(?<gender>[mf])_(?<age>\d{2})_2026_CN_100m_R2025A_v1\.tif$/;
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -250,11 +270,12 @@ function zonalSums(
 
 async function discoverRasters(
   inputDir: string,
+  fileRe: RegExp,
 ): Promise<Map<`${Gender}_${AgeGroup}`, string>> {
   const matches = new Map<`${Gender}_${AgeGroup}`, string>();
   const entries = await readdir(inputDir);
   for (const name of entries.sort()) {
-    const m = FILE_RE.exec(name);
+    const m = fileRe.exec(name);
     if (!m?.groups) continue;
     const gender = m.groups.gender.toLowerCase() as Gender;
     const age = m.groups.age as AgeGroup;
@@ -265,7 +286,28 @@ async function discoverRasters(
 
 // ─── Location fetch ───────────────────────────────────────────────────────
 
-async function fetchA2Locations(): Promise<A2Location[]> {
+/**
+ * Read just the bbox of a raster without loading pixel data — used to
+ * restrict the A2 fetch to polygons inside the country. Cheap header-only.
+ */
+async function getRasterBbox(
+  path: string,
+): Promise<[number, number, number, number]> {
+  const tiff = await fromFile(path);
+  const image = await tiff.getImage();
+  const [west, south, east, north] = image.getBoundingBox();
+  return [west, south, east, north];
+}
+
+/**
+ * A2 polygons intersecting `bbox` (raster footprint). Without this filter
+ * a mixed-country DB would have a Sudan run zero out every Afghan A2 (and
+ * vice versa) when --execute fires.
+ */
+async function fetchA2Locations(
+  bbox: [number, number, number, number],
+): Promise<A2Location[]> {
+  const [west, south, east, north] = bbox;
   // Pull GeoJSON directly from PostGIS so we don't have to handle WKB/EWKB
   // parsing client-side. The cast is needed because the column is declared
   // as `Unsupported("geometry(...)")` in the Prisma schema.
@@ -277,6 +319,10 @@ async function fetchA2Locations(): Promise<A2Location[]> {
     FROM "locations"
     WHERE level = 2
       AND "geometry" IS NOT NULL
+      AND ST_Intersects(
+        "geometry"::geometry,
+        ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
+      )
   `;
   const out: A2Location[] = [];
   for (const r of rows) {
@@ -341,6 +387,7 @@ async function upsertBatch(payloads: UpsertPayload[]): Promise<number> {
 // ─── Entry point ──────────────────────────────────────────────────────────
 
 interface Flags {
+  iso3: string;
   inputDir: string;
   execute: boolean;
 }
@@ -352,8 +399,11 @@ function parseFlags(): Flags {
     if (i === -1 || i === argv.length - 1) return null;
     return argv[i + 1] ?? null;
   };
+  const iso3 = (get("--iso3") ?? DEFAULT_ISO3).toUpperCase();
   return {
-    inputDir: get("--input") ?? DEFAULT_INPUT,
+    iso3,
+    // Explicit --input wins, otherwise derive the folder name from --iso3.
+    inputDir: get("--input") ?? defaultInputForIso3(iso3),
     execute: argv.includes("--execute"),
   };
 }
@@ -366,19 +416,24 @@ async function main(): Promise<void> {
     throw new Error(`Input folder not found: ${flags.inputDir}`);
   }
 
-  const rasters = await discoverRasters(flags.inputDir);
+  const fileRe = fileRegexForIso3(flags.iso3);
+  const rasters = await discoverRasters(flags.inputDir, fileRe);
   if (rasters.size === 0) {
-    throw new Error(`No per-(gender, age) GeoTIFFs matched in ${flags.inputDir}`);
+    throw new Error(
+      `No per-(gender, age) GeoTIFFs matching ${fileRe} found in ${flags.inputDir}`,
+    );
   }
 
+  console.log(`ISO3:    ${flags.iso3}`);
   console.log(`Input:   ${flags.inputDir}`);
   console.log(`Type:    ${METADATA_TYPE}`);
   console.log(`Mode:    ${flags.execute ? "EXECUTE" : "DRY RUN (pass --execute to write)"}`);
   console.log(`Rasters: ${rasters.size} per-(gender, age) GeoTIFFs found`);
+  const filePrefix = flags.iso3.toLowerCase();
   const missing: string[] = [];
   for (const g of ["m", "f"] as const) {
     for (const a of AGE_GROUPS) {
-      if (!rasters.has(`${g}_${a}`)) missing.push(`sdn_${g}_${a}_*.tif`);
+      if (!rasters.has(`${g}_${a}`)) missing.push(`${filePrefix}_${g}_${a}_*.tif`);
     }
   }
   if (missing.length > 0) {
@@ -387,13 +442,32 @@ async function main(): Promise<void> {
   }
   console.log();
 
-  // Fetch A2 locations
+  // Restrict A2s to those inside the raster footprint so a mixed-country DB
+  // (SDN + AFG) is safe: an --iso3 AFG run can't write zero-pop rows over
+  // Sudan A2s, and vice versa.
+  const firstRaster = rasters.values().next().value;
+  if (!firstRaster) {
+    throw new Error("No rasters available to derive footprint bbox.");
+  }
+  const rasterBbox = await getRasterBbox(firstRaster);
+  console.log(
+    `Raster footprint: [${rasterBbox.map((n) => n.toFixed(3)).join(", ")}]`,
+  );
+
+  // Fetch A2 locations within the raster footprint
   console.log("Fetching admin-2 locations (with geometry)…");
   const t0 = Date.now();
-  const locations = await fetchA2Locations();
+  const locations = await fetchA2Locations(rasterBbox);
   console.log(
     `  Got ${locations.length} A2 locations in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
   );
+  if (locations.length === 0) {
+    throw new Error(
+      `No A2 locations intersect the raster footprint. Either the country's ` +
+        `admin boundaries aren't loaded yet, or --iso3 / --input point at a ` +
+        `different country than the locations table contains.`,
+    );
+  }
   console.log();
 
   // Compute zonal sums per raster
@@ -424,7 +498,7 @@ async function main(): Promise<void> {
 
   // Build payloads
   const sourceBlock = {
-    dataset:       "WorldPop sdn_agesex_structures_2026_CN_100m_R2025A_v1",
+    dataset:       `WorldPop ${filePrefix}_agesex_structures_2026_CN_100m_R2025A_v1`,
     source_folder: flags.inputDir.split("/").pop() ?? flags.inputDir,
     year:          2026,
     resolution:    "100m",
@@ -432,7 +506,7 @@ async function main(): Promise<void> {
     release:       "R2025A",
     version:       "v1",
     raster_files:  rasters.size,
-    iso3:          "SDN",
+    iso3:          flags.iso3,
     generated_at:  new Date().toISOString(),
   };
   const payloads: UpsertPayload[] = [];
