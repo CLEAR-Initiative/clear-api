@@ -25,7 +25,7 @@ export const auth = betterAuth({
   databaseHooks: {
     session: {
       create: {
-        // Fires after Better Auth inserts a new session row — the cleanest
+        // Fires after Better Auth inserts a new session row - the cleanest
         // signal of a successful login. We capture the session's ip and
         // user-agent here because the resolver-layer activity log doesn't
         // see request headers.
@@ -62,6 +62,12 @@ export const auth = betterAuth({
       defaultTeamId: {
         type: "string",
         required: false,
+        input: false,
+      },
+      language: {
+        type: "string",
+        required: false,
+        defaultValue: "en",
         input: false,
       },
     },
