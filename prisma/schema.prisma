@@ -126,6 +126,49 @@ model activityLogs {
   @@map("activity_logs")
 }
 
+/// Per-locale translation overlay shared across every translatable entity.
+/// One row per (entity, locale); the same shape regardless of entity type so
+/// new translatable models can be added without a schema migration.
+///
+/// `data` mirrors the canonical entity's JSON shape exactly — e.g. for a
+/// crisis it carries the localized `{ title, summary, scenarios, needs }`
+/// with the same keys/nesting the API already returns in English. Resolvers
+/// overlay `data` on top of the canonical row so callers can read
+/// `crisis.scenarios.most_likely` the same way regardless of locale.
+///
+/// `sourceHashes` are per-top-level-field so the pipeline can detect which
+/// canonical field changed (e.g. user-edited title) and only re-translate
+/// the affected field per locale instead of regenerating the whole blob.
+///
+/// No SQL foreign key — `entityId` is polymorphic across (event, crisis,
+/// location). Cleanup on delete is handled in the app layer; dangling
+/// translations are harmless (nothing reads them) and can be GC'd by a
+/// periodic job if they ever accumulate.
+model translations {
+  id String @id @default(cuid())
+
+  /// Discriminator: 'event' | 'crisis' | 'location' (extend as needed).
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id")
+
+  /// BCP-47 code (lowercased) — 'ar', 'fr', 'fa', 'ps', etc. Matches the
+  /// `user.language` field; the resolver context derives locale from there.
+  locale String
+
+  data         Json
+  sourceHashes Json? @map("source_hashes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Primary read path is "give me locale X for entity (type, id)" — the
+  /// uniqueness constraint covers that with a btree without an extra index.
+  @@unique([entityType, entityId, locale])
+  /// Secondary admin queries ("what's covered in Arabic?") use this.
+  @@index([entityType, locale])
+  @@map("translations")
+}
+
 model session {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
