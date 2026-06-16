@@ -296,6 +296,11 @@ export const mutationTypeDef = gql`
       generalSummary: [String!]!,
       sector: JSON!,
     ): Crisis!
+
+    """Upsert one or more per-locale translation rows for an event,
+    crisis, or location. The translated data blob mirrors the canonical
+    entity's JSON shape per locale. Admin/pipeline only."""
+    upsertTranslations(input: UpsertTranslationsInput!): UpsertTranslationsResult!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────

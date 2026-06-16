@@ -489,6 +489,27 @@ export const eventResolvers = {
     },
   },
   Event: {
+    // Localized overlay — falls through to the canonical column when no
+    // translation exists for the active locale (including locale === "en",
+    // where the loader is a no-op).
+    title: async (
+      parent: { id: string; title: string | null },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("event", parent.id);
+      const localized = tr?.title;
+      return typeof localized === "string" ? localized : parent.title;
+    },
+    description: async (
+      parent: { id: string; description: string | null },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("event", parent.id);
+      const localized = tr?.description;
+      return typeof localized === "string" ? localized : parent.description;
+    },
     signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.signalEvents.findMany({
         where: { eventId: parent.id },
