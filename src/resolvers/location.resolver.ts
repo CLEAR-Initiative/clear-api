@@ -306,6 +306,18 @@ export const locationResolvers = {
     },
   },
   Location: {
+    // Localized name overlay — falls through to the canonical column
+    // when no translation exists for the active locale (and short-
+    // circuits entirely when the request is in English).
+    name: async (
+      parent: { id: string; name: string },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("location", parent.id);
+      const localized = tr?.name;
+      return typeof localized === "string" ? localized : parent.name;
+    },
     parent: (parent: { parentId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.parentId) return null;
       return prisma.locations.findUnique({ where: { id: parent.parentId } });

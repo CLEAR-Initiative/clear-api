@@ -11,6 +11,10 @@ import {
   resolveEmailLocation,
   resolveEventTypeLabel,
   fetchEventSignalLocations,
+  fetchEventLocalizedText,
+  normaliseUserLocale,
+  localizeLocationNames,
+  pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 
 interface CreateNotificationInput {
@@ -178,8 +182,32 @@ export const notificationResolvers = {
 
       if (userIds.length === 0) return 0;
 
-      const title = event.title ?? event.types[0] ?? "Alert";
+      const fallbackTitle = event.types[0] ?? "Alert";
       const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+
+      // Pull recipients up front so one Prisma read covers both the
+      // per-recipient in-app message text and the per-recipient email
+      // body. Each user sees the title + description in their own
+      // language (falling through to canonical English when no
+      // translation row exists for that locale).
+      const recipients = await context.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, email: true, language: true, emailNotification: true },
+      });
+      const uniqueLocales = [
+        ...new Set(recipients.map((r) => normaliseUserLocale(r.language))),
+      ];
+      const localizedText = await fetchEventLocalizedText(
+        context.prisma,
+        event.id,
+        event.title,
+        event.description,
+        uniqueLocales,
+      );
+      const titleFor = (locale: string | null) =>
+        localizedText.get(normaliseUserLocale(locale))?.title ?? fallbackTitle;
+      const descriptionFor = (locale: string | null) =>
+        localizedText.get(normaliseUserLocale(locale))?.description ?? event.description;
 
       // 1. Populate userAlerts join table
       await context.prisma.userAlerts.createMany({
@@ -190,11 +218,11 @@ export const notificationResolvers = {
         skipDuplicates: true,
       });
 
-      // 2. Create in-app notifications
+      // 2. Create in-app notifications (per-recipient title localization).
       const result = await context.prisma.notifications.createMany({
-        data: userIds.map((userId) => ({
-          userId,
-          message: `New alert: ${title}`,
+        data: recipients.map((r) => ({
+          userId: r.id,
+          message: `New alert: ${titleFor(r.language)}`,
           notificationType: "alert",
           actionUrl: `/event/${event.id}`,
           actionText: "View Alert",
@@ -202,10 +230,7 @@ export const notificationResolvers = {
       });
 
       // 3. Send email notifications to users who have email notifications enabled
-      const emailUsers = await context.prisma.user.findMany({
-        where: { id: { in: userIds }, emailNotification: true },
-        select: { id: true, name: true, email: true },
-      });
+      const emailUsers = recipients.filter((r) => r.emailNotification);
 
       if (emailUsers.length > 0) {
         const emailProvider = await getEmailProvider();
@@ -215,33 +240,80 @@ export const notificationResolvers = {
           resolveEventTypeLabel(context.prisma, event.types),
           fetchEventSignalLocations(context.prisma, event.id),
         ]);
-        const locationName = emailLoc?.name ?? null;
+
+        // Localized names for every location id that may appear in any
+        // per-recipient email. One Prisma read covers all (id, locale)
+        // pairs across the batch.
+        const locIdsForLocalization = [
+          ...(primaryLoc?.id ? [primaryLoc.id] : []),
+          ...(emailLoc?.id ? [emailLoc.id] : []),
+          ...signalLocs.ids,
+        ];
+        const localizedNames = await localizeLocationNames(
+          context.prisma,
+          locIdsForLocalization,
+          uniqueLocales,
+        );
+
         const population = emailLoc?.population ? formatCount(emailLoc.population) : null;
         const severityLabel = severityToLabel(event.severity);
         const affectedPeople = event.populationAffected != null
           ? formatCount(event.populationAffected)
           : null;
-        // Event's primary location is already an A2 district.
-        const districtName = primaryLoc?.name ?? null;
 
-        const emails = emailUsers.map((u) => {
-          const content = alertNotification(u.name, title, event.description, alertUrl, {
-            severity: severityLabel,
-            eventType: eventTypeLabel,
-            locationName,
-            population,
-            affectedPeople,
-            districtName,
-            signalLocations: signalLocs.names,
-            signalLocationsOverflow: signalLocs.overflow,
+        const emails = emailUsers
+          .filter((u) => u.email)
+          .map((u) => {
+            // Per-recipient locale — every location name swaps to the
+            // user's language when a translation row exists, otherwise
+            // canonical English.
+            const recipientLocale = normaliseUserLocale(u.language);
+            const localizedSignalNames = signalLocs.ids
+              .map((id, idx) =>
+                pickLocalizedName(
+                  localizedNames,
+                  id,
+                  recipientLocale,
+                  signalLocs.names[idx] ?? null,
+                ) ?? signalLocs.names[idx],
+              )
+              .filter((n): n is string => !!n);
+            const content = alertNotification(
+              u.name,
+              titleFor(u.language),
+              descriptionFor(u.language),
+              alertUrl,
+              {
+                severity: severityLabel,
+                eventType: eventTypeLabel,
+                locationName: pickLocalizedName(
+                  localizedNames,
+                  emailLoc?.id,
+                  recipientLocale,
+                  emailLoc?.name ?? null,
+                ),
+                population,
+                affectedPeople,
+                districtName: pickLocalizedName(
+                  localizedNames,
+                  primaryLoc?.id,
+                  recipientLocale,
+                  primaryLoc?.name ?? null,
+                ),
+                signalLocations: localizedSignalNames,
+                signalLocationsOverflow: signalLocs.overflow,
+                // Drives the template's chrome (greeting, labels, CTA,
+                // subject, html dir/lang).
+                locale: recipientLocale,
+              },
+            );
+            return {
+              to: u.email!,
+              subject: content.subject,
+              textBody: content.textBody,
+              htmlBody: content.htmlBody,
+            };
           });
-          return {
-            to: u.email,
-            subject: content.subject,
-            textBody: content.textBody,
-            htmlBody: content.htmlBody,
-          };
-        });
 
         // Fire-and-forget - don't block the response on email delivery
         void emailProvider.sendBulk(emails).catch((err) => {

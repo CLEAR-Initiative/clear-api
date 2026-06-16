@@ -176,5 +176,17 @@ export const queryTypeDef = gql`
     each Country's bounding box. The scheduled publisher reads this to know which
     countries to run. Requires authentication."""
     pipelineCountries: [PipelineCountry!]!
+
+    """Translation rows currently stored for an entity, one per locale.
+    Admin/pipeline only. Used by clear-pipeline to compare stored source
+    hashes against the canonical row and decide which fields to re-translate."""
+    translations(entityType: String!, entityId: String!): [TranslationRow!]!
+
+    """Per-(entityType, locale) translation coverage snapshot for the
+    admin dashboard. Admin only. Each row reports canonicalCount (how
+    many entities of that type exist) and translatedCount (how many
+    have a translation row for that locale). Coverage = translated /
+    canonical."""
+    translationCoverage: [TranslationCoverage!]!
   }
 `;

@@ -726,6 +726,52 @@ export const crisisResolvers = {
   },
 
   Crisis: {
+    // Localized overlays. For nested JSON fields the translated blob
+    // mirrors the canonical shape, so the resolver returns the whole
+    // translated blob (matching the existing canonical contract) and
+    // falls back to the canonical column when no translation exists.
+    title: async (
+      parent: { id: string; title: string | null },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("crisis", parent.id);
+      const localized = tr?.title;
+      return typeof localized === "string" ? localized : parent.title;
+    },
+    summary: async (
+      parent: { id: string; summary: string | null },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("crisis", parent.id);
+      // summary is canonically a stringified JSON; the translated blob
+      // mirrors that same string shape. Falling back to the canonical
+      // column preserves the existing JSON-string contract.
+      const localized = tr?.summary;
+      return typeof localized === "string" ? localized : parent.summary;
+    },
+    scenarios: async (
+      parent: { id: string; scenarios: unknown },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("crisis", parent.id);
+      const localized = tr?.scenarios;
+      // Nested-JSON field — only return the localized blob if the
+      // pipeline actually populated it. `undefined`/`null` means "no
+      // translation written"; the canonical JSON wins.
+      return localized != null ? localized : parent.scenarios;
+    },
+    needs: async (
+      parent: { id: string; needs: unknown },
+      _args: unknown,
+      { translationLoader }: Context,
+    ) => {
+      const tr = await translationLoader.load("crisis", parent.id);
+      const localized = tr?.needs;
+      return localized != null ? localized : parent.needs;
+    },
     generalLocation: (
       parent: { locationId: string | null },
       _args: unknown,
