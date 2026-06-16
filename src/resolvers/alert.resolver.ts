@@ -322,6 +322,9 @@ export const alertResolvers = {
                         ),
                         signalLocations: localizedSignalNames,
                         signalLocationsOverflow: signalLocs.overflow,
+                        // Drives the template's chrome (greeting, labels,
+                        // CTA, subject, html dir/lang).
+                        locale: recipientLocale,
                       };
                       const content = alertNotification(
                         u.name,

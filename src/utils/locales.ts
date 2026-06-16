@@ -12,6 +12,20 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = "en";
 
+/**
+ * BiDi direction for each locale. Used by server-side rendered HTML
+ * (notification emails, etc.) so the rendered document gets a correct
+ * `<html dir="...">` even when no client-side i18n layer runs.
+ * Keep in sync with clear-mvp/src/i18n/config.ts → localeDirection.
+ */
+export const LOCALE_DIRECTION: Record<Locale, "ltr" | "rtl"> = {
+  en: "ltr",
+  fr: "ltr",
+  ar: "rtl",
+  fa: "rtl",
+  ps: "rtl",
+};
+
 export function isSupportedLocale(value: unknown): value is Locale {
   return (
     typeof value === "string" &&
