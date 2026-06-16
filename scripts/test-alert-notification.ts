@@ -25,7 +25,8 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma.js";
 import { env } from "../src/utils/env.js";
 import { getEmailProvider, getSMSProvider } from "../src/services/messaging/registry.js";
-import { alertNotification } from "../src/services/messaging/templates.js";
+import { alertNotification, buildAlertSms } from "../src/services/messaging/templates.js";
+import { isSupportedLocale, DEFAULT_LOCALE, type Locale } from "../src/utils/locales.js";
 import {
   resolveEmailLocation,
   resolveEventTypeLabel,
@@ -39,6 +40,8 @@ interface Flags {
   alertId: string | null;
   recipientName: string;
   dryRun: boolean;
+  /** BCP-47 / ISO 639-1; defaults to "en". Drives both email + SMS chrome. */
+  locale: string;
 }
 
 function parseFlags(): Flags {
@@ -54,24 +57,15 @@ function parseFlags(): Flags {
     alertId: get("--alert-id"),
     recipientName: get("--name") ?? "Tester",
     dryRun: argv.includes("--dry-run"),
+    locale: get("--locale") ?? "en",
   };
 }
 
-/** Compose a short SMS body - phones don't render the HTML email template,
- * so we surface only the bits that fit in a couple of lines. */
-function buildSmsBody(
-  alertTitle: string,
-  alertUrl: string,
-  meta: { severity: string | null; locationName: string | null },
-): string {
-  const parts: string[] = [];
-  if (meta.severity) parts.push(`[${meta.severity}]`);
-  parts.push(alertTitle);
-  let body = parts.join(" ");
-  if (meta.locationName) body += `\n${meta.locationName}`;
-  body += `\n${alertUrl}`;
-  return body;
-}
+// `buildSmsBody` used to live here; it's been promoted to
+// src/services/messaging/templates.ts as `buildAlertSms` so the
+// resolver paths can reuse the same locale-aware shape when an SMS
+// channel is wired up. Anything that used to import it from this
+// script should import from templates.ts directly.
 
 async function main(): Promise<void> {
   const flags = parseFlags();
@@ -133,6 +127,13 @@ async function main(): Promise<void> {
   const title = event.title ?? "Untitled alert";
   const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
+  // Operator-supplied --locale is a free-form string; narrow it to the
+  // template's Locale union. Unsupported values fall back to "en" so a
+  // typo doesn't crash the run.
+  const locale: Locale = isSupportedLocale(flags.locale)
+    ? flags.locale
+    : DEFAULT_LOCALE;
+
   const emailContent = alertNotification(
     flags.recipientName,
     title,
@@ -143,10 +144,15 @@ async function main(): Promise<void> {
       eventType: eventTypeLabel,
       locationName,
       population,
+      locale,
     },
   );
 
-  const smsBody = buildSmsBody(title, alertUrl, { severity: severityLabel, locationName });
+  const smsBody = buildAlertSms(title, alertUrl, {
+    severity: severityLabel,
+    locationName,
+    locale,
+  });
 
   if (flags.dryRun) {
     console.log("\n---------- EMAIL (dry-run) ----------");
