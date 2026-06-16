@@ -38,7 +38,7 @@ async function assertEntityExists(
   entityType: TranslatableEntityType,
   entityId: string,
 ): Promise<void> {
-  let found: { id: string } | null = null;
+  let found: { id: string } | null;
   if (entityType === "event") {
     found = await ctx.prisma.events.findUnique({
       where: { id: entityId },
