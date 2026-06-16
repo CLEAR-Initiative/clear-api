@@ -126,6 +126,49 @@ model activityLogs {
   @@map("activity_logs")
 }
 
+/// Per-locale translation overlay shared across every translatable entity.
+/// One row per (entity, locale); the same shape regardless of entity type so
+/// new translatable models can be added without a schema migration.
+///
+/// `data` mirrors the canonical entity's JSON shape exactly — e.g. for a
+/// crisis it carries the localized `{ title, summary, scenarios, needs }`
+/// with the same keys/nesting the API already returns in English. Resolvers
+/// overlay `data` on top of the canonical row so callers can read
+/// `crisis.scenarios.most_likely` the same way regardless of locale.
+///
+/// `sourceHashes` are per-top-level-field so the pipeline can detect which
+/// canonical field changed (e.g. user-edited title) and only re-translate
+/// the affected field per locale instead of regenerating the whole blob.
+///
+/// No SQL foreign key — `entityId` is polymorphic across (event, crisis,
+/// location). Cleanup on delete is handled in the app layer; dangling
+/// translations are harmless (nothing reads them) and can be GC'd by a
+/// periodic job if they ever accumulate.
+model translations {
+  id String @id @default(cuid())
+
+  /// Discriminator: 'event' | 'crisis' | 'location' (extend as needed).
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id")
+
+  /// BCP-47 code (lowercased) — 'ar', 'fr', 'fa', 'ps', etc. Matches the
+  /// `user.language` field; the resolver context derives locale from there.
+  locale String
+
+  data         Json
+  sourceHashes Json? @map("source_hashes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Primary read path is "give me locale X for entity (type, id)" — the
+  /// uniqueness constraint covers that with a btree without an extra index.
+  @@unique([entityType, entityId, locale])
+  /// Secondary admin queries ("what's covered in Arabic?") use this.
+  @@index([entityType, locale])
+  @@map("translations")
+}
+
 model session {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
@@ -206,12 +249,12 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation     organisations     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  members          teamMembers[]
-  locations        teamLocations[]
-  defaultForUsers  user[]            @relation("DefaultTeam")
-  invitations      invitations[]
-  invitationTeams  invitationTeams[]
+  organisation    organisations     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members         teamMembers[]
+  locations       teamLocations[]
+  defaultForUsers user[]            @relation("DefaultTeam")
+  invitations     invitations[]
+  invitationTeams invitationTeams[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -264,9 +307,9 @@ model invitations {
   invitedById    String    @map("invited_by_id")
   createdAt      DateTime  @default(now()) @map("created_at")
 
-  organisation organisations @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  team         teams?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  invitedBy    user          @relation("InvitedBy", fields: [invitedById], references: [id])
+  organisation organisations     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  team         teams?            @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  invitedBy    user              @relation("InvitedBy", fields: [invitedById], references: [id])
   /// Multi-team assignments (each row is one (team, role) pair).
   teams        invitationTeams[]
 
@@ -324,16 +367,19 @@ model locations {
   ///                            centroid (fake precision); event attributed
   ///                            to the containing admin unit
   /// Null for legacy rows created before this field existed.
-  pointType  String? @map("point_type")
+  pointType String? @map("point_type")
 
   /// When the row was first inserted. Needed for debugging questions like
   /// "when did Al Kurmuk's geometry get backfilled?" — previously locations
   /// had no timestamps, making it impossible to correlate signal-ingestion
   /// timing against admin polygon availability.
   createdAt DateTime @default(now()) @map("created_at")
-  /// Auto-updated by Prisma on every write. Useful for tracking when an
-  /// admin polygon was (re-)loaded vs created.
-  updatedAt DateTime @updatedAt @map("updated_at")
+  /// Auto-updated by Prisma on every write. The DB-side DEFAULT NOW() is
+  /// intentional: nine raw SQL INSERTs across src/utils/geo-resolve.ts,
+  /// src/resolvers/location.resolver.ts, prisma/seed*.ts and the
+  /// geo-resolve tests bypass the Prisma client and omit this column —
+  /// keeping the default lets those continue to work without modification.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   parent   locations?  @relation("LocationHierarchy", fields: [parentId], references: [id])
   children locations[] @relation("LocationHierarchy")
@@ -382,9 +428,9 @@ model locationMetadata {
   data Json
 
   /// When this value became current. Defaults to row creation time.
-  validFrom DateTime @default(now()) @map("valid_from")
+  validFrom DateTime  @default(now()) @map("valid_from")
   /// When this value was superseded. Null means still current.
-  validTo DateTime? @map("valid_to")
+  validTo   DateTime? @map("valid_to")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -468,8 +514,8 @@ model signals {
   destinationId       String?    @map("destination_id")
   destinationLocation locations? @relation("SignalDestination", fields: [destinationId], references: [id])
 
-  locationId      String?         @map("location_id") // In case of signals without origin or destination
-  generalLocation locations?      @relation("SignalLocation", fields: [locationId], references: [id])
+  locationId      String?    @map("location_id") // In case of signals without origin or destination
+  generalLocation locations? @relation("SignalLocation", fields: [locationId], references: [id])
 
   /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
   /// Additive enrichment for comparison against the source's coords —
@@ -492,9 +538,9 @@ model signals {
   /// candidates, Nominatim miss, or anything below the confidence floor).
   geoparsedData Json? @map("geoparsed_data")
 
-  userFeedbacks   userFeedbacks[]
-  userComments    userComments[]
-  signalEvents    signalEvents[]
+  userFeedbacks userFeedbacks[]
+  userComments  userComments[]
+  signalEvents  signalEvents[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
@@ -583,9 +629,9 @@ model alerts {
 }
 
 model crises {
-  id      String  @id @default(cuid())
-  title   String?
-  summary String?
+  id          String   @id @default(cuid())
+  title       String?
+  summary     String?
   /// Forward-looking scenario analysis generated by the crisis enrichment
   /// task. Shape (when present):
   ///   {
@@ -598,7 +644,7 @@ model crises {
   ///                     movement — and which way each is trending>"
   ///   }
   /// Null until the enrichment task runs.
-  scenarios Json?
+  scenarios   Json?
   /// S3 keys of user-uploaded supporting documents (reports, photos, PDFs).
   /// Stored as keys, not URLs — the GraphQL resolver converts each to a
   /// presigned URL at read time. Same pattern as `signals.media`.
@@ -867,11 +913,11 @@ model notifications {
 /// periodic cleanup job (out of scope here) can DELETE WHERE expires_at <
 /// NOW() - INTERVAL '1 month' to reclaim space.
 model nominatim_cache {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   /// SHA-256 hex digest of `<endpoint>:<normalised_query>`. Used as the
   /// stable lookup key — insensitive to whitespace/casing variations as
   /// long as the caller normalises before hashing.
-  queryHash    String   @unique @map("query_hash")
+  queryHash    String @unique @map("query_hash")
   /// Raw query string for debugging only. Don't rely on it for lookups.
   query        String
   /// Nominatim endpoint that produced this response — typically 'search'
@@ -879,7 +925,7 @@ model nominatim_cache {
   endpoint     String
   /// Raw Nominatim JSON response, stored as-is so we can change downstream
   /// parsing rules without re-querying.
-  responseJson Json     @map("response_json")
+  responseJson Json   @map("response_json")
   /// 'ok'         — usable result returned
   /// 'no_result'  — the geocoder returned an empty result set
   /// 'error'      — the geocoder returned an error response (cached briefly
@@ -887,7 +933,7 @@ model nominatim_cache {
   status       String
 
   fetchedAt DateTime @default(now()) @map("fetched_at")
-  expiresAt DateTime                 @map("expires_at")
+  expiresAt DateTime @map("expires_at")
 
   @@index([queryHash])
   @@index([expiresAt])

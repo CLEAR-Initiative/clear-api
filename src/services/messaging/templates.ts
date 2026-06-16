@@ -5,10 +5,180 @@
  * Returns { subject, textBody, htmlBody } for each template type.
  */
 
+import {
+  DEFAULT_LOCALE,
+  LOCALE_DIRECTION,
+  type Locale,
+} from "../../utils/locales.js";
+
 export interface EmailContent {
   subject: string;
   textBody: string;
   htmlBody: string;
+}
+
+/**
+ * Per-locale chrome strings for the alert email — every label, button,
+ * greeting, and subject the template renders. Keep the EN entry as the
+ * source of truth; the others should mirror its shape exactly so a
+ * missing key never surfaces as `undefined` in the email.
+ *
+ * Caller chooses the locale via the `locale` parameter to
+ * `alertNotification`; an unsupported locale silently falls through to
+ * the EN strings.
+ */
+interface AlertStrings {
+  greeting: (name: string) => string;
+  newAlertPrefix: string;            // "New alert"
+  districtLabel: string;             // "District" (HTML + text caps)
+  locationsLabel: string;            // "Locations"
+  summaryLabel: string;              // "Summary"
+  populationLabel: (target: string | null) => string; // "Population [of X]"
+  viewAlertTextLine: (url: string) => string;
+  viewAlertCta: string;              // "View Alert" CTA button
+  signoff: string;                   // "- The CLEAR Platform Team"
+  subject: (title: string) => string;
+  moreSuffix: (n: number) => string; // " +N more"
+  footerCopy: string;                // copyright line
+  /**
+   * Locale-specific render of each severity tier. Keys are the English
+   * labels produced by `severityToLabel` (CRITICAL/HIGH/MEDIUM/LOW/MINIMAL);
+   * values are the user-facing string shown in the email severity chip
+   * and the SMS bracket. Caller still passes the canonical English
+   * string in `extras.severity` and the template looks up the
+   * recipient-locale variant here.
+   */
+  severityLabels: Record<string, string>;
+}
+
+// Same key shape across every locale — adding a new locale means
+// providing every key. Translations are kept short and neutral so
+// they fit the existing template padding.
+const STRINGS: Record<Locale, AlertStrings> = {
+  en: {
+    greeting: (n) => `Hi ${n},`,
+    newAlertPrefix: "New alert",
+    districtLabel: "District",
+    locationsLabel: "Locations",
+    summaryLabel: "Summary",
+    populationLabel: (t) => `Population${t ? ` of ${t}` : ""}`,
+    viewAlertTextLine: (u) => `View alert: ${u}`,
+    viewAlertCta: "View Alert",
+    signoff: "- The CLEAR Platform Team",
+    subject: (t) => `Alert: ${t} - CLEAR Platform`,
+    moreSuffix: (n) => ` +${n} more`,
+    footerCopy: "© CLEAR - Crisis Learning, Early-warning, Anticipation, and Response",
+    severityLabels: {
+      CRITICAL: "CRITICAL",
+      HIGH: "HIGH",
+      MEDIUM: "MEDIUM",
+      LOW: "LOW",
+      MINIMAL: "MINIMAL",
+    },
+  },
+  ar: {
+    greeting: (n) => `مرحبًا ${n}،`,
+    newAlertPrefix: "تنبيه جديد",
+    districtLabel: "المنطقة",
+    locationsLabel: "المواقع",
+    summaryLabel: "ملخص",
+    populationLabel: (t) => `السكان${t ? ` في ${t}` : ""}`,
+    viewAlertTextLine: (u) => `عرض التنبيه: ${u}`,
+    viewAlertCta: "عرض التنبيه",
+    signoff: "- فريق منصة CLEAR",
+    subject: (t) => `تنبيه: ${t} - منصة CLEAR`,
+    moreSuffix: (n) => ` +${n} المزيد`,
+    footerCopy: "© CLEAR - التعلم والإنذار المبكر والتوقع والاستجابة للأزمات",
+    severityLabels: {
+      CRITICAL: "حرج",
+      HIGH: "عالٍ",
+      MEDIUM: "متوسط",
+      LOW: "منخفض",
+      MINIMAL: "ضئيل",
+    },
+  },
+  fr: {
+    greeting: (n) => `Bonjour ${n},`,
+    newAlertPrefix: "Nouvelle alerte",
+    districtLabel: "District",
+    locationsLabel: "Lieux",
+    summaryLabel: "Résumé",
+    populationLabel: (t) => `Population${t ? ` de ${t}` : ""}`,
+    viewAlertTextLine: (u) => `Voir l'alerte : ${u}`,
+    viewAlertCta: "Voir l'alerte",
+    signoff: "- L'équipe de la plateforme CLEAR",
+    subject: (t) => `Alerte : ${t} - Plateforme CLEAR`,
+    moreSuffix: (n) => ` +${n} de plus`,
+    footerCopy: "© CLEAR - Apprentissage, alerte précoce, anticipation et réponse aux crises",
+    severityLabels: {
+      CRITICAL: "CRITIQUE",
+      HIGH: "ÉLEVÉ",
+      MEDIUM: "MOYEN",
+      LOW: "FAIBLE",
+      MINIMAL: "MINIMAL",
+    },
+  },
+  fa: {
+    greeting: (n) => `سلام ${n}،`,
+    newAlertPrefix: "هشدار جدید",
+    districtLabel: "ولسوالی",
+    locationsLabel: "مکان‌ها",
+    summaryLabel: "خلاصه",
+    populationLabel: (t) => `جمعیت${t ? ` ${t}` : ""}`,
+    viewAlertTextLine: (u) => `مشاهده هشدار: ${u}`,
+    viewAlertCta: "مشاهده هشدار",
+    signoff: "- تیم پلتفرم CLEAR",
+    subject: (t) => `هشدار: ${t} - پلتفرم CLEAR`,
+    moreSuffix: (n) => ` +${n} بیشتر`,
+    footerCopy: "© CLEAR - یادگیری، هشدار زودهنگام، پیش‌بینی و واکنش به بحران",
+    severityLabels: {
+      CRITICAL: "بحرانی",
+      HIGH: "بالا",
+      MEDIUM: "متوسط",
+      LOW: "پایین",
+      MINIMAL: "حداقل",
+    },
+  },
+  ps: {
+    greeting: (n) => `سلام ${n}،`,
+    newAlertPrefix: "نوی خبرتیا",
+    districtLabel: "ولسوالۍ",
+    locationsLabel: "ځایونه",
+    summaryLabel: "لنډیز",
+    populationLabel: (t) => `وګړي${t ? ` د ${t}` : ""}`,
+    viewAlertTextLine: (u) => `خبرتیا وګورئ: ${u}`,
+    viewAlertCta: "خبرتیا وګورئ",
+    signoff: "- د CLEAR پلیټفارم ټیم",
+    subject: (t) => `خبرتیا: ${t} - د CLEAR پلیټفارم`,
+    moreSuffix: (n) => ` +${n} نور`,
+    footerCopy: "© CLEAR - د بحرانونو زده‌کړه، وړاندوینه، پیشبینی او ځواب",
+    severityLabels: {
+      CRITICAL: "بحرانی",
+      HIGH: "لوړ",
+      MEDIUM: "منځنی",
+      LOW: "ټيټ",
+      MINIMAL: "لږ",
+    },
+  },
+};
+
+/**
+ * Map a raw English severity label (CRITICAL/HIGH/MEDIUM/LOW/MINIMAL)
+ * to its locale-specific render. Falls back to the raw label when no
+ * locale-specific variant exists so an unrecognised input still shows
+ * up in the message instead of becoming a silent `undefined`.
+ */
+function localizeSeverity(
+  rawSeverity: string | null | undefined,
+  s: AlertStrings,
+): string | null {
+  if (!rawSeverity) return null;
+  return s.severityLabels[rawSeverity] ?? rawSeverity;
+}
+
+function stringsFor(locale: Locale | undefined): AlertStrings {
+  if (locale && STRINGS[locale]) return STRINGS[locale];
+  return STRINGS[DEFAULT_LOCALE];
 }
 
 /** Reusable HTML email wrapper */
@@ -307,6 +477,13 @@ export interface AlertNotificationExtras {
   signalLocations?: string[] | null;
   /** Count of signal locations dropped past the cap, shown as "+N more". */
   signalLocationsOverflow?: number;
+  /**
+   * Recipient locale — drives every chrome string (greeting, labels,
+   * CTA, signoff, subject) as well as the document's `lang` + `dir`
+   * attributes. Defaults to "en" when unset so the test script and
+   * pre-locale callers keep working.
+   */
+  locale?: Locale;
 }
 
 /**
@@ -329,7 +506,16 @@ export function alertNotification(
     districtName,
     signalLocations,
     signalLocationsOverflow,
+    locale,
   } = extras ?? {};
+
+  const effectiveLocale: Locale = locale ?? DEFAULT_LOCALE;
+  const dir = LOCALE_DIRECTION[effectiveLocale] ?? "ltr";
+  const s = stringsFor(effectiveLocale);
+  // Caller passes the raw English severity label ("CRITICAL", etc.) in
+  // `severity` — render it through the locale's translation so the
+  // chip in the email displays in the recipient's language.
+  const localizedSeverity = localizeSeverity(severity, s);
 
   // Format the signal-location list once — the same string is used by the
   // plain-text body and the HTML below.
@@ -337,18 +523,22 @@ export function alertNotification(
   const overflow = Math.max(0, signalLocationsOverflow ?? 0);
   const locationsLine =
     signalLocationsList.length > 0
-      ? `${signalLocationsList.join(", ")}${overflow > 0 ? ` +${overflow} more` : ""}`
+      ? `${signalLocationsList.join(", ")}${overflow > 0 ? s.moreSuffix(overflow) : ""}`
       : null;
 
   // Plain-text rendering: stack DISTRICT and LOCATIONS as labelled lines.
   // Fall back to the bare `locationName` only when neither structured field
   // is provided (back-compat for callers that haven't been updated).
-  const textParts: string[] = [`Hi ${displayName},`, "", `New alert: ${alertTitle}`];
-  if (districtName) textParts.push(`DISTRICT: ${districtName}`);
-  if (locationsLine) textParts.push(`LOCATIONS: ${locationsLine}`);
+  const textParts: string[] = [
+    s.greeting(displayName),
+    "",
+    `${s.newAlertPrefix}: ${alertTitle}`,
+  ];
+  if (districtName) textParts.push(`${s.districtLabel.toUpperCase()}: ${districtName}`);
+  if (locationsLine) textParts.push(`${s.locationsLabel.toUpperCase()}: ${locationsLine}`);
   if (!districtName && !locationsLine && locationName) textParts.push(locationName);
   if (alertDescription) textParts.push("", alertDescription);
-  textParts.push("", `View alert: ${alertUrl}`, "", "- The CLEAR Platform Team");
+  textParts.push("", s.viewAlertTextLine(alertUrl), "", s.signoff);
 
   // Stat box prefers the district label (matches what's shown above).
   const statBoxes: Array<{ value: string; label: string }> = [];
@@ -356,7 +546,7 @@ export function alertNotification(
   if (population != null) {
     statBoxes.push({
       value: population,
-      label: `Population${populationLabelTarget ? ` of ${populationLabelTarget}` : ""}`,
+      label: s.populationLabel(populationLabelTarget),
     });
   }
 
@@ -376,13 +566,13 @@ export function alertNotification(
 
   const summaryHtml = alertDescription
     ? `<div style="border: 1px solid #E5E5E5; border-radius: 6px; padding: 20px; margin: 0 0 24px;">
-        <p style="margin: 0 0 10px; font-size: 13px; font-weight: 700; color: #171717; text-transform: uppercase; letter-spacing: 0.05em;">Summary</p>
+        <p style="margin: 0 0 10px; font-size: 13px; font-weight: 700; color: #171717; text-transform: uppercase; letter-spacing: 0.05em;">${s.summaryLabel}</p>
         <p style="margin: 0; font-size: 14px; color: #525252; line-height: 1.6;">${alertDescription}</p>
       </div>`
     : "";
 
   const htmlBody = `<!DOCTYPE html>
-<html lang="en">
+<html lang="${effectiveLocale}" dir="${dir}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -399,7 +589,7 @@ export function alertNotification(
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td>
-                    ${severity ? `<span style="font-size: 12px; font-weight: 700; color: #E85D3D; text-transform: uppercase; letter-spacing: 0.08em;">${severity}</span>` : ""}
+                    ${localizedSeverity ? `<span style="font-size: 12px; font-weight: 700; color: #E85D3D; text-transform: uppercase; letter-spacing: 0.08em;">${localizedSeverity}</span>` : ""}
                     ${eventType ? `<span style="font-size: 12px; color: #737373;${severity ? " margin-left: 6px;" : ""} text-transform: uppercase; letter-spacing: 0.05em;">${eventType}</span>` : ""}
                   </td>
                   ${dataSource ? `<td align="right"><span style="font-size: 12px; color: #A3A3A3;">${dataSource}</span></td>` : ""}
@@ -424,12 +614,12 @@ export function alertNotification(
             const lines: string[] = [];
             if (districtName) {
               lines.push(
-                `<p style="${lineStyle}"><span style="${labelStyle}">District:</span> <span style="${valueStyle}">${districtName}</span></p>`,
+                `<p style="${lineStyle}"><span style="${labelStyle}">${s.districtLabel}:</span> <span style="${valueStyle}">${districtName}</span></p>`,
               );
             }
             if (locationsLine) {
               lines.push(
-                `<p style="${lineStyle}"><span style="${labelStyle}">Locations:</span> <span style="${valueStyle}">${locationsLine}</span></p>`,
+                `<p style="${lineStyle}"><span style="${labelStyle}">${s.locationsLabel}:</span> <span style="${valueStyle}">${locationsLine}</span></p>`,
               );
             }
             // Back-compat: callers that only pass the legacy `locationName`
@@ -453,14 +643,14 @@ export function alertNotification(
           <!-- CTA -->
           <tr>
             <td style="padding: 8px 32px 32px;" align="center">
-              <a href="${alertUrl}" style="display: inline-block; padding: 14px 48px; background-color: #E85D3D; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em;">View Alert</a>
+              <a href="${alertUrl}" style="display: inline-block; padding: 14px 48px; background-color: #E85D3D; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 700; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em;">${s.viewAlertCta}</a>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
             <td style="padding: 0 32px 24px; text-align: center; border-top: 1px solid #F5F5F5;">
-              <p style="margin: 16px 0 0; font-size: 11px; color: #A3A3A3;">&copy; CLEAR - Crisis Learning, Early-warning, Anticipation, and Response</p>
+              <p style="margin: 16px 0 0; font-size: 11px; color: #A3A3A3;">${s.footerCopy}</p>
             </td>
           </tr>
 
@@ -472,7 +662,7 @@ export function alertNotification(
 </html>`;
 
   return {
-    subject: `Alert: ${alertTitle} - CLEAR Platform`,
+    subject: s.subject(alertTitle),
     textBody: textParts.join("\n"),
     htmlBody,
   };
@@ -536,4 +726,47 @@ View all alerts: ${dashboardUrl}
       </p>`,
     ),
   };
+}
+
+export interface AlertSmsOptions {
+  /** Locale label (e.g. "حرج" from severityLabels). Pass the raw English label — the function localizes. */
+  severity?: string | null;
+  /** Already-localized location name (caller is responsible). */
+  locationName?: string | null;
+  /** Recipient locale; falls back to DEFAULT_LOCALE when unset. */
+  locale?: Locale;
+}
+
+/**
+ * Compact alert SMS body. Phones don't render HTML and many carriers
+ * cap at 160 characters per segment, so the body keeps to three short
+ * lines:
+ *
+ *   [SEVERITY] {title}
+ *   {locationName}        (optional)
+ *   {url}
+ *
+ * The severity tag is rendered in the recipient's locale (looked up
+ * via the same `severityLabels` map the email uses). Caller passes
+ * already-localized `alertTitle` and `locationName` so the line bodies
+ * carry the recipient's language too.
+ */
+export function buildAlertSms(
+  alertTitle: string,
+  alertUrl: string,
+  options: AlertSmsOptions = {},
+): string {
+  const { severity, locationName, locale } = options;
+  const effectiveLocale: Locale = locale ?? DEFAULT_LOCALE;
+  const s = stringsFor(effectiveLocale);
+  const localizedSeverity = localizeSeverity(severity, s);
+
+  const headerParts: string[] = [];
+  if (localizedSeverity) headerParts.push(`[${localizedSeverity}]`);
+  headerParts.push(alertTitle);
+
+  let body = headerParts.join(" ");
+  if (locationName) body += `\n${locationName}`;
+  body += `\n${alertUrl}`;
+  return body;
 }
