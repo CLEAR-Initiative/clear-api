@@ -14,7 +14,7 @@ import {
   type TranslationLoader,
   type TranslatableEntityType,
 } from "./utils/translation-loader.js";
-import { sendCeleryTask } from "./services/celery.js";
+import { sendCeleryTask, tryReserveDedupKey } from "./services/celery.js";
 
 export interface Context {
   prisma: PrismaClient;
@@ -87,6 +87,16 @@ function readCookie(rawHeader: string | string[] | undefined, name: string): str
  * staleness diff turns a no-op into a no-op), so duplicate enqueues
  * across requests are cheap.
  *
+ * Cross-request dedup via Redis SET NX EX (60s): the per-request
+ * loader already dedupes within a single GraphQL operation, but
+ * several concurrent requests touching the same untranslated entity
+ * would each fire an enqueue. The pipeline takes a few seconds per
+ * task, so without this gate we'd see bursts of 30+ identical
+ * translate_entity_task messages on the broker. Key is locale-
+ * agnostic because translate_entity_task fans out to every
+ * configured target locale in one run — different-locale callers
+ * can share the slot.
+ *
  * Failures are intentionally silent: a flaky broker connection must
  * not cascade into a 500 from clear-api. We log + drop and the next
  * read of the same entity will retry the enqueue.
@@ -99,15 +109,21 @@ function enqueueTranslation(
   entityType: TranslatableEntityType,
   entityId: string,
 ): void {
-  void sendCeleryTask("src.tasks.translate.translate_entity_task", {
-    entity_type: entityType,
-    entity_id: entityId,
-  }).catch((err: unknown) => {
-    console.warn(
-      `[translate-enqueue] ${entityType}=${entityId} failed:`,
-      err instanceof Error ? err.message : err,
-    );
-  });
+  void (async () => {
+    const dedupKey = `xlate:enq:${entityType}:${entityId}`;
+    if (!(await tryReserveDedupKey(dedupKey, 60))) return;
+    try {
+      await sendCeleryTask("src.tasks.translate.translate_entity_task", {
+        entity_type: entityType,
+        entity_id: entityId,
+      });
+    } catch (err) {
+      console.warn(
+        `[translate-enqueue] ${entityType}=${entityId} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  })();
 }
 
 export async function createContext(
