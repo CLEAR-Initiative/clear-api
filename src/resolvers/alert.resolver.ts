@@ -431,7 +431,19 @@ export const alertResolvers = {
     },
   },
   Alert: {
-    event: (parent: { eventId: string }, _args: unknown, { prisma }: Context) => {
+    // Fast path: when the alert was preloaded via alertsPage's deep
+    // include (event + translations + locations + their translations
+    // + alerts), the event object is already on the parent. Returning
+    // it directly avoids re-fetching without include — which is
+    // exactly what made Event.title fall through to the per-request
+    // translation loader at non-English locales even after the
+    // pagination resolver thought it had pre-loaded everything.
+    event: (
+      parent: { eventId: string; event?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.event !== undefined) return parent.event;
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
     userAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {

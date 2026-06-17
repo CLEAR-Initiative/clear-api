@@ -4,7 +4,21 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
-import { sendCeleryTask } from "../services/celery.js";
+import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
+import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
+
+/**
+ * Build the Prisma `include` clause that folds the active-locale
+ * translation row into a crisis query. Mirrors the `events` resolver
+ * helper — see comment there for rationale. Returns undefined for the
+ * canonical locale so the include is omitted entirely.
+ */
+function crisisTranslationsInclude(locale: Locale):
+  | { translations: { where: { locale: string } } }
+  | undefined {
+  if (locale === DEFAULT_LOCALE) return undefined;
+  return { translations: { where: { locale } } };
+}
 
 interface CreateCrisisFromEventsInput {
   title?: string;
@@ -139,7 +153,25 @@ export const crisisResolvers = {
   Query: {
     crises: async (_parent: unknown, _args: unknown, context: Context) => {
       requireAuth(context);
-      return context.prisma.crises.findMany();
+      const tr = crisisTranslationsInclude(context.locale);
+      // Pre-load nested events with their translations so /insights's
+      // crises-list view doesn't fan out into N+1 Crisis.events queries
+      // followed by per-event translation lookups. Each event's title
+      // resolver hits the fast path off `parent.translations`.
+      const eventInclude = tr
+        ? { translations: { where: { locale: context.locale } } }
+        : undefined;
+      const include = tr
+        ? {
+            ...tr,
+            eventCrises: {
+              include: {
+                event: eventInclude ? { include: eventInclude } : true,
+              },
+            },
+          }
+        : undefined;
+      return context.prisma.crises.findMany(include ? { include } : undefined);
     },
 
     crisis: async (
@@ -148,8 +180,10 @@ export const crisisResolvers = {
       context: Context,
     ) => {
       requireAuth(context);
+      const include = crisisTranslationsInclude(context.locale);
       const crisis = await context.prisma.crises.findUnique({
         where: { id: args.id },
+        ...(include ? { include } : {}),
       });
       if (!crisis) {
         throw new GraphQLError("Crisis not found", {
@@ -726,49 +760,114 @@ export const crisisResolvers = {
   },
 
   Crisis: {
-    // Localized overlays. For nested JSON fields the translated blob
+    // Localized overlays. Prefers `parent.translations` when the caller
+    // fetched the crisis via prisma with the include from
+    // `crisisTranslationsInclude` — that's the path used by
+    // Query.crisis / Query.crises now. Falls back to the per-request
+    // translationLoader for entry points that didn't include
+    // translations (e.g. Crisis nested inside other resolvers). At
+    // locale === "en" both paths short-circuit to the canonical column.
+    //
+    // For nested JSON fields (scenarios, needs) the translated blob
     // mirrors the canonical shape, so the resolver returns the whole
-    // translated blob (matching the existing canonical contract) and
-    // falls back to the canonical column when no translation exists.
+    // translated blob (matching the existing canonical contract).
     title: async (
-      parent: { id: string; title: string | null },
+      parent: {
+        id: string;
+        title: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("crisis", parent.id);
+      if (context.locale === DEFAULT_LOCALE) return parent.title;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { title?: unknown }
+          | undefined;
+        const localized = data?.title;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.title;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
       const localized = tr?.title;
       return typeof localized === "string" ? localized : parent.title;
     },
     summary: async (
-      parent: { id: string; summary: string | null },
+      parent: {
+        id: string;
+        summary: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("crisis", parent.id);
-      // summary is canonically a stringified JSON; the translated blob
-      // mirrors that same string shape. Falling back to the canonical
-      // column preserves the existing JSON-string contract.
+      if (context.locale === DEFAULT_LOCALE) return parent.summary;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { summary?: unknown }
+          | undefined;
+        const localized = data?.summary;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.summary;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
       const localized = tr?.summary;
       return typeof localized === "string" ? localized : parent.summary;
     },
     scenarios: async (
-      parent: { id: string; scenarios: unknown },
+      parent: {
+        id: string;
+        scenarios: unknown;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("crisis", parent.id);
+      if (context.locale === DEFAULT_LOCALE) return parent.scenarios;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { scenarios?: unknown }
+          | undefined;
+        const localized = data?.scenarios;
+        if (localized != null) return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.scenarios;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
       const localized = tr?.scenarios;
-      // Nested-JSON field — only return the localized blob if the
-      // pipeline actually populated it. `undefined`/`null` means "no
-      // translation written"; the canonical JSON wins.
       return localized != null ? localized : parent.scenarios;
     },
     needs: async (
-      parent: { id: string; needs: unknown },
+      parent: {
+        id: string;
+        needs: unknown;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("crisis", parent.id);
+      if (context.locale === DEFAULT_LOCALE) return parent.needs;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { needs?: unknown }
+          | undefined;
+        const localized = data?.needs;
+        if (localized != null) return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.needs;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
       const localized = tr?.needs;
       return localized != null ? localized : parent.needs;
     },
@@ -786,7 +885,17 @@ export const crisisResolvers = {
     populationInArea: (parent: { populationInArea: bigint | null }) => {
       return parent.populationInArea?.toString() ?? null;
     },
-    events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    events: (
+      parent: { id: string; eventCrises?: Array<{ event: unknown }> },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: Query.crises deep-includes eventCrises.event so
+      // /insights's crises-list view skips the N+1 fetch and reads
+      // events (with pre-loaded translations) directly off the parent.
+      if (parent.eventCrises) {
+        return parent.eventCrises.map((l) => l.event);
+      }
       return prisma.eventCrises
         .findMany({
           where: { crisisId: parent.id },

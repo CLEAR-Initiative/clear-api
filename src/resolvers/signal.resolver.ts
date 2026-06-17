@@ -90,7 +90,40 @@ export const signalResolvers = {
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireAuth(context);
-      return context.prisma.signals.findUnique({ where: { id: args.id } });
+      const { DEFAULT_LOCALE } = await import("../utils/locales.js");
+      const tr =
+        context.locale === DEFAULT_LOCALE
+          ? undefined
+          : { translations: { where: { locale: context.locale } } };
+      const locInclude = tr ? { include: tr } : undefined;
+      // Preload signal-detail's outer chain: source, 3 signal-locations
+      // (with translations at non-canonical locale), and signalEvents +
+      // related events (with translations). Event.signals fires its
+      // own per-event findMany for each related event — that's
+      // acceptable at the observed related-event counts (~10) but
+      // can't be folded any deeper without blowing the SSH tunnel's
+      // effective throughput (a previous version included the events'
+      // own signalEvents.signal chain and wedged at 2+ minutes).
+      const include = {
+        source: true,
+        signalEvents: {
+          include: {
+            event: locInclude ? { include: tr } : true,
+          },
+          take: 25,
+        },
+        ...(locInclude
+          ? {
+              generalLocation: locInclude,
+              originLocation: locInclude,
+              destinationLocation: locInclude,
+            }
+          : {}),
+      };
+      return context.prisma.signals.findUnique({
+        where: { id: args.id },
+        include,
+      });
     },
   },
   Mutation: {
@@ -352,25 +385,73 @@ export const signalResolvers = {
     },
   },
   Signal: {
-    source: (parent: { sourceId: string }, _args: unknown, { prisma }: Context) => {
+    source: (
+      parent: { sourceId: string; source?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: when the signal was preloaded via Event.signals' deep
+      // include (`include.signal.source: true`), the source object is
+      // already on the parent. Returning it directly avoids re-running
+      // `dataSources.findUnique` per signal — the N+1 that wedged event
+      // detail at high signal counts.
+      if (parent.source !== undefined) return parent.source;
       return prisma.dataSources.findUnique({ where: { id: parent.sourceId } });
     },
-    originLocation: (parent: { originId: string | null }, _args: unknown, { prisma }: Context) => {
+    // Fast path on all three: when the signal was preloaded via a deep
+    // Prisma include (e.g. eventsPage's
+    // `include.signalEvents.signal.{general,origin,destination}Location`),
+    // the location object — translations included — is already on the
+    // parent and we just return it. Without this every signal in the
+    // list fan-out fires another findUnique per location, exactly the
+    // N+1 the include was meant to collapse.
+    originLocation: (
+      parent: { originId: string | null; originLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.originLocation !== undefined) return parent.originLocation;
       if (!parent.originId) return null;
       return prisma.locations.findUnique({ where: { id: parent.originId } });
     },
-    destinationLocation: (parent: { destinationId: string | null }, _args: unknown, { prisma }: Context) => {
+    destinationLocation: (
+      parent: { destinationId: string | null; destinationLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.destinationLocation !== undefined) return parent.destinationLocation;
       if (!parent.destinationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.destinationId } });
     },
-    generalLocation: (parent: { locationId: string | null }, _args: unknown, { prisma }: Context) => {
+    generalLocation: (
+      parent: { locationId: string | null; generalLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
     },
-    events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    events: (
+      parent: { id: string; signalEvents?: Array<{ event: unknown }> },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: Query.signal deep-includes signalEvents.event so the
+      // signal-detail page can skip this fetch and hit the Event.title
+      // fast path directly off the pre-loaded translations.
+      if (parent.signalEvents) {
+        return parent.signalEvents.map((l) => l.event);
+      }
+      // Hard cap. Each event returned here will fan out one
+      // Event.signals findMany per event from the GraphQL detail
+      // query — without a cap, a signal linked to hundreds of events
+      // wedges the response through the SSH tunnel (~50ms × N tunnel
+      // round-trips). 25 is plenty for the UI's related-events panel.
       return prisma.signalEvents.findMany({
         where: { signalId: parent.id },
         include: { event: true },
+        take: 25,
       }).then((links) => links.map((l) => l.event));
     },
     feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
