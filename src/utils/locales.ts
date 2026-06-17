@@ -7,7 +7,7 @@
  * `translations.locale` column on storage. Adding a new locale here is
  * the single switch the pipeline reads to know what to translate to.
  */
-export const SUPPORTED_LOCALES = ["en", "ar", "fr", "fa", "ps"] as const;
+export const SUPPORTED_LOCALES = ["en", "ar", "fr"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = "en";
@@ -22,8 +22,6 @@ export const LOCALE_DIRECTION: Record<Locale, "ltr" | "rtl"> = {
   en: "ltr",
   fr: "ltr",
   ar: "rtl",
-  fa: "rtl",
-  ps: "rtl",
 };
 
 export function isSupportedLocale(value: unknown): value is Locale {

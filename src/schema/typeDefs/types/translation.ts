@@ -63,7 +63,7 @@ export const translationTypeDef = gql`
   the same keys/nesting the English columns use.
   """
   input LocaleTranslationInput {
-    """BCP-47 lowercased — 'ar', 'fr', 'fa', 'ps'. 'en' is rejected (canonical)."""
+    """BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical)."""
     locale: String!
     """Translated payload. Shape mirrors the canonical entity per type."""
     data: JSON!

@@ -98,3 +98,37 @@ export async function sendCeleryTask(
   console.log(`[celery] Task ${taskName} queued: ${taskId}`);
   return taskId;
 }
+
+/**
+ * Cross-request enqueue dedup gate backed by Redis SET NX EX.
+ *
+ * Returns true when this caller "won" the key (and therefore should
+ * proceed to enqueue), false when another caller already reserved
+ * the same key within the TTL window.
+ *
+ * Fail-open on Redis errors: if the broker is unreachable we return
+ * true so the caller still attempts to enqueue. Over-enqueuing is
+ * cheap (Celery task is idempotent via staleness diff), silently
+ * never enqueuing is not.
+ *
+ * Used by the lazy-on-read translation enqueue in context.ts to
+ * collapse the burst of identical translate_entity_task messages
+ * we'd otherwise produce when several concurrent requests touch the
+ * same untranslated entity.
+ */
+export async function tryReserveDedupKey(
+  key: string,
+  ttlSeconds: number,
+): Promise<boolean> {
+  try {
+    const redis = await getRedis();
+    const res = await redis.set(key, "1", { NX: true, EX: ttlSeconds });
+    return res === "OK";
+  } catch (err) {
+    console.warn(
+      `[celery-dedup] reserve failed for ${key}, failing open:`,
+      err instanceof Error ? err.message : err,
+    );
+    return true;
+  }
+}
