@@ -61,18 +61,14 @@ function parseFlags(): Flags {
   };
 }
 
-// `buildSmsBody` used to live here; it's been promoted to
-// src/services/messaging/templates.ts as `buildAlertSms` so the
-// resolver paths can reuse the same locale-aware shape when an SMS
-// channel is wired up. Anything that used to import it from this
-// script should import from templates.ts directly.
-
 async function main(): Promise<void> {
   const flags = parseFlags();
 
   if (!flags.email && !flags.phone) {
     console.error("Error: provide at least one of --email or --phone");
-    console.error("  bun run scripts/test-alert-notification.ts --email you@example.com --phone +49170123456");
+    console.error(
+      "  bun run scripts/test-alert-notification.ts --email you@example.com --phone +49170123456",
+    );
     process.exit(1);
   }
 
@@ -83,8 +79,12 @@ async function main(): Promise<void> {
         include: {
           event: {
             include: {
-              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
-              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              generalLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
+              originLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
             },
           },
         },
@@ -94,8 +94,12 @@ async function main(): Promise<void> {
         include: {
           event: {
             include: {
-              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
-              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              generalLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
+              originLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
             },
           },
         },
@@ -130,23 +134,15 @@ async function main(): Promise<void> {
   // Operator-supplied --locale is a free-form string; narrow it to the
   // template's Locale union. Unsupported values fall back to "en" so a
   // typo doesn't crash the run.
-  const locale: Locale = isSupportedLocale(flags.locale)
-    ? flags.locale
-    : DEFAULT_LOCALE;
+  const locale: Locale = isSupportedLocale(flags.locale) ? flags.locale : DEFAULT_LOCALE;
 
-  const emailContent = alertNotification(
-    flags.recipientName,
-    title,
-    event.description,
-    alertUrl,
-    {
-      severity: severityLabel,
-      eventType: eventTypeLabel,
-      locationName,
-      population,
-      locale,
-    },
-  );
+  const emailContent = alertNotification(flags.recipientName, title, event.description, alertUrl, {
+    severity: severityLabel,
+    eventType: eventTypeLabel,
+    locationName,
+    population,
+    locale,
+  });
 
   const smsBody = buildAlertSms(title, alertUrl, {
     severity: severityLabel,
@@ -179,7 +175,9 @@ async function main(): Promise<void> {
             textBody: emailContent.textBody,
             htmlBody: emailContent.htmlBody,
           });
-          console.log(`[EMAIL -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
+          console.log(
+            `[EMAIL -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`,
+          );
         } catch (err) {
           console.error(`[EMAIL -> ${recipient}] FAILED:`, err);
           process.exitCode = 3;
