@@ -6,10 +6,76 @@ import {
   buildLocationFilterForTeam,
 } from "../utils/location-scope.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+
+/**
+ * Build the Prisma `include` clause that folds the active-locale
+ * translation row into a paginated entity query. Same shape as the
+ * helpers in event/crisis/location resolvers — kept local so the
+ * pagination resolver doesn't need to cross-import them. Returns
+ * undefined for the canonical locale so the include is omitted.
+ *
+ * Used on eventsPage / alertsPage / signalsPage so the Event /
+ * Location field resolvers can read translations off `parent.translations`
+ * instead of going through the per-request translationLoader on every
+ * page render at non-English locales — that loader path adds one extra
+ * DB round-trip per entity type and the lazy-enqueue side path that
+ * wedged the resolver at high miss counts (see 2026-06-17 incident).
+ */
+function entityTranslationsInclude(
+  locale: Locale,
+):
+  | { translations: { where: { locale: string } } }
+  | undefined {
+  if (locale === DEFAULT_LOCALE) return undefined;
+  return { translations: { where: { locale } } };
+}
+
+/**
+ * Prisma include for the event-shape used by list views and the
+ * event detail page. Folds the event's own direct relationships
+ * (translations, 3 locations + their translations, alerts) so the
+ * Event.title/description and Location.name field resolvers hit the
+ * fast path off `parent.<field>`. We deliberately do NOT include
+ * `signalEvents → signal → locations` here — that chain is 4 levels
+ * deep and produced a wedge at non-English locales when an event had
+ * many signals. Signals + their nested locations fall back to the
+ * existing field-resolver + translationLoader path, which already
+ * batches per-entity-type into one query per microtask boundary and
+ * is fast in practice.
+ */
+function deepEventInclude(locale: Locale) {
+  const tr = entityTranslationsInclude(locale);
+  if (!tr) return undefined;
+  const locInclude = { include: tr };
+  return {
+    translations: tr.translations,
+    generalLocation: locInclude,
+    originLocation: locInclude,
+    destinationLocation: locInclude,
+    alerts: true as const,
+  };
+}
+
+/**
+ * Deep Prisma include for the signal shape used by signalsPage. Signals
+ * aren't translatable themselves, but their nested locations need
+ * translations folded in so Location.name uses the fast path.
+ */
+function deepSignalInclude(locale: Locale) {
+  const tr = entityTranslationsInclude(locale);
+  if (!tr) return undefined;
+  const locInclude = { include: tr };
+  return {
+    generalLocation: locInclude,
+    originLocation: locInclude,
+    destinationLocation: locInclude,
+  };
+}
 
 function clampLimit(limit?: number | null): number {
   if (!limit || limit <= 0) return DEFAULT_LIMIT;
@@ -381,12 +447,22 @@ export const paginationResolvers = {
       const limit = clampLimit(input.limit);
       const offset = clampOffset(input.offset);
 
+      // Alerts wrap an event; the alerts feed renders the same nested
+      // chain as the events feed (event title/description, locations,
+      // signals' locations). Deep-include the whole event shape so
+      // every field resolver hits the fast path.
+      const eventInclude = deepEventInclude(context.locale);
+      const alertsInclude = eventInclude
+        ? { event: { include: eventInclude } }
+        : undefined;
+
       const [items, totalCount] = await Promise.all([
         context.prisma.alerts.findMany({
           where,
           orderBy: alertsOrderBy(input.orderBy),
           take: limit,
           skip: offset,
+          ...(alertsInclude ? { include: alertsInclude } : {}),
         }),
         context.prisma.alerts.count({ where }),
       ]);
@@ -409,12 +485,15 @@ export const paginationResolvers = {
       const limit = clampLimit(input.limit);
       const offset = clampOffset(input.offset);
 
+      const eventsInclude = deepEventInclude(context.locale);
+
       const [items, totalCount] = await Promise.all([
         context.prisma.events.findMany({
           where,
           orderBy: eventsOrderBy(input.orderBy),
           take: limit,
           skip: offset,
+          ...(eventsInclude ? { include: eventsInclude } : {}),
         }),
         context.prisma.events.count({ where }),
       ]);
@@ -437,12 +516,18 @@ export const paginationResolvers = {
       const limit = clampLimit(input.limit);
       const offset = clampOffset(input.offset);
 
+      // Signals aren't translatable themselves but their nested
+      // locations are. Fold those in so Location.name reads from the
+      // pre-loaded translation row instead of the loader at scale.
+      const signalsInclude = deepSignalInclude(context.locale);
+
       const [items, totalCount] = await Promise.all([
         context.prisma.signals.findMany({
           where,
           orderBy: signalsOrderBy(input.orderBy),
           take: limit,
           skip: offset,
+          ...(signalsInclude ? { include: signalsInclude } : {}),
         }),
         context.prisma.signals.count({ where }),
       ]);

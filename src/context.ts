@@ -14,7 +14,7 @@ import {
   type TranslationLoader,
   type TranslatableEntityType,
 } from "./utils/translation-loader.js";
-import { sendCeleryTask, tryReserveDedupKey } from "./services/celery.js";
+import { bufferTranslationRequest } from "./services/celery.js";
 
 export interface Context {
   prisma: PrismaClient;
@@ -79,51 +79,26 @@ function readCookie(rawHeader: string | string[] | undefined, name: string): str
 }
 
 /**
- * Lazy-on-read enqueue: push a Celery task onto the shared Redis
- * broker when a resolver discovers an entity has no translation for
- * the active locale yet. The pipeline worker picks it up and
- * translates the entity asynchronously; the user's current request
- * still gets canonical English. The task is idempotent (the
- * staleness diff turns a no-op into a no-op), so duplicate enqueues
- * across requests are cheap.
+ * Lazy-on-read enqueue hook. When a resolver discovers an entity has
+ * no translation for the active locale yet, this routes the miss into
+ * the per-process batch buffer (see services/celery.ts). The buffer
+ * flushes every 500ms as ONE Celery task carrying every miss the
+ * process saw in that window, instead of firing N independent Redis
+ * round-trips per request — the IIFE-per-miss pattern saturated the
+ * event loop at non-English locales when a single /detection load
+ * surfaced 100+ misses across nested signal locations.
  *
- * Cross-request dedup via Redis SET NX EX (60s): the per-request
- * loader already dedupes within a single GraphQL operation, but
- * several concurrent requests touching the same untranslated entity
- * would each fire an enqueue. The pipeline takes a few seconds per
- * task, so without this gate we'd see bursts of 30+ identical
- * translate_entity_task messages on the broker. Key is locale-
- * agnostic because translate_entity_task fans out to every
- * configured target locale in one run — different-locale callers
- * can share the slot.
- *
- * Failures are intentionally silent: a flaky broker connection must
- * not cascade into a 500 from clear-api. We log + drop and the next
- * read of the same entity will retry the enqueue.
- *
- * Wire format matches the manual-signal path (see
- * resolvers/signal.resolver.ts → sendCeleryTask) so both producers
- * use the same broker and routing key.
+ * Dedup happens inside the buffer (same entity from two concurrent
+ * requests collapses to one entry). Across flush windows the worker's
+ * staleness-diff keeps repeats idempotent. The function returns
+ * synchronously — the user's current request still gets canonical
+ * English and is never blocked on broker I/O.
  */
 function enqueueTranslation(
   entityType: TranslatableEntityType,
   entityId: string,
 ): void {
-  void (async () => {
-    const dedupKey = `xlate:enq:${entityType}:${entityId}`;
-    if (!(await tryReserveDedupKey(dedupKey, 60))) return;
-    try {
-      await sendCeleryTask("src.tasks.translate.translate_entity_task", {
-        entity_type: entityType,
-        entity_id: entityId,
-      });
-    } catch (err) {
-      console.warn(
-        `[translate-enqueue] ${entityType}=${entityId} failed:`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-  })();
+  bufferTranslationRequest(entityType, entityId);
 }
 
 export async function createContext(
@@ -142,7 +117,19 @@ export async function createContext(
   // even while Better Auth's 5-min cookieCache still serves the old
   // user object.
   const nextLocaleCookie = readCookie(args.req.headers["cookie"], "NEXT_LOCALE");
-  const locale = resolveLocale(user, nextLocaleCookie, acceptLanguage);
+  // x-force-locale opt-out: when set, override the normal resolution
+  // and pin the request to whatever locale the caller asked for.
+  // Used by clear-mvp's signals.get to force canonical English on
+  // signal detail (translation overhead at non-English locales was
+  // wedging the page through the SSH tunnel; product chose to leave
+  // signal detail in English regardless of user locale).
+  const forceHeaderRaw = args.req.headers["x-force-locale"];
+  const forceLocaleHeader = Array.isArray(forceHeaderRaw)
+    ? forceHeaderRaw[0]
+    : forceHeaderRaw;
+  const locale = isSupportedLocale(forceLocaleHeader)
+    ? forceLocaleHeader
+    : resolveLocale(user, nextLocaleCookie, acceptLanguage);
 
   return {
     prisma,

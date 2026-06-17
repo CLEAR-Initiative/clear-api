@@ -8,6 +8,28 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
+import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
+import { bufferTranslationRequest } from "../services/celery.js";
+
+/**
+ * Build the Prisma `include` clause that folds the active-locale
+ * translation row into an entity query. Returns `undefined` for the
+ * canonical locale so the include is omitted entirely and the entity
+ * query stays trivial.
+ *
+ * Use on every `events.findMany / findUnique / findFirst` in this
+ * resolver so Event.title / Event.description can read translations
+ * directly off `parent.translations` instead of going through the
+ * per-request translation loader (one extra round-trip per resolver
+ * pass + the lazy-enqueue side path).
+ */
+function eventTranslationsInclude(locale: Locale):
+  | { translations: { where: { locale: string } } }
+  | undefined {
+  if (locale === DEFAULT_LOCALE) return undefined;
+  return { translations: { where: { locale } } };
+}
+
 import {
   severityToLabel,
   formatCount,
@@ -67,18 +89,20 @@ export const eventResolvers = {
     events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
       requireAuth(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
+      const include = eventTranslationsInclude(context.locale);
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
-        return context.prisma.events.findMany({ where: dummyFilter });
+        return context.prisma.events.findMany({ where: dummyFilter, ...(include ? { include } : {}) });
       }
       // teamId provided: apply that team's location filter as a view filter
       // (no membership check -  see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter } });
+      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter }, ...(include ? { include } : {}) });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireAuth(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
+      const include = eventTranslationsInclude(context.locale);
       return context.prisma.events.findMany({
         where: {
           OR: [
@@ -87,11 +111,24 @@ export const eventResolvers = {
             { locationId: { in: locationIds } },
           ],
         },
+        ...(include ? { include } : {}),
       });
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireAuth(context);
-      return context.prisma.events.findUnique({ where: { id: args.id } });
+      // Only include the event's own translation row eagerly. Field
+      // resolvers (Event.signals, Event.{general,origin,destination}-
+      // Location) fetch what they need with their own targeted
+      // includes — that's faster overall than eagerly fetching every
+      // nested branch here. A previous version pulled the whole tree
+      // upfront and added a ~2.6s baseline to every event query (even
+      // `{ id title }`), which compounded with the field-resolver work
+      // on event detail to wedge past 10 minutes.
+      const include = eventTranslationsInclude(context.locale);
+      return context.prisma.events.findUnique({
+        where: { id: args.id },
+        ...(include ? { include } : {}),
+      });
     },
   },
   Mutation: {
@@ -560,46 +597,179 @@ export const eventResolvers = {
     },
   },
   Event: {
-    // Localized overlay — falls through to the canonical column when no
-    // translation exists for the active locale (including locale === "en",
-    // where the loader is a no-op).
+    // Localized overlay. Prefers `parent.translations` when the caller
+    // fetched the event via `events.findMany / findUnique` with
+    // `include: eventTranslationsInclude(locale)` — that's now the
+    // default in this resolver's Query.event{,s,ByLocation}. Falls
+    // back to the per-request translationLoader for entry points that
+    // didn't include translations (Alert.event, Crisis.events, etc.)
+    // so this rewire can land without touching every event-producing
+    // resolver in one PR. At locale === "en" both paths short-circuit
+    // to the canonical column.
     title: async (
-      parent: { id: string; title: string | null },
+      parent: {
+        id: string;
+        title: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("event", parent.id);
+      if (context.locale === DEFAULT_LOCALE) return parent.title;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { title?: unknown }
+          | undefined;
+        const localized = data?.title;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("event", parent.id);
+        }
+        return parent.title;
+      }
+      const tr = await context.translationLoader.load("event", parent.id);
       const localized = tr?.title;
       return typeof localized === "string" ? localized : parent.title;
     },
     description: async (
-      parent: { id: string; description: string | null },
+      parent: {
+        id: string;
+        description: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
       _args: unknown,
-      { translationLoader }: Context,
+      context: Context,
     ) => {
-      const tr = await translationLoader.load("event", parent.id);
+      if (context.locale === DEFAULT_LOCALE) return parent.description;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { description?: unknown }
+          | undefined;
+        const localized = data?.description;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("event", parent.id);
+        }
+        return parent.description;
+      }
+      const tr = await context.translationLoader.load("event", parent.id);
       const localized = tr?.description;
       return typeof localized === "string" ? localized : parent.description;
     },
-    signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.signalEvents.findMany({
-        where: { eventId: parent.id },
-        include: { signal: true },
-      }).then((links) => links.map((l) => l.signal));
+    signals: (
+      parent: {
+        id: string;
+        signalEvents?: Array<{ signal: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+      info: import("graphql").GraphQLResolveInfo,
+    ) => {
+      // Fast path: pre-loaded from a deeper include.
+      if (parent.signalEvents) {
+        return parent.signalEvents.map((l) => l.signal);
+      }
+      // Inspect the GraphQL selection to decide whether to include
+      // signal-locations + their translations. /detection's events tab
+      // asks for `signals { generalLocation { ... } ... }` and needs
+      // the include to avoid the N+1 fan-out (25 events × 10 signals ×
+      // 3 locations = 750 findUnique calls through the SSH tunnel).
+      // Signal detail page asks for nested `events.signals` WITHOUT
+      // locations — including them there is pure overhead that wedges
+      // the page payload through the tunnel. Probing `info.fieldNodes`
+      // gives us per-call accuracy without resolver-per-context
+      // duplication.
+      const selections = info.fieldNodes[0]?.selectionSet?.selections ?? [];
+      const needsLocations = selections.some(
+        (sel) =>
+          sel.kind === "Field" &&
+          (sel.name.value === "generalLocation" ||
+            sel.name.value === "originLocation" ||
+            sel.name.value === "destinationLocation"),
+      );
+
+      const tr =
+        context.locale === DEFAULT_LOCALE
+          ? undefined
+          : { translations: { where: { locale: context.locale } } };
+      const locInclude = tr ? { include: tr } : undefined;
+      const signalInclude = {
+        source: true as const,
+        ...(needsLocations && locInclude
+          ? {
+              generalLocation: locInclude,
+              originLocation: locInclude,
+              destinationLocation: locInclude,
+            }
+          : {}),
+      };
+      return context.prisma.signalEvents
+        .findMany({
+          where: { eventId: parent.id },
+          include: { signal: { include: signalInclude } },
+          take: 50,
+          // Intentionally no orderBy: ordering by signal.publishedAt
+          // requires a JOIN with the signals table and was the wedge
+          // on signal detail (25 events × slow JOIN per event). The UI
+          // can sort the small returned set client-side if needed.
+        })
+        .then((links) => links.map((l) => l.signal));
     },
-    originLocation: (parent: { originId: string | null }, _args: unknown, { prisma }: Context) => {
+    // Fast path on all three: deep-include from eventsPage / alertsPage
+    // pre-loaded the location (with translations) onto the parent. Fall
+    // back to findUnique-with-include for paths that didn't pre-load
+    // (Query.event detail, Crisis.events, etc.).
+    originLocation: (
+      parent: { originId: string | null; originLocation?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.originLocation !== undefined) return parent.originLocation;
       if (!parent.originId) return null;
-      return prisma.locations.findUnique({ where: { id: parent.originId } });
+      const include = context.locale === DEFAULT_LOCALE
+        ? undefined
+        : { translations: { where: { locale: context.locale } } };
+      return context.prisma.locations.findUnique({
+        where: { id: parent.originId },
+        ...(include ? { include } : {}),
+      });
     },
-    destinationLocation: (parent: { destinationId: string | null }, _args: unknown, { prisma }: Context) => {
+    destinationLocation: (
+      parent: { destinationId: string | null; destinationLocation?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.destinationLocation !== undefined) return parent.destinationLocation;
       if (!parent.destinationId) return null;
-      return prisma.locations.findUnique({ where: { id: parent.destinationId } });
+      const include = context.locale === DEFAULT_LOCALE
+        ? undefined
+        : { translations: { where: { locale: context.locale } } };
+      return context.prisma.locations.findUnique({
+        where: { id: parent.destinationId },
+        ...(include ? { include } : {}),
+      });
     },
-    generalLocation: (parent: { locationId: string | null }, _args: unknown, { prisma }: Context) => {
+    generalLocation: (
+      parent: { locationId: string | null; generalLocation?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
-      return prisma.locations.findUnique({ where: { id: parent.locationId } });
+      const include = context.locale === DEFAULT_LOCALE
+        ? undefined
+        : { translations: { where: { locale: context.locale } } };
+      return context.prisma.locations.findUnique({
+        where: { id: parent.locationId },
+        ...(include ? { include } : {}),
+      });
     },
-    alerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    alerts: (
+      parent: { id: string; alerts?: unknown[] },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.alerts !== undefined) return parent.alerts;
       return prisma.alerts.findMany({ where: { eventId: parent.id } });
     },
     feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
