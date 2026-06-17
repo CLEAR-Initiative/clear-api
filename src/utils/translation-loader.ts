@@ -104,21 +104,43 @@ export function createTranslationLoader(
       const uniqueIds = [...new Set(pending.map((p) => p.entityId))];
 
       try {
+        // Query via the typed FK column matching this entity type
+        // (event_id / crisis_id / location_id) instead of the
+        // polymorphic (entity_type, entity_id) pair. Hits the
+        // dedicated per-FK unique index (translations_<X>_id_locale_key)
+        // and lets Prisma's planner reason about the typed relation.
+        // The polymorphic columns stay populated as a fallback by
+        // upsertTranslations, but reads go through the typed path.
+        const fkColumn =
+          entityType === "event"
+            ? "eventId"
+            : entityType === "crisis"
+              ? "crisisId"
+              : "locationId";
         const rows = await prisma.translations.findMany({
           where: {
-            entityType,
-            entityId: { in: uniqueIds },
+            [fkColumn]: { in: uniqueIds },
             locale,
           },
-          select: { entityId: true, data: true },
+          select: { eventId: true, crisisId: true, locationId: true, data: true },
         });
 
         const byId = new Map<string, TranslationData>();
         for (const row of rows) {
+          // Pull whichever typed FK column matches this entity type —
+          // exactly one is populated per row (enforced by the CHECK
+          // constraint added in 20260617150000_add_translation_entity_relations).
+          const id =
+            entityType === "event"
+              ? row.eventId
+              : entityType === "crisis"
+                ? row.crisisId
+                : row.locationId;
+          if (!id) continue;
           // Prisma types `data` as JsonValue which is wider than what we
           // know the pipeline writes. Cast at the loader boundary so
           // resolvers see the narrower TranslationData consistently.
-          byId.set(row.entityId, row.data as TranslationData);
+          byId.set(id, row.data as TranslationData);
         }
 
         // Visibility for the lazy-enqueue path: when a batch is partly or
