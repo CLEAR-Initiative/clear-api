@@ -95,7 +95,12 @@ export async function sendCeleryTask(
   // kombu Redis transport: LPUSH queue JSON.dumps(message)
   await redis.lPush(queue, JSON.stringify(message));
 
-  console.log(`[celery] Task ${taskName} queued: ${taskId}`);
+  // Include kwargs in the log so a burst is debuggable — repeated bursts
+  // of the same (entity_type, entity_id) point at the pipeline failing to
+  // persist translations; bursts of distinct ids are just a cold list view.
+  console.log(
+    `[celery] ${taskName} queued: ${taskId} ${JSON.stringify(kwargs)}`,
+  );
   return taskId;
 }
 

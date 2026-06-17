@@ -121,6 +121,19 @@ export function createTranslationLoader(
           byId.set(row.entityId, row.data as TranslationData);
         }
 
+        // Visibility for the lazy-enqueue path: when a batch is partly or
+        // fully missing, the next thing in the logs is N
+        // translate_entity_task enqueues. Without this line you can't
+        // tell whether the pipeline is failing to persist (same misses
+        // every refresh) vs. a cold list view (different misses each
+        // refresh). Logs requested/found/missing rather than the full
+        // miss list to keep the line short for high-cardinality batches.
+        if (rows.length < uniqueIds.length) {
+          console.log(
+            `[translation-loader] locale=${locale} entityType=${entityType} requested=${uniqueIds.length} found=${rows.length} missing=${uniqueIds.length - rows.length}`,
+          );
+        }
+
         for (const req of pending) {
           const value = byId.get(req.entityId) ?? null;
           if (value === null && onMissing) {
