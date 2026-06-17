@@ -188,5 +188,14 @@ export const queryTypeDef = gql`
     have a translation row for that locale). Coverage = translated /
     canonical."""
     translationCoverage: [TranslationCoverage!]!
+
+    """IDs of entities of the given type that have NO translation row
+    for the given locale. Admin/pipeline only. Lets the backfill
+    driver enqueue only entities the worker would actually translate,
+    instead of relying on per-task staleness diffs to no-op thousands
+    of already-current rounds. Stale rows (row exists but hashes are
+    out of date) are NOT returned here — they're rare and handled by
+    the per-entity enrichment hooks."""
+    entitiesMissingTranslation(entityType: String!, locale: String!): [ID!]!
   }
 `;

@@ -100,6 +100,53 @@ export const translationResolvers = {
      * Then build the full N×M matrix so locales/types with zero rows
      * still show up as 0 instead of being silently dropped.
      */
+    entitiesMissingTranslation: async (
+      _parent: unknown,
+      args: { entityType: string; locale: string },
+      context: Context,
+    ): Promise<string[]> => {
+      requireRole(context, ["admin", "pipeline"]);
+      const entityType = args.entityType.toLowerCase() as TranslatableEntityType;
+      if (!VALID_ENTITY_TYPES.has(entityType)) {
+        throw new GraphQLError(
+          `Invalid entityType "${args.entityType}". Must be one of: event, crisis, location.`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      const locale = args.locale.toLowerCase();
+      if (locale === DEFAULT_LOCALE) {
+        throw new GraphQLError(
+          "locale 'en' is canonical; missing-translation lookup is undefined for it.",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      if (!isSupportedLocale(locale)) {
+        throw new GraphQLError(`Unsupported locale "${locale}".`, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      // Two findMany calls + a Set diff in app code instead of a raw
+      // LEFT JOIN / NOT EXISTS. Faster to reason about and we're
+      // bounded by canonical row counts in the thousands, not millions.
+      let allRows: Array<{ id: string }>;
+      if (entityType === "event") {
+        allRows = await context.prisma.events.findMany({ select: { id: true } });
+      } else if (entityType === "crisis") {
+        allRows = await context.prisma.crises.findMany({ select: { id: true } });
+      } else {
+        allRows = await context.prisma.locations.findMany({ select: { id: true } });
+      }
+      const translatedRows = await context.prisma.translations.findMany({
+        where: { entityType, locale },
+        select: { entityId: true },
+      });
+      const translated = new Set(translatedRows.map((r) => r.entityId));
+      return allRows
+        .filter((r) => !translated.has(r.id))
+        .map((r) => r.id);
+    },
+
     translationCoverage: async (
       _parent: unknown,
       _args: unknown,
@@ -220,8 +267,24 @@ export const translationResolvers = {
       // requested. Each row is keyed off the (entity_type, entity_id,
       // locale) unique constraint defined in the migration.
       await context.prisma.$transaction(
-        input.translations.map((t) =>
-          context.prisma.translations.upsert({
+        input.translations.map((t) => {
+          // Populate the typed FK column matching entityType alongside
+          // the polymorphic (entity_type, entity_id) pair so new rows
+          // satisfy the migration's "exactly one FK" CHECK constraint
+          // and are reachable via Prisma's typed `include` on the
+          // entity's relation. The polymorphic columns stay populated
+          // for the existing read paths until the loader is rewired.
+          const typedFk: {
+            eventId?: string;
+            crisisId?: string;
+            locationId?: string;
+          } =
+            entityType === "event"
+              ? { eventId: input.entityId }
+              : entityType === "crisis"
+                ? { crisisId: input.entityId }
+                : { locationId: input.entityId };
+          return context.prisma.translations.upsert({
             where: {
               entityType_entityId_locale: {
                 entityType,
@@ -232,6 +295,7 @@ export const translationResolvers = {
             create: {
               entityType,
               entityId: input.entityId,
+              ...typedFk,
               locale: t.locale.toLowerCase(),
               data: t.data as Prisma.InputJsonValue,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
@@ -239,9 +303,13 @@ export const translationResolvers = {
             update: {
               data: t.data as Prisma.InputJsonValue,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
+              // Defensive backfill on update too — if an older row was
+              // written before this migration, the next translation
+              // upsert will fill in its typed FK alongside the new data.
+              ...typedFk,
             },
-          }),
-        ),
+          });
+        }),
       );
 
       return {

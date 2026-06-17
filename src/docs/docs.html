@@ -598,6 +598,16 @@ admin dashboard. Admin only. Each row reports canonicalCount (how
 many entities of that type exist) and translatedCount (how many
 have a translation row for that locale). Coverage = translated /
 canonical.</td>
+  </tr><tr>
+    <td><code>entitiesMissingTranslation</code></td>
+    <td><code>[ID!]!</code></td>
+    <td>IDs of entities of the given type that have NO translation row
+for the given locale. Admin/pipeline only. Lets the backfill
+driver enqueue only entities the worker would actually translate,
+instead of relying on per-task staleness diffs to no-op thousands
+of already-current rounds. Stale rows (row exists but hashes are
+out of date) are NOT returned here — they're rare and handled by
+the per-entity enrichment hooks.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
