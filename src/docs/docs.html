@@ -979,7 +979,7 @@ entity's JSON shape per locale. Admin/pipeline only.<div class="field-args"><spa
         <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>owner</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
-`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>lead</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>viewer</code></td><td>—</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>lead</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -3136,13 +3136,29 @@ can confirm coverage without a follow-up read.</p><table class="ref-table"><thea
     <td><code>locales</code></td>
     <td><code>[String!]!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-user"><code>User</code> <span class="type-badge">object</span></h3><p>A registered user with role-based access.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-user"><code>User</code> <span class="type-badge">object</span></h3><p>A registered user with role-based access.
+
+PII fields (`email`, `phoneNumber`, `role`, `isActive`) and the
+private relation set (`alerts`, `notifications`, `organisations`,
+`teamMemberships`, `feedbacks`, `comments`, `escalations`) are
+gated server-side:
+  - PII: returned when caller IS the user, is a global admin, OR
+    shares at least one organisation with the user. Otherwise null
+    (PII) or empty array (private relations).
+  - Private relations: returned only when caller IS the user OR is
+    a global admin. Sharing an organisation does NOT grant access
+    to another member's inbox / comment history.
+
+Schema makes these fields nullable so the gate can return null when
+the caller is not authorised, instead of throwing — a logged-in
+analyst browsing an event's comments shouldn't see a hard error on
+the commenter's email.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>email</code></td>
-    <td><code>String!</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>name</code></td>
@@ -3162,12 +3178,13 @@ can confirm coverage without a follow-up read.</p><table class="ref-table"><thea
     <td>—</td>
   </tr><tr>
     <td><code>role</code></td>
-    <td><code>String!</code></td>
-    <td>User role: viewer, editor, or admin.</td>
+    <td><code>String</code></td>
+    <td>User role: viewer, editor, or admin. Null when caller is not
+authorised to see this user's role.</td>
   </tr><tr>
     <td><code>isActive</code></td>
-    <td><code>Boolean!</code></td>
-    <td>—</td>
+    <td><code>Boolean</code></td>
+    <td>Null when caller is not authorised to see this field.</td>
   </tr><tr>
     <td><code>language</code></td>
     <td><code>String!</code></td>
@@ -3195,35 +3212,37 @@ can confirm coverage without a follow-up read.</p><table class="ref-table"><thea
   </tr><tr>
     <td><code>alerts</code></td>
     <td><code>[UserAlert!]!</code></td>
-    <td>Alerts received by this user.</td>
+    <td>Alerts received by this user. Empty for non-self / non-admin
+callers.</td>
   </tr><tr>
     <td><code>notifications</code></td>
     <td><code>[Notification!]!</code></td>
-    <td>—</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr><tr>
     <td><code>defaultTeam</code></td>
     <td><code>Team</code></td>
-    <td>The user's default team (last selected).</td>
+    <td>The user's default team (last selected). Null for non-self /
+non-admin callers.</td>
   </tr><tr>
     <td><code>organisations</code></td>
     <td><code>[OrganisationUser!]!</code></td>
-    <td>Organisations this user belongs to.</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr><tr>
     <td><code>teamMemberships</code></td>
     <td><code>[TeamMember!]!</code></td>
-    <td>Teams this user belongs to.</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr><tr>
     <td><code>feedbacks</code></td>
     <td><code>[UserFeedback!]!</code></td>
-    <td>Feedback given by this user.</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr><tr>
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
-    <td>Comments made by this user.</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr><tr>
     <td><code>escalations</code></td>
     <td><code>[EventEscalation!]!</code></td>
-    <td>Events/alerts escalated by this user.</td>
+    <td>Empty for non-self / non-admin callers.</td>
   </tr></tbody></table><h3 id="type-useractivitysummary"><code>UserActivitySummary</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
