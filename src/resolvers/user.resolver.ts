@@ -1,6 +1,11 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import {
+  requireAuth,
+  requireRole,
+  canSeeUserPii,
+  canSeeUserPrivate,
+} from "../utils/auth-guard.js";
 
 interface UpdateProfileInput {
   name?: string;
@@ -101,34 +106,94 @@ export const userResolvers = {
     },
   },
   User: {
-    alerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userAlerts.findMany({ where: { userId: parent.id } });
+    // ─── PII gates ─────────────────────────────────────────────────
+    // Return null when the caller isn't authorised, matching the
+    // nullable schema. canSeeUserPii is async (does a DB lookup the
+    // first time per request per target user — cached on the
+    // Context's WeakMap afterwards) so these are async resolvers.
+    email: async (
+      parent: { id: string; email: string | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      return (await canSeeUserPii(context, parent.id)) ? parent.email : null;
     },
-    notifications: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.notifications.findMany({
+    phoneNumber: async (
+      parent: { id: string; phoneNumber: string | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      return (await canSeeUserPii(context, parent.id))
+        ? parent.phoneNumber
+        : null;
+    },
+    role: async (
+      parent: { id: string; role: string | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      return (await canSeeUserPii(context, parent.id)) ? parent.role : null;
+    },
+    isActive: async (
+      parent: { id: string; isActive: boolean | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      return (await canSeeUserPii(context, parent.id)) ? parent.isActive : null;
+    },
+
+    // ─── Private relations (stricter — self or admin only) ────────
+    alerts: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.userAlerts.findMany({ where: { userId: parent.id } });
+    },
+    notifications: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.notifications.findMany({
         where: { userId: parent.id },
         orderBy: { createdAt: "desc" },
       });
     },
-    defaultTeam: (parent: { defaultTeamId: string | null }, _args: unknown, { prisma }: Context) => {
+    defaultTeam: (
+      parent: { id: string; defaultTeamId: string | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (!canSeeUserPrivate(context, parent.id)) return null;
       if (!parent.defaultTeamId) return null;
-      return prisma.teams.findUnique({ where: { id: parent.defaultTeamId } });
+      return context.prisma.teams.findUnique({
+        where: { id: parent.defaultTeamId },
+      });
     },
-    organisations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.organisationUsers.findMany({ where: { userId: parent.id } });
+    organisations: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.organisationUsers.findMany({
+        where: { userId: parent.id },
+      });
     },
-    teamMemberships: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.teamMembers.findMany({ where: { userId: parent.id } });
+    teamMemberships: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.teamMembers.findMany({ where: { userId: parent.id } });
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { userId: parent.id } });
+    feedbacks: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.userFeedbacks.findMany({
+        where: { userId: parent.id },
+      });
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { userId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.userComments.findMany({
+        where: { userId: parent.id },
+      });
     },
-    escalations: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.eventEscaladedByUsers.findMany({ where: { userId: parent.id } });
+    escalations: (parent: { id: string }, _args: unknown, context: Context) => {
+      if (!canSeeUserPrivate(context, parent.id)) return [];
+      return context.prisma.eventEscaladedByUsers.findMany({
+        where: { userId: parent.id },
+      });
     },
+
     // Map Prisma field names to GraphQL field names
     enableEmailNotification: (parent: { emailNotification?: boolean }) => {
       return parent.emailNotification ?? false;
