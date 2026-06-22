@@ -685,7 +685,10 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      // Destructive operation with cascade (eventCrises, userComments,
+      // userFeedbacks, translations all drop with the crisis). Restricted
+      // to global admins.
+      requireRole(context, ["admin"]);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
