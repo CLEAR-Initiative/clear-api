@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -152,7 +153,7 @@ async function dispatchCrisisEnrichmentTask(
 export const crisisResolvers = {
   Query: {
     crises: async (_parent: unknown, _args: unknown, context: Context) => {
-      requireAuth(context);
+      const user = requireAuth(context);
       const tr = crisisTranslationsInclude(context.locale);
       // Pre-load nested events with their translations so /insights's
       // crises-list view doesn't fan out into N+1 Crisis.events queries
@@ -171,7 +172,21 @@ export const crisisResolvers = {
             },
           }
         : undefined;
-      return context.prisma.crises.findMany(include ? { include } : undefined);
+
+      // Team-based location scoping. Global admins bypass. For everyone
+      // else, restrict crises to the union of the caller's teams'
+      // location bindings; a team with no bindings is treated as
+      // open-to-all and disables the filter for the caller. See
+      // buildCrisisLocationFilterForUser for the full semantics.
+      const where =
+        user.role === "admin"
+          ? undefined
+          : await buildCrisisLocationFilterForUser(context.prisma, user.id);
+
+      return context.prisma.crises.findMany({
+        ...(include ? { include } : {}),
+        where,
+      });
     },
 
     crisis: async (
@@ -179,6 +194,10 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
+      // Intentionally open to any authenticated caller. The team-based
+      // location scope on `crises` (plural) is a UX filter for list views;
+      // crisis records themselves are platform-wide content, so deep-link
+      // / by-id fetches do not check team membership.
       requireAuth(context);
       const include = crisisTranslationsInclude(context.locale);
       const crisis = await context.prisma.crises.findUnique({
