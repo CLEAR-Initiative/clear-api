@@ -432,6 +432,14 @@ export const mutationTypeDef = gql`
     enrichment, stored verbatim for downstream comparison against the
     source's coords. Schema documented on the signals model."""
     geoparsedData: JSON
+    """Human-readable name to use when the resolver has to create a new L4
+    point location from \`lat\`/\`lng\`. Typically the geoparser's
+    top extracted candidate suffixed with " (unresolved)" when the
+    Nominatim lookup failed, so audit views show \`al-Obeid (unresolved)\`
+    instead of the signal's full paragraph. Ignored when \`locationId\`
+    is supplied. When omitted, the resolver falls back to a coord-based
+    label like \`Point 15.6280, 30.2156\`."""
+    pointName: String
   }
 
   input CreateEventInput {

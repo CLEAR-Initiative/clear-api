@@ -147,9 +147,13 @@ export const eventResolvers = {
 
       if (!locationId && !originId && !destinationId) {
         if (input.lat != null && input.lng != null) {
-          // Single lat/lng provided -  create a point location
+          // Single lat/lng provided — create a point location. Title is
+          // intentionally not used as the L4 name (see signal.resolver
+          // for the same reason: an event title is rarely a place name).
+          // The createPointLocation helper will fall back to a
+          // coord-based label.
           const pointLoc = await createPointLocation(
-            context.prisma, input.lat, input.lng, input.title ?? undefined,
+            context.prisma, input.lat, input.lng,
           );
           locationId = pointLoc.id;
         } else if (input.signalIds.length > 0) {
