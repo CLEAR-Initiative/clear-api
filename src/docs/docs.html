@@ -1452,6 +1452,16 @@ existing row instead of creating a duplicate. Recommended prefix scheme:
     <td>Optional output of clear-pipeline's text-based geoparser. Additive
 enrichment, stored verbatim for downstream comparison against the
 source's coords. Schema documented on the signals model.</td>
+  </tr><tr>
+    <td><code>pointName</code></td>
+    <td><code>String</code></td>
+    <td>Human-readable name to use when the resolver has to create a new L4
+point location from `lat`/`lng`. Typically the geoparser's
+top extracted candidate suffixed with &quot; (unresolved)&quot; when the
+Nominatim lookup failed, so audit views show `al-Obeid (unresolved)`
+instead of the signal's full paragraph. Ignored when `locationId`
+is supplied. When omitted, the resolver falls back to a coord-based
+label like `Point 15.6280, 30.2156`.</td>
   </tr></tbody></table><h3 id="type-createteaminput"><code>CreateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>organisationId</code></td>
     <td><code>String!</code></td>
