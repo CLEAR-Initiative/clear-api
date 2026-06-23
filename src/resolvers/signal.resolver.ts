@@ -58,6 +58,13 @@ interface CreateSignalInput {
   lng?: number;
   /** Output of clear-pipeline's text-based geoparser, stored verbatim. */
   geoparsedData?: Record<string, unknown>;
+  /** Optional human-readable name for the L4 point that gets created
+   *  when lat/lng are supplied but locationId is not. The pipeline fills
+   *  this with the geoparser's top candidate suffixed " (unresolved)"
+   *  when Nominatim missed. Falls back to a coord-based label when
+   *  omitted; the signal `title` is never used here so headline-style
+   *  paragraphs don't leak into the locations table. */
+  pointName?: string;
 }
 
 export const signalResolvers = {
@@ -163,14 +170,18 @@ export const signalResolvers = {
         if (existing) return existing;
       }
 
-      // Resolve lat/lng to a level-4 point location if no explicit locationId is provided
+      // Resolve lat/lng to a level-4 point location if no explicit
+      // locationId is provided. We pass `pointName` not `title` —
+      // signal titles for some sources (e.g. Dataminr) are full alert
+      // paragraphs, so using them as the L4 name pollutes the locations
+      // table with non-place strings.
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
         const pointLoc = await createPointLocation(
           context.prisma,
           input.lat,
           input.lng,
-          input.title ?? undefined,
+          input.pointName ?? undefined,
         );
         locationId = pointLoc.id;
       }
@@ -244,11 +255,14 @@ export const signalResolvers = {
         );
       }
 
-      // Resolve location from lat/lng if needed
+      // Resolve location from lat/lng if needed. Title is omitted on
+      // purpose — see createSignal above for rationale. Manual signals
+      // fall back to a coord-based L4 label unless the caller starts
+      // passing a curated `pointName` later.
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
         const pointLoc = await createPointLocation(
-          context.prisma, input.lat, input.lng, input.title,
+          context.prisma, input.lat, input.lng,
         );
         locationId = pointLoc.id;
       }

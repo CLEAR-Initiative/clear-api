@@ -50,18 +50,33 @@ export async function resolveLatLngToLocation(
 }
 
 /**
+ * Reuse radius for nearby-A4 dedup. Tight (100 m) to avoid the
+ * district-border problem flagged below: two incidents 200 m apart can
+ * sit on opposite sides of a district border, so reusing a nearby A4
+ * across that boundary would inherit the wrong parent A2 and silently
+ * misassign the new incident.
+ *
+ * Even at 100 m a border crossing is theoretically possible, so the
+ * reuse path additionally requires the existing A4's parent_id to
+ * match the parent we'd compute for the new point — see
+ * `createPointLocation` below.
+ */
+const A4_REUSE_RADIUS_METERS = 100;
+
+/**
  * Create a level-4 point location for an exact lat/lng, parented to the
  * smallest admin polygon that contains the point.
  *
- * NOTE: We deliberately do NOT dedupe against nearby existing A4 rows. Two
- * incidents 200 m apart can sit on opposite sides of a district border, so
- * reusing a nearby A4 would inherit that A4's parent A2 and silently
- * misassign the new incident to the wrong district. Each call resolves its
- * own containing polygon and creates a fresh A4 — accept the row growth in
- * exchange for correct administrative attribution.
+ * Tries to reuse an existing A4 within `A4_REUSE_RADIUS_METERS` first —
+ * but only when the candidate's parent_id matches the parent we'd
+ * compute for the new point, so a fine-grained district boundary
+ * between the two coords still creates a fresh A4 instead of silently
+ * inheriting the wrong administrative attribution.
  *
- * @param name  Human-readable name (e.g., Dataminr location name or generated)
- * @returns     The created location row
+ * @param name  Human-readable name (e.g., geoparser candidate name).
+ *              Used only when a fresh row is created — reused rows keep
+ *              their original name.
+ * @returns     The created or reused location row.
  */
 export async function createPointLocation(
   prisma: PrismaClient,
@@ -72,6 +87,36 @@ export async function createPointLocation(
   // Resolve parent location (most granular existing: district > state > country)
   const parent = await resolveLatLngToLocation(prisma, lat, lng);
   const parentId = parent?.id ?? null;
+
+  // Reuse a nearby A4 if one exists with the same parent. The
+  // parent-match check is what makes this safe near administrative
+  // borders — without it, the row growth saving would come at the cost
+  // of cross-district misassignment.
+  const nearbyReuse = await prisma.$queryRaw<ResolvedLocation[]>`
+    SELECT id, name, level
+    FROM "locations"
+    WHERE level = 4
+      AND "parent_id" IS NOT DISTINCT FROM ${parentId}
+      AND "geometry" IS NOT NULL
+      AND ST_DWithin(
+            "geometry"::geography,
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
+            ${A4_REUSE_RADIUS_METERS}
+          )
+    ORDER BY ST_Distance(
+              "geometry"::geography,
+              ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
+            ) ASC
+    LIMIT 1
+  `;
+  if (nearbyReuse[0]) {
+    const reused = nearbyReuse[0];
+    console.log(
+      `[createPointLocation] Reused "${reused.name}" (level 4, id=${reused.id}) within ` +
+      `${A4_REUSE_RADIUS_METERS}m of (${lat.toFixed(4)}, ${lng.toFixed(4)}) → parent: ${parent?.name ?? "none"}`,
+    );
+    return reused;
+  }
 
   // Compute ancestor IDs
   const ancestorIds = parentId ? await computeAncestorIds(prisma, parentId) : [];
