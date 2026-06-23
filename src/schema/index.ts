@@ -11,6 +11,7 @@ import { locationTypeDef } from "./typeDefs/types/location.js";
 import { notificationTypeDef } from "./typeDefs/types/notification.js";
 import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
+import { devUserTypeDef } from "./typeDefs/types/devUser.js";
 import { feedbackTypeDef } from "./typeDefs/types/feedback.js";
 import { disasterTypeTypeDef } from "./typeDefs/types/disasterType.js";
 import { organisationTypeDef } from "./typeDefs/types/organisation.js";
@@ -38,6 +39,7 @@ export const typeDefs = [
   notificationTypeDef,
   featureFlagTypeDef,
   apiKeyTypeDef,
+  devUserTypeDef,
   feedbackTypeDef,
   disasterTypeTypeDef,
   organisationTypeDef,

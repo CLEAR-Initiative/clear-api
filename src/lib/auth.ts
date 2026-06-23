@@ -13,6 +13,12 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: true,
     minPasswordLength: 8,
+    // Self-signup is disabled. New accounts are minted exclusively by the
+    // admin-only `createDevUser` mutation after a waitlist application is
+    // approved. The Better Auth sign-up endpoint will return 403; the
+    // existing sign-in, sign-out, and password-reset endpoints continue
+    // to work for accounts that already exist.
+    disableSignUp: true,
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days

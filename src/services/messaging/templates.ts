@@ -422,6 +422,102 @@ If you did not request this, you can safely ignore this email. Your password wil
   };
 }
 
+/**
+ * Welcome email sent to a developer whose waitlist application has been
+ * approved by an admin. Carries the plaintext API key (one-time delivery
+ * — never stored again) and a long-lived magic link the dev can use to
+ * set a password if they want to access the web UI.
+ *
+ * Inputs:
+ *   - userName            display name for greeting
+ *   - plaintextApiKey     full `sk_live_…` key, shown verbatim and
+ *                         flagged as non-retrievable
+ *   - setPasswordUrl      pre-signed link to /auth/reset-password?token=…&kind=setup
+ *   - setPasswordTtlDays  TTL of the magic link, e.g. 7
+ *   - graphqlEndpoint     e.g. https://api.clear.example/graphql
+ *   - docsUrl             link to the API docs surface served by clear-api
+ */
+export function welcomeDevUser(
+  userName: string,
+  plaintextApiKey: string,
+  setPasswordUrl: string,
+  setPasswordTtlDays: number,
+  graphqlEndpoint: string,
+  docsUrl: string,
+): EmailContent {
+  const displayName = userName || "there";
+  const curlExample = `curl -X POST "${graphqlEndpoint}" \\
+  -H "Authorization: Bearer ${plaintextApiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"query":"{ me { id email role } }"}'`;
+
+  return {
+    subject: "Your CLEAR API access is ready",
+
+    textBody: `Hi ${displayName},
+
+Your CLEAR API access has been approved. Below is the personal API key we generated for you.
+
+API key (save this now — we cannot show it again):
+
+${plaintextApiKey}
+
+Use the key as a Bearer token on every GraphQL request. Quick verification:
+
+${curlExample}
+
+GraphQL endpoint: ${graphqlEndpoint}
+API docs:        ${docsUrl}
+
+Optionally, you can also access the CLEAR web app. Set a password here (link expires in ${setPasswordTtlDays} days):
+
+${setPasswordUrl}
+
+If you lose the API key, ask the admin who approved you to rotate it — a new key will be issued and emailed.
+
+- The CLEAR Platform Team`,
+
+    htmlBody: wrapHtml(
+      "Welcome to CLEAR",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${displayName},
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        Your CLEAR API access has been approved. Below is the personal API key we generated for you.
+      </p>
+      <p style="margin: 0 0 8px; font-size: 13px; color: #B91C1C; font-weight: 600; line-height: 1.5;">
+        Save this key now — we cannot show it to you again.
+      </p>
+      <pre style="margin: 0 0 24px; padding: 14px 16px; background: #F5F5F5; border: 1px solid #E5E5E5; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: #171717; word-break: break-all; white-space: pre-wrap;">${plaintextApiKey}</pre>
+      <p style="margin: 0 0 8px; font-size: 14px; color: #171717; font-weight: 600; line-height: 1.5;">
+        Quick verification
+      </p>
+      <pre style="margin: 0 0 24px; padding: 14px 16px; background: #F5F5F5; border: 1px solid #E5E5E5; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #171717; overflow-x: auto; line-height: 1.5; white-space: pre;">${curlExample}</pre>
+      <p style="margin: 0 0 4px; font-size: 13px; color: #737373; line-height: 1.5;">
+        GraphQL endpoint: <a href="${graphqlEndpoint}" style="color: #2563EB; text-decoration: none;">${graphqlEndpoint}</a>
+      </p>
+      <p style="margin: 0 0 24px; font-size: 13px; color: #737373; line-height: 1.5;">
+        API docs: <a href="${docsUrl}" style="color: #2563EB; text-decoration: none;">${docsUrl}</a>
+      </p>
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0 0 16px; font-size: 14px; color: #171717; font-weight: 600; line-height: 1.5;">
+        Optional: set a password
+      </p>
+      <p style="margin: 0 0 16px; font-size: 14px; color: #525252; line-height: 1.5;">
+        Set a password to access the CLEAR web app in addition to the API. This link expires in ${setPasswordTtlDays} days.
+      </p>
+      ${ctaButton("Set Password", setPasswordUrl)}
+      <p style="margin: 16px 0 24px; font-size: 12px; color: #2563EB; word-break: break-all; line-height: 1.4;">
+        ${setPasswordUrl}
+      </p>
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
+        If you lose the API key, contact the admin who approved your access and ask them to rotate it. A new key will be issued and emailed.
+      </p>`,
+    ),
+  };
+}
+
 export interface AlertNotificationExtras {
   eventType?: string | null;
   severity?: string | null;
