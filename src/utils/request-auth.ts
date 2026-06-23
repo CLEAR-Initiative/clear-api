@@ -68,5 +68,15 @@ export async function resolveRequestAuth(
     }
   }
 
+  // 3. Active-account gate. Applies to both auth paths so flipping a user
+  //    inactive immediately revokes every session and every API key they
+  //    hold — admins don't have to revoke keys individually. Returning
+  //    null here means downstream resolvers see the request as
+  //    unauthenticated; `requireAuth` will then surface the standard
+  //    "You must be logged in" error.
+  if (user && user.isActive === false) {
+    return { user: null, session: null, authMethod: null };
+  }
+
   return { user, session, authMethod };
 }

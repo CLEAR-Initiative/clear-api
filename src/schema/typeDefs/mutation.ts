@@ -9,6 +9,22 @@ export const mutationTypeDef = gql`
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 
+    # ─── Dev User Provisioning ─────────────────────────────────────────────────
+    """
+    Provision a developer account from an approved waitlist application.
+    Creates the user, mints an initial API key (no expiry), issues a
+    long-lived set-password verification token, and sends the welcome
+    email. Requires global \`admin\`. The CRM write-back is the caller's
+    responsibility.
+    """
+    createDevUser(input: CreateDevUserInput!): CreateDevUserResult!
+
+    """
+    Revoke every active API key for a dev user and issue a fresh one.
+    Notifies the user by email. Requires global \`admin\`.
+    """
+    rotateDevUserApiKey(userId: String!): RotateDevUserApiKeyResult!
+
     # ─── Auth ──────────────────────────────────────────────────────────────────
     """Request an email verification link for the authenticated user."""
     requestEmailVerification: Boolean!
