@@ -1,8 +1,16 @@
 export interface PortalOptions {
   userEmail: string;
+  /** Caller's global role. When `"admin"`, the nav exposes a link to
+   *  `/portal/admin` so operators can hop straight to the approvals
+   *  dashboard from the dev portal. Anything else hides the link. */
+  userRole?: string | null;
 }
 
-export function renderPortal({ userEmail }: PortalOptions): string {
+export function renderPortal({ userEmail, userRole }: PortalOptions): string {
+  const isAdmin = userRole === "admin";
+  const adminLink = isAdmin
+    ? `<a href="/portal/admin" style="color:var(--color-accent);font-size:0.8rem;font-weight:600;">Admin</a>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -130,6 +138,7 @@ export function renderPortal({ userEmail }: PortalOptions): string {
     <div class="nav-brand"><a href="/"><span class="c">CLEAR</span> API</a> <span class="by">Developer Portal</span></div>
     <div class="nav-user">
       <a href="/docs" style="color:var(--color-muted);font-size:0.8rem;">Docs</a>
+      ${adminLink}
       <span>${escapeHtml(userEmail)}</span>
       <button onclick="signOut()">Sign Out</button>
     </div>
@@ -676,6 +685,379 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ─── Admin dashboard ──────────────────────────────────────────────────────
+
+export interface AdminPendingUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+}
+
+/**
+ * Admin-side platform metrics. Computed in the route handler and
+ * passed to the renderer; the renderer never touches Prisma so a UI
+ * change can't accidentally widen the query surface.
+ *
+ * Counts are integers; the renderer formats them with thousands
+ * separators. Dau/mau are distinct-user-id counts over the trailing
+ * 24h / 30d in the activity_logs table.
+ */
+export interface AdminMetrics {
+  engagement: {
+    dau: number;
+    mau: number;
+    totalUsers: number;
+    usersByRole: { admin: number; analyst: number; viewer: number; pending: number };
+  };
+  content: {
+    signals: number;
+    events: number;
+    publishedAlerts: number;
+    crises: number;
+  };
+  org: {
+    organisations: number;
+    teams: number;
+  };
+}
+
+export type AdminTab = "dashboard" | "pending";
+
+interface AdminShellOptions {
+  currentUserEmail: string;
+  activeTab: AdminTab;
+  pendingCount: number;
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+  /** Inner HTML for the active tab. */
+  content: string;
+  /** Subtitle line shown under the page title (specific to the tab). */
+  subtitle: string;
+  /** Page title shown in the H1. */
+  title: string;
+}
+
+/**
+ * Shared `<head>` + nav + tab bar for both admin tabs. Both panels
+ * embed inside this so the visual chrome is identical and a tab swap
+ * is a single anchor click. Server-side rendering only — no JS
+ * required.
+ */
+function renderAdminShell(opts: AdminShellOptions): string {
+  const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title } = opts;
+
+  const flashHtml = !flash
+    ? ""
+    : `<div style="
+        margin: 0 0 1.5rem;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius);
+        background: ${flash.kind === "success" ? "#0d2818" : "#2a0c0c"};
+        border: 1px solid ${flash.kind === "success" ? "var(--color-success)" : "var(--color-danger)"};
+        color: ${flash.kind === "success" ? "var(--color-success)" : "var(--color-danger)"};
+        font-size: 0.875rem;
+      ">${escapeHtml(flash.message)}</div>`;
+
+  const tabLink = (tab: AdminTab, label: string, badge?: string) => {
+    const active = tab === activeTab;
+    const badgeHtml = badge
+      ? `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;padding:0 0.4rem;margin-left:0.4rem;border-radius:999px;font-size:0.7rem;font-weight:600;background:${active ? "var(--color-accent)" : "var(--color-border)"};color:${active ? "var(--on-accent)" : "var(--color-muted)"};">${escapeHtml(badge)}</span>`
+      : "";
+    return `<a href="/portal/admin?tab=${tab}" class="admin-tab${active ? " active" : ""}">${escapeHtml(label)}${badgeHtml}</a>`;
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin · ${escapeHtml(title)}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-bg: #0a0a0b; --color-surface: #141417; --color-border: #26262b;
+      --color-accent: #f2612a; --color-accent-hover: #ff6a33;
+      --color-text: #f5f5f6; --color-muted: #9a9ca3; --color-label: #75777e;
+      --on-accent: #0a0a0b;
+      --color-success: #22c55e; --color-danger: #ef4444; --color-warning: #f59e0b;
+      --radius: 10px;
+      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
+    a { color: var(--color-accent); text-decoration: none; }
+    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+    .nav-brand { font-weight: 800; font-size: 1.05rem; }
+    .nav-brand a { color: inherit; }
+    .nav-brand .c { color: var(--color-accent); }
+    .nav-user { font-size: 0.8rem; color: var(--color-muted); }
+
+    /* Tabs */
+    .admin-tabs { display: flex; gap: 0; padding: 0 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+    .admin-tab { padding: 0.85rem 1.2rem; color: var(--color-muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; transition: all 0.15s; }
+    .admin-tab:hover { color: var(--color-text); }
+    .admin-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+
+    /* Content shell */
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 2rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
+    h2 { font-size: 1rem; margin: 2rem 0 1rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .subtitle { color: var(--color-muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
+    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
+
+    /* Table */
+    .table { width: 100%; border-collapse: collapse; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); overflow: hidden; }
+    .table th { text-align: left; padding: 0.65rem 1rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); background: var(--color-bg); }
+    .table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
+    .table tr:last-child td { border-bottom: none; }
+    .badge { display: inline-flex; align-items: center; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; }
+
+    /* Buttons */
+    .btn { border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-family: var(--font); }
+    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
+    .btn-primary:hover { background: var(--color-accent-hover); }
+    .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.78rem; }
+
+    /* Metric cards */
+    .metric-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 0.5rem; }
+    .metric-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.1rem; transition: border-color 0.15s; }
+    .metric-card:hover { border-color: var(--color-border); }
+    .metric-card.accent { border-color: var(--color-accent); }
+    .metric-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted); font-weight: 600; margin-bottom: 0.5rem; }
+    .metric-value { font-size: 2rem; font-weight: 700; line-height: 1.1; color: var(--color-text); font-variant-numeric: tabular-nums; }
+    .metric-card.accent .metric-value { color: var(--color-accent); }
+    .metric-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.4rem; }
+    .metric-breakdown { display: flex; flex-wrap: wrap; gap: 0.4rem 0.85rem; margin-top: 0.75rem; font-size: 0.78rem; color: var(--color-muted); }
+    .metric-breakdown span strong { color: var(--color-text); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-brand"><a href="/portal">CLEAR<span class="c">_</span>API</a> &nbsp;<span style="color: var(--color-muted); font-weight: 500;">· Admin</span></div>
+    <div class="nav-user">${escapeHtml(currentUserEmail)} &nbsp;|&nbsp; <a href="/portal">Portal</a></div>
+  </nav>
+  <div class="admin-tabs">
+    ${tabLink("dashboard", "Dashboard")}
+    ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+  </div>
+  <main class="wrap">
+    <h1>${escapeHtml(title)}</h1>
+    <p class="subtitle">${subtitle}</p>
+    ${flashHtml}
+    ${content}
+  </main>
+</body>
+</html>`;
+}
+
+/** Format an integer with thousands separators (en-US-style). */
+function formatNumber(n: number): string {
+  return new Intl.NumberFormat("en-US").format(n);
+}
+
+interface RenderAdminPendingOptions {
+  currentUserEmail: string;
+  pendingUsers: AdminPendingUser[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * "Pending Users" tab — the original admin page, now embedded in the
+ * shared tab shell.
+ */
+export function renderAdminPending(opts: RenderAdminPendingOptions): string {
+  const { currentUserEmail, pendingUsers, flash } = opts;
+  const rows = pendingUsers.length === 0
+    ? `<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--color-muted);">No pending users — every signup has been approved.</td></tr>`
+    : pendingUsers
+        .map((u) => `
+        <tr>
+          <td>${escapeHtml(u.name)}</td>
+          <td><code>${escapeHtml(u.email)}</code></td>
+          <td><span class="badge" style="background: #2a1f0a; color: var(--color-warning);">PENDING</span></td>
+          <td style="text-align: right;">
+            <form method="POST" action="/portal/admin/approve" style="display: inline;">
+              <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
+              <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+            </form>
+          </td>
+        </tr>`)
+        .join("");
+
+  const content = `<table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Status</th>
+          <th style="text-align: right;">Action</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "pending",
+    pendingCount: pendingUsers.length,
+    flash,
+    content,
+    title: "Pending user approvals",
+    subtitle: `${pendingUsers.length} user${pendingUsers.length === 1 ? "" : "s"} waiting for approval. Approving flips the user's role to <code>viewer</code> and moves their CRM contact from the prospects collection to the approved collection (firing the welcome email automation).`,
+  });
+}
+
+interface RenderAdminMetricsOptions {
+  currentUserEmail: string;
+  metrics: AdminMetrics;
+  pendingCount: number;
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * "Dashboard" tab — at-a-glance platform metrics in card grids.
+ * Pure presentation; metric values come from the route handler so the
+ * renderer never touches Prisma.
+ */
+export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
+  const { currentUserEmail, metrics, pendingCount, flash } = opts;
+  const { engagement, content, org } = metrics;
+
+  const card = (
+    label: string,
+    value: number,
+    sub: string,
+    opts2?: { accent?: boolean; breakdownHtml?: string },
+  ) => `
+    <div class="metric-card${opts2?.accent ? " accent" : ""}">
+      <div class="metric-label">${escapeHtml(label)}</div>
+      <div class="metric-value">${formatNumber(value)}</div>
+      <div class="metric-sub">${sub}</div>
+      ${opts2?.breakdownHtml ?? ""}
+    </div>`;
+
+  const usersBreakdown = `
+    <div class="metric-breakdown">
+      <span><strong>${formatNumber(engagement.usersByRole.admin)}</strong> admin</span>
+      <span><strong>${formatNumber(engagement.usersByRole.analyst)}</strong> analyst</span>
+      <span><strong>${formatNumber(engagement.usersByRole.viewer)}</strong> viewer</span>
+      <span><strong>${formatNumber(engagement.usersByRole.pending)}</strong> pending</span>
+    </div>`;
+
+  const html = `
+    <h2>Engagement</h2>
+    <div class="metric-grid">
+      ${card("Daily active users", engagement.dau, "Distinct users active in the last 24 hours.", { accent: true })}
+      ${card("Monthly active users", engagement.mau, "Distinct users active in the last 30 days.")}
+      ${card("Total users", engagement.totalUsers, "All registered accounts.", { breakdownHtml: usersBreakdown })}
+    </div>
+
+    <h2>Content</h2>
+    <div class="metric-grid">
+      ${card("Signals", content.signals, "Non-dummy signals ingested.")}
+      ${card("Events", content.events, "Non-dummy events grouped from signals.")}
+      ${card("Published alerts", content.publishedAlerts, "Alerts currently in the published state.")}
+      ${card("Crises", content.crises, "Long-running crisis aggregates.")}
+    </div>
+
+    <h2>Organisations &amp; teams</h2>
+    <div class="metric-grid">
+      ${card("Organisations", org.organisations, "Tenant accounts on the platform.")}
+      ${card("Teams", org.teams, "Sub-tenants across every organisation.")}
+    </div>
+  `;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "dashboard",
+    pendingCount,
+    flash,
+    content: html,
+    title: "Platform dashboard",
+    subtitle: "At-a-glance metrics for the CLEAR platform. Counts are live.",
+  });
+}
+
+// ─── Waiting-for-approval screen ──────────────────────────────────────────
+
+export interface WaitingForApprovalOptions {
+  userEmail: string;
+}
+
+/**
+ * What a pending user sees when they hit /portal after signing up.
+ * No tabs, no API key UI — just a confirmation that the account
+ * exists and an admin will reach out by email once they're approved.
+ */
+export function renderWaitingForApproval(opts: WaitingForApprovalOptions): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pending approval · CLEAR API</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-bg: #0a0a0b; --color-surface: #141417; --color-border: #26262b;
+      --color-accent: #f2612a; --color-text: #f5f5f6; --color-muted: #9a9ca3;
+      --color-warning: #f59e0b; --radius: 10px;
+      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+    .card { max-width: 480px; width: 100%; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 2.5rem; text-align: center; }
+    .badge { display: inline-block; padding: 0.3rem 0.75rem; border-radius: 999px; background: #2a1f0a; color: var(--color-warning); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 1.25rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.75rem; }
+    p { color: var(--color-muted); font-size: 0.95rem; margin-bottom: 1rem; }
+    .email { color: var(--color-text); font-weight: 500; }
+    .signout { margin-top: 1.5rem; display: inline-block; color: var(--color-muted); font-size: 0.85rem; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: var(--font); }
+    .signout:hover { color: var(--color-text); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Pending approval</div>
+    <h1>Thanks for registering</h1>
+    <p>You're signed in as <span class="email">${escapeHtml(opts.userEmail)}</span>. An admin will review your application and reach out by email once approved. You'll be able to access the developer dashboard at that point.</p>
+    <p style="font-size: 0.85rem;">No action needed from you for now.</p>
+    <button type="button" class="signout" onclick="signOut()">Sign out</button>
+  </div>
+  <script>
+    // Better Auth's /api/auth/sign-out endpoint clears the session cookie
+    // and responds with JSON. A plain HTML form POST would leave the
+    // browser sitting on that JSON page; instead we fetch it from JS
+    // then redirect back to /portal, which renders the login page now
+    // that the session is gone. Mirrors the signOut() helper on the
+    // main developer portal.
+    async function signOut() {
+      try {
+        await fetch('/api/auth/sign-out', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+      } catch (e) {}
+      window.location.href = '/portal';
+    }
+  </script>
+</body>
+</html>`;
 }
 
 const baseUrl = "https://your-api.example.com";

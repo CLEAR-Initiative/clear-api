@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
@@ -153,7 +153,7 @@ async function dispatchCrisisEnrichmentTask(
 export const crisisResolvers = {
   Query: {
     crises: async (_parent: unknown, _args: unknown, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireContentReader(context);
       const tr = crisisTranslationsInclude(context.locale);
       // Pre-load nested events with their translations so /insights's
       // crises-list view doesn't fan out into N+1 Crisis.events queries
@@ -194,11 +194,13 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      // Intentionally open to any authenticated caller. The team-based
-      // location scope on `crises` (plural) is a UX filter for list views;
-      // crisis records themselves are platform-wide content, so deep-link
-      // / by-id fetches do not check team membership.
-      requireAuth(context);
+      // Open to any approved caller (admin / analyst / viewer). The
+      // team-based location scope on `crises` (plural) is a UX filter
+      // for list views; crisis records themselves are platform-wide
+      // content, so deep-link / by-id fetches do not check team
+      // membership. Pending users are still blocked here — they have
+      // no content access until an admin approves them.
+      requireContentReader(context);
       const include = crisisTranslationsInclude(context.locale);
       const crisis = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -925,11 +927,38 @@ export const crisisResolvers = {
         })
         .then((links) => links.map((l) => l.event));
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
+    /**
+     * Visibility rules:
+     *   - admin / analyst → every feedback row on this crisis
+     *   - viewer          → only the caller's own feedback (so a dev can
+     *                       see their own engagement history without
+     *                       exposing other users' commentary)
+     *   - otherwise       → empty (defensive — the parent crisis query
+     *                       already enforces `requireContentReader`)
+     */
+    feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userFeedbacks.findMany({
+          where: { crisisId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { crisisId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userComments.findMany({ where: { crisisId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userComments.findMany({
+          where: { crisisId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
     // Convert S3 keys to presigned URLs at read time. External URLs
     // (http/https) are passed through unchanged. Mirrors signals.media.

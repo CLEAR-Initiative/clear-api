@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -87,7 +87,7 @@ interface UpdateEventInput {
 export const eventResolvers = {
   Query: {
     events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       const include = eventTranslationsInclude(context.locale);
       // No teamId: any authenticated user gets the global feed.
@@ -100,7 +100,7 @@ export const eventResolvers = {
       return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter }, ...(include ? { include } : {}) });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       const include = eventTranslationsInclude(context.locale);
       return context.prisma.events.findMany({
@@ -115,7 +115,7 @@ export const eventResolvers = {
       });
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       // Only include the event's own translation row eagerly. Field
       // resolvers (Event.signals, Event.{general,origin,destination}-
       // Location) fetch what they need with their own targeted
@@ -776,11 +776,32 @@ export const eventResolvers = {
       if (parent.alerts !== undefined) return parent.alerts;
       return prisma.alerts.findMany({ where: { eventId: parent.id } });
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
+    // Same visibility split as Crisis.feedbacks / comments: admin /
+    // analyst see all; viewer sees only their own; everyone else gets
+    // empty. See crisis.resolver for the rationale.
+    feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userFeedbacks.findMany({
+          where: { eventId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { eventId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userComments.findMany({ where: { eventId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userComments.findMany({
+          where: { eventId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
     // Map Prisma snake_case field to GraphQL camelCase
     descriptionSignals: (parent: { description_signals?: unknown }) => {
