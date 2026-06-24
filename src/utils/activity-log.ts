@@ -27,7 +27,10 @@ export type ActivityAction =
   | "event.create"
   | "alert.create"
   | "crisis.create"
-  | "feedback.create";
+  | "feedback.create"
+  | "dev_user.provisioned"
+  | "dev_user.api_key_rotated"
+  | "user.approved";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -39,7 +42,8 @@ export type ActivityResourceType =
   | "alert"
   | "crisis"
   | "feedback"
-  | "session";
+  | "session"
+  | "user";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */

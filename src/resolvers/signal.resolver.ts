@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -58,12 +58,19 @@ interface CreateSignalInput {
   lng?: number;
   /** Output of clear-pipeline's text-based geoparser, stored verbatim. */
   geoparsedData?: Record<string, unknown>;
+  /** Optional human-readable name for the L4 point that gets created
+   *  when lat/lng are supplied but locationId is not. The pipeline fills
+   *  this with the geoparser's top candidate suffixed " (unresolved)"
+   *  when Nominatim missed. Falls back to a coord-based label when
+   *  omitted; the signal `title` is never used here so headline-style
+   *  paragraphs don't leak into the locations table. */
+  pointName?: string;
 }
 
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
@@ -76,7 +83,7 @@ export const signalResolvers = {
       return context.prisma.signals.findMany({ where: { ...filter, ...dummyFilter } });
     },
     signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       return context.prisma.signals.findMany({
         where: {
@@ -89,8 +96,41 @@ export const signalResolvers = {
       });
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireAuth(context);
-      return context.prisma.signals.findUnique({ where: { id: args.id } });
+      requireContentReader(context);
+      const { DEFAULT_LOCALE } = await import("../utils/locales.js");
+      const tr =
+        context.locale === DEFAULT_LOCALE
+          ? undefined
+          : { translations: { where: { locale: context.locale } } };
+      const locInclude = tr ? { include: tr } : undefined;
+      // Preload signal-detail's outer chain: source, 3 signal-locations
+      // (with translations at non-canonical locale), and signalEvents +
+      // related events (with translations). Event.signals fires its
+      // own per-event findMany for each related event — that's
+      // acceptable at the observed related-event counts (~10) but
+      // can't be folded any deeper without blowing the SSH tunnel's
+      // effective throughput (a previous version included the events'
+      // own signalEvents.signal chain and wedged at 2+ minutes).
+      const include = {
+        source: true,
+        signalEvents: {
+          include: {
+            event: locInclude ? { include: tr } : true,
+          },
+          take: 25,
+        },
+        ...(locInclude
+          ? {
+              generalLocation: locInclude,
+              originLocation: locInclude,
+              destinationLocation: locInclude,
+            }
+          : {}),
+      };
+      return context.prisma.signals.findUnique({
+        where: { id: args.id },
+        include,
+      });
     },
   },
   Mutation: {
@@ -99,10 +139,11 @@ export const signalResolvers = {
       args: { input: CreateSignalInput },
       context: Context,
     ) => {
-      // Any authenticated user can create a signal. The downstream pipeline
-      // gates (severity >= 4, staleness, trusted-source check on the manual
-      // path) prevent low-quality / stale entries from triggering alerts.
-      requireAuth(context);
+      // Admin/analyst only. The pipeline integrations (Dataminr, ACLED,
+      // GDACS) authenticate as a system admin user via API key. Viewers
+      // are read-only in the new role model and pending users are
+      // blocked from every content path.
+      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -130,14 +171,18 @@ export const signalResolvers = {
         if (existing) return existing;
       }
 
-      // Resolve lat/lng to a level-4 point location if no explicit locationId is provided
+      // Resolve lat/lng to a level-4 point location if no explicit
+      // locationId is provided. We pass `pointName` not `title` —
+      // signal titles for some sources (e.g. Dataminr) are full alert
+      // paragraphs, so using them as the L4 name pollutes the locations
+      // table with non-place strings.
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
         const pointLoc = await createPointLocation(
           context.prisma,
           input.lat,
           input.lng,
-          input.title ?? undefined,
+          input.pointName ?? undefined,
         );
         locationId = pointLoc.id;
       }
@@ -189,10 +234,11 @@ export const signalResolvers = {
       args: { input: CreateManualSignalInput },
       context: Context,
     ) => {
-      // Any authenticated user can file a manual signal. Downstream guards
-      // (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4, staleness gate)
-      // keep low-severity / stale entries from fanning out as alerts.
-      const user = requireAuth(context);
+      // Admin/analyst only — viewers are read-only and pending users
+      // can't reach this path. Downstream guards (TRUSTED_SOURCE_NAMES
+      // on dataSource, severity >= 4, staleness gate) still keep
+      // low-severity / stale manual entries from fanning out as alerts.
+      const user = requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       // Validate source exists and is a trusted type
@@ -211,11 +257,14 @@ export const signalResolvers = {
         );
       }
 
-      // Resolve location from lat/lng if needed
+      // Resolve location from lat/lng if needed. Title is omitted on
+      // purpose — see createSignal above for rationale. Manual signals
+      // fall back to a coord-based L4 label unless the caller starts
+      // passing a curated `pointName` later.
       let locationId = input.locationId;
       if (!locationId && input.lat != null && input.lng != null) {
         const pointLoc = await createPointLocation(
-          context.prisma, input.lat, input.lng, input.title,
+          context.prisma, input.lat, input.lng,
         );
         locationId = pointLoc.id;
       }
@@ -352,32 +401,100 @@ export const signalResolvers = {
     },
   },
   Signal: {
-    source: (parent: { sourceId: string }, _args: unknown, { prisma }: Context) => {
+    source: (
+      parent: { sourceId: string; source?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: when the signal was preloaded via Event.signals' deep
+      // include (`include.signal.source: true`), the source object is
+      // already on the parent. Returning it directly avoids re-running
+      // `dataSources.findUnique` per signal — the N+1 that wedged event
+      // detail at high signal counts.
+      if (parent.source !== undefined) return parent.source;
       return prisma.dataSources.findUnique({ where: { id: parent.sourceId } });
     },
-    originLocation: (parent: { originId: string | null }, _args: unknown, { prisma }: Context) => {
+    // Fast path on all three: when the signal was preloaded via a deep
+    // Prisma include (e.g. eventsPage's
+    // `include.signalEvents.signal.{general,origin,destination}Location`),
+    // the location object — translations included — is already on the
+    // parent and we just return it. Without this every signal in the
+    // list fan-out fires another findUnique per location, exactly the
+    // N+1 the include was meant to collapse.
+    originLocation: (
+      parent: { originId: string | null; originLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.originLocation !== undefined) return parent.originLocation;
       if (!parent.originId) return null;
       return prisma.locations.findUnique({ where: { id: parent.originId } });
     },
-    destinationLocation: (parent: { destinationId: string | null }, _args: unknown, { prisma }: Context) => {
+    destinationLocation: (
+      parent: { destinationId: string | null; destinationLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.destinationLocation !== undefined) return parent.destinationLocation;
       if (!parent.destinationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.destinationId } });
     },
-    generalLocation: (parent: { locationId: string | null }, _args: unknown, { prisma }: Context) => {
+    generalLocation: (
+      parent: { locationId: string | null; generalLocation?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
     },
-    events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    events: (
+      parent: { id: string; signalEvents?: Array<{ event: unknown }> },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: Query.signal deep-includes signalEvents.event so the
+      // signal-detail page can skip this fetch and hit the Event.title
+      // fast path directly off the pre-loaded translations.
+      if (parent.signalEvents) {
+        return parent.signalEvents.map((l) => l.event);
+      }
+      // Hard cap. Each event returned here will fan out one
+      // Event.signals findMany per event from the GraphQL detail
+      // query — without a cap, a signal linked to hundreds of events
+      // wedges the response through the SSH tunnel (~50ms × N tunnel
+      // round-trips). 25 is plenty for the UI's related-events panel.
       return prisma.signalEvents.findMany({
         where: { signalId: parent.id },
         include: { event: true },
+        take: 25,
       }).then((links) => links.map((l) => l.event));
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
+    // Same visibility split as Crisis/Event feedbacks/comments: admin/
+    // analyst see all; viewer sees only their own; everyone else empty.
+    feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userFeedbacks.findMany({
+          where: { signalId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { signalId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userComments.findMany({ where: { signalId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userComments.findMany({
+          where: { signalId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
     // Convert S3 keys to presigned URLs at read time.
     // External URLs (http/https) are passed through unchanged.

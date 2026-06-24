@@ -176,5 +176,26 @@ export const queryTypeDef = gql`
     each Country's bounding box. The scheduled publisher reads this to know which
     countries to run. Requires authentication."""
     pipelineCountries: [PipelineCountry!]!
+
+    """Translation rows currently stored for an entity, one per locale.
+    Admin/pipeline only. Used by clear-pipeline to compare stored source
+    hashes against the canonical row and decide which fields to re-translate."""
+    translations(entityType: String!, entityId: String!): [TranslationRow!]!
+
+    """Per-(entityType, locale) translation coverage snapshot for the
+    admin dashboard. Admin only. Each row reports canonicalCount (how
+    many entities of that type exist) and translatedCount (how many
+    have a translation row for that locale). Coverage = translated /
+    canonical."""
+    translationCoverage: [TranslationCoverage!]!
+
+    """IDs of entities of the given type that have NO translation row
+    for the given locale. Admin/pipeline only. Lets the backfill
+    driver enqueue only entities the worker would actually translate,
+    instead of relying on per-task staleness diffs to no-op thousands
+    of already-current rounds. Stale rows (row exists but hashes are
+    out of date) are NOT returned here — they're rare and handled by
+    the per-entity enrichment hooks."""
+    entitiesMissingTranslation(entityType: String!, locale: String!): [ID!]!
   }
 `;

@@ -2,9 +2,24 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
-import { sendCeleryTask } from "../services/celery.js";
+import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
+import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
+
+/**
+ * Build the Prisma `include` clause that folds the active-locale
+ * translation row into a crisis query. Mirrors the `events` resolver
+ * helper — see comment there for rationale. Returns undefined for the
+ * canonical locale so the include is omitted entirely.
+ */
+function crisisTranslationsInclude(locale: Locale):
+  | { translations: { where: { locale: string } } }
+  | undefined {
+  if (locale === DEFAULT_LOCALE) return undefined;
+  return { translations: { where: { locale } } };
+}
 
 interface CreateCrisisFromEventsInput {
   title?: string;
@@ -138,8 +153,40 @@ async function dispatchCrisisEnrichmentTask(
 export const crisisResolvers = {
   Query: {
     crises: async (_parent: unknown, _args: unknown, context: Context) => {
-      requireAuth(context);
-      return context.prisma.crises.findMany();
+      const user = requireContentReader(context);
+      const tr = crisisTranslationsInclude(context.locale);
+      // Pre-load nested events with their translations so /insights's
+      // crises-list view doesn't fan out into N+1 Crisis.events queries
+      // followed by per-event translation lookups. Each event's title
+      // resolver hits the fast path off `parent.translations`.
+      const eventInclude = tr
+        ? { translations: { where: { locale: context.locale } } }
+        : undefined;
+      const include = tr
+        ? {
+            ...tr,
+            eventCrises: {
+              include: {
+                event: eventInclude ? { include: eventInclude } : true,
+              },
+            },
+          }
+        : undefined;
+
+      // Team-based location scoping. Global admins bypass. For everyone
+      // else, restrict crises to the union of the caller's teams'
+      // location bindings; a team with no bindings is treated as
+      // open-to-all and disables the filter for the caller. See
+      // buildCrisisLocationFilterForUser for the full semantics.
+      const where =
+        user.role === "admin"
+          ? undefined
+          : await buildCrisisLocationFilterForUser(context.prisma, user.id);
+
+      return context.prisma.crises.findMany({
+        ...(include ? { include } : {}),
+        where,
+      });
     },
 
     crisis: async (
@@ -147,9 +194,17 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      // Open to any approved caller (admin / analyst / viewer). The
+      // team-based location scope on `crises` (plural) is a UX filter
+      // for list views; crisis records themselves are platform-wide
+      // content, so deep-link / by-id fetches do not check team
+      // membership. Pending users are still blocked here — they have
+      // no content access until an admin approves them.
+      requireContentReader(context);
+      const include = crisisTranslationsInclude(context.locale);
       const crisis = await context.prisma.crises.findUnique({
         where: { id: args.id },
+        ...(include ? { include } : {}),
       });
       if (!crisis) {
         throw new GraphQLError("Crisis not found", {
@@ -632,7 +687,10 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      // Destructive operation with cascade (eventCrises, userComments,
+      // userFeedbacks, translations all drop with the crisis). Restricted
+      // to global admins.
+      requireRole(context, ["admin"]);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -726,6 +784,117 @@ export const crisisResolvers = {
   },
 
   Crisis: {
+    // Localized overlays. Prefers `parent.translations` when the caller
+    // fetched the crisis via prisma with the include from
+    // `crisisTranslationsInclude` — that's the path used by
+    // Query.crisis / Query.crises now. Falls back to the per-request
+    // translationLoader for entry points that didn't include
+    // translations (e.g. Crisis nested inside other resolvers). At
+    // locale === "en" both paths short-circuit to the canonical column.
+    //
+    // For nested JSON fields (scenarios, needs) the translated blob
+    // mirrors the canonical shape, so the resolver returns the whole
+    // translated blob (matching the existing canonical contract).
+    title: async (
+      parent: {
+        id: string;
+        title: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.title;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { title?: unknown }
+          | undefined;
+        const localized = data?.title;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.title;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
+      const localized = tr?.title;
+      return typeof localized === "string" ? localized : parent.title;
+    },
+    summary: async (
+      parent: {
+        id: string;
+        summary: string | null;
+        translations?: Array<{ data: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.summary;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { summary?: unknown }
+          | undefined;
+        const localized = data?.summary;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.summary;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
+      const localized = tr?.summary;
+      return typeof localized === "string" ? localized : parent.summary;
+    },
+    scenarios: async (
+      parent: {
+        id: string;
+        scenarios: unknown;
+        translations?: Array<{ data: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.scenarios;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { scenarios?: unknown }
+          | undefined;
+        const localized = data?.scenarios;
+        if (localized != null) return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.scenarios;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
+      const localized = tr?.scenarios;
+      return localized != null ? localized : parent.scenarios;
+    },
+    needs: async (
+      parent: {
+        id: string;
+        needs: unknown;
+        translations?: Array<{ data: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.needs;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { needs?: unknown }
+          | undefined;
+        const localized = data?.needs;
+        if (localized != null) return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("crisis", parent.id);
+        }
+        return parent.needs;
+      }
+      const tr = await context.translationLoader.load("crisis", parent.id);
+      const localized = tr?.needs;
+      return localized != null ? localized : parent.needs;
+    },
     generalLocation: (
       parent: { locationId: string | null },
       _args: unknown,
@@ -740,7 +909,17 @@ export const crisisResolvers = {
     populationInArea: (parent: { populationInArea: bigint | null }) => {
       return parent.populationInArea?.toString() ?? null;
     },
-    events: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
+    events: (
+      parent: { id: string; eventCrises?: Array<{ event: unknown }> },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: Query.crises deep-includes eventCrises.event so
+      // /insights's crises-list view skips the N+1 fetch and reads
+      // events (with pre-loaded translations) directly off the parent.
+      if (parent.eventCrises) {
+        return parent.eventCrises.map((l) => l.event);
+      }
       return prisma.eventCrises
         .findMany({
           where: { crisisId: parent.id },
@@ -748,11 +927,38 @@ export const crisisResolvers = {
         })
         .then((links) => links.map((l) => l.event));
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
+    /**
+     * Visibility rules:
+     *   - admin / analyst → every feedback row on this crisis
+     *   - viewer          → only the caller's own feedback (so a dev can
+     *                       see their own engagement history without
+     *                       exposing other users' commentary)
+     *   - otherwise       → empty (defensive — the parent crisis query
+     *                       already enforces `requireContentReader`)
+     */
+    feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userFeedbacks.findMany({
+          where: { crisisId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { crisisId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userComments.findMany({ where: { crisisId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userComments.findMany({
+          where: { crisisId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
     // Convert S3 keys to presigned URLs at read time. External URLs
     // (http/https) are passed through unchanged. Mirrors signals.media.

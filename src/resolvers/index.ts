@@ -10,6 +10,7 @@ import { locationResolvers } from "./location.resolver.js";
 import { notificationResolvers } from "./notification.resolver.js";
 import { featureFlagResolvers } from "./featureFlag.resolver.js";
 import { apiKeyResolvers } from "./apiKey.resolver.js";
+import { devUserResolvers } from "./devUser.resolver.js";
 import { disasterTypeResolvers } from "./disasterType.resolver.js";
 import { organisationResolvers } from "./organisation.resolver.js";
 import { teamResolvers } from "./team.resolver.js";
@@ -22,6 +23,7 @@ import { nominatimCacheResolvers } from "./nominatimCache.resolver.js";
 import { paginationResolvers } from "./pagination.resolver.js";
 import { activityLogResolvers } from "./activityLog.resolver.js";
 import { pipelineCountryResolvers } from "./pipelineCountry.resolver.js";
+import { translationResolvers } from "./translation.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -35,6 +37,7 @@ export const resolvers: IResolvers[] = [
   notificationResolvers,
   featureFlagResolvers,
   apiKeyResolvers,
+  devUserResolvers,
   disasterTypeResolvers,
   organisationResolvers,
   teamResolvers,
@@ -47,4 +50,5 @@ export const resolvers: IResolvers[] = [
   paginationResolvers,
   activityLogResolvers,
   pipelineCountryResolvers,
+  translationResolvers,
 ];

@@ -1,0 +1,34 @@
+# Regenerate the GraphQL docs HTML when something that could affect the
+# schema is part of the commit, then re-stage the regenerated file.
+#
+# Mirrors the docs-sync check in .github/workflows/ci.yml — without this
+# hook, every schema PR has to remember to run `bun run build:docs` and
+# stage the result by hand, and CI fails noisily when they don't.
+#
+# Skips work when no relevant files are staged so a docs-only or
+# config-only commit doesn't pay the build cost.
+
+SCHEMA_PATTERN='^src/(schema/|resolvers/|docs/)'
+
+# Honour --no-verify; nothing to do for an empty commit either.
+if [ -n "$SKIP_DOCS_HOOK" ]; then
+  exit 0
+fi
+
+if ! git diff --cached --name-only | grep -qE "$SCHEMA_PATTERN"; then
+  exit 0
+fi
+
+echo "[pre-commit] schema-affecting files staged — rebuilding src/docs/docs.html"
+if ! bun run build:docs; then
+  echo "[pre-commit] bun run build:docs failed — fix the schema and try again." >&2
+  exit 1
+fi
+
+# Stage the regenerated file only when it actually changed; quietly
+# proceed otherwise so unrelated touches to resolver/schema files
+# don't bloat every commit with a no-op diff.
+if ! git diff --quiet src/docs/docs.html; then
+  git add src/docs/docs.html
+  echo "[pre-commit] re-staged src/docs/docs.html"
+fi

@@ -11,6 +11,7 @@ import { locationTypeDef } from "./typeDefs/types/location.js";
 import { notificationTypeDef } from "./typeDefs/types/notification.js";
 import { featureFlagTypeDef } from "./typeDefs/types/featureFlag.js";
 import { apiKeyTypeDef } from "./typeDefs/types/apiKey.js";
+import { devUserTypeDef } from "./typeDefs/types/devUser.js";
 import { feedbackTypeDef } from "./typeDefs/types/feedback.js";
 import { disasterTypeTypeDef } from "./typeDefs/types/disasterType.js";
 import { organisationTypeDef } from "./typeDefs/types/organisation.js";
@@ -22,6 +23,7 @@ import { nominatimCacheTypeDef } from "./typeDefs/types/nominatimCache.js";
 import { paginationTypeDef } from "./typeDefs/types/pagination.js";
 import { activityLogTypeDef } from "./typeDefs/types/activityLog.js";
 import { pipelineCountryTypeDef } from "./typeDefs/types/pipelineCountry.js";
+import { translationTypeDef } from "./typeDefs/types/translation.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -37,6 +39,7 @@ export const typeDefs = [
   notificationTypeDef,
   featureFlagTypeDef,
   apiKeyTypeDef,
+  devUserTypeDef,
   feedbackTypeDef,
   disasterTypeTypeDef,
   organisationTypeDef,
@@ -48,4 +51,5 @@ export const typeDefs = [
   paginationTypeDef,
   activityLogTypeDef,
   pipelineCountryTypeDef,
+  translationTypeDef,
 ];

@@ -41,6 +41,9 @@ export const organisationTypeDef = gql`
     lead
     analyst
     viewer
+    team_admin
+    field_coordinator
+    team_member
   }
 
   """Fields for creating a new organisation."""

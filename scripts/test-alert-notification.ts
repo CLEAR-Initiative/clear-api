@@ -25,7 +25,8 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma.js";
 import { env } from "../src/utils/env.js";
 import { getEmailProvider, getSMSProvider } from "../src/services/messaging/registry.js";
-import { alertNotification } from "../src/services/messaging/templates.js";
+import { alertNotification, buildAlertSms } from "../src/services/messaging/templates.js";
+import { isSupportedLocale, DEFAULT_LOCALE, type Locale } from "../src/utils/locales.js";
 import {
   resolveEmailLocation,
   resolveEventTypeLabel,
@@ -39,6 +40,8 @@ interface Flags {
   alertId: string | null;
   recipientName: string;
   dryRun: boolean;
+  /** BCP-47 / ISO 639-1; defaults to "en". Drives both email + SMS chrome. */
+  locale: string;
 }
 
 function parseFlags(): Flags {
@@ -54,23 +57,8 @@ function parseFlags(): Flags {
     alertId: get("--alert-id"),
     recipientName: get("--name") ?? "Tester",
     dryRun: argv.includes("--dry-run"),
+    locale: get("--locale") ?? "en",
   };
-}
-
-/** Compose a short SMS body - phones don't render the HTML email template,
- * so we surface only the bits that fit in a couple of lines. */
-function buildSmsBody(
-  alertTitle: string,
-  alertUrl: string,
-  meta: { severity: string | null; locationName: string | null },
-): string {
-  const parts: string[] = [];
-  if (meta.severity) parts.push(`[${meta.severity}]`);
-  parts.push(alertTitle);
-  let body = parts.join(" ");
-  if (meta.locationName) body += `\n${meta.locationName}`;
-  body += `\n${alertUrl}`;
-  return body;
 }
 
 async function main(): Promise<void> {
@@ -78,7 +66,9 @@ async function main(): Promise<void> {
 
   if (!flags.email && !flags.phone) {
     console.error("Error: provide at least one of --email or --phone");
-    console.error("  bun run scripts/test-alert-notification.ts --email you@example.com --phone +49170123456");
+    console.error(
+      "  bun run scripts/test-alert-notification.ts --email you@example.com --phone +49170123456",
+    );
     process.exit(1);
   }
 
@@ -89,8 +79,12 @@ async function main(): Promise<void> {
         include: {
           event: {
             include: {
-              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
-              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              generalLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
+              originLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
             },
           },
         },
@@ -100,8 +94,12 @@ async function main(): Promise<void> {
         include: {
           event: {
             include: {
-              generalLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
-              originLocation: { select: { id: true, name: true, level: true, population: true, ancestorIds: true } },
+              generalLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
+              originLocation: {
+                select: { id: true, name: true, level: true, population: true, ancestorIds: true },
+              },
             },
           },
         },
@@ -133,20 +131,24 @@ async function main(): Promise<void> {
   const title = event.title ?? "Untitled alert";
   const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
-  const emailContent = alertNotification(
-    flags.recipientName,
-    title,
-    event.description,
-    alertUrl,
-    {
-      severity: severityLabel,
-      eventType: eventTypeLabel,
-      locationName,
-      population,
-    },
-  );
+  // Operator-supplied --locale is a free-form string; narrow it to the
+  // template's Locale union. Unsupported values fall back to "en" so a
+  // typo doesn't crash the run.
+  const locale: Locale = isSupportedLocale(flags.locale) ? flags.locale : DEFAULT_LOCALE;
 
-  const smsBody = buildSmsBody(title, alertUrl, { severity: severityLabel, locationName });
+  const emailContent = alertNotification(flags.recipientName, title, event.description, alertUrl, {
+    severity: severityLabel,
+    eventType: eventTypeLabel,
+    locationName,
+    population,
+    locale,
+  });
+
+  const smsBody = buildAlertSms(title, alertUrl, {
+    severity: severityLabel,
+    locationName,
+    locale,
+  });
 
   if (flags.dryRun) {
     console.log("\n---------- EMAIL (dry-run) ----------");
@@ -173,7 +175,9 @@ async function main(): Promise<void> {
             textBody: emailContent.textBody,
             htmlBody: emailContent.htmlBody,
           });
-          console.log(`[EMAIL -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`);
+          console.log(
+            `[EMAIL -> ${recipient}] ${ok ? "sent" : "FAILED (provider returned false)"}`,
+          );
         } catch (err) {
           console.error(`[EMAIL -> ${recipient}] FAILED:`, err);
           process.exitCode = 3;

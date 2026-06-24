@@ -9,6 +9,33 @@ export const mutationTypeDef = gql`
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 
+    # ─── Dev User Provisioning ─────────────────────────────────────────────────
+    """
+    Provision a developer account from an approved waitlist application.
+    Creates the user, mints an initial API key (no expiry), issues a
+    long-lived set-password verification token, and sends the welcome
+    email. Requires global \`admin\`. The CRM write-back is the caller's
+    responsibility.
+    """
+    createDevUser(input: CreateDevUserInput!): CreateDevUserResult!
+
+    """
+    Revoke every active API key for a dev user and issue a fresh one.
+    Notifies the user by email. Requires global \`admin\`.
+    """
+    rotateDevUserApiKey(userId: String!): RotateDevUserApiKeyResult!
+
+    """
+    Approve a self-signed-up user. Flips their role from \`pending\`
+    to \`viewer\` (granting read access to signals / events / alerts /
+    crises) and moves their CRM contact from the prospects collection
+    into the approved collection — which fires Exponential's welcome
+    automation. The local role flip is authoritative; CRM updates are
+    best-effort and surface as fields on the result so the admin UI
+    can offer a retry. Requires global \`admin\`.
+    """
+    approveUser(userId: String!): ApproveUserResult!
+
     # ─── Auth ──────────────────────────────────────────────────────────────────
     """Request an email verification link for the authenticated user."""
     requestEmailVerification: Boolean!
@@ -296,6 +323,11 @@ export const mutationTypeDef = gql`
       generalSummary: [String!]!,
       sector: JSON!,
     ): Crisis!
+
+    """Upsert one or more per-locale translation rows for an event,
+    crisis, or location. The translated data blob mirrors the canonical
+    entity's JSON shape per locale. Admin/pipeline only."""
+    upsertTranslations(input: UpsertTranslationsInput!): UpsertTranslationsResult!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -427,6 +459,14 @@ export const mutationTypeDef = gql`
     enrichment, stored verbatim for downstream comparison against the
     source's coords. Schema documented on the signals model."""
     geoparsedData: JSON
+    """Human-readable name to use when the resolver has to create a new L4
+    point location from \`lat\`/\`lng\`. Typically the geoparser's
+    top extracted candidate suffixed with " (unresolved)" when the
+    Nominatim lookup failed, so audit views show \`al-Obeid (unresolved)\`
+    instead of the signal's full paragraph. Ignored when \`locationId\`
+    is supplied. When omitted, the resolver falls back to a coord-based
+    label like \`Point 15.6280, 30.2156\`."""
+    pointName: String
   }
 
   input CreateEventInput {

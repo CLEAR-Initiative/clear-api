@@ -43,6 +43,26 @@ const envSchema = z.object({
   // Global admin seed (env overrides seed defaults)
   ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
   ADMIN_PASSWORD: z.string().min(8).default("password123"),
+
+  // ─── Exponential CRM integration ─────────────────────────────────────
+  // Used to push new signups into the prospects collection and to move
+  // approved users into the approved collection. All optional in dev so
+  // the absence of these vars degrades cleanly (the CRM calls become
+  // best-effort no-ops with a log line, not a startup failure).
+  EXPONENTIAL_API_URL: z.string().url().optional(),
+  /** Long-lived JWT bearer token issued by Exponential. Used as
+   *  `Authorization: Bearer <token>` on every Exponential request.
+   *  Resolves to a user; that user must be a member of the workspace
+   *  and have edit rights on the prospects + approved collections. */
+  EXPONENTIAL_JWT: z.string().optional(),
+  EXPONENTIAL_WORKSPACE_ID: z.string().optional(),
+  /** Collection id holding contacts that signed up but haven't been
+   *  approved yet. Members are added here from the Better Auth signup
+   *  hook. */
+  EXPONENTIAL_PROSPECTS_COLLECTION_ID: z.string().optional(),
+  /** Collection id holding admin-approved contacts. The approval action
+   *  removes the contact from prospects and adds it here. */
+  EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
 });
 
 const parsed = envSchema.parse(process.env);

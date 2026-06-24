@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -14,6 +14,10 @@ import {
   resolveEmailLocation,
   resolveEventTypeLabel,
   fetchEventSignalLocations,
+  fetchEventLocalizedText,
+  normaliseUserLocale,
+  localizeLocationNames,
+  pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 
 interface CreateAlertInput {
@@ -28,7 +32,7 @@ interface UpdateAlertInput {
 export const alertResolvers = {
   Query: {
     alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string; includeDummy?: boolean }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const eventDummyFilter = args.includeDummy ? {} : { isDummy: false };
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
@@ -54,7 +58,7 @@ export const alertResolvers = {
       args: { locationId: string; status?: AlertStatus },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       return context.prisma.alerts.findMany({
         where: {
@@ -70,7 +74,7 @@ export const alertResolvers = {
       });
     },
     alert: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       return context.prisma.alerts.findUnique({ where: { id: args.id } });
     },
   },
@@ -187,7 +191,7 @@ export const alertResolvers = {
         }
 
         if (uniqueUserIds.length > 0) {
-          const title = event.title ?? event.types[0] ?? "Alert";
+          const fallbackTitle = event.types[0] ?? "Alert";
           const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
 
           // 1. Populate userAlerts join table
@@ -200,23 +204,43 @@ export const alertResolvers = {
           });
           console.log(`[createAlert] Created ${uniqueUserIds.length} userAlert records`);
 
-          // 2. Create in-app notifications
+          // Pull every recipient's language up front — drives both the
+          // in-app notification message text below and the per-recipient
+          // email body further down. One Prisma query covers both.
+          const recipients = await context.prisma.user.findMany({
+            where: { id: { in: uniqueUserIds } },
+            select: { id: true, name: true, email: true, language: true, emailNotification: true },
+          });
+          const uniqueLocales = [
+            ...new Set(recipients.map((r) => normaliseUserLocale(r.language))),
+          ];
+          const localizedText = await fetchEventLocalizedText(
+            context.prisma,
+            event.id,
+            event.title,
+            event.description,
+            uniqueLocales,
+          );
+          const titleFor = (locale: string) =>
+            localizedText.get(normaliseUserLocale(locale))?.title ?? fallbackTitle;
+          const descriptionFor = (locale: string) =>
+            localizedText.get(normaliseUserLocale(locale))?.description ?? event.description;
+
+          // 2. Create in-app notifications (per-recipient so each user
+          // sees the title in their own language).
           await context.prisma.notifications.createMany({
-            data: uniqueUserIds.map((userId) => ({
-              userId,
-              message: `New alert: ${title}`,
+            data: recipients.map((r) => ({
+              userId: r.id,
+              message: `New alert: ${titleFor(r.language)}`,
               notificationType: "alert",
               actionUrl: `/event/${event.id}`,
               actionText: "View Alert",
             })),
           });
-          console.log(`[createAlert] Created ${uniqueUserIds.length} in-app notifications`);
+          console.log(`[createAlert] Created ${recipients.length} in-app notifications`);
 
           // 3. Send email notifications (fire-and-forget)
-          const emailUsers = await context.prisma.user.findMany({
-            where: { id: { in: uniqueUserIds }, emailNotification: true },
-            select: { name: true, email: true },
-          });
+          const emailUsers = recipients.filter((r) => r.emailNotification);
 
           console.log(`[createAlert] ${emailUsers.length}/${uniqueUserIds.length} users have email notifications enabled`);
 
@@ -233,30 +257,89 @@ export const alertResolvers = {
               resolveEventTypeLabel(context.prisma, event.types),
               fetchEventSignalLocations(context.prisma, event.id),
             ]);
-            const emailExtras = {
-              severity: severityToLabel(event.severity),
-              eventType: eventTypeLabel,
-              locationName: emailLoc?.name ?? null,
-              population: emailLoc?.population ? formatCount(emailLoc.population) : null,
-              affectedPeople: event.populationAffected != null ? formatCount(event.populationAffected) : null,
-              // Event's primary location is already an A2 district.
-              districtName: primaryLoc?.name ?? null,
-              signalLocations: signalLocs.names,
-              signalLocationsOverflow: signalLocs.overflow,
-            };
+
+            // Every location id that will appear in any per-recipient
+            // email — used as the input set for the one-shot batched
+            // localized-name lookup below.
+            const locIdsForLocalization = [
+              ...(primaryLoc?.id ? [primaryLoc.id] : []),
+              ...(emailLoc?.id ? [emailLoc.id] : []),
+              ...signalLocs.ids,
+            ];
+            const localizedNames = await localizeLocationNames(
+              context.prisma,
+              locIdsForLocalization,
+              uniqueLocales,
+            );
+
+            const severityLabel = severityToLabel(event.severity);
+            const populationStr = emailLoc?.population
+              ? formatCount(emailLoc.population)
+              : null;
+            const affectedPeopleStr =
+              event.populationAffected != null
+                ? formatCount(event.populationAffected)
+                : null;
+
             void (async () => {
               try {
                 const emailProvider = await getEmailProvider();
                 await emailProvider.sendBulk(
-                  emailUsers.map((u) => {
-                    const content = alertNotification(u.name, title, event.description, alertUrl, emailExtras);
-                    return {
-                      to: u.email,
-                      subject: content.subject,
-                      textBody: content.textBody,
-                      htmlBody: content.htmlBody,
-                    };
-                  }),
+                  emailUsers
+                    .filter((u) => u.email)
+                    .map((u) => {
+                      // Per-recipient locale: title, description, AND
+                      // every location name swap to the user's
+                      // language when a translation row exists,
+                      // otherwise canonical English.
+                      const recipientLocale = normaliseUserLocale(u.language);
+                      const localizedSignalNames = signalLocs.ids.map(
+                        (id, idx) =>
+                          pickLocalizedName(
+                            localizedNames,
+                            id,
+                            recipientLocale,
+                            signalLocs.names[idx] ?? null,
+                          ) ?? signalLocs.names[idx],
+                      ).filter((n): n is string => !!n);
+                      const emailExtras = {
+                        severity: severityLabel,
+                        eventType: eventTypeLabel,
+                        locationName: pickLocalizedName(
+                          localizedNames,
+                          emailLoc?.id,
+                          recipientLocale,
+                          emailLoc?.name ?? null,
+                        ),
+                        population: populationStr,
+                        affectedPeople: affectedPeopleStr,
+                        // Event's primary location is already an A2 district.
+                        districtName: pickLocalizedName(
+                          localizedNames,
+                          primaryLoc?.id,
+                          recipientLocale,
+                          primaryLoc?.name ?? null,
+                        ),
+                        signalLocations: localizedSignalNames,
+                        signalLocationsOverflow: signalLocs.overflow,
+                        // Drives the template's chrome (greeting, labels,
+                        // CTA, subject, html dir/lang).
+                        locale: recipientLocale,
+                      };
+                      const content = alertNotification(
+                        u.name,
+                        titleFor(u.language),
+                        descriptionFor(u.language),
+                        alertUrl,
+                        emailExtras,
+                      );
+                      return {
+                        to: u.email!,
+                        subject: content.subject,
+                        textBody: content.textBody,
+                        htmlBody: content.htmlBody,
+                      };
+                    }),
                 );
                 console.log(`[createAlert] Email sent successfully to ${emailUsers.length} users`);
               } catch (err) {
@@ -348,7 +431,19 @@ export const alertResolvers = {
     },
   },
   Alert: {
-    event: (parent: { eventId: string }, _args: unknown, { prisma }: Context) => {
+    // Fast path: when the alert was preloaded via alertsPage's deep
+    // include (event + translations + locations + their translations
+    // + alerts), the event object is already on the parent. Returning
+    // it directly avoids re-fetching without include — which is
+    // exactly what made Event.title fall through to the per-request
+    // translation loader at non-English locales even after the
+    // pagination resolver thought it had pre-loaded everything.
+    event: (
+      parent: { eventId: string; event?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.event !== undefined) return parent.event;
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
     userAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {

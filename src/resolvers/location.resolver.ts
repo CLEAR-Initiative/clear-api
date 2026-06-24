@@ -4,6 +4,8 @@ import type { Context } from "../context.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { computeAncestorIds, findOrCreateLandmarkL4 } from "../utils/geo-resolve.js";
+import { DEFAULT_LOCALE } from "../utils/locales.js";
+import { bufferTranslationRequest } from "../services/celery.js";
 
 interface CreateLocationInput {
   geoId?: number;
@@ -306,6 +308,39 @@ export const locationResolvers = {
     },
   },
   Location: {
+    // Localized name overlay. Prefers `parent.translations` when the
+    // caller fetched the location via prisma with
+    // `include: { translations: { where: { locale } } }` — that's the
+    // path Event.{general,origin,destination}Location now uses. Falls
+    // back to the per-request translationLoader for code paths that
+    // didn't include translations (most other location call sites).
+    // At locale === "en" both paths short-circuit to the canonical
+    // column.
+    name: async (
+      parent: {
+        id: string;
+        name: string;
+        translations?: Array<{ data: unknown }>;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.name;
+      if (parent.translations !== undefined) {
+        const data = parent.translations[0]?.data as
+          | { name?: unknown }
+          | undefined;
+        const localized = data?.name;
+        if (typeof localized === "string") return localized;
+        if (parent.translations.length === 0) {
+          bufferTranslationRequest("location", parent.id);
+        }
+        return parent.name;
+      }
+      const tr = await context.translationLoader.load("location", parent.id);
+      const localized = tr?.name;
+      return typeof localized === "string" ? localized : parent.name;
+    },
     parent: (parent: { parentId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.parentId) return null;
       return prisma.locations.findUnique({ where: { id: parent.parentId } });
