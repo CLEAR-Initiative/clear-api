@@ -1,6 +1,6 @@
 import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireContentReader } from "../utils/auth-guard.js";
 import {
   buildEventLocationFilterForTeam,
   buildLocationFilterForTeam,
@@ -441,7 +441,7 @@ export const paginationResolvers = {
       args: { input?: AlertsPageInput },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const input = args.input ?? {};
       const where = await buildAlertsWhere(context.prisma, input);
       const limit = clampLimit(input.limit);
@@ -479,7 +479,7 @@ export const paginationResolvers = {
       args: { input?: EventsPageInput },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const input = args.input ?? {};
       const where = await buildEventsWhere(context.prisma, input);
       const limit = clampLimit(input.limit);
@@ -510,7 +510,7 @@ export const paginationResolvers = {
       args: { input?: SignalsPageInput },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const input = args.input ?? {};
       const where = await buildSignalsWhere(context.prisma, input);
       const limit = clampLimit(input.limit);
@@ -544,7 +544,7 @@ export const paginationResolvers = {
       args: { input: EntityStatsInput },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const input = args.input;
       const groupBy: StatsGroupBy = input.groupBy ?? "none";
 

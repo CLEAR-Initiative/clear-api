@@ -20,7 +20,6 @@ import { env } from "./utils/env.js";
 import { portalRouter } from "./portal/index.js";
 import { homeRouter } from "./home/index.js";
 import { createDocsRouter } from "./docs/index.js";
-import { waitlistRouter } from "./waitlist/index.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 
@@ -55,12 +54,6 @@ app.use("/portal", portalRouter);
 
 // Auto-generated docs (pre-built HTML)
 app.use("/docs", createDocsRouter());
-
-// Public waitlist application page. Mounted before homeRouter (which
-// catches "/") so /waitlist resolves here. The form posts to
-// ${FRONTEND_URL}/api/waitlist on clear-mvp, which owns the Exponential
-// CRM integration.
-app.use("/waitlist", waitlistRouter);
 
 // Public home page
 app.use("/", homeRouter);
