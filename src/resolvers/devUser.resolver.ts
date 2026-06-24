@@ -6,6 +6,7 @@ import { generateApiKey } from "../utils/api-key.js";
 import { logActivity } from "../utils/activity-log.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
+import { approveUserById } from "../services/approve-user.js";
 
 interface CreateDevUserInput {
   email: string;
@@ -282,6 +283,20 @@ export const devUserResolvers = {
         plaintextKey,
         notificationEmailSent,
       };
+    },
+
+    approveUser: async (
+      _parent: unknown,
+      args: { userId: string },
+      context: Context,
+    ) => {
+      const admin = requireRole(context, ["admin"]);
+      // The actual approve flow (role flip + CRM sync + audit) is in
+      // a shared service so the Express `/portal/admin/approve` route
+      // can call it via the same code path. Idempotency + NOT_FOUND
+      // checks are inside `approveUserById`; they bubble up as
+      // GraphQLErrors with the right extension codes.
+      return approveUserById(context.prisma, admin.id, args.userId);
     },
   },
 };

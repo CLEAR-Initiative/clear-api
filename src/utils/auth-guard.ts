@@ -23,6 +23,37 @@ export function requireRole(context: Context, roles: string[]) {
 }
 
 /**
+ * Approved-tier gate. Admits `admin`, `analyst`, and `viewer`; rejects
+ * `pending` (the default for fresh signups) and any other unrecognised
+ * role.
+ *
+ * Use this on every content-read resolver (signals, events, alerts,
+ * crises and their by-location / by-id variants). Pending users still
+ * need `requireAuth`-only resolvers for the "waiting for approval"
+ * screen — specifically `me` and `updateProfile` — so don't replace
+ * those.
+ *
+ * Throws FORBIDDEN with a message the portal UI can render verbatim on
+ * the pending-user screen.
+ */
+const APPROVED_ROLES: ReadonlySet<string> = new Set([
+  "admin",
+  "analyst",
+  "viewer",
+]);
+
+export function requireContentReader(context: Context) {
+  const user = requireAuth(context);
+  if (!user.role || !APPROVED_ROLES.has(user.role)) {
+    throw new GraphQLError(
+      "Your account is awaiting admin approval. You'll be able to access platform data once an admin has approved you.",
+      { extensions: { code: "FORBIDDEN", subCode: "PENDING_APPROVAL" } },
+    );
+  }
+  return user;
+}
+
+/**
  * Look up the user's role in a team. Returns the teamMembers record.
  * Throws FORBIDDEN if the user is not a member (unless they're a global admin).
  */

@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -32,7 +32,7 @@ interface UpdateAlertInput {
 export const alertResolvers = {
   Query: {
     alerts: async (_parent: unknown, args: { status?: AlertStatus; teamId?: string; includeDummy?: boolean }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const eventDummyFilter = args.includeDummy ? {} : { isDummy: false };
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
@@ -58,7 +58,7 @@ export const alertResolvers = {
       args: { locationId: string; status?: AlertStatus },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireContentReader(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       return context.prisma.alerts.findMany({
         where: {
@@ -74,7 +74,7 @@ export const alertResolvers = {
       });
     },
     alert: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       return context.prisma.alerts.findUnique({ where: { id: args.id } });
     },
   },
