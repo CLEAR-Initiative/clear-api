@@ -1,12 +1,15 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireContentReader } from "../utils/auth-guard.js";
 import { generateApiKey } from "../utils/api-key.js";
 
 export const apiKeyResolvers = {
   Query: {
     myApiKeys: (_parent: unknown, _args: unknown, context: Context) => {
-      const user = requireAuth(context);
+      // Approved users only. Pending accounts have no use for API keys
+      // — any key they minted would inherit the pending role and be
+      // rejected by every read/write gate anyway.
+      const user = requireContentReader(context);
       return context.prisma.apiKeys.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
@@ -20,7 +23,12 @@ export const apiKeyResolvers = {
       args: { input: { name: string; expiresAt?: string } },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      // Approved users only — blocks pending accounts. A pending user
+      // shouldn't be able to mint a credential before an admin has
+      // signed off; the FORBIDDEN error carries `subCode:
+      // PENDING_APPROVAL` so the portal UI renders the waiting screen
+      // language verbatim.
+      const user = requireContentReader(context);
 
       const activeCount = await context.prisma.apiKeys.count({
         where: { userId: user.id, revokedAt: null },
@@ -54,7 +62,10 @@ export const apiKeyResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      // Approved users only. Symmetric with createApiKey above — pending
+      // users have nothing to revoke (they couldn't have minted one),
+      // and gating consistently keeps the API key surface coherent.
+      const user = requireContentReader(context);
 
       const apiKey = await context.prisma.apiKeys.findUnique({
         where: { id: args.id },

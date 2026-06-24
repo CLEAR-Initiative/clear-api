@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -63,7 +63,7 @@ interface CreateSignalInput {
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
@@ -76,7 +76,7 @@ export const signalResolvers = {
       return context.prisma.signals.findMany({ where: { ...filter, ...dummyFilter } });
     },
     signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       return context.prisma.signals.findMany({
         where: {
@@ -89,7 +89,7 @@ export const signalResolvers = {
       });
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireAuth(context);
+      requireContentReader(context);
       const { DEFAULT_LOCALE } = await import("../utils/locales.js");
       const tr =
         context.locale === DEFAULT_LOCALE
@@ -132,10 +132,11 @@ export const signalResolvers = {
       args: { input: CreateSignalInput },
       context: Context,
     ) => {
-      // Any authenticated user can create a signal. The downstream pipeline
-      // gates (severity >= 4, staleness, trusted-source check on the manual
-      // path) prevent low-quality / stale entries from triggering alerts.
-      requireAuth(context);
+      // Admin/analyst only. The pipeline integrations (Dataminr, ACLED,
+      // GDACS) authenticate as a system admin user via API key. Viewers
+      // are read-only in the new role model and pending users are
+      // blocked from every content path.
+      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -222,10 +223,11 @@ export const signalResolvers = {
       args: { input: CreateManualSignalInput },
       context: Context,
     ) => {
-      // Any authenticated user can file a manual signal. Downstream guards
-      // (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4, staleness gate)
-      // keep low-severity / stale entries from fanning out as alerts.
-      const user = requireAuth(context);
+      // Admin/analyst only — viewers are read-only and pending users
+      // can't reach this path. Downstream guards (TRUSTED_SOURCE_NAMES
+      // on dataSource, severity >= 4, staleness gate) still keep
+      // low-severity / stale manual entries from fanning out as alerts.
+      const user = requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       // Validate source exists and is a trusted type
@@ -454,11 +456,31 @@ export const signalResolvers = {
         take: 25,
       }).then((links) => links.map((l) => l.event));
     },
-    feedbacks: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
+    // Same visibility split as Crisis/Event feedbacks/comments: admin/
+    // analyst see all; viewer sees only their own; everyone else empty.
+    feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userFeedbacks.findMany({
+          where: { signalId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
-    comments: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.userComments.findMany({ where: { signalId: parent.id } });
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (role === "admin" || role === "analyst") {
+        return ctx.prisma.userComments.findMany({ where: { signalId: parent.id } });
+      }
+      if (role === "viewer" && ctx.user) {
+        return ctx.prisma.userComments.findMany({
+          where: { signalId: parent.id, userId: ctx.user.id },
+        });
+      }
+      return [];
     },
     // Convert S3 keys to presigned URLs at read time.
     // External URLs (http/https) are passed through unchanged.

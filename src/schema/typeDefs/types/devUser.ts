@@ -43,4 +43,27 @@ export const devUserTypeDef = gql`
     """Optional descriptive label for the first API key. Defaults to "Initial dev key"."""
     keyName: String
   }
+
+  """
+  Result of the admin-only \`approveUser\` mutation. Flips a \`pending\`
+  user's role to \`viewer\` and moves the matching CRM contact from
+  the prospects collection into the approved collection, triggering
+  Exponential's welcome automation.
+  """
+  type ApproveUserResult {
+    """The approved user (with the new role)."""
+    user: User!
+    """
+    True when the CRM-side list move completed cleanly. False means
+    the user is approved locally but the CRM record still sits in the
+    prospects list — the admin can retry from /portal/admin without
+    re-approving the user.
+    """
+    crmMoved: Boolean!
+    """
+    Non-fatal CRM warnings, if any (e.g. profileType update failed
+    while the list swap succeeded). Empty on the happy path.
+    """
+    crmWarnings: [String!]!
+  }
 `;
