@@ -32,6 +32,27 @@ export const queryTypeDef = gql`
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event
 
+    """
+    Resolve a public share-link to its cached event snapshot. No auth —
+    the (eventId, token) pair from the URL is the gate, and the snapshot
+    only contains the safe fields enumerated on \`PublicEvent\`. Returns
+    null when the Redis cache has no entry for that pair (link expired,
+    revoked, or evicted under memory pressure — caller treats all three
+    the same).
+    """
+    publicEvent(eventId: String!, token: String!): PublicEvent
+
+    """
+    Look up the most recently-minted public share link for an event,
+    if one still exists in the cache. The Share modal calls this on
+    open so it can reuse an existing link rather than minting a fresh
+    token every time. Returns null when no live link exists — the
+    caller then mints one via \`createPublicEventLink\`. Requires
+    \`requireContentReader\` (admin / analyst / viewer); pending users
+    are blocked.
+    """
+    existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
+
     """List events by location. Returns all events whose origin, destination, or general location is within the given location (including descendants)."""
     eventsByLocation(locationId: String!): [Event!]!
 

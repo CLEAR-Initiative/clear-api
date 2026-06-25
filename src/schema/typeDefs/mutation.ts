@@ -9,6 +9,27 @@ export const mutationTypeDef = gql`
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 
+    # ─── Public Event Share Links ──────────────────────────────────────────────
+    """
+    Mint a Redis-backed share token for an event. The snapshot of the
+    event's safe-to-share fields is stored under a key derived from
+    the eventId + token and lives for \`ttlDays\` days (default 30, max
+    90). Anyone who has the resulting URL can read the snapshot via
+    the \`publicEvent(eventId, token)\` query. Caller must be able to
+    read the event normally (admin / analyst / viewer); pending users
+    are blocked.
+    """
+    createPublicEventLink(input: CreatePublicEventLinkInput!): CreatePublicEventLinkResult!
+
+    """
+    Invalidate a public share token by deleting the cached snapshot.
+    Idempotent — revoking a missing key returns true. Caller must be
+    an approved user; ownership of the original link is not checked
+    because the link is by definition unauthenticated and the only
+    state to delete is the cache entry itself.
+    """
+    revokePublicEventLink(eventId: String!, token: String!): Boolean!
+
     # ─── Dev User Provisioning ─────────────────────────────────────────────────
     """
     Provision a developer account from an approved waitlist application.
