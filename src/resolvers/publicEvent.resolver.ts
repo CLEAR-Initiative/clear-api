@@ -42,6 +42,12 @@ const TOKEN_BYTES = 32;
  * returns this object verbatim, GraphQL field selection just picks
  * fields off it.
  */
+interface PublicEventSignalPointSnapshot {
+  name: string | null;
+  lng: number;
+  lat: number;
+}
+
 interface PublicEventSnapshot {
   id: string;
   title: string | null;
@@ -54,6 +60,13 @@ interface PublicEventSnapshot {
   primaryLocationCoords: [number, number] | null;
   populationAffected: string | null;
   populationDisplaced: string | null;
+  signalPoints: PublicEventSignalPointSnapshot[];
+  locationPopulation: string | null;
+  locationPopulationLevel: number | null;
+  locationPopulationName: string | null;
+  locationIdp: string | null;
+  locationIdpLevel: number | null;
+  locationIdpName: string | null;
   sharedAt: string;
   expiresAt: string;
 }
@@ -161,16 +174,24 @@ export const publicEventResolvers = {
         Math.max(1, args.input.ttlDays ?? DEFAULT_TTL_DAYS),
       );
 
-      // Fetch the live event, including the three location relations
-      // (just `id` + `name` — geometry is a PostGIS column Prisma
-      // can't select, so we hit it separately below if we need it for
-      // the minimap).
+      // Fetch the live event, including the three location relations.
+      // We pull `ancestorIds` on the primary triplet so we can walk
+      // the A2 → A1 → A0 chain below without a second round-trip per
+      // candidate. Geometry stays out of the include because Prisma
+      // can't select PostGIS columns; that's queried via raw SQL
+      // separately when we need Point coords.
       const event = await context.prisma.events.findUnique({
         where: { id: eventId },
         include: {
-          generalLocation: { select: { id: true, name: true } },
-          originLocation: { select: { id: true, name: true } },
-          destinationLocation: { select: { id: true, name: true } },
+          generalLocation: {
+            select: { id: true, name: true, ancestorIds: true },
+          },
+          originLocation: {
+            select: { id: true, name: true, ancestorIds: true },
+          },
+          destinationLocation: {
+            select: { id: true, name: true, ancestorIds: true },
+          },
         },
       });
       if (!event) {
@@ -192,6 +213,113 @@ export const publicEventResolvers = {
         ? await pointCoordsForLocation(context.prisma, primary.id)
         : null;
 
+      // ─── Signal points ─────────────────────────────────────────────
+      // Gather every Point-geometry location that any of the event's
+      // constituent signals references (general / origin / destination
+      // fields, deduped by location id). Polygon-only locations are
+      // dropped via the `ST_GeometryType = 'ST_Point'` filter below.
+      const signalLinks = await context.prisma.signalEvents.findMany({
+        where: { eventId },
+        select: {
+          signal: {
+            select: {
+              locationId: true,
+              originId: true,
+              destinationId: true,
+            },
+          },
+        },
+      });
+      const signalLocIds = new Set<string>();
+      for (const link of signalLinks) {
+        if (link.signal.locationId) signalLocIds.add(link.signal.locationId);
+        if (link.signal.originId) signalLocIds.add(link.signal.originId);
+        if (link.signal.destinationId) signalLocIds.add(link.signal.destinationId);
+      }
+      const signalPoints: PublicEventSignalPointSnapshot[] =
+        signalLocIds.size > 0
+          ? (
+              await context.prisma.$queryRaw<
+                Array<{ name: string | null; lng: number; lat: number }>
+              >`
+                SELECT name,
+                       ST_X("geometry"::geometry) AS lng,
+                       ST_Y("geometry"::geometry) AS lat
+                FROM "locations"
+                WHERE id = ANY(${[...signalLocIds]}::text[])
+                  AND "geometry" IS NOT NULL
+                  AND ST_GeometryType("geometry"::geometry) = 'ST_Point'
+              `
+            ).filter(
+              (row) =>
+                typeof row.lng === "number" && typeof row.lat === "number",
+            )
+          : [];
+
+      // ─── A2-fallback population + IDP ──────────────────────────────
+      // Walk the primary location's ancestor chain to find the
+      // deepest level (district → state → country) that has a
+      // population number and an IOM DTM displacement entry. Mirrors
+      // the helpers in event-detail-content.tsx so the public card
+      // matches the in-app view.
+      let locationPopulation: string | null = null;
+      let locationPopulationLevel: number | null = null;
+      let locationPopulationName: string | null = null;
+      let locationIdp: string | null = null;
+      let locationIdpLevel: number | null = null;
+      let locationIdpName: string | null = null;
+
+      if (primary) {
+        const candidateIds = [primary.id, ...(primary.ancestorIds ?? [])];
+        const candidates = await context.prisma.locations.findMany({
+          where: { id: { in: candidateIds } },
+          select: {
+            id: true,
+            name: true,
+            level: true,
+            population: true,
+          },
+        });
+        const metaRows = await context.prisma.locationMetadata.findMany({
+          where: {
+            locationId: { in: candidateIds },
+            type: "iom_dtm_displacement",
+          },
+          select: { locationId: true, data: true },
+        });
+        const metaByLoc = new Map<string, unknown>();
+        for (const m of metaRows) metaByLoc.set(m.locationId, m.data);
+
+        for (const level of [2, 1, 0]) {
+          const c = candidates.find(
+            (x) => x.level === level && x.population != null,
+          );
+          if (c) {
+            locationPopulation = (c.population as bigint).toString();
+            locationPopulationLevel = level;
+            locationPopulationName = c.name;
+            break;
+          }
+        }
+
+        for (const level of [2, 1, 0]) {
+          const c = candidates.find((x) => x.level === level);
+          if (!c) continue;
+          const meta = metaByLoc.get(c.id) as
+            | { population_displaced?: number | null }
+            | null
+            | undefined;
+          const displaced = meta?.population_displaced;
+          if (typeof displaced !== "number" || !Number.isFinite(displaced)) {
+            continue;
+          }
+          locationIdp = String(Math.round(displaced));
+          locationIdpLevel = level;
+          locationIdpName = c.name;
+          break;
+        }
+      }
+
       const now = new Date();
       const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
 
@@ -209,6 +337,13 @@ export const publicEventResolvers = {
           event.populationAffected != null ? event.populationAffected.toString() : null,
         populationDisplaced:
           event.populationDisplaced != null ? event.populationDisplaced.toString() : null,
+        signalPoints,
+        locationPopulation,
+        locationPopulationLevel,
+        locationPopulationName,
+        locationIdp,
+        locationIdpLevel,
+        locationIdpName,
         sharedAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
       };
