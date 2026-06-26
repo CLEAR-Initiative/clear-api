@@ -40,11 +40,56 @@ export const publicEventTypeDef = gql`
     shape). Null when unknown."""
     populationAffected: String
     populationDisplaced: String
+    """\`[lng, lat]\` for every Point location attached to the event's
+    constituent signals (origin / destination / general fields,
+    deduped by location id). Polygon-only signal locations are
+    omitted. Empty when no signals carry Point geometry — the
+    frontend hides the markers list in that case."""
+    signalPoints: [PublicEventSignalPoint!]!
+    """Population of the event's administrative area, resolved by
+    walking the primary location's ancestor chain in A2 → A1 → A0
+    order (district → state → country) and picking the deepest non-
+    null. Mirrors the fallback the in-app event page uses so the
+    share card shows the same number. Stringified bigint; null when
+    no level along the chain has a population. See also
+    \`locationPopulationLevel\` and \`locationPopulationName\`."""
+    locationPopulation: String
+    """Level the population number came from: \`2\` (district), \`1\`
+    (state), \`0\` (country). Null when \`locationPopulation\` is
+    null."""
+    locationPopulationLevel: Int
+    """Name of the location the population number is for (e.g. \"South
+    Darfur\"). Null when \`locationPopulation\` is null. Lets the
+    frontend label the figure with context — \"Population of South
+    Darfur\" reads more honestly than a bare number when we fell back
+    to a country-level figure."""
+    locationPopulationName: String
+    """Internally-displaced persons count for the event's admin area,
+    sourced from \`locationMetadata(type = "iom_dtm_displacement")\`.
+    Same A2 → A1 → A0 fallback as \`locationPopulation\`. Stringified
+    bigint; null when no displacement metadata exists for any level."""
+    locationIdp: String
+    """Level the IDP number came from. Null when \`locationIdp\` is null."""
+    locationIdpLevel: Int
+    """Name of the location the IDP figure is for. Null when
+    \`locationIdp\` is null."""
+    locationIdpName: String
     """When the share link was minted."""
     sharedAt: DateTime!
     """Soft expiry — the Redis TTL the cached snapshot was written
     with. The frontend uses this to render \"Link expires in N days\"."""
     expiresAt: DateTime!
+  }
+
+  """One Point location attached to one of the event's signals."""
+  type PublicEventSignalPoint {
+    """Display name of the location (e.g. \"Al Fasher\"). Often null
+    for raw point-locations like \"Point 15.62, 30.21\"."""
+    name: String
+    """Geographic longitude."""
+    lng: Float!
+    """Geographic latitude."""
+    lat: Float!
   }
 
   """Input for the \`createPublicEventLink\` mutation."""
