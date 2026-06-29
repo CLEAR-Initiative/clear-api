@@ -30,9 +30,7 @@ import { prisma } from "../../src/lib/prisma.js";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import { sendCeleryTask } from "../../src/services/celery.js";
 import type { Context } from "../../src/context.js";
-
-const enabled = !!process.env.DATABASE_URL;
-const describeIfDb = enabled ? describe : describe.skip;
+import { describeIfDb } from "../helpers/db.js";
 
 // Source ids confirmed to exist in the dev DB (see seed data). Tests use
 // the same data_sources rows the production pipeline does, so the resolver's
