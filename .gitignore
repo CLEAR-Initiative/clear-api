@@ -10,6 +10,7 @@ dist
 .terraform.lock.hcl
 
 /src/generated/prisma
+/coverage
 .DS_Store
 
 /.claude

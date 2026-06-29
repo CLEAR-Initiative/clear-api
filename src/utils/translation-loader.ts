@@ -96,7 +96,7 @@ export function createTranslationLoader(
     queueMicrotask(async () => {
       const pending = queues.get(entityType);
       if (!pending || pending.length === 0) return;
-      queues.set(entityType, []); // reset so newly-enqueued requests start a fresh batch
+      queues.delete(entityType); // drop the entry so a later-tick load starts a fresh batch
 
       // Dedupe ids before hitting Postgres — multiple resolvers asking
       // for the same entity (e.g. Event.title + Event.description on the

@@ -9,7 +9,7 @@
  * `afterAll`. Skipped automatically when DATABASE_URL is absent.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 
@@ -37,9 +37,7 @@ import express from "express";
 import { prisma } from "../../src/lib/prisma.js";
 import { generateApiKey } from "../../src/utils/api-key.js";
 import { uploadRouter } from "../../src/routes/upload.js";
-
-const enabled = !!process.env.DATABASE_URL;
-const describeIfDb = enabled ? describe : describe.skip;
+import { describeIfDb } from "../helpers/db.js";
 
 describeIfDb("POST /api/upload — source-PDF archival", () => {
   let server: Server;
