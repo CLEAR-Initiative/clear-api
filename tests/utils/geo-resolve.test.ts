@@ -20,6 +20,7 @@ import {
   createPointLocation,
   resolvePointsToCommonAncestor,
 } from "../../src/utils/geo-resolve.js";
+import { describeIfDb } from "../helpers/db.js";
 
 // Inside Al Kurmuk district (Blue Nile state, Sudan). Same coordinates we
 // debugged when the L4-cascade bug surfaced. Picked because it sits well
@@ -30,9 +31,6 @@ const AL_KURMUK_LNG = 33.9750018;
 const AL_KURMUK_NAME = "Al Kurmuk";
 const BLUE_NILE_NAME = "Blue Nile";
 const SUDAN_NAME = "Sudan";
-
-const enabled = !!process.env.DATABASE_URL;
-const describeIfDb = enabled ? describe : describe.skip;
 
 describeIfDb("geo-resolve — L4 parent + ancestor resolution", () => {
   const createdIds: string[] = [];
