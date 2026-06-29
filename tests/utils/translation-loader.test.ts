@@ -172,32 +172,23 @@ describe("createTranslationLoader — batching & dedup", () => {
     expect(columns).toEqual(expect.arrayContaining(["crisisId", "eventId"]));
   });
 
-  it("does NOT re-flush an entity_type after its first batch drains (latent bug)", async () => {
-    // KNOWN LIMITATION of the current implementation: scheduleFlush resets the
-    // queue to an empty array (`queues.set(entityType, [])`) rather than
-    // deleting the map entry. A subsequent `load` for the same entity_type
-    // finds that truthy-but-empty array, so the `if (!queue)` guard is false
-    // and no new flush is scheduled — the second load's promise never settles.
-    //
-    // This is fine in production because the loader is created per request and
-    // a single resolver pass enqueues all loads within one microtask tick, so
-    // the second-tick path is never exercised. We assert the actual behavior
-    // (no second query, promise stays pending) rather than the arguably-correct
-    // behavior, so the test documents the contract and stays green.
+  it("re-flushes an entity_type in a later tick after its first batch drains", async () => {
+    // scheduleFlush deletes the queue entry once a batch drains (rather than
+    // leaving a truthy-but-empty array behind), so a `load` issued in a later
+    // microtask tick starts a fresh batch and settles. Within a single tick all
+    // loads still collapse into one query (covered by the batching tests above);
+    // this guards the cross-tick path so the loader can't silently leave a
+    // promise pending forever.
     const findMany = vi.fn().mockResolvedValue([]);
     const loader = createTranslationLoader(buildPrisma(findMany), "ar");
 
     await loader.load("crisis", "c1");
     expect(findMany).toHaveBeenCalledTimes(1);
 
-    let secondSettled = false;
-    void loader.load("crisis", "c2").then(() => {
-      secondSettled = true;
-    });
-    // Give it several microtask + macrotask turns to (not) settle.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(secondSettled).toBe(false);
-    expect(findMany).toHaveBeenCalledTimes(1);
+    // Second load happens in a later tick (the first already awaited) — it must
+    // schedule its own flush and resolve, not hang.
+    await expect(loader.load("crisis", "c2")).resolves.toBeNull();
+    expect(findMany).toHaveBeenCalledTimes(2);
   });
 });
 
