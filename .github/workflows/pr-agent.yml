@@ -4,9 +4,11 @@ name: PR Agent
 # Runs from the copy of this file on the PR's BASE branch (dev), so it only
 # takes effect for PRs targeting dev — the integration branch where review happens.
 #
-# Manual step (one-time): the repo secret ANTHROPIC_KEY must exist, e.g.
-#   gh secret set ANTHROPIC_KEY
-# Until it is set, the auth step fails. No OPENAI_API_KEY is required —
+# Manual step (one-time): the repo secret PR_AGENT_ANTHROPIC_KEY must exist, e.g.
+#   gh secret set PR_AGENT_ANTHROPIC_KEY
+# A dedicated key (separate from any app-level ANTHROPIC key) keeps PR-Agent's
+# Anthropic spend on its own billing line. Until it is set, the auth step fails
+# (litellm AuthenticationError: invalid x-api-key). No OPENAI_API_KEY is required —
 # config.fallback_models points at another Anthropic model to stop PR-Agent
 # from initialising an OpenAI client (qodo-ai/pr-agent#1323).
 
@@ -30,7 +32,7 @@ jobs:
         uses: qodo-ai/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
+          ANTHROPIC.KEY: ${{ secrets.PR_AGENT_ANTHROPIC_KEY }}
           config.model: "anthropic/claude-sonnet-4-6"
           config.fallback_models: '["anthropic/claude-sonnet-4-6"]'
           github_action_config.auto_review: "true"
