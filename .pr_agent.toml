@@ -1,0 +1,27 @@
+# PR-Agent (Qodo) review behaviour — version-controlled so it applies to every PR.
+# Env keys in .github/workflows/pr-agent.yml (model, keys, action toggles) take
+# precedence; this file tunes how the review itself behaves.
+
+[config]
+# One comment per section that updates in place on re-push, instead of a new
+# comment every time the PR is synchronised.
+publish_output = true
+
+[pr_reviewer]
+# Keep the review focused: cap the number of findings so it stays high-signal.
+num_max_findings = 4
+# Surface missing tests and security concerns.
+require_tests_review = true
+require_security_review = true
+# Re-pushes update a single persistent comment rather than spamming new ones.
+persistent_comment = true
+final_update_message = false
+
+[pr_code_suggestions]
+# Keep code-suggestion volume aligned with the review cap.
+num_code_suggestions_per_chunk = 4
+persistent_comment = true
+
+[pr_description]
+# Update one description comment in place across re-pushes.
+persistent_comment = true
