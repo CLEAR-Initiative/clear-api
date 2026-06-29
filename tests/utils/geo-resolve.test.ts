@@ -169,6 +169,49 @@ describeIfDb("geo-resolve — L4 parent + ancestor resolution", () => {
       // The sibling L4 must NOT appear anywhere in the ancestor chain.
       expect(row?.ancestorIds).not.toContain(siblingId);
     });
+
+    it("does not reuse a nearby L4 whose name looks like a signal headline", async () => {
+      // Plant a legacy signal-title L4 at the exact target coordinates with
+      // the parent the new point will resolve to. Without the name-shape
+      // filter, the reuse query would pick this row over creating a fresh
+      // "al-Obeid (unresolved)" point, silently re-attributing the new
+      // signal to a leftover headline. Mirrors the production incident
+      // where a Dataminr fallback inherited a Radio Dabanga headline as
+      // its location name.
+      const a2 = await prisma.locations.findFirst({
+        where: { level: 2, name: AL_KURMUK_NAME },
+        select: { id: true },
+      });
+      if (!a2) throw new Error("Test fixture A2 (Al Kurmuk) not found");
+
+      const headlineId = `test-l4-headline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      createdIds.push(headlineId);
+      const headlineName =
+        "Labor protest for revised salary and arrest of professors blocked area in al Obeid, Sudan on March 30: Local News Outlet via Radio Dabanga.";
+      await prisma.$executeRaw`
+        INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
+        VALUES (
+          ${headlineId},
+          ${headlineName},
+          4,
+          ${a2.id},
+          ARRAY[${a2.id}]::text[],
+          ST_SetSRID(ST_MakePoint(${AL_KURMUK_LNG}, ${AL_KURMUK_LAT}), 4326)
+        )
+      `;
+
+      const created = await createPointLocation(
+        prisma,
+        AL_KURMUK_LAT,
+        AL_KURMUK_LNG,
+        "al-Obeid (unresolved)",
+      );
+      createdIds.push(created.id);
+
+      // A fresh row must be created — never the headline-shaped legacy row.
+      expect(created.id).not.toBe(headlineId);
+      expect(created.name).toBe("al-Obeid (unresolved)");
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────────
