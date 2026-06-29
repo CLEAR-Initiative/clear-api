@@ -22,4 +22,16 @@ jobs:
       # Fail if the committed generated docs drifted from its source template.
       - name: Docs HTML is in sync with template
         run: bun run build:docs && git diff --exit-code src/docs/docs.html
-      # - run: bun run test
+
+      # Run the DB-free test suite. The DB-backed integration tests need a
+      # seeded Postgres + PostGIS (specific dev-DB UUIDs and Sudan admin
+      # polygons), so they're skipped here via SKIP_DB_TESTS=1. The dummy env
+      # vars below only need to satisfy the src/utils/env.ts schema parse at
+      # import time — no real services are contacted, since those describe
+      # blocks are skipped.
+      - name: Test (DB-free)
+        run: bun run test:ci
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
+          BETTER_AUTH_SECRET: ci-dummy-secret-at-least-32-chars-long-xxxx
+          BETTER_AUTH_URL: http://localhost:4000
