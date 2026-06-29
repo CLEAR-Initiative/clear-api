@@ -36,4 +36,7 @@ jobs:
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "true"
           github_action_config.auto_improve: "true"
-          github_action_config.pr_actions: '["review", "describe", "improve", "ask"]'
+          # Webhook pull_request action types that trigger the auto tools.
+          # Must mirror the `on: pull_request: types` above — these are event
+          # action names (NOT tool names like "review"/"improve").
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
