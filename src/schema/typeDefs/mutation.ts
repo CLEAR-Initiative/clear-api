@@ -179,6 +179,14 @@ export const mutationTypeDef = gql`
     Replaces any existing row with the same queryHash, resetting the TTL."""
     upsertNominatimCache(input: UpsertNominatimCacheInput!): NominatimCacheEntry!
 
+    # ─── Feature flags ─────────────────────────────────────────────────────────
+    """Set the enabled state of a feature flag, identified by its string key.
+    Upserts the row so the same call works whether the key is already present.
+    Admin only — toggling features is an org-wide change, not a per-user
+    preference. Returns the persisted flag so callers can update local state
+    without an extra round-trip."""
+    setFeatureFlag(key: String!, enabled: Boolean!): FeatureFlag!
+
     # ─── Notifications ─────────────────────────────────────────────────────────
     """Create a notification for a user."""
     createNotification(input: CreateNotificationInput!): Notification!
