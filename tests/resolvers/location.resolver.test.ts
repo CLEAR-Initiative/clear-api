@@ -23,6 +23,7 @@ import {
 } from "../../src/resolvers/location.resolver.js";
 import { locationMetadataResolvers } from "../../src/resolvers/locationMetadata.resolver.js";
 import type { Context } from "../../src/context.js";
+import { describeIfDb } from "../helpers/db.js";
 
 // Sudan bbox from the PRD / frontend per-country config.
 const SUDAN_BBOX = [21.8, 8.5, 38.6, 22.0];
@@ -62,9 +63,6 @@ describe("bboxToMultipolygonWkt", () => {
     expect(() => bboxToMultipolygonWkt([21.8, 22.0, 38.6, 8.5])).toThrow(GraphQLError);
   });
 });
-
-const enabled = !!process.env.DATABASE_URL;
-const describeIfDb = enabled ? describe : describe.skip;
 
 describeIfDb("ensureCountryLocation (DB)", () => {
   const createdLocationIds: string[] = [];

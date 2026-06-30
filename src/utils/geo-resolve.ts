@@ -64,6 +64,15 @@ export async function resolveLatLngToLocation(
 const A4_REUSE_RADIUS_METERS = 100;
 
 /**
+ * Upper bound on name length for a reusable A4. No real place name
+ * comes close to this; anything longer is almost certainly a legacy
+ * signal-title L4 (created back when the pipeline used the signal
+ * headline as the location name). Used by `createPointLocation` to
+ * keep new points from inheriting an old headline as their location.
+ */
+const PLACE_NAME_MAX_CHARS = 80;
+
+/**
  * Create a level-4 point location for an exact lat/lng, parented to the
  * smallest admin polygon that contains the point.
  *
@@ -92,12 +101,25 @@ export async function createPointLocation(
   // parent-match check is what makes this safe near administrative
   // borders — without it, the row growth saving would come at the cost
   // of cross-district misassignment.
+  //
+  // The name-shape filters skip legacy signal-title L4s — rows created
+  // back when the pipeline used the signal headline as the location
+  // name (e.g. "Labor protest for revised salary […]: Local News Outlet
+  // via Radio Dabanga."). Those headline rows sit at the same city
+  // centroids new Dataminr signals land on, so without the filter a
+  // fresh al-Obeid point silently inherits a leftover headline as its
+  // location name. Place names never run >80 chars or carry the
+  // "<headline>: <attribution> via <source>" punctuation pattern,
+  // making the exclusion both cheap and unambiguous.
   const nearbyReuse = await prisma.$queryRaw<ResolvedLocation[]>`
     SELECT id, name, level
     FROM "locations"
     WHERE level = 4
       AND "parent_id" IS NOT DISTINCT FROM ${parentId}
       AND "geometry" IS NOT NULL
+      AND LENGTH(name) <= ${PLACE_NAME_MAX_CHARS}
+      AND name NOT LIKE '%: %'
+      AND name NOT LIKE '% via %'
       AND ST_DWithin(
             "geometry"::geography,
             ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
