@@ -768,6 +768,14 @@ source coords. Admin/pipeline only.<div class="field-args"><span class="arg"><co
     <td>Upsert a Nominatim geocoder cache entry (admin/pipeline only).
 Replaces any existing row with the same queryHash, resetting the TTL.<div class="field-args"><span class="arg"><code>input: UpsertNominatimCacheInput!</code></span></div></td>
   </tr><tr>
+    <td><code>setFeatureFlag</code></td>
+    <td><code>FeatureFlag!</code></td>
+    <td>Set the enabled state of a feature flag, identified by its string key.
+Upserts the row so the same call works whether the key is already present.
+Admin only — toggling features is an org-wide change, not a per-user
+preference. Returns the persisted flag so callers can update local state
+without an extra round-trip.<div class="field-args"><span class="arg"><code>key: String!</code></span><span class="arg"><code>enabled: Boolean!</code></span></div></td>
+  </tr><tr>
     <td><code>createNotification</code></td>
     <td><code>Notification!</code></td>
     <td>Create a notification for a user.<div class="field-args"><span class="arg"><code>input: CreateNotificationInput!</code></span></div></td>
