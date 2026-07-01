@@ -753,7 +753,10 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!<
     <td><code>escalateEvent</code></td>
     <td><code>EventEscalation!</code></td>
     <td>Escalate an event: creates an alert (published) and records the user escalation.
-If the event already has a published alert, just records the user escalation.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span></div></td>
+If the event already has a published alert, just records the user escalation.
+teamId (optional) admits a team_admin or field_coordinator on that team
+even without a global admin/analyst role — purely an authorisation hint,
+not stored on the event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
   </tr><tr>
     <td><code>createDataSource</code></td>
     <td><code>DataSource!</code></td>
@@ -1251,6 +1254,14 @@ its descendants).</td>
     <td><code>eventIds</code></td>
     <td><code>[String!]!</code></td>
     <td>Event IDs to link to the newly created crisis (must not be empty).</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Team the crisis is being filed under. When present, the caller may be
+a team-level team_admin or field_coordinator on that team instead of a
+platform admin/analyst. Purely an authorisation hint — the crisis itself
+has no team column; team affiliation is derived from location scope.
+Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -1359,6 +1370,14 @@ its descendants).</td>
     <td><code>lng</code></td>
     <td><code>Float</code></td>
     <td>Longitude for automatic geo-resolution.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Team the event is being filed under. When present, the caller may be
+a team-level team_admin or field_coordinator on that team instead of a
+platform admin/analyst. Purely an authorisation hint — the event itself
+has no team column; team affiliation is derived from location scope.
+Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createlocationinput"><code>CreateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
     <td><code>Int</code></td>
