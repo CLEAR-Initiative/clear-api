@@ -3,14 +3,15 @@
  * `requireTeamAdminOrOrgAdmin` permission helper.
  *
  * DB-free: all `prisma.*` calls are mocked. These cover:
- *   1. `addTeamMember` defaults role to "viewer" when not supplied, and
- *      rejects unknown role strings.
+ *   1. `addTeamMember` defaults role to "team_member" when not supplied,
+ *      and rejects unknown role strings.
  *   2. `updateTeamMemberRole` rejects unknown role strings, and accepts
- *      every value in the canonical 6-role list.
+ *      every value in the canonical 3-role list.
  *   3. The permission helper that gates `addTeamMember` /
  *      `removeTeamMember` / `updateTeamMemberRole` grants when the caller
- *      is a global admin, an org owner/admin, or a team-admin (either the
- *      legacy "lead" or the new "team_admin"), and denies otherwise.
+ *      is a global admin, an org_admin, or a team_admin, and denies
+ *      otherwise. Legacy roles (`owner`, org `admin`, `lead`) were folded
+ *      into the new taxonomy by the Phase-3 backfill and no longer bypass.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -58,6 +59,17 @@ function buildContext(
     ...args.data,
   }));
 
+  // `addTeamMember` also seeds the target user's defaultTeamId via
+  // `ensureDefaultTeam`, which reads user.defaultTeamId and (when null)
+  // verifies the target membership exists before writing. The stubs
+  // below just say "already has a default" so the seed call is a no-op
+  // and doesn't clutter these role-focused assertions.
+  const userFindUnique = vi.fn(async () => ({ defaultTeamId: "t-seed" }));
+  const userUpdate = vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => ({
+    id: "u-target",
+    ...args.data,
+  }));
+
   const prisma = {
     teams: {
       findUnique: vi.fn(async () => ({ id: TEAM_ID, organisationId: ORG_ID })),
@@ -76,6 +88,10 @@ function buildContext(
         if (args.where.userId_organisationId.userId === TARGET_USER_ID) return targetOrgMembership;
         return null;
       }),
+    },
+    user: {
+      findUnique: userFindUnique,
+      update: userUpdate,
     },
   };
 
@@ -100,32 +116,26 @@ const ADMIN_CALLER_CASES: Array<{ label: string; caller: { id: string; role: str
     opts: {},
   },
   {
-    label: "org owner",
+    label: "org_admin",
     caller: { id: "u-caller", role: "viewer" },
-    opts: { callerOrgMembership: { role: "owner" } },
+    opts: { callerOrgMembership: { role: "org_admin" } },
   },
   {
-    label: "org admin",
-    caller: { id: "u-caller", role: "viewer" },
-    opts: { callerOrgMembership: { role: "admin" } },
-  },
-  {
-    label: 'legacy team-admin role "lead"',
-    caller: { id: "u-caller", role: "viewer" },
-    opts: { callerTeamMembership: { role: "lead" } },
-  },
-  {
-    label: 'new team-admin role "team_admin"',
+    label: "team_admin",
     caller: { id: "u-caller", role: "viewer" },
     opts: { callerTeamMembership: { role: "team_admin" } },
   },
 ];
 
 // Non-admin team roles — these callers must NOT be able to manage members.
-const NON_ADMIN_TEAM_ROLES = ["analyst", "viewer", "field_coordinator", "team_member"];
+// Only the two lower team roles left after Phase 3.
+const NON_ADMIN_TEAM_ROLES = ["field_coordinator", "team_member"];
+
+// Canonical team roles the resolver still accepts as input.
+const CANONICAL_TEAM_ROLES = ["team_admin", "field_coordinator", "team_member"];
 
 describe("addTeamMember — role validation", () => {
-  it('defaults role to "viewer" when none is supplied', async () => {
+  it('defaults role to "team_member" when none is supplied', async () => {
     const { ctx, createSpy } = buildContext(
       { id: "u-caller", role: "admin" },
     );
@@ -134,12 +144,12 @@ describe("addTeamMember — role validation", () => {
     expect(createSpy.mock.calls[0]?.[0]?.data).toMatchObject({
       teamId: TEAM_ID,
       userId: TARGET_USER_ID,
-      role: "viewer",
+      role: "team_member",
     });
   });
 
   it("accepts every canonical role", async () => {
-    for (const role of ["lead", "analyst", "viewer", "team_admin", "field_coordinator", "team_member"]) {
+    for (const role of CANONICAL_TEAM_ROLES) {
       const { ctx, createSpy } = buildContext(
         { id: "u-caller", role: "admin" },
       );
@@ -165,6 +175,20 @@ describe("addTeamMember — role validation", () => {
     ).rejects.toThrow(GraphQLError);
     expect(createSpy).not.toHaveBeenCalled();
   });
+
+  it('rejects the legacy team role "lead" so old clients get a clear error', async () => {
+    const { ctx, createSpy } = buildContext(
+      { id: "u-caller", role: "admin" },
+    );
+    await expect(
+      addTeamMember(
+        undefined,
+        { teamId: TEAM_ID, userId: TARGET_USER_ID, role: "lead" },
+        ctx,
+      ),
+    ).rejects.toThrow(/Invalid team role/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("updateTeamMemberRole — role validation", () => {
@@ -181,7 +205,7 @@ describe("updateTeamMemberRole — role validation", () => {
   });
 
   it("accepts every canonical role", async () => {
-    for (const role of ["lead", "analyst", "viewer", "team_admin", "field_coordinator", "team_member"]) {
+    for (const role of CANONICAL_TEAM_ROLES) {
       const { ctx, updateSpy } = buildContext({ id: "u-caller", role: "admin" });
       await updateTeamMemberRole(
         undefined,
@@ -189,6 +213,20 @@ describe("updateTeamMemberRole — role validation", () => {
         ctx,
       );
       expect(updateSpy.mock.calls[0]?.[0]?.data).toEqual({ role });
+    }
+  });
+
+  it('rejects the legacy team roles ("lead", "analyst", "viewer") so callers get a clear error', async () => {
+    for (const role of ["lead", "analyst", "viewer"]) {
+      const { ctx, updateSpy } = buildContext({ id: "u-caller", role: "admin" });
+      await expect(
+        updateTeamMemberRole(
+          undefined,
+          { teamId: TEAM_ID, userId: TARGET_USER_ID, role },
+          ctx,
+        ),
+      ).rejects.toThrow(/Invalid team role/i);
+      expect(updateSpy).not.toHaveBeenCalled();
     }
   });
 });
@@ -227,6 +265,21 @@ describe("requireTeamAdminOrOrgAdmin (via updateTeamMemberRole)", () => {
     const { ctx, updateSpy } = buildContext(
       { id: "u-caller", role: "viewer" },
       { callerOrgMembership: { role: "member" } },
+    );
+    await expect(
+      updateTeamMemberRole(
+        undefined,
+        { teamId: TEAM_ID, userId: TARGET_USER_ID, role: "team_member" },
+        ctx,
+      ),
+    ).rejects.toThrow(/team admin or org admin/i);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('denies the legacy org "owner" role now that it has been folded into org_admin', async () => {
+    const { ctx, updateSpy } = buildContext(
+      { id: "u-caller", role: "viewer" },
+      { callerOrgMembership: { role: "owner" } },
     );
     await expect(
       updateTeamMemberRole(

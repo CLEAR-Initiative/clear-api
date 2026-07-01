@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireContentReader } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader } from "../utils/auth-guard.js";
 import { generateApiKey } from "../utils/api-key.js";
 
 export const apiKeyResolvers = {
@@ -77,7 +77,7 @@ export const apiKeyResolvers = {
         });
       }
 
-      if (apiKey.userId !== user.id && user.role !== "admin") {
+      if (apiKey.userId !== user.id && !isPlatformAdmin(user)) {
         throw new GraphQLError("Insufficient permissions", {
           extensions: { code: "FORBIDDEN" },
         });

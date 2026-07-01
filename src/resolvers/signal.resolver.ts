@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -33,7 +33,20 @@ interface CreateManualSignalInput {
   lat?: number;
   lng?: number;
   metadata?: Record<string, unknown>;
+  /**
+   * Team the signal is filed under. Used only for authorisation — when
+   * present, a caller with `team_admin` or `field_coordinator` on this team
+   * is admitted even without a global `admin`/`analyst` role. The signal
+   * itself has no team column; team scope is derived from location.
+   */
+  teamId?: string;
 }
+
+/** Team roles allowed to create signals within their team scope. */
+const TEAM_SIGNAL_WRITER_ROLES: ReadonlySet<string> = new Set([
+  "team_admin",
+  "field_coordinator",
+]);
 
 interface CreateSignalInput {
   sourceId: string;
@@ -234,12 +247,40 @@ export const signalResolvers = {
       args: { input: CreateManualSignalInput },
       context: Context,
     ) => {
-      // Admin/analyst only — viewers are read-only and pending users
-      // can't reach this path. Downstream guards (TRUSTED_SOURCE_NAMES
-      // on dataSource, severity >= 4, staleness gate) still keep
-      // low-severity / stale manual entries from fanning out as alerts.
-      const user = requireRole(context, ["admin", "analyst"]);
+      // Authorisation model:
+      //   - Global `admin` / `analyst` may file for any location (existing
+      //     path — no team context required).
+      //   - When `input.teamId` is supplied, a caller with `team_admin` or
+      //     `field_coordinator` on that team is also admitted. This lets
+      //     field coordinators file signals within their own team scope
+      //     without granting them platform-wide write access.
+      //   - `team_member` (view-only + comment) and everyone else is
+      //     rejected regardless of team context.
+      // Downstream guards (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4,
+      // staleness gate) still keep low-severity / stale manual entries from
+      // fanning out as alerts.
       const { input } = args;
+      const user = requireAuth(context);
+      const isGlobalWriter = isPlatformAdmin(user) || user.role === "analyst";
+      if (!isGlobalWriter) {
+        if (!input.teamId) {
+          throw new GraphQLError("Insufficient permissions", {
+            extensions: { code: "FORBIDDEN" },
+          });
+        }
+        const membership = await context.prisma.teamMembers.findUnique({
+          where: {
+            teamId_userId: { teamId: input.teamId, userId: user.id },
+          },
+          select: { role: true },
+        });
+        if (!membership || !TEAM_SIGNAL_WRITER_ROLES.has(membership.role)) {
+          throw new GraphQLError(
+            "Requires team_admin or field_coordinator on this team, or global admin/analyst",
+            { extensions: { code: "FORBIDDEN" } },
+          );
+        }
+      }
 
       // Validate source exists and is a trusted type
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -474,7 +515,7 @@ export const signalResolvers = {
     // analyst see all; viewer sees only their own; everyone else empty.
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {
@@ -486,7 +527,7 @@ export const signalResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userComments.findMany({ where: { signalId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {

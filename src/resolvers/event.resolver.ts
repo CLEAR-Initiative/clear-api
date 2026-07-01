@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -801,7 +801,7 @@ export const eventResolvers = {
     // empty. See crisis.resolver for the rationale.
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {
@@ -813,7 +813,7 @@ export const eventResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userComments.findMany({ where: { eventId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {
