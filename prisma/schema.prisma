@@ -253,7 +253,7 @@ model organisationUsers {
   id             String   @id @default(cuid())
   userId         String   @map("user_id")
   organisationId String   @map("organisation_id")
-  role           String   @default("member") // owner | admin | member
+  role           String   @default("member") // org_admin | member (legacy: owner, admin → org_admin — see migration)
   createdAt      DateTime @default(now()) @map("created_at")
 
   user         user          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -289,7 +289,7 @@ model teamMembers {
   id        String   @id @default(cuid())
   teamId    String   @map("team_id")
   userId    String   @map("user_id")
-  role      String   @default("viewer") // lead | analyst | viewer | team_admin | field_coordinator | team_member
+  role      String   @default("team_member") // team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
   createdAt DateTime @default(now()) @map("created_at")
 
   team teams @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -324,8 +324,8 @@ model invitations {
   /// `invitationTeams` existed). New invites use the join table — these stay
   /// null on multi-team invites.
   teamId         String?   @map("team_id")
-  role           String    @default("member") // org role: owner | admin | member
-  teamRole       String?   @map("team_role") // team role: lead | analyst | viewer | team_admin | field_coordinator | team_member
+  role           String    @default("member") // org role: org_admin | member (legacy: owner, admin → org_admin — see migration)
+  teamRole       String?   @map("team_role") // team role: team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
   token          String    @unique
   expiresAt      DateTime  @map("expires_at")
   acceptedAt     DateTime? @map("accepted_at")
@@ -349,9 +349,10 @@ model invitationTeams {
   id           String @id @default(cuid())
   invitationId String @map("invitation_id")
   teamId       String @map("team_id")
-  /// Team role: lead | analyst | viewer | team_admin | field_coordinator |
-  /// team_member. Stored as a string to mirror teamMembers.role semantics;
-  /// the GraphQL enum lives in the typedefs.
+  /// Team role: team_admin | field_coordinator | team_member. Stored as a
+  /// string to mirror teamMembers.role semantics; the GraphQL enum lives in
+  /// the typedefs. Legacy values (lead / analyst / viewer) were folded into
+  /// the new set by the Phase-3 backfill.
   teamRole     String @map("team_role")
 
   invitation invitations @relation(fields: [invitationId], references: [id], onDelete: Cascade)
