@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
@@ -178,10 +178,9 @@ export const crisisResolvers = {
       // location bindings; a team with no bindings is treated as
       // open-to-all and disables the filter for the caller. See
       // buildCrisisLocationFilterForUser for the full semantics.
-      const where =
-        user.role === "admin"
-          ? undefined
-          : await buildCrisisLocationFilterForUser(context.prisma, user.id);
+      const where = isPlatformAdmin(user)
+        ? undefined
+        : await buildCrisisLocationFilterForUser(context.prisma, user.id);
 
       return context.prisma.crises.findMany({
         ...(include ? { include } : {}),
@@ -938,7 +937,7 @@ export const crisisResolvers = {
      */
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {
@@ -950,7 +949,7 @@ export const crisisResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userComments.findMany({ where: { crisisId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {

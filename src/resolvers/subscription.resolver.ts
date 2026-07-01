@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { Channel, Frequency } from "../generated/prisma/client.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface SubscribeToAlertsInput {
   locationId: string;
@@ -210,7 +210,7 @@ export const subscriptionResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      if (subscription.userId !== user.id && user.role !== "admin") {
+      if (subscription.userId !== user.id && !isPlatformAdmin(user)) {
         throw new GraphQLError("Not authorized to update this subscription", {
           extensions: { code: "FORBIDDEN" },
         });
@@ -242,7 +242,7 @@ export const subscriptionResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      if (subscription.userId !== user.id && user.role !== "admin") {
+      if (subscription.userId !== user.id && !isPlatformAdmin(user)) {
         throw new GraphQLError("Not authorized to delete this subscription", {
           extensions: { code: "FORBIDDEN" },
         });
