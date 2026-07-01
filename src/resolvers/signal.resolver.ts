@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -41,12 +41,6 @@ interface CreateManualSignalInput {
    */
   teamId?: string;
 }
-
-/** Team roles allowed to create signals within their team scope. */
-const TEAM_SIGNAL_WRITER_ROLES: ReadonlySet<string> = new Set([
-  "team_admin",
-  "field_coordinator",
-]);
 
 interface CreateSignalInput {
   sourceId: string;
@@ -247,40 +241,15 @@ export const signalResolvers = {
       args: { input: CreateManualSignalInput },
       context: Context,
     ) => {
-      // Authorisation model:
-      //   - Global `admin` / `analyst` may file for any location (existing
-      //     path — no team context required).
-      //   - When `input.teamId` is supplied, a caller with `team_admin` or
-      //     `field_coordinator` on that team is also admitted. This lets
-      //     field coordinators file signals within their own team scope
-      //     without granting them platform-wide write access.
-      //   - `team_member` (view-only + comment) and everyone else is
-      //     rejected regardless of team context.
+      // Authorisation model — see `requireTeamContentWriter`:
+      // global admin/analyst may file for any location; a `team_admin` or
+      // `field_coordinator` may file when they supply the `teamId` they're
+      // acting on behalf of. `team_member` and everyone else are rejected.
       // Downstream guards (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4,
       // staleness gate) still keep low-severity / stale manual entries from
       // fanning out as alerts.
       const { input } = args;
-      const user = requireAuth(context);
-      const isGlobalWriter = isPlatformAdmin(user) || user.role === "analyst";
-      if (!isGlobalWriter) {
-        if (!input.teamId) {
-          throw new GraphQLError("Insufficient permissions", {
-            extensions: { code: "FORBIDDEN" },
-          });
-        }
-        const membership = await context.prisma.teamMembers.findUnique({
-          where: {
-            teamId_userId: { teamId: input.teamId, userId: user.id },
-          },
-          select: { role: true },
-        });
-        if (!membership || !TEAM_SIGNAL_WRITER_ROLES.has(membership.role)) {
-          throw new GraphQLError(
-            "Requires team_admin or field_coordinator on this team, or global admin/analyst",
-            { extensions: { code: "FORBIDDEN" } },
-          );
-        }
-      }
+      const { user } = await requireTeamContentWriter(context, input.teamId);
 
       // Validate source exists and is a trusted type
       const dataSource = await context.prisma.dataSources.findUnique({
