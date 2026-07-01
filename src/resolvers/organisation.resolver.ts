@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface CreateOrganisationInput {
   name: string;
@@ -23,7 +23,7 @@ export const organisationResolvers = {
       const user = requireAuth(context);
 
       // Global admins see all organisations
-      if (user.role === "admin") {
+      if (isPlatformAdmin(user)) {
         return context.prisma.organisations.findMany({
           orderBy: { createdAt: "desc" },
         });
@@ -50,7 +50,7 @@ export const organisationResolvers = {
       if (!org) return null;
 
       // Global admins can see any org
-      if (user.role === "admin") return org;
+      if (isPlatformAdmin(user)) return org;
 
       // Otherwise must be a member
       const membership = await context.prisma.organisationUsers.findUnique({
@@ -197,7 +197,7 @@ export const organisationResolvers = {
         if (teams.length === 1) {
           await tx.teamMembers.upsert({
             where: { teamId_userId: { teamId: teams[0]!.id, userId: targetUserId } },
-            create: { teamId: teams[0]!.id, userId: targetUserId, role: "viewer" },
+            create: { teamId: teams[0]!.id, userId: targetUserId, role: "team_member" },
             update: {},
           });
         }
@@ -235,6 +235,52 @@ export const organisationResolvers = {
         throw error;
       }
     },
+
+    /**
+     * Change an existing member's role within an organisation.
+     * The GraphQL enum bounds the role value to `org_admin | member`, but
+     * we still guard defensively here so a caller who slips a bad string
+     * past a stale client gets a clear rejection rather than a silent DB
+     * write of a non-taxonomy value.
+     */
+    updateOrgMemberRole: async (
+      _parent: unknown,
+      args: { orgId: string; userId: string; role: string },
+      context: Context,
+    ) => {
+      const user = requireAuth(context);
+      await requireOrgAdmin(context.prisma, user, args.orgId);
+
+      if (!["org_admin", "member"].includes(args.role)) {
+        throw new GraphQLError(
+          `Invalid org role "${args.role}". Must be one of: org_admin, member`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
+      try {
+        return await context.prisma.organisationUsers.update({
+          where: {
+            userId_organisationId: {
+              userId: args.userId,
+              organisationId: args.orgId,
+            },
+          },
+          data: { role: args.role },
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          throw new GraphQLError("Member not found in this organisation", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        throw error;
+      }
+    },
   },
 
   Organisation: {
@@ -263,15 +309,15 @@ async function requireOrgAdmin(
   user: { id: string; role?: string | null },
   orgId: string,
 ) {
-  if (user.role === "admin") return; // global admin bypass
+  if (isPlatformAdmin(user)) return; // global admin bypass
 
   const membership = await prisma.organisationUsers.findUnique({
     where: {
       userId_organisationId: { userId: user.id, organisationId: orgId },
     },
   });
-  if (!membership || !["owner", "admin"].includes(membership.role)) {
-    throw new GraphQLError("Requires org owner or admin role", {
+  if (!membership || membership.role !== "org_admin") {
+    throw new GraphQLError("Requires org admin role", {
       extensions: { code: "FORBIDDEN" },
     });
   }

@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ export const feedbackResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      if (feedback.userId !== user.id && user.role !== "admin") {
+      if (feedback.userId !== user.id && !isPlatformAdmin(user)) {
         throw new GraphQLError("You can only delete your own feedback", {
           extensions: { code: "FORBIDDEN" },
         });
@@ -209,7 +209,7 @@ export const feedbackResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
-      if (comment.userId !== user.id && user.role !== "admin") {
+      if (comment.userId !== user.id && !isPlatformAdmin(user)) {
         throw new GraphQLError("You can only delete your own comments", {
           extensions: { code: "FORBIDDEN" },
         });

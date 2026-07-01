@@ -23,7 +23,7 @@ export const organisationTypeDef = gql`
   type OrgMember {
     id: String!
     user: User!
-    """Organisation-level role: owner, admin, or member."""
+    """Organisation-level role: org_admin or member."""
     role: String!
     """When this membership was created."""
     createdAt: DateTime!
@@ -31,16 +31,12 @@ export const organisationTypeDef = gql`
 
   """Role within an organisation."""
   enum OrgMemberRole {
-    owner
-    admin
+    org_admin
     member
   }
 
   """Role within a team."""
   enum TeamMemberRole {
-    lead
-    analyst
-    viewer
     team_admin
     field_coordinator
     team_member

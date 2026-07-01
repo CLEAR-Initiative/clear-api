@@ -230,10 +230,10 @@ export const mutationTypeDef = gql`
     tagUsersInComment(commentId: String!, userIds: [String!]!): UserComment!
 
     # ─── Organisations ─────────────────────────────────────────────────────────
-    """Create a new organisation. The creator becomes the owner."""
+    """Create a new organisation. The creator becomes the first org_admin."""
     createOrganisation(input: CreateOrganisationInput!): Organisation!
 
-    """Update an existing organisation. Requires org owner or admin."""
+    """Update an existing organisation. Requires org_admin (or platform admin)."""
     updateOrganisation(id: String!, input: UpdateOrganisationInput!): Organisation!
 
     """Add a member to an organisation."""
@@ -242,11 +242,15 @@ export const mutationTypeDef = gql`
     """Remove a member from an organisation."""
     removeOrgMember(orgId: String!, userId: String!): Boolean!
 
+    """Change a member's role within an organisation. Requires the caller to be
+    a platform admin or an org_admin of the target organisation."""
+    updateOrgMemberRole(orgId: String!, userId: String!, role: OrgMemberRole!): OrgMember!
+
     """Delete an organisation and all its teams, members, and invitations. Requires global admin."""
     deleteOrganisation(id: String!): Boolean!
 
     # ─── Teams ─────────────────────────────────────────────────────────────────
-    """Create a new team within an organisation. Requires org admin or owner."""
+    """Create a new team within an organisation. Requires org_admin (or platform admin)."""
     createTeam(input: CreateTeamInput!): Team!
 
     """Update an existing team."""
@@ -393,7 +397,7 @@ export const mutationTypeDef = gql`
   input InviteUserInput {
     email: String!
     organisationId: String!
-    """Organisation role: owner, admin, member (default: member)."""
+    """Organisation role: org_admin, member (default: member)."""
     role: String
     """Team assignments — at least one team is required. Each entry grants the
     invitee membership in that team with the given role on acceptance."""
@@ -456,6 +460,12 @@ export const mutationTypeDef = gql`
     """Arbitrary internal metadata stored in rawData (e.g. notes, recommendAlert).
     Not surfaced in the UI - use freely without schema changes."""
     metadata: JSON
+    """Team the signal is being filed under. When present, the caller may be
+    a team-level team_admin or field_coordinator on that team instead of a
+    platform admin/analyst. Purely an authorisation hint — the signal itself
+    has no team column; team affiliation is derived from location scope.
+    Ignored for platform-level callers."""
+    teamId: String
   }
 
   input CreateSignalInput {

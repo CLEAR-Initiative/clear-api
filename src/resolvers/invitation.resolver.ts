@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import {
@@ -9,6 +9,7 @@ import {
   teamInviteNotification,
 } from "../services/messaging/templates.js";
 import { auth } from "../lib/auth.js";
+import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ async function requireOrgAdmin(context: Context, organisationId: string) {
   const user = requireAuth(context);
 
   // Global admins bypass org-level checks
-  if (user.role === "admin") return user;
+  if (isPlatformAdmin(user)) return user;
 
   const membership = await context.prisma.organisationUsers.findUnique({
     where: {
@@ -58,8 +59,8 @@ async function requireOrgAdmin(context: Context, organisationId: string) {
     },
   });
 
-  if (!membership || !["owner", "admin"].includes(membership.role)) {
-    throw new GraphQLError("Requires organisation admin or owner role", {
+  if (!membership || membership.role !== "org_admin") {
+    throw new GraphQLError("Requires organisation admin role", {
       extensions: { code: "FORBIDDEN" },
     });
   }
@@ -118,7 +119,7 @@ export const invitationResolvers = {
           ? [{
               teamId: invite.teamId!,
               teamName: invite.team.name,
-              teamRole: invite.teamRole ?? "viewer",
+              teamRole: invite.teamRole ?? "team_member",
             }]
           : [];
 
@@ -213,9 +214,15 @@ export const invitationResolvers = {
             data: toAdd.map((tid) => ({
               teamId: tid,
               userId: existingUser.id,
-              role: roleByTeam.get(tid) ?? "viewer",
+              role: roleByTeam.get(tid) ?? "team_member",
             })),
           });
+
+          // Seed the invitee's default team if they don't yet have one.
+          // Picks the first team from the (deduped) add list — deterministic
+          // for the common single-team case, and the caller's intent for
+          // the ordering-matters multi-team case.
+          await ensureDefaultTeam(context.prisma, existingUser.id, toAdd[0]!);
 
           // Best-effort notification — failures shouldn't block the add.
           // Single email summarising the new teams the user has access to.
@@ -228,7 +235,7 @@ export const invitationResolvers = {
               inviter.name,
               org.name,
               teamSummary,
-              roleByTeam.get(toAdd[0]!) ?? "viewer",
+              roleByTeam.get(toAdd[0]!) ?? "team_member",
               `${env.FRONTEND_URL}/dashboard`,
             );
             await emailProvider.send({
@@ -254,7 +261,7 @@ export const invitationResolvers = {
               teams: {
                 create: toAdd.map((tid) => ({
                   teamId: tid,
-                  teamRole: roleByTeam.get(tid) ?? "viewer",
+                  teamRole: roleByTeam.get(tid) ?? "team_member",
                 })),
               },
             },
@@ -294,7 +301,7 @@ export const invitationResolvers = {
           teams: {
             create: teamIds.map((tid) => ({
               teamId: tid,
-              teamRole: roleByTeam.get(tid) ?? "viewer",
+              teamRole: roleByTeam.get(tid) ?? "team_member",
             })),
           },
         },
@@ -401,7 +408,7 @@ export const invitationResolvers = {
       const teamAssignments = invitationTeams.length > 0
         ? invitationTeams
         : invitation.teamId
-          ? [{ teamId: invitation.teamId, teamRole: invitation.teamRole ?? "viewer" }]
+          ? [{ teamId: invitation.teamId, teamRole: invitation.teamRole ?? "team_member" }]
           : [];
 
       for (const a of teamAssignments) {
@@ -410,6 +417,15 @@ export const invitationResolvers = {
           create: { teamId: a.teamId, userId: existingUser.id, role: a.teamRole },
           update: {},
         });
+      }
+
+      // Seed defaultTeamId if unset. Uses the invitation's first team
+      // assignment — this is the invitee's initial team and the sensible
+      // pick for a "which team am I filing under by default" hint.
+      if (teamAssignments.length > 0) {
+        await ensureDefaultTeam(
+          context.prisma, existingUser.id, teamAssignments[0]!.teamId,
+        );
       }
 
       // Mark invitation as accepted
@@ -521,7 +537,7 @@ export const invitationResolvers = {
       // Legacy fallback for pre-join-table invitations.
       if (parent.teamId) {
         const team = await prisma.teams.findUnique({ where: { id: parent.teamId } });
-        if (team) return [{ team, teamRole: parent.teamRole ?? "viewer" }];
+        if (team) return [{ team, teamRole: parent.teamRole ?? "team_member" }];
       }
       return [];
     },

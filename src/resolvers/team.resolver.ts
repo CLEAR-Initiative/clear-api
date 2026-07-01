@@ -1,24 +1,20 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
+import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
-// Valid team-member roles. Legacy roles (lead/analyst/viewer) are kept so
-// pre-existing data continues to validate; the newer set (team_admin/
-// field_coordinator/team_member) is what new UI surfaces.
+// Valid team-member roles. Legacy values (lead/analyst/viewer) were folded
+// into (team_admin/field_coordinator/team_member) by the Phase-3 backfill,
+// so this list is intentionally the closed new set.
 const TEAM_MEMBER_ROLES = [
-  "lead",
-  "analyst",
-  "viewer",
   "team_admin",
   "field_coordinator",
   "team_member",
 ] as const;
 type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
 
-// Roles with admin-level privileges over a team. "lead" and "team_admin"
-// are treated as equivalent so the permission gate works for both legacy
-// and new role names.
-const TEAM_ADMIN_ROLES: ReadonlySet<string> = new Set(["lead", "team_admin"]);
+// Roles with admin-level privileges over a team.
+const TEAM_ADMIN_ROLES: ReadonlySet<string> = new Set(["team_admin"]);
 
 function assertTeamMemberRole(role: string): TeamMemberRole {
   if (!TEAM_MEMBER_ROLES.includes(role as TeamMemberRole)) {
@@ -67,7 +63,7 @@ export const teamResolvers = {
       });
       if (!team) return null;
 
-      if (user.role === "admin") return team;
+      if (isPlatformAdmin(user)) return team;
 
       const membership = await context.prisma.teamMembers.findUnique({
         where: {
@@ -105,7 +101,7 @@ export const teamResolvers = {
           members: {
             create: {
               userId: user.id,
-              role: "lead",
+              role: "team_admin",
             },
           },
         },
@@ -199,15 +195,21 @@ export const teamResolvers = {
         );
       }
 
-      const role = args.role ? assertTeamMemberRole(args.role) : "viewer";
+      const role = args.role ? assertTeamMemberRole(args.role) : "team_member";
 
-      return context.prisma.teamMembers.create({
+      const membership = await context.prisma.teamMembers.create({
         data: {
           teamId: args.teamId,
           userId: args.userId,
           role,
         },
       });
+
+      // Seed defaultTeamId when the target user has none. First team wins;
+      // subsequent adds don't overwrite an explicit choice.
+      await ensureDefaultTeam(context.prisma, args.userId, args.teamId);
+
+      return membership;
     },
 
     removeTeamMember: async (
@@ -353,7 +355,7 @@ export const teamResolvers = {
       }
 
       // Verify membership (admins bypass)
-      if (user.role !== "admin") {
+      if (!isPlatformAdmin(user)) {
         const membership = await context.prisma.teamMembers.findUnique({
           where: {
             teamId_userId: { teamId: args.teamId, userId: user.id },
@@ -416,15 +418,15 @@ async function requireOrgAdminForTeam(
   user: { id: string; role?: string | null },
   orgId: string,
 ) {
-  if (user.role === "admin") return;
+  if (isPlatformAdmin(user)) return;
 
   const membership = await prisma.organisationUsers.findUnique({
     where: {
       userId_organisationId: { userId: user.id, organisationId: orgId },
     },
   });
-  if (!membership || !["owner", "admin"].includes(membership.role)) {
-    throw new GraphQLError("Requires org owner or admin role", {
+  if (!membership || membership.role !== "org_admin") {
+    throw new GraphQLError("Requires org admin role", {
       extensions: { code: "FORBIDDEN" },
     });
   }
@@ -437,9 +439,9 @@ async function requireTeamAdminOrOrgAdmin(
   teamId: string,
   orgId: string,
 ) {
-  if (user.role === "admin") return;
+  if (isPlatformAdmin(user)) return;
 
-  // Check team admin — accept both legacy "lead" and new "team_admin"
+  // Check team admin.
   const teamMembership = await prisma.teamMembers.findUnique({
     where: { teamId_userId: { teamId, userId: user.id } },
   });
@@ -451,7 +453,7 @@ async function requireTeamAdminOrOrgAdmin(
       userId_organisationId: { userId: user.id, organisationId: orgId },
     },
   });
-  if (orgMembership && ["owner", "admin"].includes(orgMembership.role)) return;
+  if (orgMembership && orgMembership.role === "org_admin") return;
 
   throw new GraphQLError("Requires team admin or org admin role", {
     extensions: { code: "FORBIDDEN" },
