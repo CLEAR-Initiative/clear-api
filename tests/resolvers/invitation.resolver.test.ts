@@ -117,16 +117,30 @@ describe("requireOrgAdmin gate", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
-  it("lets an org owner through", async () => {
+  it("lets an org_admin through", async () => {
     const findMany = vi.fn().mockResolvedValue([{ id: "i1" }]);
+    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+      organisationUsers: {
+        findUnique: vi.fn().mockResolvedValue({ role: "org_admin" }),
+      },
+      invitations: { findMany },
+    });
+    await pendingInvites(null, { organisationId: "o1" }, ctx);
+    expect(findMany).toHaveBeenCalledOnce();
+  });
+
+  it('rejects the legacy "owner" org role now that it has been folded into org_admin', async () => {
+    const findMany = vi.fn();
     const ctx = buildContext({ id: "u1", role: "viewer" }, {
       organisationUsers: {
         findUnique: vi.fn().mockResolvedValue({ role: "owner" }),
       },
       invitations: { findMany },
     });
-    await pendingInvites(null, { organisationId: "o1" }, ctx);
-    expect(findMany).toHaveBeenCalledOnce();
+    await expect(
+      pendingInvites(null, { organisationId: "o1" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -208,8 +222,10 @@ describe("Query.invitationByToken", () => {
       },
     });
     const result = await invitationByToken(null, { token: "tok" }, ctx);
+    // Legacy fallback default flipped from "viewer" to "team_member"
+    // when the Phase-3 team taxonomy was locked in.
     expect(result!.teams).toEqual([
-      { teamId: "t9", teamName: "Legacy", teamRole: "viewer" },
+      { teamId: "t9", teamName: "Legacy", teamRole: "team_member" },
     ]);
   });
 
@@ -616,7 +632,9 @@ describe("Mutation.acceptInvite", () => {
     expect(teamUpsert.mock.calls[0][0].create).toEqual({
       teamId: "t-legacy",
       userId: "u9",
-      role: "viewer", // teamRole null → default viewer
+      // teamRole null → default flipped from "viewer" to "team_member"
+      // when the Phase-3 team taxonomy was locked in.
+      role: "team_member",
     });
   });
 });
@@ -799,7 +817,8 @@ describe("Invitation field resolvers", () => {
       {},
       ctx,
     );
-    expect(result).toEqual([{ team: { id: "t9", name: "Legacy" }, teamRole: "viewer" }]);
+    // Legacy fallback default flipped in Phase 3.
+    expect(result).toEqual([{ team: { id: "t9", name: "Legacy" }, teamRole: "team_member" }]);
   });
 
   it("teams: returns an empty array when neither join nor legacy teamId exists", async () => {
