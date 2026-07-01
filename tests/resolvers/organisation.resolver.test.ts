@@ -292,7 +292,7 @@ describe("Mutation.deleteOrganisation", () => {
 });
 
 describe("Mutation.updateOrganisation", () => {
-  it("updates an org when the caller is an org admin, passing input through", async () => {
+  it("updates an org when the caller is an org_admin, passing input through", async () => {
     const updated = { id: "o1", name: "New" };
     const update = vi.fn().mockResolvedValue(updated);
     const ctx = buildContext(
@@ -303,7 +303,7 @@ describe("Mutation.updateOrganisation", () => {
           update,
         },
         organisationUsers: {
-          findUnique: vi.fn().mockResolvedValue({ role: "admin" }),
+          findUnique: vi.fn().mockResolvedValue({ role: "org_admin" }),
         },
       },
     );
@@ -426,17 +426,18 @@ describe("Mutation.addOrgMember", () => {
       teams: [{ id: "t1" }],
     });
 
-    await addOrgMember(null, { orgId: "o1", userId: "u-target", role: "admin" }, ctx);
+    await addOrgMember(null, { orgId: "o1", userId: "u-target", role: "org_admin" }, ctx);
 
     expect(orgUserCreate.mock.calls[0][0].data).toEqual({
       userId: "u-target",
       organisationId: "o1",
-      role: "admin",
+      role: "org_admin",
     });
     expect(teamUpsert).toHaveBeenCalledOnce();
     expect(teamUpsert.mock.calls[0][0]).toMatchObject({
       where: { teamId_userId: { teamId: "t1", userId: "u-target" } },
-      create: { teamId: "t1", userId: "u-target", role: "viewer" },
+      // Default team-member role after Phase 3 taxonomy cleanup.
+      create: { teamId: "t1", userId: "u-target", role: "team_member" },
     });
   });
 
@@ -484,7 +485,7 @@ describe("Mutation.addOrgMember", () => {
     expect(orgUserCreate).not.toHaveBeenCalled();
   });
 
-  it("throws FORBIDDEN when the caller is not an org owner/admin", async () => {
+  it("throws FORBIDDEN when the caller is only a plain org member", async () => {
     const { ctx, orgUserCreate } = buildAddCtx({
       caller: { id: "u1", role: "viewer" },
       callerOrgRole: "member",
@@ -495,14 +496,25 @@ describe("Mutation.addOrgMember", () => {
     expect(orgUserCreate).not.toHaveBeenCalled();
   });
 
-  it("allows an org owner (non-global-admin) to add a member", async () => {
+  it("allows an org_admin (non-global-admin) to add a member", async () => {
     const { ctx, orgUserCreate } = buildAddCtx({
       caller: { id: "u1", role: "viewer" },
-      callerOrgRole: "owner",
+      callerOrgRole: "org_admin",
       teams: [],
     });
     await addOrgMember(null, { orgId: "o1", userId: "u-target" }, ctx);
     expect(orgUserCreate).toHaveBeenCalledOnce();
+  });
+
+  it('denies the legacy org "owner" role now that it has been folded into org_admin', async () => {
+    const { ctx, orgUserCreate } = buildAddCtx({
+      caller: { id: "u1", role: "viewer" },
+      callerOrgRole: "owner",
+    });
+    await expect(
+      addOrgMember(null, { orgId: "o1", userId: "u-target" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(orgUserCreate).not.toHaveBeenCalled();
   });
 
   it("throws UNAUTHENTICATED when not logged in", async () => {

@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -171,7 +171,16 @@ export const eventResolvers = {
             if (sl.destinationId) locIds.add(sl.destinationId);
           }
 
-          if (locIds.size > 0) {
+          if (locIds.size === 1) {
+            // Single signal location — trust it directly, regardless of
+            // geometry type. Manual signals frequently attach to an A1
+            // (state) or A2 (district) polygon; before this branch existed
+            // the resolver fell through to the point-only query below,
+            // silently dropped the polygon, and left the event with no
+            // location at all — which in turn blocked alert email dispatch
+            // because subscription matching keys off event.locationId.
+            locationId = [...locIds][0]!;
+          } else if (locIds.size > 1) {
             // Fetch point geometries for these locations
             const locPoints = await context.prisma.$queryRaw<
               Array<{ lat: number; lng: number }>
@@ -183,18 +192,29 @@ export const eventResolvers = {
                 AND ST_GeometryType("geometry"::geometry) = 'ST_Point'
             `;
 
-            if (locPoints.length === 1) {
-              // Single point — reuse the signal's location directly.
-              locationId = [...locIds][0]!;
-            } else if (locPoints.length > 1) {
-              // Multiple points — attribute the event to the deepest admin
-              // polygon containing them all (A2 if same district, A1 if same
-              // state, A0 otherwise). Keeps `locations` purely administrative
-              // instead of accreting a convex-hull region row per event.
+            if (locPoints.length >= 1) {
+              // Multiple points (or one point alongside polygons) —
+              // attribute the event to the deepest admin polygon containing
+              // every point (A2 if same district, A1 if same state, A0
+              // otherwise). Keeps `locations` purely administrative instead
+              // of accreting a convex-hull region row per event.
               const ancestor = await resolvePointsToCommonAncestor(
                 context.prisma, locPoints,
               );
               if (ancestor) locationId = ancestor.id;
+            } else {
+              // No point-geometry signals — the analyst attached each
+              // signal to an admin polygon (A0/A1/A2). Pick the deepest
+              // one as the event location. Strictly an approximation when
+              // those polygons sit in different branches of the hierarchy
+              // (e.g. two distinct A2s), but strictly better than leaving
+              // the event with no location and blocking alert dispatch.
+              const deepest = await context.prisma.locations.findFirst({
+                where: { id: { in: [...locIds] } },
+                orderBy: { level: "desc" },
+                select: { id: true },
+              });
+              if (deepest) locationId = deepest.id;
             }
           }
         }
@@ -781,7 +801,7 @@ export const eventResolvers = {
     // empty. See crisis.resolver for the rationale.
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {
@@ -793,7 +813,7 @@ export const eventResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (role === "admin" || role === "analyst") {
+      if (isPlatformAdmin(ctx.user) || role === "analyst") {
         return ctx.prisma.userComments.findMany({ where: { eventId: parent.id } });
       }
       if (role === "viewer" && ctx.user) {

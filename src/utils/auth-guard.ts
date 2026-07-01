@@ -11,6 +11,20 @@ export function requireAuth(context: Context) {
   return context.user;
 }
 
+/**
+ * Global-admin bypass predicate. Every org- or team-scoped permission gate
+ * MUST short-circuit on this before consulting membership tables, so a
+ * platform admin can act on any org/team without an explicit membership
+ * row. Centralised here so future renames of the global admin role
+ * (planned: `admin` → `superadmin`) touch exactly one line instead of
+ * ~10 scattered `user.role === "admin"` checks.
+ */
+export function isPlatformAdmin(
+  user: { role?: string | null } | null | undefined,
+): boolean {
+  return user?.role === "admin";
+}
+
 /** Check global user.role (admin, viewer). Use for platform-wide operations. */
 export function requireRole(context: Context, roles: string[]) {
   const user = requireAuth(context);
@@ -64,7 +78,7 @@ export async function resolveTeamMembership(
   userRole?: string | null,
 ) {
   // Global admins can access any team's data
-  if (userRole === "admin") return null;
+  if (isPlatformAdmin({ role: userRole })) return null;
 
   const membership = await prisma.teamMembers.findUnique({
     where: { teamId_userId: { teamId, userId } },
@@ -103,7 +117,7 @@ export async function canSeeUserPii(
 ): Promise<boolean> {
   if (!context.user) return false;
   if (context.user.id === targetUserId) return true;
-  if (context.user.role === "admin") return true;
+  if (isPlatformAdmin(context.user)) return true;
 
   const cache = getPiiCache(context);
   const cached = cache.get(targetUserId);
@@ -139,7 +153,7 @@ export function canSeeUserPrivate(
 ): boolean {
   if (!context.user) return false;
   if (context.user.id === targetUserId) return true;
-  if (context.user.role === "admin") return true;
+  if (isPlatformAdmin(context.user)) return true;
   return false;
 }
 
