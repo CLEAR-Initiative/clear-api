@@ -12,6 +12,7 @@ import { GraphQLError } from "graphql";
 import {
   requireAuth,
   requireRole,
+  requireTeamContentWriter,
   resolveTeamMembership,
   canSeeUserPii,
   canSeeUserPrivate,
@@ -155,6 +156,93 @@ describe("canSeeUserPii", () => {
     expect(await canSeeUserPii(ctx, "colleague")).toBe(true);
     expect(await canSeeUserPii(ctx, "colleague")).toBe(true);
     expect(findFirst).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("requireTeamContentWriter", () => {
+  // Every non-team path short-circuits before any prisma call — the stub
+  // stays a `never` throw so we notice if the fast paths ever regress into
+  // consulting the DB.
+  const noPrisma = {
+    teamMembers: {
+      findUnique: vi.fn(() => {
+        throw new Error("prisma should not be called on the global-writer path");
+      }),
+    },
+  };
+
+  it("admits a global admin without a teamId and without touching prisma", async () => {
+    const ctx = buildContext({ id: "a1", role: "admin" }, noPrisma);
+    const result = await requireTeamContentWriter(ctx);
+    expect(result.via).toBe("global");
+    expect(result.user.id).toBe("a1");
+    expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("admits a global analyst without a teamId and without touching prisma", async () => {
+    const ctx = buildContext({ id: "an1", role: "analyst" }, noPrisma);
+    const result = await requireTeamContentWriter(ctx);
+    expect(result.via).toBe("global");
+    expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects a viewer with no teamId", async () => {
+    const ctx = buildContext({ id: "v1", role: "viewer" }, noPrisma);
+    await expect(requireTeamContentWriter(ctx)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects UNAUTHENTICATED when nobody is logged in", async () => {
+    await expect(
+      requireTeamContentWriter(buildContext(null), "t1"),
+    ).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("admits a viewer who is team_admin on the supplied teamId", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ role: "team_admin" });
+    const ctx = buildContext(
+      { id: "v1", role: "viewer" },
+      { teamMembers: { findUnique } },
+    );
+    const result = await requireTeamContentWriter(ctx, "t1");
+    expect(result.via).toBe("team");
+    expect(findUnique).toHaveBeenCalledOnce();
+  });
+
+  it("admits a viewer who is field_coordinator on the supplied teamId", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ role: "field_coordinator" });
+    const ctx = buildContext(
+      { id: "v1", role: "viewer" },
+      { teamMembers: { findUnique } },
+    );
+    const result = await requireTeamContentWriter(ctx, "t1");
+    expect(result.via).toBe("team");
+  });
+
+  it("admits a viewer who is team_member on the supplied teamId", async () => {
+    // Team membership is treated as a proxy for "acts on behalf of this
+    // team" — a global viewer who's on a team can file content for it
+    // regardless of intra-team seniority.
+    const findUnique = vi.fn().mockResolvedValue({ role: "team_member" });
+    const ctx = buildContext(
+      { id: "v1", role: "viewer" },
+      { teamMembers: { findUnique } },
+    );
+    const result = await requireTeamContentWriter(ctx, "t1");
+    expect(result.via).toBe("team");
+  });
+
+  it("rejects a caller who has no membership on the supplied teamId", async () => {
+    const findUnique = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(
+      { id: "v1", role: "viewer" },
+      { teamMembers: { findUnique } },
+    );
+    await expect(
+      requireTeamContentWriter(ctx, "t1"),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 });
 
