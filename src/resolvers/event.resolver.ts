@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -62,6 +62,13 @@ interface CreateEventInput {
   signalIds: string[];
   lat?: number;
   lng?: number;
+  /**
+   * Team the event is being filed under. Used only for authorisation —
+   * a `team_admin` or `field_coordinator` on this team is admitted even
+   * without a global admin/analyst role. Ignored for platform-level
+   * callers; the event itself has no team column.
+   */
+  teamId?: string;
 }
 
 interface UpdateEventInput {
@@ -137,8 +144,11 @@ export const eventResolvers = {
       args: { input: CreateEventInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      // Global admin/analyst may create events for any location; a team
+      // team_admin / field_coordinator may create when they supply the
+      // teamId they're acting on behalf of. See `requireTeamContentWriter`.
       const { input } = args;
+      await requireTeamContentWriter(context, input.teamId);
 
       // Resolve location for the event
       let locationId = input.locationId;
@@ -374,10 +384,13 @@ export const eventResolvers = {
 
     escalateEvent: async (
       _parent: unknown,
-      args: { eventId: string; userId: string },
+      args: { eventId: string; userId: string; teamId?: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      // Global admin/analyst may escalate any event; a team_admin or
+      // field_coordinator may escalate when they pass the teamId they're
+      // acting on behalf of. team_member and everyone else are rejected.
+      await requireTeamContentWriter(context, args.teamId);
 
       const event = await context.prisma.events.findUnique({
         where: { id: args.eventId },
