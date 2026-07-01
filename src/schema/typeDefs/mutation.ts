@@ -115,8 +115,11 @@ export const mutationTypeDef = gql`
     deleteEvent(id: String!): Boolean!
 
     """Escalate an event: creates an alert (published) and records the user escalation.
-    If the event already has a published alert, just records the user escalation."""
-    escalateEvent(eventId: String!, userId: String!): EventEscalation!
+    If the event already has a published alert, just records the user escalation.
+    teamId (optional) admits a team_admin or field_coordinator on that team
+    even without a global admin/analyst role — purely an authorisation hint,
+    not stored on the event."""
+    escalateEvent(eventId: String!, userId: String!, teamId: String): EventEscalation!
 
     # ─── Data Sources ──────────────────────────────────────────────────────────
     """Create a new data source."""
@@ -533,6 +536,12 @@ export const mutationTypeDef = gql`
     lat: Float
     """Longitude for automatic geo-resolution."""
     lng: Float
+    """Team the event is being filed under. When present, the caller may be
+    a team-level team_admin or field_coordinator on that team instead of a
+    platform admin/analyst. Purely an authorisation hint — the event itself
+    has no team column; team affiliation is derived from location scope.
+    Ignored for platform-level callers."""
+    teamId: String
   }
 
   input UpdateEventInput {

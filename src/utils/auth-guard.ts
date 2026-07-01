@@ -25,6 +25,65 @@ export function isPlatformAdmin(
   return user?.role === "admin";
 }
 
+/**
+ * Team roles allowed to write content (create signals, events, alerts,
+ * crises) within their team's scope. Any team membership is sufficient
+ * for the create/escalate mutations — the policy is that a global
+ * viewer who belongs to a team acts on behalf of that team and can
+ * file content on its behalf, regardless of intra-team seniority.
+ * (Intra-team seniority still matters for team-admin actions like
+ * managing members, which flow through `requireTeamAdminOrOrgAdmin`
+ * and remain restricted to `team_admin`.)
+ */
+export const TEAM_CONTENT_WRITER_ROLES: ReadonlySet<string> = new Set([
+  "team_admin",
+  "field_coordinator",
+  "team_member",
+]);
+
+/**
+ * Content-write gate for mutations that can be either platform-wide
+ * (any admin or analyst) or team-scoped (a `team_admin` or
+ * `field_coordinator` acting on behalf of `teamId`).
+ *
+ * Precedence:
+ *   1. Global admin  → allowed unconditionally.
+ *   2. Global analyst → allowed unconditionally.
+ *   3. `teamId` provided AND caller has any TEAM_CONTENT_WRITER_ROLES
+ *      role (currently: any team membership) on it → allowed.
+ *   4. Everything else → FORBIDDEN.
+ *
+ * A viewer with no team membership and anyone whose only role is
+ * `pending` are rejected. Returns the authenticated user so the caller
+ * can attribute activity, and `via` so an audit log can distinguish
+ * global from team-scoped writes.
+ */
+export async function requireTeamContentWriter(
+  context: Context,
+  teamId?: string | null,
+): Promise<{ user: NonNullable<Context["user"]>; via: "global" | "team" }> {
+  const user = requireAuth(context);
+  if (isPlatformAdmin(user) || user.role === "analyst") {
+    return { user, via: "global" };
+  }
+  if (!teamId) {
+    throw new GraphQLError("Insufficient permissions", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+  const membership = await context.prisma.teamMembers.findUnique({
+    where: { teamId_userId: { teamId, userId: user.id } },
+    select: { role: true },
+  });
+  if (!membership || !TEAM_CONTENT_WRITER_ROLES.has(membership.role)) {
+    throw new GraphQLError(
+      "Requires team_admin or field_coordinator on this team, or global admin/analyst",
+      { extensions: { code: "FORBIDDEN" } },
+    );
+  }
+  return { user, via: "team" };
+}
+
 /** Check global user.role (admin, viewer). Use for platform-wide operations. */
 export function requireRole(context: Context, roles: string[]) {
   const user = requireAuth(context);

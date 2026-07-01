@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireAuth, requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
@@ -28,6 +28,13 @@ interface CreateCrisisFromEventsInput {
   locationId?: string;
   needs: Record<string, unknown>;
   eventIds: string[];
+  /**
+   * Team the crisis is being filed under. Used only for authorisation —
+   * a `team_admin` or `field_coordinator` on this team is admitted even
+   * without a global admin/analyst role. Ignored for platform-level
+   * callers; the crisis itself has no team column.
+   */
+  teamId?: string;
 }
 
 interface UpdateCrisisPopulationInput {
@@ -225,8 +232,11 @@ export const crisisResolvers = {
       args: { input: CreateCrisisFromEventsInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      // Global admin/analyst may roll up any events into a crisis; a
+      // team_admin / field_coordinator may do so when they supply the
+      // teamId they're acting on behalf of. See `requireTeamContentWriter`.
       const { input } = args;
+      await requireTeamContentWriter(context, input.teamId);
 
       if (input.eventIds.length === 0) {
         throw new GraphQLError("At least one event ID is required", {
