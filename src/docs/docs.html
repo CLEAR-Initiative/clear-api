@@ -2450,6 +2450,17 @@ the resolver converts at read time so links stay short-lived.</td>
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
     <td>User comments on this crisis.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the crisis row was created.</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the crisis was last written to — bumped automatically by Prisma
+on every update path (title / description / population / attachments
+/ event-linkage / needs / scenarios). Useful for cache invalidation
+and &quot;recently updated&quot; surfaces.</td>
   </tr></tbody></table><h3 id="type-dailyactivitycount"><code>DailyActivityCount</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>date</code></td>
     <td><code>String!</code></td>

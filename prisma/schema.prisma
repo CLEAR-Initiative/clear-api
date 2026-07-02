@@ -691,6 +691,13 @@ model crises {
   eventCrises   eventCrises[]
   translations  translations[]
 
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Kept in sync by Prisma on every `crises.update(...)` — matches the
+  /// pattern used across the rest of this schema (translations, orgs,
+  /// teams, feedbacks, etc). The migration's `DEFAULT CURRENT_TIMESTAMP`
+  /// is a belt-and-braces for raw SQL writes that skip the ORM.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
   @@map("crises")
 }
 
