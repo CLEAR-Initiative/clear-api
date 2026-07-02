@@ -101,6 +101,14 @@ export const mutationTypeDef = gql`
     Admin/pipeline only."""
     updateSignalGeoparsedData(id: String!, geoparsedData: JSON!): Signal!
 
+    """Set (or replace) an existing signal's generalLocation. Used by the
+    manual-signal pipeline path: when the user didn't pick a location and
+    the geoparser resolved a landmark, we promote it to an L4 via
+    findOrCreateLandmarkL4 and then wire the signal to it so downstream
+    event grouping can key on the resolved admin-2 district instead of
+    creating an isolated event. Admin/pipeline only."""
+    updateSignalLocation(id: String!, locationId: String!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 

@@ -734,6 +734,15 @@ createManualSignal before the pipeline has a chance to run the geoparser.
 Stores the structured candidate verbatim; does not change locationId.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>geoparsedData: JSON!</code></span></div></td>
   </tr><tr>
+    <td><code>updateSignalLocation</code></td>
+    <td><code>Signal!</code></td>
+    <td>Set (or replace) an existing signal's generalLocation. Used by the
+manual-signal pipeline path: when the user didn't pick a location and
+the geoparser resolved a landmark, we promote it to an L4 via
+findOrCreateLandmarkL4 and then wire the signal to it so downstream
+event grouping can key on the resolved admin-2 district instead of
+creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>

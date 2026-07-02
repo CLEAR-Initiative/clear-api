@@ -390,6 +390,45 @@ export const signalResolvers = {
       });
     },
 
+    updateSignalLocation: async (
+      _parent: unknown,
+      args: { id: string; locationId: string },
+      context: Context,
+    ) => {
+      // Admin/pipeline only — invoked by the manual-signal processing task
+      // after the geoparser resolves a candidate and we've promoted it to
+      // an L4 via findOrCreateLandmarkL4. Sets `generalLocation` (the
+      // `location_id` column); leaves origin/destination alone.
+      requireRole(context, ["admin"]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.id },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Validate the target location exists so a bad locationId returns a
+      // clear error instead of a Prisma FK-violation stacktrace.
+      const targetLoc = await context.prisma.locations.findUnique({
+        where: { id: args.locationId },
+        select: { id: true },
+      });
+      if (!targetLoc) {
+        throw new GraphQLError("Location not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.signals.update({
+        where: { id: args.id },
+        data: { locationId: args.locationId },
+      });
+    },
+
     deleteSignal: async (
       _parent: unknown,
       args: { id: string },
