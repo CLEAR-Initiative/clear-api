@@ -1,12 +1,16 @@
 /**
- * Tests for the role-relaxed auth on signal creation.
+ * Tests for the auth model on signal creation.
  *
- * Pre-change behaviour: `createSignal` and `createManualSignal` both required
- * the global `admin` or `analyst` role. The change opens both to any
- * authenticated user — non-admin / non-analyst users (the default `viewer`
- * role, and anything else) can now file signals. This is intentional; the
- * downstream pipeline gates (severity >= 4, staleness, TRUSTED_SOURCE_NAMES
- * on the manual path) carry the integrity load.
+ * `createSignal` is admin/analyst only — the pipeline integrations
+ * (Dataminr, ACLED, GDACS) authenticate as system admin/analyst users via
+ * API key. Viewers and pending users are rejected.
+ *
+ * `createManualSignal` allows either global admin/analyst OR a team-scoped
+ * writer (team_admin / field_coordinator / team_member) acting on behalf
+ * of a supplied `teamId`. This lets a global viewer file a signal on
+ * behalf of a team they belong to, but rejects viewers with no team.
+ * The TRUSTED_SOURCE_NAMES gate on the dataSource is independent of the
+ * user's role and still blocks non-trusted sources.
  *
  * Tests run against the real database (DATABASE_URL from `.env`). All
  * created rows are tracked and DELETEd in `afterAll`. `sendCeleryTask` is
@@ -41,17 +45,19 @@ const FIELD_OFFICER_SOURCE_ID = "9df2265c-ff6c-400c-8d0a-0a48b4b09159"; // trust
 
 function buildContext(user: { id: string; role: string } | null): Context {
   // Minimal Context shape — resolvers only read `prisma` + `user` for these
-  // mutations. `session` / `authMethod` are present on the real Context but
-  // unread inside createSignal / createManualSignal.
+  // mutations. `session` / `authMethod` / `locale` / `translationLoader`
+  // are present on the real Context but unread inside createSignal /
+  // createManualSignal, so we cast to satisfy the type without wiring them.
   return {
     prisma,
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
-  };
+    locale: "en",
+  } as Context;
 }
 
-describeIfDb("signal resolver — role relaxation on signal creation", () => {
+describeIfDb("signal resolver — auth model on signal creation", () => {
   const createdSignalIds: string[] = [];
   const createdLocationIds: string[] = [];
   let viewerUserId: string;
@@ -78,31 +84,52 @@ describeIfDb("signal resolver — role relaxation on signal creation", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────
-  // createSignal — the generic mutation used by the pipeline workers
+  // createSignal — the generic mutation used by the pipeline workers.
+  // Admin/analyst only.
   // ──────────────────────────────────────────────────────────────────────
   describe("createSignal", () => {
-    it("allows a viewer-role user to create a signal", async () => {
-      const ctx = buildContext({ id: viewerUserId, role: "viewer" });
+    it("allows an analyst-role user to create a signal", async () => {
+      const ctx = buildContext({ id: viewerUserId, role: "analyst" });
       const result = await signalResolvers.Mutation.createSignal(
         null,
         {
           input: {
             sourceId: DATAMINR_SOURCE_ID,
-            title: "TEST viewer-created signal",
-            description: "Created in the role-relaxation test",
+            title: "TEST analyst-created signal",
+            description: "Created in the auth-model test",
             // publishedAt is a required field on CreateSignalInput.
             publishedAt: new Date().toISOString(),
             rawData: { test: true },
             // No coords / location — keeps the test hermetic and avoids
             // the createPointLocation path.
-            externalId: `test:viewer:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            externalId: `test:analyst:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           },
         },
         ctx,
       );
       createdSignalIds.push(result.id);
       expect(result.id).toBeTruthy();
-      expect(result.title).toBe("TEST viewer-created signal");
+      expect(result.title).toBe("TEST analyst-created signal");
+    });
+
+    it("rejects a viewer-role user with FORBIDDEN", async () => {
+      const ctx = buildContext({ id: viewerUserId, role: "viewer" });
+      await expect(
+        signalResolvers.Mutation.createSignal(
+          null,
+          {
+            input: {
+              sourceId: DATAMINR_SOURCE_ID,
+              title: "TEST should fail",
+              description: "viewer not allowed on createSignal",
+              publishedAt: new Date().toISOString(),
+              rawData: { test: true },
+              externalId: `test:viewer-reject:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            },
+          },
+          ctx,
+        ),
+      ).rejects.toThrow(/insufficient permissions/i);
     });
 
     it("rejects an unauthenticated request with UNAUTHENTICATED", async () => {
@@ -116,7 +143,7 @@ describeIfDb("signal resolver — role relaxation on signal creation", () => {
               title: "TEST should fail",
               description: "no user",
               publishedAt: new Date().toISOString(),
-            rawData: { test: true },
+              rawData: { test: true },
             },
           },
           ctx,
@@ -146,18 +173,21 @@ describeIfDb("signal resolver — role relaxation on signal creation", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────
-  // createManualSignal — the user-facing mutation; trusted-source-only
+  // createManualSignal — the user-facing mutation; trusted-source-only.
+  // Admin/analyst may file for any location; a team-scoped writer may file
+  // when they supply the teamId they're acting on behalf of. Viewers with
+  // no team membership are rejected before the trusted-source check.
   // ──────────────────────────────────────────────────────────────────────
   describe("createManualSignal", () => {
-    it("allows a viewer-role user to file a manual signal on a trusted source", async () => {
-      const ctx = buildContext({ id: viewerUserId, role: "viewer" });
+    it("allows an admin-role user to file a manual signal on a trusted source", async () => {
+      const ctx = buildContext({ id: viewerUserId, role: "admin" });
       const result = await signalResolvers.Mutation.createManualSignal(
         null,
         {
           input: {
             sourceId: FIELD_OFFICER_SOURCE_ID,
-            title: "TEST viewer-filed manual signal",
-            description: "Filed via the relaxed auth path",
+            title: "TEST admin-filed manual signal",
+            description: "Filed via the platform-admin auth path",
             severity: 4,
           },
         },
@@ -177,6 +207,27 @@ describeIfDb("signal resolver — role relaxation on signal creation", () => {
       );
     });
 
+    it("rejects a viewer without a teamId with FORBIDDEN", async () => {
+      // A global viewer with no team membership can't file signals — the
+      // team-scoped write path requires an explicit teamId and a matching
+      // TEAM_CONTENT_WRITER_ROLES membership on it.
+      const ctx = buildContext({ id: viewerUserId, role: "viewer" });
+      await expect(
+        signalResolvers.Mutation.createManualSignal(
+          null,
+          {
+            input: {
+              sourceId: FIELD_OFFICER_SOURCE_ID,
+              title: "TEST should fail",
+              description: "viewer without teamId",
+              severity: 4,
+            },
+          },
+          ctx,
+        ),
+      ).rejects.toThrow(/insufficient permissions/i);
+    });
+
     it("rejects an unauthenticated request with UNAUTHENTICATED", async () => {
       const ctx = buildContext(null);
       await expect(
@@ -194,11 +245,12 @@ describeIfDb("signal resolver — role relaxation on signal creation", () => {
       ).rejects.toThrow(GraphQLError);
     });
 
-    it("rejects a non-trusted source even when called by a viewer", async () => {
+    it("rejects a non-trusted source even for an admin", async () => {
       // The TRUSTED_SOURCE_NAMES guard is independent of the user's role —
       // it's a property of the dataSource. Dataminr is `api` type, not
-      // trusted for manual entry. This must still throw post-relaxation.
-      const ctx = buildContext({ id: viewerUserId, role: "viewer" });
+      // trusted for manual entry. Using admin here bypasses the auth gate
+      // so the trusted-source check itself is what raises.
+      const ctx = buildContext({ id: viewerUserId, role: "admin" });
       await expect(
         signalResolvers.Mutation.createManualSignal(
           null,
