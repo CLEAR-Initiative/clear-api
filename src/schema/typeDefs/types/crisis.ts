@@ -30,6 +30,13 @@ export const crisisTypeDef = gql`
     feedbacks: [UserFeedback!]!
     """User comments on this crisis."""
     comments: [UserComment!]!
+    """When the crisis row was created."""
+    createdAt: DateTime!
+    """When the crisis was last written to — bumped automatically by Prisma
+    on every update path (title / description / population / attachments
+    / event-linkage / needs / scenarios). Useful for cache invalidation
+    and "recently updated" surfaces."""
+    updatedAt: DateTime!
   }
 
   """Link between a crisis and an event."""

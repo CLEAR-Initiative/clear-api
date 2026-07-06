@@ -734,6 +734,15 @@ createManualSignal before the pipeline has a chance to run the geoparser.
 Stores the structured candidate verbatim; does not change locationId.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>geoparsedData: JSON!</code></span></div></td>
   </tr><tr>
+    <td><code>updateSignalLocation</code></td>
+    <td><code>Signal!</code></td>
+    <td>Set (or replace) an existing signal's generalLocation. Used by the
+manual-signal pipeline path: when the user didn't pick a location and
+the geoparser resolved a landmark, we promote it to an L4 via
+findOrCreateLandmarkL4 and then wire the signal to it so downstream
+event grouping can key on the resolved admin-2 district instead of
+creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
@@ -2441,6 +2450,17 @@ the resolver converts at read time so links stay short-lived.</td>
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
     <td>User comments on this crisis.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the crisis row was created.</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the crisis was last written to — bumped automatically by Prisma
+on every update path (title / description / population / attachments
+/ event-linkage / needs / scenarios). Useful for cache invalidation
+and &quot;recently updated&quot; surfaces.</td>
   </tr></tbody></table><h3 id="type-dailyactivitycount"><code>DailyActivityCount</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>date</code></td>
     <td><code>String!</code></td>
