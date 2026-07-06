@@ -184,6 +184,19 @@ describeIfDb("geo-resolve — L4 parent + ancestor resolution", () => {
       });
       if (!a2) throw new Error("Test fixture A2 (Al Kurmuk) not found");
 
+      // Clear any legitimate-looking L4 rows at these coords planted by
+      // earlier tests in this file — the reuse query would return them
+      // and mask the headline-filter behaviour this test is exercising.
+      await prisma.$executeRaw`
+        DELETE FROM "locations"
+        WHERE level = 4
+          AND ST_DWithin(
+            "geometry"::geography,
+            ST_SetSRID(ST_MakePoint(${AL_KURMUK_LNG}, ${AL_KURMUK_LAT}), 4326)::geography,
+            100
+          )
+      `;
+
       const headlineId = `test-l4-headline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       createdIds.push(headlineId);
       const headlineName =

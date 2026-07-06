@@ -28,6 +28,7 @@
  * Usage:
  *   bun run scripts/worldpop/import-age-sex.ts                       # SDN, dry run
  *   bun run scripts/worldpop/import-age-sex.ts --iso3 AFG            # Afghanistan
+ *   bun run scripts/worldpop/import-age-sex.ts --iso3 VEN            # Venezuela
  *   bun run scripts/worldpop/import-age-sex.ts --execute              # write to DB
  *   bun run scripts/worldpop/import-age-sex.ts --input <folder>       # custom raster folder
  *

@@ -13,6 +13,7 @@ import { requireAuth } from "../utils/auth-guard.js";
 const PIPELINE_COUNTRIES: ReadonlyArray<{ name: string; bbox: number[] }> = [
   { name: "Sudan", bbox: [21.8, 8.5, 38.6, 22.0] },
   { name: "Afghanistan", bbox: [60.5, 29.4, 74.9, 38.5] },
+  { name: "Venezuela", bbox: [-73.4, 0.6, -59.8, 12.3] },
 ];
 
 export const pipelineCountryResolvers = {

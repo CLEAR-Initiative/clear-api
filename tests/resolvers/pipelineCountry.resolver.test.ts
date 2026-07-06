@@ -26,7 +26,7 @@ describe("pipelineCountries", () => {
       ctx({ id: "u", role: "pipeline" }),
     );
     const names = result.map((c) => c.name);
-    expect(names).toEqual(["Sudan", "Afghanistan"]);
+    expect(names).toEqual(["Sudan", "Afghanistan", "Venezuela"]);
     for (const country of result) {
       expect(country.bbox).toHaveLength(4);
       expect(country.bbox.every((n) => typeof n === "number")).toBe(true);
@@ -38,9 +38,9 @@ describe("pipelineCountries", () => {
   });
 
   it("rejects an unauthenticated request", () => {
-    expect(() =>
-      pipelineCountryResolvers.Query.pipelineCountries(null, {}, ctx(null)),
-    ).toThrow(GraphQLError);
+    expect(() => pipelineCountryResolvers.Query.pipelineCountries(null, {}, ctx(null))).toThrow(
+      GraphQLError,
+    );
   });
 
   it("returns copies — a consumer cannot mutate the shared config", () => {
