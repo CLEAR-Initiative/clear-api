@@ -722,6 +722,11 @@ export interface AdminMetrics {
     organisations: number;
     teams: number;
   };
+  newsletter: {
+    configured: boolean;
+    count: number | null;
+    error?: string;
+  };
 }
 
 export type AdminTab = "dashboard" | "pending";
@@ -934,7 +939,7 @@ interface RenderAdminMetricsOptions {
  */
 export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
   const { currentUserEmail, metrics, pendingCount, flash } = opts;
-  const { engagement, content, org } = metrics;
+  const { engagement, content, org, newsletter } = metrics;
 
   const card = (
     label: string,
@@ -949,6 +954,28 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
       ${opts2?.breakdownHtml ?? ""}
     </div>`;
 
+  const textCard = (
+    label: string,
+    value: string,
+    sub: string,
+    opts2?: { accent?: boolean },
+  ) => `
+    <div class="metric-card${opts2?.accent ? " accent" : ""}">
+      <div class="metric-label">${escapeHtml(label)}</div>
+      <div class="metric-value">${escapeHtml(value)}</div>
+      <div class="metric-sub">${escapeHtml(sub)}</div>
+    </div>`;
+
+  const newsletterValue =
+    newsletter.configured && newsletter.count !== null
+      ? formatNumber(newsletter.count)
+      : "—";
+  const newsletterSub = !newsletter.configured
+    ? "BUTTONDOWN_API_KEY not configured."
+    : newsletter.error
+      ? newsletter.error
+      : "Subscribers on the public Buttondown list.";
+
   const usersBreakdown = `
     <div class="metric-breakdown">
       <span><strong>${formatNumber(engagement.usersByRole.admin)}</strong> admin</span>
@@ -958,6 +985,13 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
     </div>`;
 
   const html = `
+    <h2>Newsletter</h2>
+    <div class="metric-grid">
+      ${textCard("Newsletter subscribers", newsletterValue, newsletterSub, {
+        accent: newsletter.configured && newsletter.count !== null,
+      })}
+    </div>
+
     <h2>Engagement</h2>
     <div class="metric-grid">
       ${card("Daily active users", engagement.dau, "Distinct users active in the last 24 hours.", { accent: true })}

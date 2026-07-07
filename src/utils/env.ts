@@ -63,6 +63,10 @@ const envSchema = z.object({
   /** Collection id holding admin-approved contacts. The approval action
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
+
+  // Buttondown newsletter — optional; powers the subscriber count on
+  // `/portal/admin`. Absent in dev → dashboard shows "not configured".
+  BUTTONDOWN_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.parse(process.env);

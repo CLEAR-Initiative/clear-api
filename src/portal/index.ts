@@ -5,6 +5,8 @@ import { auth } from "../lib/auth.js";
 import { fromNodeHeaders } from "better-auth/node";
 import { prisma } from "../lib/prisma.js";
 import { approveUserById } from "../services/approve-user.js";
+import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
+import { env } from "../utils/env.js";
 import {
   renderPortal,
   renderLoginPage,
@@ -159,6 +161,7 @@ async function computeAdminMetrics(): Promise<AdminMetrics> {
     crises,
     organisations,
     teams,
+    newsletter,
   ] = await Promise.all([
     prisma.$queryRaw<Array<{ c: bigint }>>`
       SELECT COUNT(DISTINCT user_id)::bigint AS c
@@ -181,6 +184,7 @@ async function computeAdminMetrics(): Promise<AdminMetrics> {
     prisma.crises.count(),
     prisma.organisations.count(),
     prisma.teams.count(),
+    fetchNewsletterSubscriberCount(env.BUTTONDOWN_API_KEY),
   ]);
 
   const toNumber = (b: bigint | undefined) => Number(b ?? 0n);
@@ -207,6 +211,7 @@ async function computeAdminMetrics(): Promise<AdminMetrics> {
       organisations,
       teams,
     },
+    newsletter,
   };
 }
 
