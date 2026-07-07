@@ -6,11 +6,63 @@ export interface PortalOptions {
   userRole?: string | null;
 }
 
+const PORTAL_ICON_BASE = "/portal/icons";
+
+const PORTAL_SVGS = {
+  rocket:
+    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.284 10.525 3.439 9.68a.86.86 0 0 1-.21-.88c.082-.243.191-.56.323-.923H.658a.75.75 0 0 1-.57-1.33L1.528 4.465A2.1 2.1 0 0 1 3.22 3.5h2.25c.066-.11.132-.21.197-.309 2.24-3.303 5.575-3.412 7.566-3.046a.75.75 0 0 1 .623.623c.366 1.994.254 5.327-3.046 7.566-.096.066-.2.131-.31.197v2.25c0 .695-.366 1.34-.965 1.693l-2.42 1.435a.75.75 0 0 1-1.059-.32v-2.93a4.6 4.6 0 0 1-1.475.325.86.86 0 0 1-.87-.214ZM10.502 4.594a1.094 1.094 0 1 0 0-2.187 1.094 1.094 0 0 0 0 2.187Z"/></svg>',
+  key: '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9.188 9.625A4.812 4.812 0 1 0 4.602 6.28L.192 10.691a.656.656 0 0 0 0 .928.656.656 0 0 0 .465.193H2.844a.656.656 0 0 0 .656-.656V12.25h1.094a.656.656 0 0 0 .656-.656v-1.094h1.094c.175 0 .342-.068.465-.191l.91-.911a4.77 4.77 0 0 0 1.469.227Zm1.094-7a1.094 1.094 0 1 1-2.188 0 1.094 1.094 0 0 1 2.188 0Z"/></svg>',
+  shield:
+    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 0c.126 0 .252.027.366.079l5.149 2.185c.602.254 1.05.847 1.047 1.564-.014 2.712-1.129 7.675-5.84 9.931a1.75 1.75 0 0 1-1.444 0C1.567 11.504.451 6.54.438 3.828.435 3.112.883 2.518 1.485 2.264L6.636.08A.75.75 0 0 1 7 0Zm0 1.827v10.336C10.773 10.336 11.788 6.292 11.813 3.866L7 1.827Z"/></svg>',
+  doc: '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2.625 0C1.176 0 0 1.176 0 2.625v8.75C0 12.824 1.176 14 2.625 14h8.75c.484 0 .875-.391.875-.875a.875.875 0 0 0-.875-.875V10.5c.484 0 .875-.391.875-.875V.875A.875.875 0 0 0 11.375 0H2.625Zm0 10.5h7v1.75H2.625a.875.875 0 0 1-.875-.875c0-.484.391-.875.875-.875ZM3.5 3.938c0-.24.197-.438.438-.438h5.25a.438.438 0 0 1 0 .875h-5.25a.438.438 0 0 1-.438-.437Zm0 1.312a.438.438 0 0 0 0 .875h5.25a.438.438 0 0 0 0-.875h-5.25Z"/></svg>',
+  chart:
+    '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.375 2.188C4.375 1.463 4.963.875 5.688.875h.875C7.287.875 7.875 1.463 7.875 2.188v9.625c0 .725-.588 1.312-1.313 1.312h-.875c-.725 0-1.312-.587-1.312-1.312V2.188ZM0 7.438C0 6.713.588 6.125 1.313 6.125h.875C2.912 6.125 3.5 6.713 3.5 7.438v4.375c0 .725-.588 1.312-1.313 1.312h-.875C.588 13.125 0 12.537 0 11.812V7.438Zm10.063 2.625h.875c.725 0 1.312.588 1.312 1.313v4.375c0 .725-.587 1.312-1.312 1.312h-.875c-.725 0-1.313-.587-1.313-1.312V3.938c0-.725.588-1.313 1.313-1.313Z"/></svg>',
+  signout:
+    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
+  modalClose:
+    '<svg width="15" height="20" viewBox="0 0 15 20" aria-hidden="true"><path fill="currentColor" d="M2.5 2.5 12.5 12.5M12.5 2.5 2.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  modalInfo:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6.25" stroke="currentColor" stroke-width="1.25" fill="none"/><path fill="currentColor" d="M7 6.25a.75.75 0 0 0-.75.75v3.5a.75.75 0 0 0 1.5 0V7a.75.75 0 0 0-.75-.75ZM7 4.25a.875.875 0 1 0 0 1.75.875.875 0 0 0 0-1.75Z"/></svg>',
+  modalCopy:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="4.5" y="4.5" width="7.5" height="7.5" rx="1.25" stroke="currentColor" stroke-width="1.25" fill="none"/><path fill="currentColor" d="M3.25 9.5h-.5A1.25 1.25 0 0 1 1.5 8.25V3.25A1.25 1.25 0 0 1 2.75 2h5A1.25 1.25 0 0 1 9 3.25v.5"/></svg>',
+  modalCheck:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path fill="currentColor" d="M5.6 10.15 2.85 7.4l.95-.95 1.8 1.8 4.55-4.55.95.95-5.5 5.5Z"/></svg>',
+  modalCheckWatermark:
+    '<svg width="136" height="136" viewBox="0 0 136 136" aria-hidden="true"><path fill="#22c55e" d="M48 68 62 82 88 54" stroke="#22c55e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+} as const;
+
+const PORTAL_ASSETS = {
+  logo: "logo.png",
+  avatar: "avatar-default.png",
+} as const;
+
+function formatAccountLabel(role?: string | null): string {
+  switch (role) {
+    case "admin":
+      return "Admin Account";
+    case "analyst":
+      return "Analyst Account";
+    case "viewer":
+      return "Viewer Account";
+    default:
+      return "Developer Account";
+  }
+}
+
+function portalNavButton(tab: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
+  return `<button type="button" class="nav-item" data-tab="${tab}" title="${escapeHtml(label)}" onclick="showTab('${tab}')">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></button>`;
+}
+
+function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
+  return `<a href="${href}" class="nav-item nav-item--link" title="${escapeHtml(label)}">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
+}
+
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   const isAdmin = userRole === "admin";
-  const adminLink = isAdmin
-    ? `<a href="/portal/admin" style="color:var(--color-accent);font-size:0.8rem;font-weight:600;">Admin</a>`
-    : "";
+  const accountLabel = formatAccountLabel(userRole);
+  const adminAccountHtml = isAdmin
+    ? `<a href="/portal/admin" class="user-role">${escapeHtml(accountLabel)}</a>`
+    : `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,55 +76,358 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --color-bg: #0a0a0b;
-      --color-surface: #141417;
-      --color-border: #26262b;
-      --color-accent: #f2612a;
-      --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6;
-      --color-muted: #9a9ca3;
-      --color-label: #75777e;
-      --on-accent: #0a0a0b;
+      --color-bg: #0a0a0a;
+      --color-surface: #0d0d0d;
+      --color-surface-2: #111111;
+      --color-surface-3: #141414;
+      --color-border: #1f1f1f;
+      --color-border-2: #222222;
+      --color-accent: #ff5c00;
+      --color-accent-hover: #ff6a1a;
+      --color-accent-soft: rgba(255, 92, 0, 0.1);
+      --color-text: #ffffff;
+      --color-muted: #999999;
+      --color-label: #666666;
+      --color-section: #444444;
+      --on-accent: #ffffff;
       --color-success: #22c55e;
       --color-danger: #ef4444;
       --color-warning: #f59e0b;
       --color-code-bg: #0e0e10;
-      --radius: 10px;
+      --radius: 12px;
+      --radius-sm: 6px;
       --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
       --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
+      --sidebar-width: 288px;
+      --sidebar-width-collapsed: 72px;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
+    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; -webkit-font-smoothing: antialiased; }
     a { color: var(--color-accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    /* Nav */
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem; color: var(--color-text); }
-    .nav-brand a { color: inherit; text-decoration: none; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-brand .by { color: var(--color-label); font-weight: 500; font-size: 0.8rem; font-style: italic; }
-    .nav-user { font-size: 0.8rem; color: var(--color-muted); display: flex; align-items: center; gap: 1rem; }
-    .nav-user button { background: none; border: 1px solid var(--color-border); color: var(--color-muted); padding: 0.3rem 0.75rem; border-radius: var(--radius); cursor: pointer; font-size: 0.75rem; }
-    .nav-user button:hover { border-color: var(--color-danger); color: var(--color-danger); }
+    /* Shell */
+    .portal-shell { display: flex; min-height: 100vh; }
 
-    /* Tabs */
-    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--color-border); padding: 0 2rem; background: var(--color-surface); }
-    .tab-btn { padding: 0.75rem 1.25rem; border: none; background: none; color: var(--color-muted); cursor: pointer; border-bottom: 2px solid transparent; font-size: 0.875rem; font-weight: 500; transition: all 0.15s; font-family: var(--font); }
-    .tab-btn:hover { color: var(--color-text); }
-    .tab-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width); flex-shrink: 0; background: var(--color-surface);
+      border-right: 1px solid var(--color-border); display: flex; flex-direction: column;
+      justify-content: space-between; min-height: 100vh;
+      transition: width 0.2s ease;
+      overflow: hidden;
+    }
+    .portal-shell.sidebar-collapsed .sidebar { width: var(--sidebar-width-collapsed); justify-content: flex-start; }
+    .sidebar-top { padding: 32px 32px 0; display: flex; flex-direction: column; gap: 48px; transition: padding 0.2s ease; }
+    .portal-shell.sidebar-collapsed .sidebar-top { padding: 20px 12px 0; gap: 24px; }
+    .sidebar-brand {
+      display: flex; align-items: center; gap: 12px;
+      flex-shrink: 0;
+    }
+    .portal-shell.sidebar-collapsed .sidebar-brand {
+      flex-direction: column; gap: 10px; align-items: center;
+    }
+    .brand-logo-img { width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0; display: block; }
+    .brand-text { min-width: 0; overflow: hidden; white-space: nowrap; transition: opacity 0.15s, max-width 0.2s ease; max-width: 200px; }
+    .portal-shell.sidebar-collapsed .brand-text { opacity: 0; max-width: 0; pointer-events: none; }
+    .brand-title { font-weight: 700; font-size: 14px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--color-text); line-height: 14px; }
+    .brand-sub { font-size: 10px; font-weight: 500; color: var(--color-label); margin-top: 4px; line-height: 15px; }
+    .sidebar-toggle {
+      margin-left: auto; flex-shrink: 0;
+      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--color-border); border-radius: 6px; background: transparent;
+      color: var(--color-muted); cursor: pointer; font-family: var(--font);
+      transition: color 0.15s, border-color 0.15s, transform 0.2s ease;
+    }
+    .sidebar-toggle:hover { color: var(--color-text); border-color: var(--color-border-2); }
+    .portal-shell.sidebar-collapsed .sidebar-toggle { margin-left: 0; transform: rotate(180deg); }
+
+    .nav-section {
+      font-size: 10px; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--color-section);
+      padding: 0 16px; margin-bottom: 6px;
+      white-space: nowrap; overflow: hidden;
+      transition: opacity 0.15s, max-height 0.2s ease; max-height: 24px;
+    }
+    .portal-shell.sidebar-collapsed .nav-section {
+      opacity: 0; max-height: 0; margin: 0; padding: 0; pointer-events: none;
+    }
+    .nav-list { display: flex; flex-direction: column; gap: 6px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 12px; width: 100%;
+      min-height: 40px; padding: 10px 16px; border: none; background: none;
+      color: var(--color-muted); font-size: 14px; font-weight: 500;
+      cursor: pointer; text-align: left; font-family: var(--font);
+      border-right: 2px solid transparent; border-radius: var(--radius-sm);
+      transition: color 0.15s, background 0.15s, border-color 0.15s, padding 0.2s ease;
+      text-decoration: none;
+    }
+    .portal-shell.sidebar-collapsed .nav-item {
+      justify-content: center; padding: 10px 8px; gap: 0;
+      border-right-color: transparent !important;
+    }
+    .nav-label {
+      white-space: nowrap; overflow: hidden;
+      transition: opacity 0.15s, max-width 0.2s ease; max-width: 180px;
+    }
+    .portal-shell.sidebar-collapsed .nav-label {
+      opacity: 0; max-width: 0; pointer-events: none;
+    }
+    .nav-item:hover { color: var(--color-text); text-decoration: none; }
+    .nav-item.active {
+      color: var(--color-accent); border-right-color: var(--color-accent);
+      background: var(--color-accent-soft);
+    }
+    .nav-icon-img { flex-shrink: 0; display: block; color: inherit; }
+    .nav-item:not(.active) .nav-icon-img { opacity: 0.6; }
+    .nav-item.active .nav-icon-img { opacity: 1; color: var(--color-accent); }
+
+    .sidebar-footer { padding: 24px; transition: padding 0.2s ease; flex-shrink: 0; }
+    .portal-shell.sidebar-collapsed .sidebar-footer {
+      padding: 0 12px 16px; margin-top: auto;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .user-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--color-surface-3); border-radius: 8px; padding: 8px; margin-bottom: 16px;
+      transition: background 0.2s ease, padding 0.2s ease;
+    }
+    .portal-shell.sidebar-collapsed .user-card {
+      justify-content: center; padding: 0; margin-bottom: 0; background: transparent;
+    }
+    .user-avatar-link { display: flex; flex-shrink: 0; border-radius: 9999px; }
+    .user-avatar-link:hover { opacity: 0.9; text-decoration: none; }
+    .user-avatar {
+      width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333;
+      object-fit: cover; flex-shrink: 0; display: block;
+    }
+    .user-details { min-width: 0; overflow: hidden; transition: opacity 0.15s, max-width 0.2s ease; max-width: 200px; }
+    .portal-shell.sidebar-collapsed .user-details { opacity: 0; max-width: 0; pointer-events: none; }
+    .user-email { font-size: 12px; font-weight: 500; color: var(--color-text); line-height: 16px; word-break: break-all; }
+    .user-role { font-size: 10px; color: var(--color-label); line-height: 15px; margin-top: 0; text-decoration: none; display: block; }
+    a.user-role:hover { color: var(--color-accent); }
+    .signout-btn {
+      width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px; border-radius: var(--radius); border: 1px solid var(--color-border);
+      background: transparent; color: var(--color-label); font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: var(--font);
+      transition: padding 0.2s ease, width 0.2s ease, height 0.2s ease;
+    }
+    .portal-shell.sidebar-collapsed .signout-btn {
+      width: 40px; height: 40px; padding: 0; margin: 0 auto; gap: 0;
+    }
+    .signout-btn:hover { color: var(--color-text); border-color: var(--color-border-2); }
+    .signout-btn svg { color: var(--color-label); flex-shrink: 0; }
+    .signout-label { white-space: nowrap; transition: opacity 0.15s, max-width 0.2s ease; max-width: 80px; overflow: hidden; }
+    .portal-shell.sidebar-collapsed .signout-label { opacity: 0; max-width: 0; }
+
+    /* Main */
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); }
+    .main-header {
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 20px 32px; border-bottom: 1px solid var(--color-border);
+      background: rgba(13, 13, 13, 0.8); backdrop-filter: blur(6px);
+    }
+    .system-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 500; color: #aaaaaa;
+      background: #1a1a1a; border: 1px solid var(--color-border-2);
+      border-radius: 9999px; padding: 4px 12px;
+    }
+    .system-status .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); flex-shrink: 0;
+    }
+    .main-content { flex: 1; overflow-y: auto; padding: 32px; max-width: 1280px; width: 100%; }
 
     /* Tab panels */
-    .tab-panel { padding: 2.5rem 2rem; max-width: 860px; margin: 0 auto; display: none; }
+    .tab-panel { display: none; }
     .tab-panel.active { display: block; }
-    .tab-panel h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .tab-panel h1 { font-size: 24px; font-weight: 700; line-height: 32px; margin-bottom: 8px; letter-spacing: -0.02em; }
     .tab-panel h2 { font-size: 1.15rem; margin: 2rem 0 0.75rem; color: var(--color-text); }
     .tab-panel h3 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--color-muted); }
-    .tab-panel p { color: var(--color-muted); margin-bottom: 0.75rem; }
-    .tab-panel ul { padding-left: 1.5rem; color: var(--color-muted); }
+    .tab-panel p { color: #888888; margin-bottom: 0.75rem; font-size: 14px; line-height: 20px; }
+    .tab-panel ul { padding-left: 1.5rem; color: #888888; }
     .tab-panel li { margin: 0.4rem 0; }
-    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
+    .subtitle { font-size: 14px; color: #888888; margin-bottom: 0; line-height: 20px; }
+
+    /* Page header row */
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 24px; margin-bottom: 40px; flex-wrap: wrap;
+    }
+    .page-header-text { flex: 1; min-width: 240px; }
+
+    /* Create key button */
+    .btn-create-key {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      min-width: 202px; height: 48px; padding: 0 20px 0 16px;
+      background: var(--color-accent); color: var(--on-accent); border: none;
+      border-radius: var(--radius); font-size: 14px; font-weight: 700;
+      cursor: pointer; font-family: var(--font); white-space: nowrap;
+      box-shadow: 0 10px 15px -3px rgba(255, 92, 0, 0.1), 0 4px 6px -4px rgba(255, 92, 0, 0.1);
+      transition: background 0.15s;
+    }
+    .btn-create-key:hover { background: var(--color-accent-hover); }
+    .btn-create-key-plus { font-size: 24px; font-weight: 700; line-height: 1; margin-right: 2px; }
+
+    /* Keys panel */
+    .keys-panel {
+      background: var(--color-surface-2); border: 1px solid var(--color-border);
+      border-radius: var(--radius); min-height: 164px; overflow: hidden;
+    }
+    .keys-empty {
+      min-height: 164px; display: flex; align-items: center; justify-content: center;
+      color: #888888; font-size: 14px; line-height: 20px;
+    }
+    .keys-table { margin: 0; }
+    .keys-table th {
+      background: var(--color-bg); font-size: 10px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--color-label); font-weight: 700;
+      padding: 12px 20px; border-bottom: 1px solid var(--color-border);
+    }
+    .keys-table td {
+      padding: 14px 20px; border-bottom: 1px solid var(--color-border);
+      font-size: 14px; color: var(--color-text);
+    }
+    .keys-table tr:last-child td { border-bottom: none; }
+    .keys-table .actions-col { text-align: right; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; z-index: 200;
+    }
+    .modal {
+      width: 100%; max-width: 440px; background: var(--color-surface-3);
+      border: 1px solid var(--color-border); border-radius: var(--radius);
+      padding: 24px;
+    }
+    .modal.modal--key-created {
+      max-width: 520px; padding: 0; background: #111;
+      border: 1px solid #1f1f1f; border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      overflow: hidden; position: relative;
+    }
+    .modal h3 { font-size: 16px; font-weight: 700; color: var(--color-text); margin-bottom: 4px; }
+    .modal p { font-size: 13px; color: var(--color-label); margin-bottom: 20px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .btn-ghost {
+      padding: 10px 16px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);
+      background: transparent; color: var(--color-muted); font-size: 14px; font-weight: 500;
+      cursor: pointer; font-family: var(--font);
+    }
+    .btn-ghost:hover { color: var(--color-text); border-color: var(--color-border-2); }
+
+    /* Key created modal (Figma 87-1173 / 87-1956) */
+    .key-created-watermark {
+      position: absolute; right: 23px; top: 30px; width: 136px; height: 136px;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+    }
+    .key-created-modal.key-copied .key-created-watermark { opacity: 0.1; }
+    .key-created-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; padding: 24px 24px 16px;
+    }
+    .key-created-header h3 {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.5px; line-height: 30px;
+      color: #fff; margin: 0 0 8px;
+    }
+    .key-created-header p {
+      font-size: 14px; line-height: 20px; color: #888; margin: 0;
+    }
+    .modal-close-btn {
+      flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center;
+      justify-content: center; border: none; background: transparent; color: #666;
+      cursor: pointer; padding: 0; border-radius: 6px;
+    }
+    .modal-close-btn:hover { color: #fff; }
+    .key-created-body { padding: 8px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .key-created-warning {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 16px; border-radius: 12px;
+      background: rgba(255, 92, 0, 0.05); border: 1px solid rgba(255, 92, 0, 0.2);
+      color: #ff5c00; font-size: 13px; font-weight: 500; line-height: 19.5px;
+    }
+    .key-created-warning svg { flex-shrink: 0; margin-top: 2px; color: #ff5c00; }
+    .key-created-field-wrap label {
+      display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+      text-transform: uppercase; color: #666; margin-bottom: 8px;
+    }
+    .key-created-field {
+      display: flex; align-items: center; gap: 8px;
+      background: #0a0a0a; border: 1px solid #222; border-radius: 8px;
+      padding: 14px 16px; transition: border-color 0.2s, background 0.2s;
+    }
+    .key-created-modal.key-copied .key-created-field {
+      background: #0b120e; border-color: #166534;
+    }
+    .key-created-field code {
+      flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 14px;
+      line-height: 20px; color: #fff; letter-spacing: -0.027px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .key-created-modal.key-copied .key-created-field code { color: #22c55e; }
+    .key-field-copy-btn {
+      flex-shrink: 0; width: 28px; height: 28px; display: flex; align-items: center;
+      justify-content: center; border: none; background: transparent; color: #666;
+      cursor: pointer; padding: 0; border-radius: 4px;
+    }
+    .key-field-copy-btn:hover { color: #fff; }
+    .key-created-modal.key-copied .key-field-copy-btn { display: none; }
+    .key-created-footer {
+      display: flex; justify-content: flex-end; padding: 24px;
+    }
+    .btn-copy-key {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 32px; border: none; border-radius: 8px;
+      background: #ff5c00; color: #fff; font-size: 14px; font-weight: 600;
+      letter-spacing: 0.16px; cursor: pointer; font-family: var(--font);
+      box-shadow: 0 4px 6px rgba(255, 92, 0, 0.25);
+    }
+    .btn-copy-key:hover { background: #ff6a1a; }
+    .btn-copy-key svg { flex-shrink: 0; }
+
+    /* Confirm modal (revoke, etc.) */
+    .modal.modal--confirm {
+      max-width: 440px; padding: 0; background: #111;
+      border: 1px solid #1f1f1f; border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    }
+    .confirm-modal-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; padding: 24px 24px 0;
+    }
+    .confirm-modal-header h3 {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.5px; line-height: 30px;
+      color: #fff; margin: 0;
+    }
+    .confirm-modal-body { padding: 16px 24px 0; }
+    .confirm-modal-body p {
+      font-size: 14px; line-height: 20px; color: #888; margin: 0;
+    }
+    .confirm-modal-body strong { color: #fff; font-weight: 600; }
+    .confirm-modal-warning {
+      display: flex; gap: 12px; align-items: flex-start; margin-top: 16px;
+      padding: 16px; border-radius: 12px;
+      background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #f87171; font-size: 13px; font-weight: 500; line-height: 19.5px;
+    }
+    .confirm-modal-warning svg { flex-shrink: 0; margin-top: 1px; color: #f87171; }
+    .confirm-modal-footer {
+      display: flex; gap: 10px; justify-content: flex-end;
+      padding: 24px;
+    }
+    .btn-danger-solid {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 12px 24px; border: none; border-radius: 8px;
+      background: #ef4444; color: #fff; font-size: 14px; font-weight: 600;
+      cursor: pointer; font-family: var(--font);
+      box-shadow: 0 4px 6px rgba(239, 68, 68, 0.2);
+    }
+    .btn-danger-solid:hover { background: #dc2626; }
+    .btn-danger-solid:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Code blocks */
     pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
@@ -86,7 +441,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     /* Steps */
     .steps { margin-top: 1rem; }
     .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
-    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: #1a0a02; }
     .step-content h3 { margin: 0 0 0.25rem; color: var(--color-text); }
     .step-content p { margin: 0.25rem 0; }
 
@@ -99,6 +454,10 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .badge-revoked { background: #450a0a; color: #f87171; }
     .badge-expired { background: #431407; color: #fb923c; }
 
+    input[type="text"], input[type="date"] { padding: 0.5rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-code-bg); color: var(--color-text); font-size: 0.875rem; font-family: var(--font); }
+    input:focus { outline: none; border-color: var(--color-accent); }
+    .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
+
     /* Buttons */
     .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-size: 0.875rem; transition: all 0.15s; font-family: var(--font); }
     .btn-primary { background: var(--color-accent); color: var(--on-accent); }
@@ -108,22 +467,6 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Key reveal */
-    .key-reveal { background: #14532d; border: 1px solid #16a34a; border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1rem 0; display: none; }
-    .key-reveal.visible { display: block; }
-    .key-reveal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
-    .key-reveal-header strong { color: #4ade80; }
-    .key-reveal p { font-size: 0.8rem; color: #86efac; margin: 0; }
-    .key-reveal code { color: #4ade80; word-break: break-all; display: block; margin-top: 0.5rem; background: #0f2d1a; padding: 0.5rem 0.75rem; border-radius: 4px; }
-
-    /* Create form */
-    .create-form { margin: 1.5rem 0; padding: 1.25rem; background: var(--color-surface); border-radius: var(--radius); border: 1px solid var(--color-border); }
-    .create-form h3 { margin: 0 0 1rem; color: var(--color-text); }
-    .form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
-    .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
-    input[type="text"], input[type="date"] { padding: 0.5rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-code-bg); color: var(--color-text); font-size: 0.875rem; font-family: var(--font); }
-    input:focus { outline: none; border-color: var(--color-accent); }
-
     /* Notices */
     .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
     .notice-warning { background: #451a03; border: 1px solid var(--color-warning); color: #fde68a; }
@@ -131,27 +474,98 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
 
     .error-text { color: var(--color-danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .empty-state { color: var(--color-muted); padding: 2rem; text-align: center; }
+
+    /* Usage analytics */
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1.5rem 0 2rem; }
+    .stat-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.1rem 1.2rem; }
+    .stat-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-label); font-weight: 600; margin-bottom: 0.35rem; }
+    .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.25rem; }
+
+    /* Getting started CTAs */
+    .getting-started-ctas {
+      display: flex; gap: 16px; flex-wrap: wrap; margin-top: 48px;
+    }
+    .btn-cta-secondary {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 12px 24px; border-radius: var(--radius);
+      border: 1px solid rgba(255, 92, 0, 0.4); background: rgba(204, 88, 23, 0.2);
+      color: var(--color-text); font-size: 14px; font-weight: 700;
+      text-decoration: none; font-family: var(--font);
+    }
+    .btn-cta-secondary:hover { text-decoration: none; border-color: var(--color-accent); }
+    .btn-cta-primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 12px 24px; border-radius: var(--radius);
+      border: none; background: var(--color-accent); color: var(--on-accent);
+      font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--font);
+      box-shadow: 0 10px 15px -3px rgba(255, 92, 0, 0.1), 0 4px 6px -4px rgba(255, 92, 0, 0.1);
+    }
+    .btn-cta-primary:hover { background: var(--color-accent-hover); }
+
+    @media (max-width: 768px) {
+      .portal-shell { flex-direction: column; }
+      .portal-shell.sidebar-collapsed .sidebar { width: 100%; }
+      .sidebar { width: 100%; min-height: auto; border-right: none; border-bottom: 1px solid var(--color-border); }
+      .sidebar-top { padding: 20px 20px 0; gap: 24px; }
+      .sidebar-footer { display: none; }
+      .main-content { padding: 20px; }
+      .main-header { padding: 16px 20px; }
+      .page-header { margin-bottom: 24px; }
+      .btn-create-key { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-brand"><a href="/"><span class="c">CLEAR</span> API</a> <span class="by">Developer Portal</span></div>
-    <div class="nav-user">
-      <a href="/docs" style="color:var(--color-muted);font-size:0.8rem;">Docs</a>
-      ${adminLink}
-      <span>${escapeHtml(userEmail)}</span>
-      <button onclick="signOut()">Sign Out</button>
-    </div>
-  </nav>
+  <div class="portal-shell" id="portal-shell">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
+          <div class="brand-text">
+            <div class="brand-title">Clear API</div>
+            <div class="brand-sub">Developer Portal</div>
+          </div>
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+        </div>
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="getting-started" onclick="showTab('getting-started')">Getting Started</button>
-    <button class="tab-btn" data-tab="api-keys" onclick="showTab('api-keys')">API Keys</button>
-    <button class="tab-btn" data-tab="authentication" onclick="showTab('authentication')">Authentication</button>
-    <button class="tab-btn" data-tab="reference" onclick="showTab('reference')">API Reference</button>
-  </div>
+        <nav class="nav-list" aria-label="Portal navigation">
+          <div class="nav-section">Menu</div>
+          ${portalNavButton("getting-started", "Getting Started", "rocket")}
+          ${portalNavButton("api-keys", "API Keys", "key")}
+          ${portalNavButton("authentication", "Authentication", "shield")}
 
-  <!-- Getting Started -->
+          <div class="nav-section" style="margin-top:18px">Resources</div>
+          ${portalNavButton("reference", "API Reference", "doc")}
+          ${portalNavLink("/docs", "API Docs", "doc")}
+          ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="user-card">
+          ${isAdmin ? `<a href="/portal/admin" class="user-avatar-link" title="Admin dashboard">` : ""}
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.avatar}" alt="" class="user-avatar" width="32" height="32">
+          ${isAdmin ? `</a>` : ""}
+          <div class="user-details">
+            <div class="user-email">${escapeHtml(userEmail)}</div>
+            ${adminAccountHtml}
+          </div>
+        </div>
+        <button type="button" class="signout-btn" onclick="signOut()" title="Sign out">
+          ${PORTAL_SVGS.signout}
+          <span class="signout-label">Sign Out</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="main-header">
+        <div class="system-status" title="All systems operational"><span class="dot"></span> System Status: Operational</div>
+      </header>
+      <div class="main-content">
   <div id="tab-getting-started" class="tab-panel active">
     <h1>Getting Started</h1>
     <p class="subtitle">Start making authenticated API calls in minutes.</p>
@@ -161,7 +575,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         <div class="step-num">1</div>
         <div class="step-content">
           <h3>Create an API Key</h3>
-          <p>Go to the <a href="#api-keys" onclick="showTab('api-keys')">API Keys</a> tab and click <strong>Create Key</strong>. Give it a descriptive name like <code>my-app-prod</code>.</p>
+          <p>Go to the <a href="#api-keys" onclick="showTab('api-keys')">API Keys</a> tab and click <strong>Create New API Key</strong>. Give it a descriptive name like <code>my-app-prod</code>.</p>
         </div>
       </div>
       <div class="step">
@@ -190,52 +604,116 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         </div>
       </div>
     </div>
+
+    <div class="getting-started-ctas">
+      <a href="/docs" class="btn-cta-secondary">Read documentation</a>
+      <button type="button" class="btn-cta-primary" onclick="showTab('api-keys')">Manage API Keys &rarr;</button>
+    </div>
   </div>
 
   <!-- API Keys -->
   <div id="tab-api-keys" class="tab-panel">
-    <h1>API Keys</h1>
-    <p>Manage your personal API keys. Maximum 10 active keys per account.</p>
-
-    <div id="new-key-reveal" class="key-reveal">
-      <div class="key-reveal-header">
-        <strong>New key created &mdash; save this now!</strong>
-        <button class="btn btn-primary btn-sm" onclick="copyText(document.getElementById('new-key-value').textContent, this)">Copy</button>
+    <div class="page-header">
+      <div class="page-header-text">
+        <h1>API Keys</h1>
+        <p class="subtitle">Manage your personal API keys. Maximum 10 active keys per account.</p>
       </div>
-      <p>This key is shown once and cannot be retrieved again.</p>
-      <code id="new-key-value"></code>
+      <button type="button" class="btn-create-key" onclick="openCreateKeyModal()">
+        <span class="btn-create-key-plus">+</span>
+        Create New API Key
+      </button>
     </div>
 
-    <div class="create-form">
-      <h3>Create New Key</h3>
-      <div class="form-row">
-        <div class="form-group">
+    <div class="keys-panel" id="keys-panel">
+      <div id="keys-empty" class="keys-empty">No API Keys yet.</div>
+      <table class="key-table keys-table" id="keys-table" style="display:none">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Last Used</th>
+            <th class="actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="key-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="create-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCreateKeyModal()">
+    <div class="modal" id="create-key-modal-panel" role="dialog" aria-labelledby="create-key-title">
+      <div id="create-key-form-view">
+        <h3 id="create-key-title">Create New Key</h3>
+        <p>Give your key a descriptive name. You can optionally set an expiry date.</p>
+        <div class="form-group" style="margin-bottom:12px">
           <label for="key-name">Name (required)</label>
-          <input type="text" id="key-name" placeholder="my-app-prod" style="width:220px">
+          <input type="text" id="key-name" placeholder="my-app-prod" style="width:100%">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:4px">
           <label for="key-expires">Expires (optional)</label>
-          <input type="date" id="key-expires">
+          <input type="date" id="key-expires" style="width:100%">
         </div>
-        <button class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
+        <div id="create-error" class="error-text"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeCreateKeyModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
+        </div>
       </div>
-      <div id="create-error" class="error-text"></div>
+      <div id="create-key-success-view" class="key-created-modal" style="display:none">
+        <div class="key-created-watermark">${PORTAL_SVGS.modalCheckWatermark}</div>
+        <div class="key-created-header">
+          <div>
+            <h3 id="create-key-success-title">Your API Key has been created</h3>
+            <p>Your API Key is a secure credential for accessing the API. Do not share it or expose it in browsers, or other client-side code.</p>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeCreateKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+        </div>
+        <div class="key-created-body">
+          <div class="key-created-warning">
+            ${PORTAL_SVGS.modalInfo}
+            <div>
+              <div>Important: your API Key will only be displayed once.</div>
+              <div>Please store it securely.</div>
+            </div>
+          </div>
+          <div class="key-created-field-wrap">
+            <label for="new-key-value">API Key</label>
+            <div class="key-created-field">
+              <code id="new-key-value"></code>
+              <button type="button" class="key-field-copy-btn" onclick="copyApiKey()" aria-label="Copy API key">${PORTAL_SVGS.modalCopy}</button>
+            </div>
+          </div>
+        </div>
+        <div class="key-created-footer">
+          <button type="button" class="btn-copy-key" id="copy-key-btn" onclick="copyApiKey()">
+            ${PORTAL_SVGS.modalCopy}
+            <span class="btn-copy-key-label">Copy Key</span>
+          </button>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <table class="key-table">
-      <thead>
-        <tr>
-          <th>Key</th>
-          <th>Name</th>
-          <th>Status</th>
-          <th>Last Used</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="key-table-body">
-        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
-      </tbody>
-    </table>
+  <div id="revoke-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRevokeKeyModal()">
+    <div class="modal modal--confirm" role="alertdialog" aria-labelledby="revoke-key-title" aria-describedby="revoke-key-desc">
+      <div class="confirm-modal-header">
+        <h3 id="revoke-key-title">Revoke API Key?</h3>
+        <button type="button" class="modal-close-btn" onclick="closeRevokeKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+      </div>
+      <div class="confirm-modal-body">
+        <p id="revoke-key-desc">Are you sure you want to revoke <strong id="revoke-key-name"></strong>? This action cannot be undone.</p>
+        <div class="confirm-modal-warning">
+          ${PORTAL_SVGS.modalInfo}
+          <div>Revoked keys stop working immediately. Any integrations using this key will fail until you create a new one.</div>
+        </div>
+        <div id="revoke-error" class="error-text" style="margin-top:12px"></div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn-ghost" onclick="closeRevokeKeyModal()">Cancel</button>
+        <button type="button" class="btn-danger-solid" id="revoke-confirm-btn" onclick="confirmRevokeKey()">Revoke Key</button>
+      </div>
+    </div>
   </div>
 
   <!-- Authentication -->
@@ -361,17 +839,49 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     </table>
   </div>
 
+  <!-- Usage Analytics -->
+  <div id="tab-usage-analytics" class="tab-panel">
+    <h1>Usage Analytics</h1>
+    <p class="subtitle">API key activity for your account. Last-used timestamps update when a key authenticates a request.</p>
+
+    <div id="usage-stats" class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Active keys</div><div class="stat-value" id="stat-active">—</div></div>
+      <div class="stat-card"><div class="stat-label">Total keys</div><div class="stat-value" id="stat-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Last activity</div><div class="stat-value" id="stat-last" style="font-size:1.1rem">—</div><div class="stat-sub" id="stat-last-sub"></div></div>
+    </div>
+
+    <table class="key-table">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Last used</th>
+        </tr>
+      </thead>
+      <tbody id="usage-table-body">
+        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+      </div><!-- /.main-content -->
+    </div><!-- /.main -->
+  </div><!-- /.portal-shell -->
+
   <script>
     // --- Tab routing ---
     function showTab(name) {
       document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
-      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.nav-item[data-tab]').forEach(function(b) { b.classList.remove('active'); });
       var panel = document.getElementById('tab-' + name);
-      var btn = document.querySelector('[data-tab="' + name + '"]');
+      var btn = document.querySelector('.nav-item[data-tab="' + name + '"]');
       if (panel) panel.classList.add('active');
       if (btn) btn.classList.add('active');
       history.replaceState(null, '', '#' + name);
       if (name === 'api-keys') loadApiKeys();
+      if (name === 'usage-analytics') loadUsageAnalytics();
     }
 
     // Init from hash
@@ -379,6 +889,31 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     if (document.getElementById('tab-' + initialTab)) {
       showTab(initialTab);
     }
+
+    // --- Collapsible sidebar ---
+    function toggleSidebar() {
+      var shell = document.getElementById('portal-shell');
+      var collapsed = shell.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('portal-sidebar-collapsed', collapsed ? '1' : '0');
+      var toggleBtn = document.getElementById('sidebar-toggle');
+      if (toggleBtn) {
+        var label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        toggleBtn.setAttribute('aria-label', label);
+        toggleBtn.title = label;
+      }
+    }
+
+    (function initSidebar() {
+      if (localStorage.getItem('portal-sidebar-collapsed') === '1') {
+        var shell = document.getElementById('portal-shell');
+        shell.classList.add('sidebar-collapsed');
+        var toggleBtn = document.getElementById('sidebar-toggle');
+        if (toggleBtn) {
+          toggleBtn.setAttribute('aria-label', 'Expand sidebar');
+          toggleBtn.title = 'Expand sidebar';
+        }
+      }
+    })();
 
     // --- GraphQL helper ---
     async function gql(query, variables) {
@@ -396,25 +931,111 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- API Key Management ---
     var keysLoaded = false;
 
+    function openCreateKeyModal() {
+      resetCreateKeyModal();
+      document.getElementById('create-key-modal').style.display = 'flex';
+      document.getElementById('key-name').focus();
+    }
+
+    function resetCreateKeyModal() {
+      var panel = document.getElementById('create-key-modal-panel');
+      var successView = document.getElementById('create-key-success-view');
+      panel.classList.remove('modal--key-created');
+      document.getElementById('create-key-form-view').style.display = '';
+      successView.style.display = 'none';
+      successView.classList.remove('key-copied');
+      document.getElementById('key-name').value = '';
+      document.getElementById('key-expires').value = '';
+      document.getElementById('new-key-value').textContent = '';
+      document.getElementById('new-key-value').removeAttribute('data-full-key');
+      var copyLabel = document.querySelector('#copy-key-btn .btn-copy-key-label');
+      if (copyLabel) copyLabel.textContent = 'Copy Key';
+      var copyBtn = document.getElementById('copy-key-btn');
+      if (copyBtn) copyBtn.innerHTML = '${PORTAL_SVGS.modalCopy.replace(/'/g, "\\'")}<span class="btn-copy-key-label">Copy Key</span>';
+      showCreateError('');
+      var btn = document.getElementById('create-btn');
+      btn.disabled = false;
+      btn.textContent = 'Create Key';
+    }
+
+    function closeCreateKeyModal() {
+      document.getElementById('create-key-modal').style.display = 'none';
+      resetCreateKeyModal();
+    }
+
+    function maskApiKey(key) {
+      if (!key || key.length < 16) return key;
+      var start = key.slice(0, 12);
+      var end = key.slice(-4);
+      var dotCount = Math.min(28, Math.max(12, key.length - 16));
+      return start + '.'.repeat(dotCount) + end;
+    }
+
+    function showKeyCreated(fullKey) {
+      var panel = document.getElementById('create-key-modal-panel');
+      var successView = document.getElementById('create-key-success-view');
+      var valueEl = document.getElementById('new-key-value');
+      valueEl.setAttribute('data-full-key', fullKey);
+      valueEl.textContent = maskApiKey(fullKey);
+      document.getElementById('create-key-form-view').style.display = 'none';
+      successView.style.display = '';
+      successView.classList.remove('key-copied');
+      panel.classList.add('modal--key-created');
+    }
+
+    async function copyApiKey() {
+      var valueEl = document.getElementById('new-key-value');
+      var fullKey = valueEl.getAttribute('data-full-key');
+      if (!fullKey) return;
+      try {
+        await navigator.clipboard.writeText(fullKey);
+      } catch (e) {
+        var ta = document.createElement('textarea');
+        ta.value = fullKey;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      var successView = document.getElementById('create-key-success-view');
+      successView.classList.add('key-copied');
+      valueEl.textContent = maskApiKey(fullKey) + ' ✓';
+      var copyBtn = document.getElementById('copy-key-btn');
+      if (copyBtn) {
+        copyBtn.innerHTML = '${PORTAL_SVGS.modalCheck.replace(/'/g, "\\'")}<span class="btn-copy-key-label">Key copied!</span>';
+      }
+    }
+
     async function loadApiKeys() {
       if (keysLoaded) return;
-      var tbody = document.getElementById('key-table-body');
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading...</td></tr>';
+      var empty = document.getElementById('keys-empty');
+      var table = document.getElementById('keys-table');
+      empty.style.display = 'flex';
+      empty.textContent = 'Loading...';
+      table.style.display = 'none';
       try {
         var data = await gql('query { myApiKeys { id name prefix expiresAt lastUsedAt revokedAt createdAt } }');
         keysLoaded = true;
         renderKeyTable(data.myApiKeys);
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="error-text">' + e.message + '</td></tr>';
+        empty.style.display = 'flex';
+        empty.textContent = e.message;
+        table.style.display = 'none';
       }
     }
 
     function renderKeyTable(keys) {
+      var empty = document.getElementById('keys-empty');
+      var table = document.getElementById('keys-table');
       var tbody = document.getElementById('key-table-body');
       if (!keys.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No API keys yet. Create one above.</td></tr>';
+        empty.style.display = 'flex';
+        empty.textContent = 'No API Keys yet.';
+        table.style.display = 'none';
         return;
       }
+      empty.style.display = 'none';
+      table.style.display = 'table';
       tbody.innerHTML = keys.map(function(k) {
         var now = new Date();
         var status = k.revokedAt ? 'revoked' : (k.expiresAt && new Date(k.expiresAt) < now) ? 'expired' : 'active';
@@ -424,8 +1045,8 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
           + '<td>' + escapeHtmlJs(k.name) + '</td>'
           + '<td><span class="badge badge-' + status + '">' + status + '</span></td>'
           + '<td>' + lastUsed + '</td>'
-          + '<td>' + (status === 'active'
-            ? '<button class="btn btn-danger btn-sm" onclick="revokeKey(' + k.id + ', \\'' + escapeHtmlJs(k.name).replace(/'/g, "\\\\'") + '\\')">Revoke</button>'
+          + '<td class="actions-col">' + (status === 'active'
+            ? '<button type="button" class="btn btn-danger btn-sm" data-revoke-id="' + escapeHtmlJs(k.id) + '" data-revoke-name="' + escapeHtmlJs(k.name) + '">Revoke</button>'
             : '&mdash;')
           + '</td></tr>';
       }).join('');
@@ -447,11 +1068,9 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
           'mutation CreateApiKey($input: CreateApiKeyInput!) { createApiKey(input: $input) { key apiKey { id name prefix createdAt } } }',
           { input: input }
         );
-        document.getElementById('new-key-value').textContent = data.createApiKey.key;
-        document.getElementById('new-key-reveal').classList.add('visible');
-        nameInput.value = '';
-        expiresInput.value = '';
+        showKeyCreated(data.createApiKey.key);
         keysLoaded = false;
+        usageLoaded = false;
         loadApiKeys();
       } catch (e) {
         showCreateError(e.message);
@@ -461,19 +1080,101 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       }
     }
 
-    async function revokeKey(id, name) {
-      if (!confirm('Revoke key "' + name + '"? This cannot be undone.')) return;
+    var pendingRevoke = { id: null, name: null };
+
+    function openRevokeKeyModal(id, name) {
+      pendingRevoke.id = id;
+      pendingRevoke.name = name;
+      document.getElementById('revoke-key-name').textContent = name;
+      document.getElementById('revoke-error').textContent = '';
+      var btn = document.getElementById('revoke-confirm-btn');
+      btn.disabled = false;
+      btn.textContent = 'Revoke Key';
+      document.getElementById('revoke-key-modal').style.display = 'flex';
+    }
+
+    function closeRevokeKeyModal() {
+      document.getElementById('revoke-key-modal').style.display = 'none';
+      pendingRevoke.id = null;
+      pendingRevoke.name = null;
+      document.getElementById('revoke-error').textContent = '';
+    }
+
+    async function confirmRevokeKey() {
+      if (!pendingRevoke.id) return;
+      var btn = document.getElementById('revoke-confirm-btn');
+      btn.disabled = true;
+      btn.textContent = 'Revoking...';
+      document.getElementById('revoke-error').textContent = '';
       try {
-        await gql('mutation RevokeApiKey($id: Int!) { revokeApiKey(id: $id) { id revokedAt } }', { id: id });
+        await gql('mutation RevokeApiKey($id: String!) { revokeApiKey(id: $id) { id revokedAt } }', { id: pendingRevoke.id });
+        closeRevokeKeyModal();
         keysLoaded = false;
-        loadApiKeys();
+        usageLoaded = false;
+        await loadApiKeys();
       } catch (e) {
-        alert('Failed to revoke: ' + e.message);
+        document.getElementById('revoke-error').textContent = e.message;
+        btn.disabled = false;
+        btn.textContent = 'Revoke Key';
       }
     }
 
+    document.getElementById('keys-table').addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-revoke-id]');
+      if (!btn) return;
+      openRevokeKeyModal(btn.getAttribute('data-revoke-id'), btn.getAttribute('data-revoke-name'));
+    });
+
     function showCreateError(msg) {
       document.getElementById('create-error').textContent = msg;
+    }
+
+    // --- Usage Analytics ---
+    var usageLoaded = false;
+
+    async function loadUsageAnalytics() {
+      if (usageLoaded) return;
+      var tbody = document.getElementById('usage-table-body');
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading...</td></tr>';
+      try {
+        var data = await gql('query { myApiKeys { id name prefix expiresAt lastUsedAt revokedAt createdAt } }');
+        usageLoaded = true;
+        renderUsageAnalytics(data.myApiKeys);
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="error-text">' + e.message + '</td></tr>';
+      }
+    }
+
+    function renderUsageAnalytics(keys) {
+      var now = new Date();
+      var active = keys.filter(function(k) {
+        return !k.revokedAt && (!k.expiresAt || new Date(k.expiresAt) >= now);
+      });
+      var lastUsedDates = keys.map(function(k) { return k.lastUsedAt ? new Date(k.lastUsedAt) : null; }).filter(Boolean);
+      var mostRecent = lastUsedDates.length ? new Date(Math.max.apply(null, lastUsedDates.map(function(d) { return d.getTime(); }))) : null;
+
+      document.getElementById('stat-active').textContent = String(active.length);
+      document.getElementById('stat-total').textContent = String(keys.length);
+      document.getElementById('stat-last').textContent = mostRecent ? mostRecent.toLocaleDateString() : 'Never';
+      document.getElementById('stat-last-sub').textContent = mostRecent ? mostRecent.toLocaleTimeString() : 'No authenticated requests yet';
+
+      var tbody = document.getElementById('usage-table-body');
+      if (!keys.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No API keys yet. Create one on the API Keys page.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = keys.map(function(k) {
+        var status = k.revokedAt ? 'revoked' : (k.expiresAt && new Date(k.expiresAt) < now) ? 'expired' : 'active';
+        var created = new Date(k.createdAt).toLocaleDateString();
+        var lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : 'Never';
+        return '<tr>'
+          + '<td><code>' + k.prefix + '...</code></td>'
+          + '<td>' + escapeHtmlJs(k.name) + '</td>'
+          + '<td><span class="badge badge-' + status + '">' + status + '</span></td>'
+          + '<td>' + created + '</td>'
+          + '<td>' + lastUsed + '</td>'
+          + '</tr>';
+      }).join('');
     }
 
     // --- Clipboard ---
