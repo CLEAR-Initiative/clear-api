@@ -1430,7 +1430,7 @@ export interface AdminMetrics {
   };
 }
 
-export type AdminTab = "dashboard" | "pending";
+export type AdminTab = "dashboard" | "pending" | "organisations";
 
 interface AdminShellOptions {
   currentUserEmail: string;
@@ -1542,6 +1542,21 @@ function renderAdminShell(opts: AdminShellOptions): string {
     .metric-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.4rem; }
     .metric-breakdown { display: flex; flex-wrap: wrap; gap: 0.4rem 0.85rem; margin-top: 0.75rem; font-size: 0.78rem; color: var(--color-muted); }
     .metric-breakdown span strong { color: var(--color-text); font-weight: 600; }
+
+    /* Forms */
+    .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1.5rem; }
+    .form-grid { display: grid; gap: 0.85rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); align-items: end; }
+    .form-field label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.35rem; font-weight: 600; }
+    .form-field input, .form-field select { width: 100%; padding: 0.55rem 0.7rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text); font-family: var(--font); font-size: 0.875rem; }
+    .form-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .btn-danger { background: transparent; color: var(--color-danger); border: 1px solid var(--color-danger); }
+    .btn-danger:hover { background: #2a0c0c; }
+    .inline-form { display: inline-flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+    .note { font-size: 0.8rem; color: var(--color-muted); margin: 0.75rem 0 0; }
+    .org-link { font-weight: 600; }
+    .team-card { margin-bottom: 1.5rem; }
+    .team-card h3 { font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--color-text); text-transform: none; letter-spacing: normal; font-weight: 600; }
+    .team-meta { font-size: 0.78rem; color: var(--color-muted); margin-bottom: 0.75rem; }
   </style>
 </head>
 <body>
@@ -1551,6 +1566,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
   </nav>
   <div class="admin-tabs">
     ${tabLink("dashboard", "Dashboard")}
+    ${tabLink("organisations", "Organisations")}
     ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
   </div>
   <main class="wrap">
@@ -1568,9 +1584,18 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat("en-US").format(n);
 }
 
+function teamRoleSelectOptions(selected: string): string {
+  return ["team_member", "field_coordinator", "team_admin"]
+    .map(
+      (r) => `<option value="${r}"${selected === r ? " selected" : ""}>${r}</option>`,
+    )
+    .join("");
+}
+
 interface RenderAdminPendingOptions {
   currentUserEmail: string;
   pendingUsers: AdminPendingUser[];
+  pendingCount: number;
   flash?:
     | { kind: "success"; message: string }
     | { kind: "error"; message: string }
@@ -1582,7 +1607,7 @@ interface RenderAdminPendingOptions {
  * shared tab shell.
  */
 export function renderAdminPending(opts: RenderAdminPendingOptions): string {
-  const { currentUserEmail, pendingUsers, flash } = opts;
+  const { currentUserEmail, pendingUsers, pendingCount, flash } = opts;
   const rows = pendingUsers.length === 0
     ? `<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--color-muted);">No pending users — every signup has been approved.</td></tr>`
     : pendingUsers
@@ -1615,7 +1640,7 @@ export function renderAdminPending(opts: RenderAdminPendingOptions): string {
   return renderAdminShell({
     currentUserEmail,
     activeTab: "pending",
-    pendingCount: pendingUsers.length,
+    pendingCount,
     flash,
     content,
     title: "Pending user approvals",
@@ -1713,6 +1738,7 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
       ${card("Organisations", org.organisations, "Tenant accounts on the platform.")}
       ${card("Teams", org.teams, "Sub-tenants across every organisation.")}
     </div>
+    <p class="note" style="margin-top:0.25rem;"><a href="/portal/admin?tab=organisations">Manage organisations →</a></p>
   `;
 
   return renderAdminShell({
@@ -1723,6 +1749,388 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
     content: html,
     title: "Platform dashboard",
     subtitle: "At-a-glance metrics for the CLEAR platform. Counts are live.",
+  });
+}
+
+// ─── Organisations tab (SuperAdmin) ───────────────────────────────────────
+
+export interface AdminOrgListRow {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  memberCount: number;
+  teamCount: number;
+  createdAt: Date;
+}
+
+export interface AdminOrgDetailView {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  createdAt: Date;
+  teams: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    members: {
+      userId: string;
+      email: string;
+      name: string;
+      teamRole: string;
+    }[];
+  }[];
+  members: {
+    userId: string;
+    email: string;
+    name: string;
+    globalRole: string | null;
+    orgRole: string;
+    joinedAt: Date;
+  }[];
+  importableTeams: { id: string; label: string; memberCount: number }[];
+}
+
+interface RenderAdminOrganisationsOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  organisations: AdminOrgListRow[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions): string {
+  const { currentUserEmail, pendingCount, organisations, flash } = opts;
+
+  const rows =
+    organisations.length === 0
+      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No organisations yet. Create one below.</td></tr>`
+      : organisations
+          .map(
+            (o) => `
+        <tr>
+          <td><a class="org-link" href="/portal/admin?tab=organisations&amp;org=${escapeHtml(o.id)}">${escapeHtml(o.name)}</a></td>
+          <td><code>${escapeHtml(o.slug)}</code></td>
+          <td>${formatNumber(o.memberCount)}</td>
+          <td>${formatNumber(o.teamCount)}</td>
+          <td style="color:var(--color-muted);font-size:0.8rem;">${escapeHtml(o.createdAt.toISOString().slice(0, 10))}</td>
+        </tr>`,
+          )
+          .join("");
+
+  const content = `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Slug</th>
+          <th>Members</th>
+          <th>Teams</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <h2>Create organisation</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/create">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="org-name">Name</label>
+            <input id="org-name" name="name" required placeholder="Acme Response" />
+          </div>
+          <div class="form-field">
+            <label for="org-slug">Slug</label>
+            <input id="org-slug" name="slug" required placeholder="acme-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Create</button>
+          </div>
+        </div>
+        <p class="note">A default team with the same name and slug is created automatically. The first member you invite or add becomes <code>org_admin</code> (portal convention — see backend gaps doc).</p>
+      </form>
+    </div>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "organisations",
+    pendingCount,
+    flash,
+    content,
+    title: "Organisations",
+    subtitle: "Create and manage tenant organisations. Open an organisation to invite users and set org-level roles.",
+  });
+}
+
+interface RenderAdminOrgDetailOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  org: AdminOrgDetailView;
+  defaultInviteOrgRole: "org_admin" | "member";
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string {
+  const { currentUserEmail, pendingCount, org, defaultInviteOrgRole, flash } = opts;
+  const orgParam = escapeHtml(org.id);
+
+  const inviteOrgRoleOptions = ["org_admin", "member"]
+    .map(
+      (r) =>
+        `<option value="${r}"${defaultInviteOrgRole === r ? " selected" : ""}>${r}</option>`,
+    )
+    .join("");
+
+  const importOptions =
+    org.importableTeams.length === 0
+      ? `<option value="" disabled>No teams available to import</option>`
+      : `<option value="">Select a team…</option>${org.importableTeams
+          .map(
+            (t) =>
+              `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)} (${formatNumber(t.memberCount)} members)</option>`,
+          )
+          .join("")}`;
+
+  const teamSections = org.teams
+    .map((team) => {
+      const teamParam = escapeHtml(team.id);
+      const memberRows =
+        team.members.length === 0
+          ? `<tr><td colspan="4" style="text-align:center;padding:1.25rem;color:var(--color-muted);font-size:0.85rem;">No members in this team yet.</td></tr>`
+          : team.members
+              .map((m) => `
+        <tr>
+          <td>${escapeHtml(m.name)}</td>
+          <td><code>${escapeHtml(m.email)}</code></td>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/teams/members/role">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="teamId" value="${teamParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <select name="teamRole">${teamRoleSelectOptions(m.teamRole)}</select>
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+            </form>
+          </td>
+          <td style="text-align:right;">
+            <form method="POST" action="/portal/admin/orgs/teams/members/remove" onsubmit="return confirm('Remove this user from the team?');">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="teamId" value="${teamParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>`)
+              .join("");
+
+      return `
+    <div class="form-card team-card">
+      <h3>${escapeHtml(team.name)}</h3>
+      <p class="team-meta"><code>${escapeHtml(team.slug)}</code>${team.description ? ` · ${escapeHtml(team.description)}` : ""} · ${team.members.length} member${team.members.length === 1 ? "" : "s"}</p>
+      <form method="POST" action="/portal/admin/orgs/teams/delete" style="margin-bottom:1rem;" onsubmit="return confirm('Delete this team? Members stay in the organisation.');">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <input type="hidden" name="teamId" value="${teamParam}" />
+        <button type="submit" class="btn btn-danger btn-sm">Delete team</button>
+      </form>
+      <table class="table" style="margin-bottom:1rem;">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Team role</th>
+            <th style="text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>${memberRows}</tbody>
+      </table>
+      <div class="form-grid">
+        <div class="form-field" style="grid-column: 1 / -1;">
+          <label>Invite to this team</label>
+          <form method="POST" action="/portal/admin/orgs/invite">
+            <input type="hidden" name="orgId" value="${orgParam}" />
+            <input type="hidden" name="teamId" value="${teamParam}" />
+            <div class="form-grid">
+              <div class="form-field">
+                <input name="email" type="email" required placeholder="user@example.com" />
+              </div>
+              <div class="form-field">
+                <select name="orgRole">${inviteOrgRoleOptions}</select>
+              </div>
+              <div class="form-field">
+                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-sm">Send invite</button>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="form-field" style="grid-column: 1 / -1;">
+          <label>Add existing user to this team</label>
+          <form method="POST" action="/portal/admin/orgs/teams/members/add">
+            <input type="hidden" name="orgId" value="${orgParam}" />
+            <input type="hidden" name="teamId" value="${teamParam}" />
+            <div class="form-grid">
+              <div class="form-field">
+                <input name="email" type="email" required placeholder="existing-user@example.com" />
+              </div>
+              <div class="form-field">
+                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-sm">Add to team</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>`;
+    })
+    .join("");
+
+  const memberRows =
+    org.members.length === 0
+      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No org members yet. Invite or add a user to a team below — the first member should be the org admin.</td></tr>`
+      : org.members
+          .map((m) => {
+            const roleOptions = ["org_admin", "member"]
+              .map(
+                (r) =>
+                  `<option value="${r}"${m.orgRole === r ? " selected" : ""}>${r}</option>`,
+              )
+              .join("");
+            return `
+        <tr>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/members/name">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <input name="name" value="${escapeHtml(m.name)}" size="18" />
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Save</button>
+            </form>
+          </td>
+          <td><code>${escapeHtml(m.email)}</code></td>
+          <td><span class="badge" style="background:#1a1a22;color:var(--color-muted);">${escapeHtml(m.globalRole ?? "—")}</span></td>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/members/role">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <select name="role">${roleOptions}</select>
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+            </form>
+          </td>
+          <td style="text-align:right;">
+            <form method="POST" action="/portal/admin/orgs/members/remove" onsubmit="return confirm('Remove this member from the organisation?');">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>`;
+          })
+          .join("");
+
+  const content = `
+    <p style="margin-bottom:1.25rem;"><a href="/portal/admin?tab=organisations">← All organisations</a></p>
+
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/update">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="edit-name">Name</label>
+            <input id="edit-name" name="name" value="${escapeHtml(org.name)}" required />
+          </div>
+          <div class="form-field">
+            <label for="edit-slug">Slug</label>
+            <input id="edit-slug" name="slug" value="${escapeHtml(org.slug)}" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+          </div>
+        </div>
+      </form>
+      <form method="POST" action="/portal/admin/orgs/delete" style="margin-top:1rem;" onsubmit="return confirm('Delete this organisation and all its teams, members, and invitations?');">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <button type="submit" class="btn btn-danger btn-sm">Delete organisation</button>
+      </form>
+    </div>
+
+    <h2>Teams</h2>
+    ${teamSections || `<p class="note">No teams yet.</p>`}
+
+    <h2>Create team</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/teams/create">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="team-name">Name</label>
+            <input id="team-name" name="name" required placeholder="Field response" />
+          </div>
+          <div class="form-field">
+            <label for="team-slug">Slug</label>
+            <input id="team-slug" name="slug" required placeholder="field-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-field">
+            <label for="team-desc">Description (optional)</label>
+            <input id="team-desc" name="description" placeholder="Optional" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Create empty team</button>
+          </div>
+        </div>
+        <p class="note">New teams start with no members. Add or invite users per team below.</p>
+      </form>
+    </div>
+
+    <h2>Import team</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/teams/import">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="import-team">Team from another organisation</label>
+            <select id="import-team" name="sourceTeamId" required ${org.importableTeams.length === 0 ? "disabled" : ""}>${importOptions}</select>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm" ${org.importableTeams.length === 0 ? "disabled" : ""}>Import team &amp; members</button>
+          </div>
+        </div>
+        <p class="note">Copies the team into this organisation and adds all of its current members (creating org memberships when needed).</p>
+      </form>
+    </div>
+
+    <h2>Organisation members</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Global role</th>
+          <th>Org role</th>
+          <th style="text-align:right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>${memberRows}</tbody>
+    </table>
+    <p class="note">Org roles apply across all teams. Use the team sections above to add users to specific teams or send invites.</p>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "organisations",
+    pendingCount,
+    flash,
+    content,
+    title: org.name,
+    subtitle: `Organisation · <code>${escapeHtml(org.slug)}</code> · ${org.members.length} member${org.members.length === 1 ? "" : "s"} · ${org.teams.length} team${org.teams.length === 1 ? "" : "s"}`,
   });
 }
 
