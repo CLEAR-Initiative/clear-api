@@ -186,7 +186,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .sidebar-footer { padding: 24px; transition: padding 0.2s ease; flex-shrink: 0; }
     .portal-shell.sidebar-collapsed .sidebar-footer {
       padding: 0 12px 16px; margin-top: auto;
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
     }
     .user-card {
       display: flex; align-items: center; gap: 12px;
@@ -194,7 +194,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
       transition: background 0.2s ease, padding 0.2s ease;
     }
     .portal-shell.sidebar-collapsed .user-card {
-      justify-content: center; padding: 0; margin-bottom: 0; background: transparent;
+      justify-content: center; gap: 0; padding: 0; margin-bottom: 0; background: transparent;
     }
     .user-avatar-link { display: flex; flex-shrink: 0; border-radius: 9999px; }
     .user-avatar-link:hover { opacity: 0.9; text-decoration: none; }
@@ -203,7 +203,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
       object-fit: cover; flex-shrink: 0; display: block;
     }
     .user-details { min-width: 0; overflow: hidden; transition: opacity 0.15s, max-width 0.2s ease; max-width: 200px; }
-    .portal-shell.sidebar-collapsed .user-details { opacity: 0; max-width: 0; pointer-events: none; }
+    .portal-shell.sidebar-collapsed .user-details { display: none; }
     .user-email { font-size: 12px; font-weight: 500; color: var(--color-text); line-height: 16px; word-break: break-all; }
     .user-role { font-size: 10px; color: var(--color-label); line-height: 15px; margin-top: 0; text-decoration: none; display: block; }
     a.user-role:hover { color: var(--color-accent); }
