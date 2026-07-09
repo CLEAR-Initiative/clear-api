@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector]
 }
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
@@ -975,4 +977,191 @@ model nominatim_cache {
   @@index([queryHash])
   @@index([expiresAt])
   @@map("nominatim_cache")
+}
+
+/// Chunk-level knowledge base built from ReliefWeb PDFs (and, later, other
+/// long-form sources). Each row is a single ~800-token excerpt from a
+/// source document, embedded and indexed for hybrid (vector + BM25)
+/// retrieval and pre-filtered by the parameters an LLM extracted from
+/// the chunk (locations, time range, event types, need sectors).
+///
+/// Provider-agnostic by design: `embeddingProvider` + `embeddingModel`
+/// let us swap between voyage-3-large / bge-m3 / future models without
+/// re-embedding everything at once — search API filters to rows written
+/// by the currently-configured model, and a backfill can top up any
+/// missing coverage.
+///
+/// Writes/reads go through raw SQL only (`$queryRaw` / `$executeRaw`)
+/// because `embedding` and `lexicalTsv` are `Unsupported` — the Prisma
+/// client can't serialise them. Downstream code must reflect that.
+model knowledgebase {
+  id            String @id @default(cuid())
+
+  /// Report identifier the chunk came from.
+  reportId      String @map("report_id")
+  reportTitle   String @map("report_title")
+  sourceUrl     String @map("source_url")
+  /// S3 key of the PDF this chunk was extracted from — lets a search
+  /// hit link back to the original document without re-fetching from
+  /// ReliefWeb.
+  s3Key      String @map("s3_key")
+  publishedAt   DateTime @map("published_at")
+
+  /// Position of the chunk within its report (0-indexed).
+  chunkIndex    Int    @map("chunk_index")
+  /// Inclusive PDF page range this chunk covers. Kept as start/end
+  /// rather than a single page so chunks that straddle a page break
+  /// still cite correctly.
+  pageStart     Int    @map("page_start")
+  pageEnd       Int    @map("page_end")
+
+  /// Original excerpt text — what a UI would render on a search hit.
+  chunkText     String @map("chunk_text")
+  /// LLM-generated 50–100 token context prefix that situates the chunk
+  /// within the report (Anthropic's "Contextual Retrieval" technique).
+  /// Kept separate so we can regenerate it independently of the excerpt.
+  contextPrefix String @map("context_prefix")
+  /// `contextPrefix + "\n\n" + chunkText` — what actually got embedded
+  /// and tokenised into `lexical_tsv`. Stored verbatim so we can
+  /// reproduce the ranking behaviour offline.
+  embeddedText  String @map("embedded_text")
+
+  /// Which provider produced `embedding`. Search API filters by this so
+  /// mixed-model rows never contaminate a nearest-neighbour query.
+  embeddingProvider String @map("embedding_provider")
+  /// Specific model version — pinned so a silent provider-side model
+  /// upgrade shows up here as a mismatch instead of degrading recall.
+  embeddingModel    String @map("embedding_model")
+
+  /// 1024-dim dense embedding (cosine-normalised). Written and read
+  /// exclusively via raw SQL. Backed by an HNSW index for k-NN — the
+  /// index itself lives in the migration SQL because Prisma can't
+  /// express HNSW natively. Keep this field intact; removing it would
+  /// force Prisma to DROP the column (and cascade the HNSW index).
+  embedding Unsupported("vector(1024)")
+
+  /// BM25/lexical column, populated by a BEFORE INSERT/UPDATE trigger
+  /// from `embedded_text`. GIN index added in the migration. Same
+  /// preservation rule as `embedding` — don't remove this field from
+  /// the model without also updating the search path.
+  lexicalTsv Unsupported("tsvector") @map("lexical_tsv")
+
+  /// Location IDs resolved back to `locations.id` when the extracted
+  /// pcode/name matched a CLEAR row. Empty when the LLM produced a
+  /// location the resolver couldn't tie to an admin unit.
+  locationIds    String[] @map("location_ids")
+  /// Raw pcodes the LLM emitted — kept alongside `locationIds` so a
+  /// future backfill of `locations` can re-resolve without re-running
+  /// the extraction step.
+  locationPcodes String[] @map("location_pcodes")
+
+  /// Optional event window the chunk describes. When absent, the chunk
+  /// is treated as reference / evergreen material.
+  timeRangeStart DateTime? @map("time_range_start")
+  timeRangeEnd   DateTime? @map("time_range_end")
+
+  /// GLIDE codes (or the CLEAR internal disaster-type slug) the chunk
+  /// pertains to. Multi-hazard sitreps are the norm — arrays, not scalars.
+  eventTypes  String[] @map("event_types")
+  /// NRC SAF sectors the chunk discusses: Shelter, WASH, Protection,
+  /// Health, Food Security, Education. Constrained to the enum by the
+  /// extraction prompt so filter queries don't have to normalise.
+  needSectors String[] @map("need_sectors")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// A given (report, chunk_index) pair is unique per re-ingest — the
+  /// upsert path deletes-then-inserts per report so this doubles as the
+  /// idempotency key.
+  @@unique([reportId, chunkIndex])
+  @@index([reportId])
+  @@index([embeddingModel])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([needSectors], type: Gin)
+  @@index([timeRangeStart, timeRangeEnd])
+  @@map("knowledgebase")
+}
+
+/// Outbound webhook subscription. Configured by platform admins; every
+/// incoming GlitchTip alert is fanned out to every active subscription
+/// whose filters match. HMAC signing is opt-out (not currently exposed —
+/// every delivery is signed with the row's `secret`).
+model WebhookSubscription {
+  id        String @id @default(uuid())
+  /// Human-readable label shown in the admin UI. Not sent downstream.
+  name      String
+  /// Target URL. Must include scheme; https is enforced at write time.
+  targetUrl String @map("target_url")
+  /// HMAC-SHA256 key. Generated on create (32 random bytes, hex-encoded),
+  /// rotatable via a dedicated mutation. Stored plaintext because the
+  /// signing worker needs it; scope of exposure is limited to platform
+  /// admins who created it and can already read it.
+  secret    String
+
+  /// Pause without deleting. `false` skips this subscription during fan-out.
+  active Boolean @default(true)
+
+  /// Optional event-type allowlist. Empty array (default) = all types.
+  /// GlitchTip's alert payload carries an "event_type" field like
+  /// "issue.new", "issue.regression", "issue.resolved" — we match on that.
+  eventTypeFilter String[] @default([]) @map("event_type_filter")
+
+  /// User who created this subscription. Kept for audit; not FK-linked
+  /// because the audit trail should survive user deletion.
+  createdBy String? @map("created_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  deliveries WebhookDelivery[]
+
+  @@index([active])
+  @@map("webhook_subscriptions")
+}
+
+/// One row per (subscription, incoming-event) delivery attempt-sequence.
+/// A single row tracks the whole retry chain — `attemptNumber` and
+/// `nextRetryAt` are advanced in-place. `succeededAt` non-null marks the
+/// chain complete; `attemptNumber >= 5 && succeededAt == null` marks it
+/// DLQ.
+model WebhookDelivery {
+  id             String              @id @default(uuid())
+  subscriptionId String              @map("subscription_id")
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// GlitchTip's event ID (present in the payload). Kept for admin
+  /// debugging / correlating back to the source issue.
+  eventId String @map("event_id")
+
+  /// Event type extracted from the payload (e.g. "issue.new"). Cached on
+  /// the row so the delivery-history UI doesn't need to re-parse the body.
+  eventType String @map("event_type")
+
+  /// 1-indexed. 1 = first attempt; 2..5 = retries; 6 would be DLQ (never
+  /// written because we mark and stop at 5 failed attempts).
+  attemptNumber Int @default(1) @map("attempt_number")
+
+  /// The exact JSON POSTed to the target URL. Preserved for replay/debug.
+  /// Includes the GlitchTip payload verbatim.
+  requestBody Json @map("request_body")
+
+  /// Populated on each attempt. Null while pending. On failure, contains
+  /// whatever the target returned (or the network error message).
+  responseStatus Int?    @map("response_status")
+  responseBody   String? @map("response_body")
+  error          String?
+
+  /// Non-null once the target returned 2xx. Terminal state.
+  succeededAt DateTime? @map("succeeded_at")
+
+  /// When the retry poller should pick this up. Null after success (no
+  /// more attempts). On failure, computed as now() + exponential backoff.
+  nextRetryAt DateTime? @map("next_retry_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([subscriptionId, createdAt])
+  @@index([nextRetryAt])
+  @@map("webhook_deliveries")
 }

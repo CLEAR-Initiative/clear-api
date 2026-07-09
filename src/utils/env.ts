@@ -67,6 +67,34 @@ const envSchema = z.object({
   // Buttondown newsletter — optional; powers the subscriber count on
   // `/portal/admin`. Absent in dev → dashboard shows "not configured".
   BUTTONDOWN_API_KEY: z.string().optional(),
+
+  // ─── Dagster (knowledge-base manual ingest trigger) ──────────────
+  // Used by `uploadKnowledgebaseDocument` to hand off freshly uploaded
+  // PDFs to the `process_manual_document_job` in dagster-quickstart.
+  // All optional in dev: when unset, the mutation still uploads to S3
+  // but returns a UNKNOWN-status job (i.e. no run is launched) — useful
+  // when Dagster is offline and you just want to stage a PDF.
+  /** Base URL of the Dagster webserver, e.g. http://localhost:3000. */
+  DAGSTER_URL: z.string().url().optional(),
+  /** Location name Dagster's UI shows for the dagster-quickstart code
+   *  location. Typically `dagster_quickstart` (module name) or
+   *  `dagster-quickstart` (project slug). Run
+   *  `curl <dagster_url>/graphql -d '{"query":"{ repositoryLocations{ id name } }"}'`
+   *  to check. */
+  DAGSTER_REPOSITORY_LOCATION_NAME: z.string().default("clear-context-pipeline"),
+  /** Repository name inside that location. Dagster auto-names it
+   *  `__repository__` when the module uses `@definitions`. */
+  DAGSTER_REPOSITORY_NAME: z.string().default("__repository__"),
+
+  // ─── Webhook receiver (GlitchTip → clear-api) ────────────────────
+  /** Shared secret required as `?token=` query param on
+   *  POST /webhooks/glitchtip. Rotates via redeploy — set it in the
+   *  environment env, and re-configure each GlitchTip project's Alert
+   *  Rule webhook URL to include the new token. Empty value disables
+   *  the endpoint (returns 503) — used in tests + local dev when the
+   *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
+   *  when set (`openssl rand -hex 32`). */
+  GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
 });
 
 const parsed = envSchema.parse(process.env);

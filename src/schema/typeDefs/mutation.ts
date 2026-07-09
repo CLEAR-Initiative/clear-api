@@ -372,6 +372,43 @@ export const mutationTypeDef = gql`
     crisis, or location. The translated data blob mirrors the canonical
     entity's JSON shape per locale. Admin/pipeline only."""
     upsertTranslations(input: UpsertTranslationsInput!): UpsertTranslationsResult!
+
+    # ─── Knowledge base ────────────────────────────────────────────────────────
+    """Replace all knowledgebase rows for \`reportId\` with \`chunks\`.
+    Runs inside one transaction — a failed insert rolls back the
+    delete so a re-run can retry cleanly. Vector length is validated
+    against the pgvector column dimension (1024) on the server;
+    mismatched rows are rejected before the write hits Postgres.
+    Admin/pipeline only."""
+    upsertKnowledgebaseChunks(
+      reportId: String!
+      reportTitle: String!
+      sourceUrl: String!
+      s3Key: String!
+      publishedAt: DateTime!
+      chunks: [KnowledgebaseChunkInput!]!
+    ): UpsertKnowledgebaseResult!
+
+    """Upload a PDF into the manual-ingest S3 inbox and trigger the
+    Dagster \`process_manual_document_job\` to run the extract →
+    chunk → enrich → embed → upsert chain against it.
+
+    The report_id is derived from the file's SHA-256 (first 12 chars,
+    prefixed \`manual:\`) so re-uploading the same bytes is idempotent
+    — Dagster runs but the upsert path replaces the previous version
+    in place. To force a fresh row, tweak the file (any byte) or
+    switch to a scripted upload that supplies its own report_id.
+
+    Restricted to admin / analyst — the ingest costs LLM + embedding
+    credits per document. When DAGSTER_URL is unset the mutation
+    still stages the PDF in S3 but returns a UNKNOWN-status job with
+    no runId — useful for offline dev of the upload path."""
+    uploadKnowledgebaseDocument(
+      file: Upload!
+      title: String!
+      sourceUrl: String
+      publishedAt: DateTime!
+    ): KnowledgebaseIngestJob!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -678,5 +715,35 @@ export const mutationTypeDef = gql`
     """LLM-generated forward scenarios. Shape:
        { most_likely, best_case, worst_case, description }."""
     scenarios: JSON
+  }
+
+  # ─── Webhook Mutations (platform admin only) ─────────────────────────
+  extend type Mutation {
+    """Create a new webhook subscription. The response is the only place
+    the plaintext secret is returned — persist it in your own records
+    (e.g. downstream verifier config) at this moment. To retrieve later,
+    use rotateWebhookSubscriptionSecret which generates a fresh one."""
+    createWebhookSubscription(input: CreateWebhookSubscriptionInput!): WebhookSubscription!
+
+    """Update a subscription. Only provide fields you want to change."""
+    updateWebhookSubscription(id: String!, input: UpdateWebhookSubscriptionInput!): WebhookSubscription!
+
+    """Permanently delete a subscription and all its delivery history."""
+    deleteWebhookSubscription(id: String!): Boolean!
+
+    """Generate a new secret and invalidate the old one. Response
+    includes the new plaintext secret (same one-shot semantics as
+    create)."""
+    rotateWebhookSubscriptionSecret(id: String!): WebhookSubscription!
+
+    """Send a synthetic test event to this subscription. Creates a
+    WebhookDelivery row and attempts delivery immediately. Payload
+    mimics GlitchTip's alert format so downstream verifiers see a
+    realistic shape."""
+    sendTestWebhookEvent(id: String!): WebhookDelivery!
+
+    """Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
+    schedules an immediate retry via the poller."""
+    retryWebhookDelivery(id: String!): WebhookDelivery!
   }
 `;
