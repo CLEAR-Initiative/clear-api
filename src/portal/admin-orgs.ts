@@ -302,10 +302,15 @@ export async function portalAddOrgMember(
 
 export async function portalRemoveOrgMember(orgId: string, userId: string) {
   try {
-    await prisma.organisationUsers.delete({
-      where: { userId_organisationId: { userId, organisationId: orgId } },
+    return await prisma.$transaction(async (tx) => {
+      await tx.organisationUsers.delete({
+        where: { userId_organisationId: { userId, organisationId: orgId } },
+      });
+      await tx.teamMembers.deleteMany({
+        where: { userId, team: { organisationId: orgId } },
+      });
+      return true;
     });
-    return true;
   } catch {
     throw new Error("Member not found in this organisation.");
   }
@@ -645,6 +650,17 @@ export async function portalRemoveTeamMember(
     where: { id: teamId, organisationId: orgId },
   });
   if (!team) throw new Error("Team not found in this organisation.");
+
+  // Ensure the user remains in at least one team within the org
+  const teamCount = await prisma.teamMembers.count({
+    where: { userId, team: { organisationId: orgId } },
+  });
+  if (teamCount <= 1) {
+    throw new Error(
+      "User must belong to at least one team in the organisation. Remove them from the organisation instead.",
+    );
+  }
+
   try {
     await prisma.teamMembers.delete({
       where: { teamId_userId: { teamId, userId } },

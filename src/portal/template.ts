@@ -1899,6 +1899,14 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
           )
           .join("")}`;
 
+  // Build a per-user team count map for sole-team detection
+  const teamCountByUser = new Map<string, number>();
+  for (const t of org.teams) {
+    for (const m of t.members) {
+      teamCountByUser.set(m.userId, (teamCountByUser.get(m.userId) ?? 0) + 1);
+    }
+  }
+
   const teamSections = org.teams
     .map((team) => {
       const teamParam = escapeHtml(team.id);
@@ -1920,9 +1928,9 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
             </form>
           </td>
           <td style="text-align:right;">
-            <form method="POST" action="/portal/admin/orgs/teams/members/remove" onsubmit="return confirm('Remove this user from the team?');">
+            <form method="POST" action="${teamCountByUser.get(m.userId) === 1 ? "/portal/admin/orgs/members/remove" : "/portal/admin/orgs/teams/members/remove"}" onsubmit="return confirm('${teamCountByUser.get(m.userId) === 1 ? "User will be removed from the organisation if removed from this team. Do you want to proceed?" : "Remove this user from the team?"}');">
               <input type="hidden" name="orgId" value="${orgParam}" />
-              <input type="hidden" name="teamId" value="${teamParam}" />
+              ${teamCountByUser.get(m.userId) === 1 ? "" : `<input type="hidden" name="teamId" value="${teamParam}" />`}
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
               <button type="submit" class="btn btn-danger btn-sm">Remove</button>
             </form>
