@@ -25,6 +25,7 @@ import { paginationTypeDef } from "./typeDefs/types/pagination.js";
 import { activityLogTypeDef } from "./typeDefs/types/activityLog.js";
 import { pipelineCountryTypeDef } from "./typeDefs/types/pipelineCountry.js";
 import { translationTypeDef } from "./typeDefs/types/translation.js";
+import { knowledgebaseTypeDef } from "./typeDefs/types/knowledgebase.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -54,4 +55,5 @@ export const typeDefs = [
   activityLogTypeDef,
   pipelineCountryTypeDef,
   translationTypeDef,
+  knowledgebaseTypeDef,
 ];

@@ -218,5 +218,39 @@ export const queryTypeDef = gql`
     out of date) are NOT returned here — they're rare and handled by
     the per-entity enrichment hooks."""
     entitiesMissingTranslation(entityType: String!, locale: String!): [ID!]!
+
+    # ─── Knowledge base ────────────────────────────────────────────────────────
+    """Resolve a knowledge-base location reference to a \`locations.id\`.
+    Pcode wins over name; \`adminLevel\` narrows the name match so a
+    village that shares its state's name doesn't collide. Returns null
+    when neither the pcode nor the name matches — the ingest keeps the
+    raw pcode on the row so a future backfill can re-resolve. Admin /
+    pipeline only."""
+    resolveKnowledgebaseLocation(
+      pcode: String
+      name: String
+      adminLevel: Int
+    ): String
+
+    """Hybrid dense + BM25 retrieval over the knowledge base, fused
+    with Reciprocal Rank Fusion (k=60) and returned in descending
+    score order. Both retrievers run in parallel over the same filter
+    set; each contributes up to 50 candidates before fusion. The
+    embedding provider is the one configured in the environment —
+    keep the write and read sides on the same provider or turn on
+    \`filters.currentEmbeddingModelOnly\` to guarantee vector-space
+    consistency. Requires any authenticated content reader."""
+    searchKnowledgebase(
+      query: String!
+      filters: KnowledgebaseFilters
+      limit: Int = 10
+    ): [KnowledgebaseHit!]!
+
+    """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.
+    Returns null when the runId doesn't exist on this Dagster instance
+    (e.g. Dagster was restarted with a fresh instance store, or the
+    runId was recorded against a different DAGSTER_URL). Requires any
+    authenticated content reader."""
+    knowledgebaseIngestJob(runId: String!): KnowledgebaseIngestJob
   }
 `;
