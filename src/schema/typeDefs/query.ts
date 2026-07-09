@@ -252,5 +252,13 @@ export const queryTypeDef = gql`
     runId was recorded against a different DAGSTER_URL). Requires any
     authenticated content reader."""
     knowledgebaseIngestJob(runId: String!): KnowledgebaseIngestJob
+
+    # ─── Webhooks (platform admin only) ────────────────────────────────
+    """All webhook subscriptions, newest first."""
+    webhookSubscriptions: [WebhookSubscription!]!
+    """One subscription by ID, or null if not found."""
+    webhookSubscription(id: String!): WebhookSubscription
+    """Recent delivery attempts for a subscription, newest first."""
+    webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
   }
 `;

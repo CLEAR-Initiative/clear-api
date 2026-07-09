@@ -1082,3 +1082,86 @@ model knowledgebase {
   @@index([timeRangeStart, timeRangeEnd])
   @@map("knowledgebase")
 }
+
+/// Outbound webhook subscription. Configured by platform admins; every
+/// incoming GlitchTip alert is fanned out to every active subscription
+/// whose filters match. HMAC signing is opt-out (not currently exposed —
+/// every delivery is signed with the row's `secret`).
+model WebhookSubscription {
+  id        String @id @default(uuid())
+  /// Human-readable label shown in the admin UI. Not sent downstream.
+  name      String
+  /// Target URL. Must include scheme; https is enforced at write time.
+  targetUrl String @map("target_url")
+  /// HMAC-SHA256 key. Generated on create (32 random bytes, hex-encoded),
+  /// rotatable via a dedicated mutation. Stored plaintext because the
+  /// signing worker needs it; scope of exposure is limited to platform
+  /// admins who created it and can already read it.
+  secret    String
+
+  /// Pause without deleting. `false` skips this subscription during fan-out.
+  active Boolean @default(true)
+
+  /// Optional event-type allowlist. Empty array (default) = all types.
+  /// GlitchTip's alert payload carries an "event_type" field like
+  /// "issue.new", "issue.regression", "issue.resolved" — we match on that.
+  eventTypeFilter String[] @default([]) @map("event_type_filter")
+
+  /// User who created this subscription. Kept for audit; not FK-linked
+  /// because the audit trail should survive user deletion.
+  createdBy String? @map("created_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  deliveries WebhookDelivery[]
+
+  @@index([active])
+  @@map("webhook_subscriptions")
+}
+
+/// One row per (subscription, incoming-event) delivery attempt-sequence.
+/// A single row tracks the whole retry chain — `attemptNumber` and
+/// `nextRetryAt` are advanced in-place. `succeededAt` non-null marks the
+/// chain complete; `attemptNumber >= 5 && succeededAt == null` marks it
+/// DLQ.
+model WebhookDelivery {
+  id             String              @id @default(uuid())
+  subscriptionId String              @map("subscription_id")
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// GlitchTip's event ID (present in the payload). Kept for admin
+  /// debugging / correlating back to the source issue.
+  eventId String @map("event_id")
+
+  /// Event type extracted from the payload (e.g. "issue.new"). Cached on
+  /// the row so the delivery-history UI doesn't need to re-parse the body.
+  eventType String @map("event_type")
+
+  /// 1-indexed. 1 = first attempt; 2..5 = retries; 6 would be DLQ (never
+  /// written because we mark and stop at 5 failed attempts).
+  attemptNumber Int @default(1) @map("attempt_number")
+
+  /// The exact JSON POSTed to the target URL. Preserved for replay/debug.
+  /// Includes the GlitchTip payload verbatim.
+  requestBody Json @map("request_body")
+
+  /// Populated on each attempt. Null while pending. On failure, contains
+  /// whatever the target returned (or the network error message).
+  responseStatus Int?    @map("response_status")
+  responseBody   String? @map("response_body")
+  error          String?
+
+  /// Non-null once the target returned 2xx. Terminal state.
+  succeededAt DateTime? @map("succeeded_at")
+
+  /// When the retry poller should pick this up. Null after success (no
+  /// more attempts). On failure, computed as now() + exponential backoff.
+  nextRetryAt DateTime? @map("next_retry_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([subscriptionId, createdAt])
+  @@index([nextRetryAt])
+  @@map("webhook_deliveries")
+}
