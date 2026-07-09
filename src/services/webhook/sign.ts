@@ -23,6 +23,11 @@
 import { createHmac } from "node:crypto";
 
 export interface SignedRequestHeaders {
+  // Index signature is required for structural assignability to
+  // `fetch`'s HeadersInit (which is `Record<string, string> | ...`).
+  // Without it, TS2322 fires at the fetch() call site in deliver.ts.
+  [key: string]: string;
+
   "X-Signature": string;
   "X-Timestamp": string;
   "X-Delivery-Id": string;
