@@ -63,6 +63,24 @@ const envSchema = z.object({
   /** Collection id holding admin-approved contacts. The approval action
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
+
+  // ─── Dagster (knowledge-base manual ingest trigger) ──────────────
+  // Used by `uploadKnowledgebaseDocument` to hand off freshly uploaded
+  // PDFs to the `process_manual_document_job` in dagster-quickstart.
+  // All optional in dev: when unset, the mutation still uploads to S3
+  // but returns a UNKNOWN-status job (i.e. no run is launched) — useful
+  // when Dagster is offline and you just want to stage a PDF.
+  /** Base URL of the Dagster webserver, e.g. http://localhost:3000. */
+  DAGSTER_URL: z.string().url().optional(),
+  /** Location name Dagster's UI shows for the dagster-quickstart code
+   *  location. Typically `dagster_quickstart` (module name) or
+   *  `dagster-quickstart` (project slug). Run
+   *  `curl <dagster_url>/graphql -d '{"query":"{ repositoryLocations{ id name } }"}'`
+   *  to check. */
+  DAGSTER_REPOSITORY_LOCATION_NAME: z.string().default("clear-context-pipeline"),
+  /** Repository name inside that location. Dagster auto-names it
+   *  `__repository__` when the module uses `@definitions`. */
+  DAGSTER_REPOSITORY_NAME: z.string().default("__repository__"),
 });
 
 const parsed = envSchema.parse(process.env);
