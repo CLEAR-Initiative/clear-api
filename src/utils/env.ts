@@ -81,6 +81,16 @@ const envSchema = z.object({
   /** Repository name inside that location. Dagster auto-names it
    *  `__repository__` when the module uses `@definitions`. */
   DAGSTER_REPOSITORY_NAME: z.string().default("__repository__"),
+
+  // ─── Webhook receiver (GlitchTip → clear-api) ────────────────────
+  /** Shared secret required as `?token=` query param on
+   *  POST /webhooks/glitchtip. Rotates via redeploy — set it in the
+   *  environment env, and re-configure each GlitchTip project's Alert
+   *  Rule webhook URL to include the new token. Empty value disables
+   *  the endpoint (returns 503) — used in tests + local dev when the
+   *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
+   *  when set (`openssl rand -hex 32`). */
+  GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
 });
 
 const parsed = envSchema.parse(process.env);

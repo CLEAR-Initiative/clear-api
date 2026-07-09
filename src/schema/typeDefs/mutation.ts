@@ -716,4 +716,34 @@ export const mutationTypeDef = gql`
        { most_likely, best_case, worst_case, description }."""
     scenarios: JSON
   }
+
+  # ─── Webhook Mutations (platform admin only) ─────────────────────────
+  extend type Mutation {
+    """Create a new webhook subscription. The response is the only place
+    the plaintext secret is returned — persist it in your own records
+    (e.g. downstream verifier config) at this moment. To retrieve later,
+    use rotateWebhookSubscriptionSecret which generates a fresh one."""
+    createWebhookSubscription(input: CreateWebhookSubscriptionInput!): WebhookSubscription!
+
+    """Update a subscription. Only provide fields you want to change."""
+    updateWebhookSubscription(id: String!, input: UpdateWebhookSubscriptionInput!): WebhookSubscription!
+
+    """Permanently delete a subscription and all its delivery history."""
+    deleteWebhookSubscription(id: String!): Boolean!
+
+    """Generate a new secret and invalidate the old one. Response
+    includes the new plaintext secret (same one-shot semantics as
+    create)."""
+    rotateWebhookSubscriptionSecret(id: String!): WebhookSubscription!
+
+    """Send a synthetic test event to this subscription. Creates a
+    WebhookDelivery row and attempts delivery immediately. Payload
+    mimics GlitchTip's alert format so downstream verifiers see a
+    realistic shape."""
+    sendTestWebhookEvent(id: String!): WebhookDelivery!
+
+    """Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
+    schedules an immediate retry via the poller."""
+    retryWebhookDelivery(id: String!): WebhookDelivery!
+  }
 `;
