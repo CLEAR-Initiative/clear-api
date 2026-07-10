@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import express from "express";
 import { GraphQLError } from "graphql";
+import { randomBytes } from "node:crypto";
 import { auth } from "../lib/auth.js";
 import { fromNodeHeaders } from "better-auth/node";
 import { prisma } from "../lib/prisma.js";
@@ -27,6 +28,7 @@ import {
 import { approveUserById } from "../services/approve-user.js";
 import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
 import { env } from "../utils/env.js";
+import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 import {
   renderPortal,
   renderLoginPage,
@@ -35,9 +37,14 @@ import {
   renderAdminOrganisations,
   renderAdminOrgDetail,
   renderWaitingForApproval,
+  renderAdminWebhooksList,
+  renderAdminWebhookNew,
+  renderAdminWebhookDetail,
   type AdminPendingUser,
   type AdminMetrics,
   type AdminTab,
+  type AdminWebhookRow,
+  type AdminWebhookDelivery,
 } from "./template.js";
 
 export const portalRouter = Router();
@@ -103,7 +110,7 @@ async function requireAdminSession(req: Request, res: Response) {
 }
 
 function parseAdminTab(raw: unknown): AdminTab {
-  if (raw === "pending" || raw === "organisations") return raw;
+  if (raw === "pending" || raw === "organisations" || raw === "webhooks") return raw;
   return "dashboard";
 }
 
@@ -186,6 +193,20 @@ portalRouter.get("/admin", async (req, res) => {
     return;
   }
 
+  if (tab === "webhooks") {
+    const rows = await loadWebhookRows();
+    res.send(
+      renderAdminWebhooksList({
+        currentUserEmail: admin.email,
+        pendingCount,
+        rows,
+        flash,
+      }),
+    );
+    return;
+  }
+
+  // Dashboard tab — pendingCount already fetched above for the tab badge.
   const metrics = await computeAdminMetrics();
   res.send(
     renderAdminMetrics({
@@ -591,6 +612,348 @@ portalRouter.post("/admin/orgs/teams/delete", urlencoded, async (req, res) => {
   }
 });
 
+// ─── /portal/admin/webhooks ────────────────────────────────────────────
+//
+// Server-rendered admin panel for webhook subscription management.
+// Mirrors the GraphQL resolvers in src/resolvers/webhook.resolver.ts —
+// both go through the same delivery service, so behaviour is identical
+// whether you drive it via GraphQL or the HTML admin.
+//
+// URL shape:
+//   GET  /portal/admin?tab=webhooks             (list — handled in /admin GET above)
+//   GET  /portal/admin/webhooks/new             (create form)
+//   GET  /portal/admin/webhooks/:id             (detail + delivery history)
+//   POST /portal/admin/webhooks/create
+//   POST /portal/admin/webhooks/:id/update
+//   POST /portal/admin/webhooks/:id/delete
+//   POST /portal/admin/webhooks/:id/rotate-secret
+//   POST /portal/admin/webhooks/:id/test
+//   POST /portal/admin/webhook-deliveries/:id/retry
+
+/**
+ * Load the list-view rows in one round-trip. Prisma's `_count` groups the
+ * delivery-status derivation into the query so we don't ship every row
+ * back to Node just to categorise.
+ */
+async function loadWebhookRows(): Promise<AdminWebhookRow[]> {
+  const subs = await prisma.webhookSubscription.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  // For each subscription, count total deliveries and dead-lettered
+  // ones (attemptNumber >= MAX_ATTEMPTS && succeededAt == null &&
+  // nextRetryAt == null). Two queries per subscription — fine at N < 100.
+  return Promise.all(
+    subs.map(async (s) => {
+      const [total, dead] = await Promise.all([
+        prisma.webhookDelivery.count({ where: { subscriptionId: s.id } }),
+        prisma.webhookDelivery.count({
+          where: {
+            subscriptionId: s.id,
+            succeededAt: null,
+            nextRetryAt: null,
+            attemptNumber: { gte: MAX_ATTEMPTS },
+          },
+        }),
+      ]);
+      return {
+        id: s.id,
+        name: s.name,
+        targetUrl: s.targetUrl,
+        active: s.active,
+        eventTypeFilter: s.eventTypeFilter,
+        createdAt: s.createdAt,
+        deliveryCount: total,
+        deadCount: dead,
+      };
+    }),
+  );
+}
+
+/**
+ * Derive delivery status the same way the GraphQL resolver does. Kept
+ * as a plain helper here so we don't have to import from resolvers/
+ * (which would tangle admin-panel HTML into GraphQL execution paths).
+ */
+function deriveDeliveryStatus(row: {
+  succeededAt: Date | null;
+  nextRetryAt: Date | null;
+  attemptNumber: number;
+}): "pending" | "succeeded" | "retrying" | "dead" {
+  if (row.succeededAt) return "succeeded";
+  if (row.attemptNumber >= MAX_ATTEMPTS && !row.nextRetryAt) return "dead";
+  if (row.nextRetryAt) return "retrying";
+  return "pending";
+}
+
+/** URL validation matching the GraphQL resolver's rule: https-only in
+ *  the real world, http allowed for localhost so we can test locally. */
+function validateTargetUrl(url: string): { ok: true } | { ok: false; error: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, error: "targetUrl must be an absolute URL" };
+  }
+  if (parsed.protocol === "https:") return { ok: true };
+  if (
+    parsed.protocol === "http:" &&
+    (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
+  ) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: "targetUrl must use https (http allowed only for localhost)",
+  };
+}
+
+/** Parse the comma-separated event-type filter input into a clean array
+ *  (trimmed, empty entries dropped). Kept case-preserving; GlitchTip's
+ *  alias values are lower-case dot-separated. */
+function parseEventTypeFilter(input: string | undefined): string[] {
+  if (!input) return [];
+  return input
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+// ─── GET /admin/webhooks/new ────────────────────────────────────────────
+
+portalRouter.get("/admin/webhooks/new", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+  const pendingCount = await prisma.user.count({ where: { role: "pending" } });
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(
+    renderAdminWebhookNew({
+      currentUserEmail: admin.email,
+      pendingCount,
+    }),
+  );
+});
+
+// ─── GET /admin/webhooks/:id ────────────────────────────────────────────
+//
+// `?newSecret=<hex>` is respected as the one-shot secret display path
+// used by the create + rotate handlers below. We don't check
+// authenticity of the query param — the URL is only reachable by an
+// authenticated admin, and the value is theirs to see anyway.
+
+portalRouter.get("/admin/webhooks/:id", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  const sub = await prisma.webhookSubscription.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!sub) {
+    res
+      .status(404)
+      .redirect(303, "/portal/admin?tab=webhooks&flash=error&msg=Route+not+found");
+    return;
+  }
+
+  const [deliveryRows, pendingCount] = await Promise.all([
+    prisma.webhookDelivery.findMany({
+      where: { subscriptionId: sub.id },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    prisma.user.count({ where: { role: "pending" } }),
+  ]);
+  const [totalDeliveries, deadDeliveries] = await Promise.all([
+    prisma.webhookDelivery.count({ where: { subscriptionId: sub.id } }),
+    prisma.webhookDelivery.count({
+      where: {
+        subscriptionId: sub.id,
+        succeededAt: null,
+        nextRetryAt: null,
+        attemptNumber: { gte: MAX_ATTEMPTS },
+      },
+    }),
+  ]);
+
+  const deliveries: AdminWebhookDelivery[] = deliveryRows.map((d) => ({
+    id: d.id,
+    eventId: d.eventId,
+    eventType: d.eventType,
+    attemptNumber: d.attemptNumber,
+    responseStatus: d.responseStatus,
+    error: d.error,
+    succeededAt: d.succeededAt,
+    nextRetryAt: d.nextRetryAt,
+    createdAt: d.createdAt,
+    status: deriveDeliveryStatus(d),
+  }));
+
+  const revealedSecret =
+    typeof req.query.newSecret === "string" && req.query.newSecret.length > 0
+      ? req.query.newSecret
+      : null;
+
+  const flashKind = req.query.flash === "success" ? "success" : req.query.flash === "error" ? "error" : null;
+  const flashMsg = typeof req.query.msg === "string" ? req.query.msg : "";
+  const flash =
+    flashKind && flashMsg
+      ? { kind: flashKind as "success" | "error", message: flashMsg }
+      : null;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(
+    renderAdminWebhookDetail({
+      currentUserEmail: admin.email,
+      pendingCount,
+      subscription: {
+        id: sub.id,
+        name: sub.name,
+        targetUrl: sub.targetUrl,
+        active: sub.active,
+        eventTypeFilter: sub.eventTypeFilter,
+        createdAt: sub.createdAt,
+        deliveryCount: totalDeliveries,
+        deadCount: deadDeliveries,
+        revealedSecret,
+        secretPrefix: sub.secret.slice(0, 8),
+      },
+      deliveries,
+      flash,
+    }),
+  );
+});
+
+// ─── POST /admin/webhooks/create ────────────────────────────────────────
+
+portalRouter.post(
+  "/admin/webhooks/create",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const admin = await requireAdminSession(req, res);
+    if (!admin) return;
+
+    const name =
+      typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const targetUrl =
+      typeof req.body?.targetUrl === "string" ? req.body.targetUrl.trim() : "";
+    const eventTypeFilter = parseEventTypeFilter(
+      typeof req.body?.eventTypeFilter === "string" ? req.body.eventTypeFilter : "",
+    );
+    const active = req.body?.active === "on" || req.body?.active === "true";
+
+    if (!name || !targetUrl) {
+      res.redirect(
+        303,
+        `/portal/admin?tab=webhooks&flash=error&msg=${encodeURIComponent("Name and target URL are required")}`,
+      );
+      return;
+    }
+    const urlCheck = validateTargetUrl(targetUrl);
+    if (!urlCheck.ok) {
+      res.redirect(
+        303,
+        `/portal/admin?tab=webhooks&flash=error&msg=${encodeURIComponent(urlCheck.error)}`,
+      );
+      return;
+    }
+
+    // Generate the secret ourselves so we can pass the plaintext into
+    // the redirect target — Prisma writes it to the row and we hand
+    // the same value to the detail page via ?newSecret=.
+    const secret = randomBytes(32).toString("hex");
+    const created = await prisma.webhookSubscription.create({
+      data: {
+        name,
+        targetUrl,
+        secret,
+        eventTypeFilter,
+        active,
+        createdBy: admin.id,
+      },
+    });
+    res.redirect(
+      303,
+      `/portal/admin/webhooks/${created.id}?newSecret=${encodeURIComponent(secret)}`,
+    );
+  },
+);
+
+// ─── POST /admin/webhooks/:id/update ────────────────────────────────────
+
+portalRouter.post(
+  "/admin/webhooks/:id/update",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const admin = await requireAdminSession(req, res);
+    if (!admin) return;
+
+    const name =
+      typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const targetUrl =
+      typeof req.body?.targetUrl === "string" ? req.body.targetUrl.trim() : "";
+    const eventTypeFilter = parseEventTypeFilter(
+      typeof req.body?.eventTypeFilter === "string" ? req.body.eventTypeFilter : "",
+    );
+    const active = req.body?.active === "on" || req.body?.active === "true";
+
+    if (!name || !targetUrl) {
+      res.redirect(
+        303,
+        `/portal/admin/webhooks/${req.params.id}?flash=error&msg=${encodeURIComponent("Name and target URL are required")}`,
+      );
+      return;
+    }
+    const urlCheck = validateTargetUrl(targetUrl);
+    if (!urlCheck.ok) {
+      res.redirect(
+        303,
+        `/portal/admin/webhooks/${req.params.id}?flash=error&msg=${encodeURIComponent(urlCheck.error)}`,
+      );
+      return;
+    }
+
+    try {
+      await prisma.webhookSubscription.update({
+        where: { id: req.params.id },
+        data: { name, targetUrl, eventTypeFilter, active },
+      });
+      res.redirect(
+        303,
+        `/portal/admin/webhooks/${req.params.id}?flash=success&msg=${encodeURIComponent("Saved.")}`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      res.redirect(
+        303,
+        `/portal/admin/webhooks/${req.params.id}?flash=error&msg=${encodeURIComponent(message)}`,
+      );
+    }
+  },
+);
+
+// ─── POST /admin/webhooks/:id/delete ────────────────────────────────────
+
+portalRouter.post("/admin/webhooks/:id/delete", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  try {
+    // Cascade in the Prisma schema drops the delivery history too.
+    const deleted = await prisma.webhookSubscription.delete({
+      where: { id: req.params.id },
+    });
+    res.redirect(
+      303,
+      `/portal/admin?tab=webhooks&flash=success&msg=${encodeURIComponent(`Deleted "${deleted.name}".`)}`,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.redirect(
+      303,
+      `/portal/admin?tab=webhooks&flash=error&msg=${encodeURIComponent(message)}`,
+    );
+  }
+});
+
 portalRouter.post("/admin/orgs/teams/members/add", urlencoded, async (req, res) => {
   const admin = await requireAdminSession(req, res);
   if (!admin) return;
@@ -610,6 +973,31 @@ portalRouter.post("/admin/orgs/teams/members/add", urlencoded, async (req, res) 
       "organisations",
       { kind: "error", message: portalActionError(err) },
       orgId || undefined,
+    );
+  }
+});
+
+// ─── POST /admin/webhooks/:id/rotate-secret ─────────────────────────────
+
+portalRouter.post("/admin/webhooks/:id/rotate-secret", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  try {
+    const secret = randomBytes(32).toString("hex");
+    await prisma.webhookSubscription.update({
+      where: { id: req.params.id },
+      data: { secret },
+    });
+    res.redirect(
+      303,
+      `/portal/admin/webhooks/${req.params.id}?newSecret=${encodeURIComponent(secret)}`,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.redirect(
+      303,
+      `/portal/admin/webhooks/${req.params.id}?flash=error&msg=${encodeURIComponent(message)}`,
     );
   }
 });
@@ -657,4 +1045,91 @@ portalRouter.post("/admin/orgs/teams/members/remove", urlencoded, async (req, re
       orgId || undefined,
     );
   }
+});
+
+// ─── POST /admin/webhooks/:id/test ──────────────────────────────────────
+
+portalRouter.post("/admin/webhooks/:id/test", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  const sub = await prisma.webhookSubscription.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!sub) {
+    res.redirect(
+      303,
+      `/portal/admin?tab=webhooks&flash=error&msg=Route+not+found`,
+    );
+    return;
+  }
+
+  // Synthetic payload mimicking GlitchTip's Slack-style alert shape.
+  // Kept in sync with the equivalent block in the GraphQL resolver so
+  // downstream verifiers see the same test event either way.
+  const testPayload = {
+    alias: "test.ping",
+    text: "Test event from clear-api admin panel",
+    issue_id: `test-${Date.now()}`,
+    project: "clear-api",
+    triggered_by: admin.email,
+    timestamp: new Date().toISOString(),
+  };
+  const delivery = await prisma.webhookDelivery.create({
+    data: {
+      subscriptionId: sub.id,
+      eventId: testPayload.issue_id,
+      eventType: testPayload.alias,
+      requestBody: testPayload,
+    },
+  });
+  const result = await attemptDelivery(prisma, delivery.id);
+
+  const msg =
+    result.status === "succeeded"
+      ? `Test delivered (HTTP ${result.responseStatus}).`
+      : `Test failed on attempt ${result.attempt} (${result.status}${result.responseStatus !== null ? `, HTTP ${result.responseStatus}` : ""}).`;
+  res.redirect(
+    303,
+    `/portal/admin/webhooks/${req.params.id}?flash=${result.status === "succeeded" ? "success" : "error"}&msg=${encodeURIComponent(msg)}`,
+  );
+});
+
+// ─── POST /admin/webhook-deliveries/:id/retry ───────────────────────────
+
+portalRouter.post("/admin/webhook-deliveries/:id/retry", async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  const existing = await prisma.webhookDelivery.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, subscriptionId: true },
+  });
+  if (!existing) {
+    res.redirect(
+      303,
+      `/portal/admin?tab=webhooks&flash=error&msg=Delivery+not+found`,
+    );
+    return;
+  }
+
+  // Reset the row so the worker's next tick picks it up. Same
+  // semantics as the GraphQL `retryWebhookDelivery` mutation — we
+  // don't fire inline here because we want the retry to go through
+  // the same code path as automated retries (worker → attemptDelivery).
+  await prisma.webhookDelivery.update({
+    where: { id: existing.id },
+    data: {
+      attemptNumber: 1,
+      nextRetryAt: new Date(),
+      succeededAt: null,
+      responseStatus: null,
+      responseBody: null,
+      error: null,
+    },
+  });
+  res.redirect(
+    303,
+    `/portal/admin/webhooks/${existing.subscriptionId}?flash=success&msg=${encodeURIComponent("Retry scheduled (fires on the next worker tick, within ~15s).")}`,
+  );
 });

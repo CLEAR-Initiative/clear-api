@@ -1,6 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
+import { removeOrgMember as removeOrgMemberService } from "../services/team-membership.js";
 
 interface CreateOrganisationInput {
   name: string;
@@ -78,6 +79,10 @@ export const organisationResolvers = {
     ) => {
       // Only global admins can create organisations
       requireRole(context, ["admin"]);
+      // The schema doc for this mutation states the creator becomes
+      // the first org_admin. Bind the authenticated user here so we
+      // can insert the organisationUsers row in the same transaction.
+      const creator = requireAuth(context);
       const { name, slug } = args.input;
 
       const existing = await context.prisma.organisations.findUnique({
@@ -89,18 +94,33 @@ export const organisationResolvers = {
         });
       }
 
-      // Create the org and a same-named default team in a single transaction
-      // so an org can never exist without its default team. Subsequent invites
-      // / addOrgMember calls auto-route members into this team while it's the
-      // only one in the org.
+      // Create the org + default team + creator's org_admin +
+      // creator's team_admin membership in one transaction. The
+      // organisationUsers row satisfies the schema-doc claim; the
+      // teamMembers row honours the "no org member without a team"
+      // invariant enforced by src/services/team-membership.ts.
       return context.prisma.$transaction(async (tx) => {
         const org = await tx.organisations.create({ data: { name, slug } });
-        await tx.teams.create({
+        const defaultTeam = await tx.teams.create({
           data: {
             organisationId: org.id,
             name,
             slug,
             description: "Default team — created automatically with the organisation.",
+          },
+        });
+        await tx.organisationUsers.create({
+          data: {
+            organisationId: org.id,
+            userId: creator.id,
+            role: "org_admin",
+          },
+        });
+        await tx.teamMembers.create({
+          data: {
+            teamId: defaultTeam.id,
+            userId: creator.id,
+            role: "team_admin",
           },
         });
         return org;
@@ -178,11 +198,23 @@ export const organisationResolvers = {
       // transaction so we never end up with an org member who silently failed
       // to land in the only team (and vice versa).
       return context.prisma.$transaction(async (tx) => {
+        // First-member default: when no role was passed AND the org
+        // currently has zero members, promote to org_admin so the org
+        // isn't left without an administrator. Explicitly-passed roles
+        // are always respected. Matches the SuperAdmin portal's
+        // `defaultOrgRoleForNewMember(memberCount)` heuristic.
+        let role = args.role ?? null;
+        if (role === null) {
+          const existingCount = await tx.organisationUsers.count({
+            where: { organisationId: args.orgId },
+          });
+          role = existingCount === 0 ? "org_admin" : "member";
+        }
         const membership = await tx.organisationUsers.create({
           data: {
             userId: targetUserId,
             organisationId: args.orgId,
-            role: args.role ?? "member",
+            role,
           },
         });
 
@@ -214,26 +246,15 @@ export const organisationResolvers = {
       const user = requireAuth(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
-      try {
-        await context.prisma.organisationUsers.delete({
-          where: {
-            userId_organisationId: {
-              userId: args.userId,
-              organisationId: args.orgId,
-            },
-          },
-        });
-        return true;
-      } catch (error: unknown) {
-        if (
-          error instanceof Error &&
-          "code" in error &&
-          (error as { code: string }).code === "P2025"
-        ) {
-          return false;
-        }
-        throw error;
-      }
+      // Delegate to the shared service — it also cascades team
+      // memberships within this org, keeping the "no team member
+      // without an org row" invariant. See
+      // src/services/team-membership.ts.
+      const result = await removeOrgMemberService(context.prisma, {
+        organisationId: args.orgId,
+        userId: args.userId,
+      });
+      return result.removed;
     },
 
     /**
