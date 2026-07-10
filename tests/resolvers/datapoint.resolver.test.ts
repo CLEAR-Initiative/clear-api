@@ -382,4 +382,188 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       .sort();
     expect(windowKinds).toEqual(["all", "monthly", "weekly", "yearly"]);
   });
+
+  it("supersedes any current row BEFORE inserting the new one", async () => {
+    // Bitemporal invariant: `updateMany(validTo=now)` on the current
+    // row MUST run before the `create` of the fresh row. Otherwise
+    // the partial unique index (WHERE valid_to IS NULL) rejects the
+    // insert. This test locks that ordering per bucket.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1",
+        reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sd0701"],
+        data: {
+          casualties: {
+            killed: {
+              total: {
+                value: 3, unit: "people", confidence: "reported",
+                source_quote: "…", chunk_index: 0, page_number: 1,
+              },
+            },
+          },
+        },
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+      ])
+      .mockResolvedValueOnce([
+        { id: "sdn10", level: 1 }, { id: "sdn0", level: 0 },
+      ]);
+
+    // Order of operations tracker — every mock records into it so we
+    // can assert supersede-before-insert per bucket.
+    const opOrder: string[] = [];
+    const updateManyTx = vi.fn().mockImplementation(async () => {
+      opOrder.push("updateMany");
+      // Simulate a previously-current row being superseded.
+      return { count: 1 };
+    });
+    const createTx = vi.fn().mockImplementation(async () => {
+      opOrder.push("create");
+      return {};
+    });
+    const transactionRun = vi.fn().mockImplementation(async (cb) => {
+      await cb({
+        aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+      });
+    });
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: transactionRun,
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-04-01T00:00:00Z"),
+      to: new Date("2026-07-10T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    // 4 buckets × (1 updateMany + 1 create) = 8 total ops, alternating.
+    expect(opOrder).toEqual([
+      "updateMany", "create", "updateMany", "create",
+      "updateMany", "create", "updateMany", "create",
+    ]);
+    // supersededBuckets sums the updateMany counts (1 per tier).
+    expect(result.supersededBuckets).toBe(4);
+    expect(result.computedBuckets).toBe(4);
+  });
+
+  it("skips higher tiers when a report location has no A0/A1 ancestor", async () => {
+    // Location with level=4 (point) and NO A0/A1/A2 ancestor. Should
+    // NOT crash — just produces zero buckets (nothing to attribute
+    // the report to). Defensive against orphan locations in the tree.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row-orphan",
+        reportId: "r-orphan",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["orphan-l4"],
+        data: {},
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        // Level=4 point with no ancestors — an orphaned test/legacy row.
+        { id: "orphan-l4", level: 4, ancestorIds: [] },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const createTx = vi.fn().mockResolvedValue({});
+    const updateManyTx = vi.fn().mockResolvedValue({ count: 0 });
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+        });
+      }),
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-07-01T00:00:00Z"),
+      to: new Date("2026-07-15T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    // No buckets: level=4 has no A0/A1/A2 ancestor to attribute to.
+    expect(result.computedBuckets).toBe(0);
+    expect(createTx).not.toHaveBeenCalled();
+  });
+
+  it("shared parent A1 collapses into one monthly-A1 bucket across A2 siblings", async () => {
+    // Two reports touching two A2 siblings that share the same A1
+    // parent + same country. Weekly-A2 tier gets 2 buckets (one per
+    // A2), but monthly-A1 / yearly-country / all-time-country should
+    // collapse — only one bucket per shared parent per window.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1", reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sd0701"],
+        data: {},
+      },
+      {
+        id: "row2", reportId: "r2",
+        publishedAt: new Date("2026-07-11T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-09T00:00:00Z"),
+        locationIds: ["sd0702"], // sibling A2 under same A1
+        data: {},
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+        { id: "sd0702", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+      ])
+      .mockResolvedValueOnce([
+        { id: "sdn10", level: 1 }, { id: "sdn0", level: 0 },
+      ]);
+
+    const createTx = vi.fn().mockResolvedValue({});
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            create: createTx,
+          },
+        });
+      }),
+    });
+
+    await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-07-01T00:00:00Z"),
+      to: new Date("2026-07-15T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    const bucketsByKind: Record<string, Set<string>> = {
+      weekly: new Set(), monthly: new Set(), yearly: new Set(), all: new Set(),
+    };
+    for (const call of createTx.mock.calls) {
+      const d = (call[0] as { data: { windowKind: string; locationId: string } }).data;
+      bucketsByKind[d.windowKind]?.add(d.locationId);
+    }
+    // Both siblings write to their own weekly bucket — 2 distinct A2s.
+    expect(bucketsByKind.weekly!.size).toBe(2);
+    // But the shared parents collapse to one bucket each.
+    expect(bucketsByKind.monthly!.size).toBe(1);
+    expect(bucketsByKind.yearly!.size).toBe(1);
+    expect(bucketsByKind.all!.size).toBe(1);
+  });
 });

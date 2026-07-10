@@ -270,6 +270,159 @@ describe("aggregateReports — bucket metadata", () => {
   });
 });
 
+describe("aggregateReports — incident-key dedup edge cases", () => {
+  it("different-week reports do NOT dedupe on additive_count with week bucket", () => {
+    // `new_displacements` uses week bucket. Reports in different ISO
+    // weeks yield distinct incident keys → both count.
+    const rows = [
+      row("r1", "2026-07-01T00:00:00Z", ["SD0201"], {
+        displacement: { new_displacements: nf(10000) },
+      }, "2026-06-30T00:00:00Z"), // ISO week 27
+      row("r2", "2026-07-08T00:00:00Z", ["SD0201"], {
+        displacement: { new_displacements: nf(5000) },
+      }, "2026-07-07T00:00:00Z"), // ISO week 28
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.new_displacements;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(15000);
+  });
+
+  it("same ISO week + same location dedupes even across calendar weekend", () => {
+    // ISO week runs Mon..Sun. Two reports both landing in the same
+    // ISO week (Sunday + following Sunday should be DIFFERENT ISO
+    // weeks — sanity check that boundary handling is right).
+    const rows = [
+      row("r1", "2026-07-06T00:00:00Z", ["SD0201"], {
+        displacement: { new_displacements: nf(10000) },
+      }, "2026-07-06T00:00:00Z"), // Monday of ISO week 28
+      row("r2", "2026-07-11T00:00:00Z", ["SD0201"], {
+        displacement: { new_displacements: nf(20000) },
+      }, "2026-07-11T00:00:00Z"), // Saturday of ISO week 28
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.new_displacements;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    // Same ISO week + same location → same incident key → latest wins.
+    // Sat > Mon by publishedAt, value=20000.
+    expect(field.value).toBe(20000);
+  });
+
+  it("distinct locations don't share incident keys even in the same week", () => {
+    // Same week but different A2s → distinct incidents → both sum.
+    const rows = [
+      row("r1", "2026-07-08T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r2", "2026-07-08T00:00:00Z", ["SD0301"], {
+        casualties: { killed: { total: nf(5) } },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    // Country-wide roll-up should sum across both locations.
+    const result = aggregateReports(rows, null);
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(8);
+  });
+
+  it("unlocated report (empty locationIds) contributes under empty-location bucket", () => {
+    // When the LLM emits data but the resolver couldn't tie ANY
+    // location, the row still contributes to country-wide roll-ups
+    // via the empty-string location. Prevents silent data loss on
+    // locate-fail reports.
+    const rows = [
+      row("r1", "2026-07-05T00:00:00Z", [], {
+        casualties: { killed: { total: nf(7) } },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    // Location-scoped query: the empty-location bucket doesn't match
+    // "SD0201" scope → null.
+    const scoped = aggregateReports(rows, "SD0201");
+    expect(scoped!.data.killed_total).toBeNull();
+    // Country-wide (null) sees it.
+    const cw = aggregateReports(rows, null);
+    const field = cw!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(7);
+  });
+
+  it("multi-location report contributes to each location scope", () => {
+    // One report tagged with two A2s. Scoping to A2-1 gets the
+    // report's value; scoping to A2-2 also gets it. Country-wide
+    // sees TWO mentions but they dedupe to one incident-per-location.
+    const rows = [
+      row("r-multi", "2026-07-05T00:00:00Z", ["SD0201", "SD0301"], {
+        casualties: { killed: { total: nf(4) } },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const scoped1 = aggregateReports(rows, "SD0201");
+    const scoped2 = aggregateReports(rows, "SD0301");
+    const field1 = scoped1!.data.killed_total;
+    const field2 = scoped2!.data.killed_total;
+    if (!field1 || !("value" in field1)) throw new Error("expected numeric field");
+    if (!field2 || !("value" in field2)) throw new Error("expected numeric field");
+    expect(field1.value).toBe(4);
+    expect(field2.value).toBe(4);
+  });
+});
+
+describe("aggregateReports — time bucket granularity", () => {
+  it("uses day bucket for casualties (killed_total) — same-day dedupes", () => {
+    // Two reports about killed on 2026-07-08. Same day → same bucket.
+    const rows = [
+      row("r1", "2026-07-09T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r2", "2026-07-10T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    // Latest wins → 5 (not 8).
+    expect(field.value).toBe(5);
+  });
+
+  it("uses month bucket for latest_state (idp_stock) — same-month dedupes", () => {
+    // Both reports fall in 2026-07 → same incident group.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        displacement: { idp_stock: nf(45000) },
+      }, "2026-07-01T00:00:00Z"),
+      row("r2", "2026-07-20T00:00:00Z", ["SD0201"], {
+        displacement: { idp_stock: nf(52000) },
+      }, "2026-07-18T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.idp_stock;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    // Latest wins → 52000.
+    expect(field.value).toBe(52000);
+  });
+});
+
+describe("aggregateReports — quality mix distribution invariants", () => {
+  it("confidence_mix values sum to 1", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(3, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r2", "2026-07-04T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5, "reported") } },
+      }, "2026-07-04T00:00:00Z"),
+      row("r3", "2026-07-06T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(7, "media") } },
+      }, "2026-07-06T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("quality_score" in field)) throw new Error("expected numeric field");
+    const mixSum = Object.values(field.confidence_mix).reduce((a, b) => a + b, 0);
+    expect(mixSum).toBeCloseTo(1.0, 4);
+  });
+});
+
 describe("aggregateReports — malformed inputs", () => {
   it("ignores non-numeric values on numeric-field paths", () => {
     // A NumericField with a string value should be silently skipped —
