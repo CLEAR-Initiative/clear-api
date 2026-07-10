@@ -389,6 +389,28 @@ export const mutationTypeDef = gql`
       chunks: [KnowledgebaseChunkInput!]!
     ): UpsertKnowledgebaseResult!
 
+    """Replace the \`report_datapoints\` row for \`input.reportId\`.
+    Admin / pipeline only. The dagster-quickstart datapoints
+    extraction asset is the primary caller; hand-invocation is
+    supported for backfills and re-extraction. Idempotent — the row
+    is uniquely keyed on \`report_id\`."""
+    upsertReportDatapoints(
+      input: UpsertReportDatapointsInput!
+    ): UpsertReportDatapointsResult!
+
+    """Pre-compute all four aggregation tiers (weekly × A2, monthly × A1,
+    yearly × country, all-time × country) for reports whose
+    \`reportingPeriodEnd\` falls in \`[from, to]\`. Each computed
+    bucket is inserted with \`validFrom = now()\`; the previous
+    "current" row for the same bucket key has its \`validTo\` stamped
+    in the same transaction. History rows are preserved. Admin /
+    pipeline only."""
+    refreshAggregatedDatapoints(
+      from: DateTime!
+      to: DateTime!
+      schemaVersion: String!
+    ): RefreshAggregatedDatapointsResult!
+
     """Upload a PDF into the manual-ingest S3 inbox and trigger the
     Dagster \`process_manual_document_job\` to run the extract →
     chunk → enrich → embed → upsert chain against it.

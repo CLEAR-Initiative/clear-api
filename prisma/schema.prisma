@@ -1165,3 +1165,186 @@ model WebhookDelivery {
   @@index([nextRetryAt])
   @@map("webhook_deliveries")
 }
+
+/// Structured, per-report humanitarian datapoints extracted from a
+/// source document (typically a ReliefWeb sitrep). One row per report.
+/// Powers the Layer 2 read path in the situation-analysis dashboard
+/// and feeds the aggregation pipeline that produces
+/// `aggregated_datapoints`.
+///
+/// Design decisions (see docs/humanitarian-datapoint-extraction.md):
+///   - JSONB `data` blob carries the exhaustive extracted payload
+///     across the 6 domain sub-schemas (timing_and_scope, casualties,
+///     displacement, needs_and_funding, access_and_incidents,
+///     narrative_and_confidence). Per-field shape is
+///     { value, unit, confidence, source_quote, chunk_index, page_number }.
+///   - Denormalised "hot" scalars (total_affected / total_displaced /
+///     total_killed) mirror the sum-over-unspecified-event bucket for
+///     each so the dashboard can filter and sort without opening the
+///     JSON blob.
+///   - `schema_version` is the load-bearing versioning field:
+///     aggregation only combines rows with matching version. A prompt
+///     or taxonomy change bumps the version and triggers targeted
+///     re-extraction of recent reports before Layer 1 flips over.
+///
+/// Writes go through raw SQL only for `data` (Prisma serialises Json
+/// safely, but multi-row upserts benefit from the same batching we use
+/// on knowledgebase). Reads go through Prisma's typed client.
+model reportDatapoint {
+  id      String @id @default(cuid())
+
+  /// Stable dedup key for the report. Matches `knowledgebase.report_id`
+  /// when the same source PDF is also embedded for vector RAG — a
+  /// downstream consumer can join the two tables to correlate
+  /// structured data with the narrative chunks it was extracted from.
+  reportId    String @unique @map("report_id")
+  reportTitle String @map("report_title")
+  sourceUrl   String @map("source_url")
+
+  /// When the source document was issued. Not the reporting period —
+  /// see below.
+  publishedAt DateTime @map("published_at")
+
+  /// The window the CONTENT describes. Sitreps typically report on a
+  /// 2–6 week trailing period; conflating this with `publishedAt`
+  /// pollutes weekly aggregation buckets. Left nullable because a
+  /// minority of reports don't state a period explicitly — the
+  /// extractor infers a fallback and flags it as `estimated`.
+  reportingPeriodStart DateTime? @map("reporting_period_start")
+  reportingPeriodEnd   DateTime? @map("reporting_period_end")
+
+  /// Locations mentioned by the report, resolved to `locations.id`
+  /// where a match was found. `location_pcodes` preserves raw pcodes
+  /// the resolver couldn't tie back — a nightly backfill re-attempts
+  /// resolution as the `locations` tree grows.
+  locationIds    String[] @map("location_ids")
+  locationPcodes String[] @map("location_pcodes")
+
+  /// Free-text event categories the report covers (mapped later to
+  /// `disaster_types` glide codes during aggregation). Array because
+  /// multi-hazard sitreps are the norm.
+  eventTypes String[] @map("event_types")
+
+  /// Denormalised "hot" totals for cheap filter / sort on the
+  /// dashboard. Populated from the corresponding `unspecified`-bucket
+  /// entries in `data.casualties` / `data.displacement`; NULL when
+  /// the report doesn't report a top-line figure. Do NOT sum these
+  /// across rows — the JSON blob carries the disaggregated form
+  /// that respects incident-level dedup.
+  totalAffected  Int? @map("total_affected")
+  totalDisplaced Int? @map("total_displaced")
+  totalKilled    Int? @map("total_killed")
+
+  /// Exhaustive extracted payload keyed by sub-schema name. Every
+  /// numeric leaf is a NumericField object carrying provenance —
+  /// see the shared Pydantic schema in
+  /// `clear-context-pipeline/src/clear_context_pipeline/defs/knowledgebase/datapoints_schemas.py`.
+  data Json
+
+  /// Schema-version string like "v1". Aggregation only combines
+  /// same-version rows; version bumps drive targeted re-extraction.
+  schemaVersion String @map("schema_version")
+
+  /// Provenance for the extraction itself — which LLM + which
+  /// pipeline run produced this row. Feeds the reviewer-audit
+  /// workflow (§13 of the design doc).
+  extractedByModel String   @map("extracted_by_model")
+  extractedAt      DateTime @default(now()) @map("extracted_at")
+
+  @@index([reportingPeriodStart, reportingPeriodEnd])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([schemaVersion])
+  @@map("report_datapoints")
+}
+
+/// Pre-computed roll-ups of `report_datapoints` grouped by
+/// (window × window_kind × location) at the four tiers the design
+/// doc pins:
+///
+///   weekly × A2 (atomic — never rebuilt from anything else)
+///   monthly × A1
+///   yearly × country
+///   all-time × country
+///
+/// The atomic tier is the source of truth: higher tiers can always be
+/// recomputed from weekly × A2 aggregations. Any read window that
+/// doesn't match one of the four tiers is served by on-demand rollup
+/// in the resolver, using the same aggregation function the pre-
+/// compute path runs (§6.6 of the design doc).
+///
+/// Every field in `data` carries a quality envelope alongside its
+/// value — `{ value, quality_score, confidence_mix, newest_report_at,
+/// oldest_report_at, contributing_report_ids }` — so the dashboard
+/// can render freshness / trust affordances without a second query.
+model aggregatedDatapoint {
+  id String @id @default(cuid())
+
+  /// The window this aggregation covers. Half-open on the design doc's
+  /// convention but stored inclusive here for query ergonomics —
+  /// resolvers convert as needed.
+  windowStart DateTime @map("window_start")
+  windowEnd   DateTime @map("window_end")
+
+  /// One of "weekly" | "monthly" | "yearly" | "all". Kept as text
+  /// rather than an enum so a future tier addition doesn't require
+  /// a migration.
+  windowKind String @map("window_kind")
+
+  /// Location this bucket rolls up to. NULL means country-wide (used
+  /// by the yearly and all-time tiers). Otherwise references
+  /// `locations.id`.
+  locationId String? @map("location_id")
+
+  /// Aggregated payload — same key structure as `report_datapoints.data`
+  /// but every numeric leaf is a QualityEnvelope object
+  /// (value + quality_score + confidence_mix + provenance).
+  data Json
+
+  /// Report ids that contributed to this bucket. Denormalised out of
+  /// `data` so the dashboard can list sources cheaply.
+  contributingReportIds String[] @map("contributing_report_ids")
+
+  /// Bucket-level freshness / quality metadata surfaced as columns so
+  /// the dashboard can filter and sort without opening the JSON blob.
+  newestSourceAt   DateTime @map("newest_source_at")
+  oldestSourceAt   DateTime @map("oldest_source_at")
+  dataQualityScore Float    @map("data_quality_score")
+  reportCount      Int      @map("report_count")
+
+  /// Bitemporal validity.
+  ///
+  ///   validFrom: when this snapshot was computed and became current.
+  ///   validTo:   when it was superseded by a fresher computation.
+  ///              NULL means "still current".
+  ///
+  /// The resolver's default cache lookup is `WHERE valid_to IS NULL`;
+  /// callers who want a historical snapshot pass an `asOf` date and
+  /// the resolver filters `WHERE valid_from <= asOf AND
+  /// (valid_to IS NULL OR valid_to > asOf)`.
+  ///
+  /// When new `report_datapoints` arrive, the mutation stamps
+  /// `validTo = now()` on affected buckets (marking them superseded
+  /// without deletion), and the next Dagster aggregation run inserts
+  /// fresh rows with `validFrom = now()`. Between the two, queries
+  /// for those buckets fall through to on-demand aggregation over
+  /// `report_datapoints` directly.
+  validFrom DateTime  @default(now()) @map("valid_from")
+  validTo   DateTime? @map("valid_to")
+
+  /// Matches `report_datapoints.schema_version`. Rows are recomputed
+  /// per version so version bumps don't mix incompatible payloads.
+  schemaVersion String   @map("schema_version")
+  computedAt    DateTime @default(now()) @map("computed_at")
+
+  /// The natural key for cache lookup — at most ONE current row per
+  /// (window, kind, location, version) combination. History rows
+  /// (validTo NOT NULL) don't participate in this constraint; the
+  /// partial unique index that enforces it lives in the migration
+  /// SQL because Prisma can't express partial indexes in the DSL.
+  @@index([locationId, windowStart])
+  @@index([validTo])
+  @@index([windowKind, windowStart, locationId, schemaVersion])
+  @@map("aggregated_datapoints")
+}
+
