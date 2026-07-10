@@ -69,23 +69,12 @@ function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SV
   return `<a href="${href}" class="nav-item nav-item--link" title="${escapeHtml(label)}">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
 }
 
-export function renderPortal({ userEmail, userRole }: PortalOptions): string {
-  const isAdmin = userRole === "admin";
-  const accountLabel = formatAccountLabel(userRole);
-  // Account label is non-clickable - admin panel access is via sidebar menu only
-  const adminAccountHtml = `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Developer Portal</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#0a0a0b">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
+/**
+ * Complete shared styles for portal sidebar - used by both /portal and /portal/admin.
+ * This ensures visual consistency across all pages.
+ */
+function renderPortalStyles(): string {
+  return `  <style>
     :root {
       --color-bg: #0a0a0a;
       --color-surface: #0d0d0d;
@@ -116,123 +105,572 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; -webkit-font-smoothing: antialiased; }
     a { color: var(--color-accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
 
-    /* Shell */
+    /* Portal shell layout */
     .portal-shell { display: flex; min-height: 100vh; }
 
     /* Sidebar */
     .sidebar {
       width: var(--sidebar-width); flex-shrink: 0; background: var(--color-surface);
       border-right: 1px solid var(--color-border); display: flex; flex-direction: column;
-      justify-content: space-between; min-height: 100vh;
-      transition: width 0.2s ease;
+      justify-content: space-between;
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden;
+      z-index: 100;
     }
-    .portal-shell.sidebar-collapsed .sidebar { width: var(--sidebar-width-collapsed); justify-content: flex-start; }
-    .sidebar-top { padding: 32px 32px 0; display: flex; flex-direction: column; gap: 48px; transition: padding 0.2s ease; }
-    .portal-shell.sidebar-collapsed .sidebar-top { padding: 20px 12px 0; gap: 24px; }
+    .portal-shell.sidebar-collapsed .sidebar { 
+      width: var(--sidebar-width-collapsed); 
+      justify-content: flex-start; 
+    }
+    
+    .sidebar-top { 
+      padding: 32px 32px 0; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 48px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      flex: 1;
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      /* Subtle scrollbar */
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .sidebar-top:hover {
+      scrollbar-color: var(--color-border) transparent;
+    }
+    .sidebar-top::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar-top::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .sidebar-top::-webkit-scrollbar-thumb {
+      background: transparent;
+      border-radius: 3px;
+    }
+    .sidebar-top:hover::-webkit-scrollbar-thumb {
+      background: var(--color-border);
+    }
+    .portal-shell.sidebar-collapsed .sidebar-top { 
+      padding: 20px 12px 0; 
+      gap: 24px; 
+    }
+    
     .sidebar-brand {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; 
+      align-items: center; 
+      gap: 12px;
       flex-shrink: 0;
+      transition: gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .sidebar-brand {
-      flex-direction: column; gap: 10px; align-items: center;
+      flex-direction: column; 
+      gap: 10px; 
+      align-items: center;
     }
-    .brand-logo-img { width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0; display: block; }
-    .brand-text { min-width: 0; overflow: hidden; white-space: nowrap; transition: opacity 0.15s, max-width 0.2s ease; max-width: 200px; }
-    .portal-shell.sidebar-collapsed .brand-text { opacity: 0; max-width: 0; pointer-events: none; }
-    .brand-title { font-weight: 700; font-size: 14px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--color-text); line-height: 14px; }
-    .brand-sub { font-size: 10px; font-weight: 500; color: var(--color-label); margin-top: 4px; line-height: 15px; }
+    
+    .brand-logo-img { 
+      width: 36px; 
+      height: 36px; 
+      border-radius: 12px; 
+      flex-shrink: 0; 
+      display: block; 
+    }
+    
+    .brand-text { 
+      min-width: 0; 
+      overflow: hidden; 
+      white-space: nowrap; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 200px; 
+    }
+    .portal-shell.sidebar-collapsed .brand-text { 
+      opacity: 0; 
+      max-width: 0; 
+      pointer-events: none; 
+    }
+    
+    .brand-title { 
+      font-weight: 700; 
+      font-size: 14px; 
+      letter-spacing: 1.4px; 
+      text-transform: uppercase; 
+      color: var(--color-text); 
+      line-height: 14px; 
+    }
+    .brand-sub { 
+      font-size: 10px; 
+      font-weight: 500; 
+      color: var(--color-label); 
+      margin-top: 4px; 
+      line-height: 15px; 
+    }
+    
     .sidebar-toggle {
-      margin-left: auto; flex-shrink: 0;
-      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-      border: 1px solid var(--color-border); border-radius: 6px; background: transparent;
-      color: var(--color-muted); cursor: pointer; font-family: var(--font);
-      transition: color 0.15s, border-color 0.15s, transform 0.2s ease;
+      margin-left: auto; 
+      flex-shrink: 0;
+      width: 28px; 
+      height: 28px; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      border: 1px solid var(--color-border); 
+      border-radius: 6px; 
+      background: transparent;
+      color: var(--color-muted); 
+      cursor: pointer; 
+      font-family: var(--font);
+      transition: color 0.15s ease, border-color 0.15s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .sidebar-toggle:hover { color: var(--color-text); border-color: var(--color-border-2); }
-    .portal-shell.sidebar-collapsed .sidebar-toggle { margin-left: 0; transform: rotate(180deg); }
+    .sidebar-toggle:hover { 
+      color: var(--color-text); 
+      border-color: var(--color-border-2); 
+    }
+    .portal-shell.sidebar-collapsed .sidebar-toggle { 
+      margin-left: 0; 
+      transform: rotate(180deg); 
+    }
 
     .nav-section {
-      font-size: 10px; font-weight: 700; letter-spacing: 2px;
-      text-transform: uppercase; color: var(--color-section);
-      padding: 0 16px; margin-bottom: 6px;
-      white-space: nowrap; overflow: hidden;
-      transition: opacity 0.15s, max-height 0.2s ease; max-height: 24px;
+      font-size: 10px; 
+      font-weight: 700; 
+      letter-spacing: 2px;
+      text-transform: uppercase; 
+      color: var(--color-section);
+      padding: 0 16px; 
+      margin-bottom: 6px;
+      white-space: nowrap; 
+      overflow: hidden;
+      transition: opacity 0.2s ease, max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-height: 24px;
     }
     .portal-shell.sidebar-collapsed .nav-section {
-      opacity: 0; max-height: 0; margin: 0; padding: 0; pointer-events: none;
+      opacity: 0; 
+      max-height: 0; 
+      margin: 0; 
+      padding: 0; 
+      pointer-events: none;
     }
-    .nav-list { display: flex; flex-direction: column; gap: 6px; }
+    
+    .nav-list { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 6px; 
+    }
+    
     .nav-item {
-      display: flex; align-items: center; gap: 12px; width: 100%;
-      min-height: 40px; padding: 10px 16px; border: none; background: none;
-      color: var(--color-muted); font-size: 14px; font-weight: 500;
-      cursor: pointer; text-align: left; font-family: var(--font);
-      border-right: 2px solid transparent; border-radius: var(--radius-sm);
-      transition: color 0.15s, background 0.15s, border-color 0.15s, padding 0.2s ease;
+      display: flex; 
+      align-items: center; 
+      gap: 12px; 
+      width: 100%;
+      min-height: 40px; 
+      padding: 10px 16px; 
+      border: none; 
+      background: none;
+      color: var(--color-muted); 
+      font-size: 14px; 
+      font-weight: 500;
+      cursor: pointer; 
+      text-align: left; 
+      font-family: var(--font);
+      border-right: 2px solid transparent; 
+      border-radius: var(--radius-sm);
+      transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       text-decoration: none;
     }
     .portal-shell.sidebar-collapsed .nav-item {
-      justify-content: center; padding: 10px 8px; gap: 0;
+      justify-content: center; 
+      padding: 10px 8px; 
+      gap: 0;
       border-right-color: transparent !important;
     }
+    
     .nav-label {
-      white-space: nowrap; overflow: hidden;
-      transition: opacity 0.15s, max-width 0.2s ease; max-width: 180px;
+      white-space: nowrap; 
+      overflow: hidden;
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 180px;
     }
     .portal-shell.sidebar-collapsed .nav-label {
-      opacity: 0; max-width: 0; pointer-events: none;
+      opacity: 0; 
+      max-width: 0; 
+      pointer-events: none;
     }
-    .nav-item:hover { color: var(--color-text); text-decoration: none; }
+    
+    .nav-item:hover { 
+      color: var(--color-text); 
+      text-decoration: none; 
+    }
     .nav-item.active {
-      color: var(--color-accent); border-right-color: var(--color-accent);
+      color: var(--color-accent); 
+      border-right-color: var(--color-accent);
       background: var(--color-accent-soft);
     }
-    .nav-icon-img { flex-shrink: 0; display: block; color: inherit; }
-    .nav-item:not(.active) .nav-icon-img { opacity: 0.6; }
-    .nav-item.active .nav-icon-img { opacity: 1; color: var(--color-accent); }
-
-    .sidebar-footer { padding: 24px; transition: padding 0.2s ease; flex-shrink: 0; }
-    .portal-shell.sidebar-collapsed .sidebar-footer {
-      padding: 0 12px 16px; margin-top: auto;
-      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    
+    .nav-icon-img { 
+      flex-shrink: 0; 
+      display: block; 
+      color: inherit; 
+      width: 18px;
+      height: 18px;
     }
+    .nav-item:not(.active) .nav-icon-img { 
+      opacity: 0.6; 
+    }
+    .nav-item.active .nav-icon-img { 
+      opacity: 1; 
+      color: var(--color-accent); 
+    }
+
+    .sidebar-footer { 
+      padding: 24px; 
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0; 
+    }
+    .portal-shell.sidebar-collapsed .sidebar-footer {
+      padding: 0 12px 16px; 
+      margin-top: auto;
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      gap: 10px;
+    }
+    
     .user-card {
-      display: flex; align-items: center; gap: 12px;
-      background: var(--color-surface-3); border-radius: 8px; padding: 8px; margin-bottom: 16px;
-      transition: background 0.2s ease, padding 0.2s ease;
+      display: flex; 
+      align-items: center; 
+      gap: 12px;
+      background: var(--color-surface-3); 
+      border-radius: 8px; 
+      padding: 8px; 
+      margin-bottom: 16px;
+      transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .user-card {
-      justify-content: center; gap: 0; padding: 0; margin-bottom: 0; background: transparent;
+      justify-content: center; 
+      gap: 0; 
+      padding: 0; 
+      margin-bottom: 0; 
+      background: transparent;
     }
+    
     .user-avatar {
-      width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333;
-      object-fit: cover; flex-shrink: 0; display: block;
+      width: 32px; 
+      height: 32px; 
+      border-radius: 9999px; 
+      border: 1px solid #333;
+      object-fit: cover; 
+      flex-shrink: 0; 
+      display: block;
     }
-    .user-details { min-width: 0; overflow: hidden; transition: opacity 0.15s, max-width 0.2s ease; max-width: 200px; }
-    .portal-shell.sidebar-collapsed .user-details { display: none; }
-    .user-email { font-size: 12px; font-weight: 500; color: var(--color-text); line-height: 16px; word-break: break-all; }
-    .user-role { font-size: 10px; color: var(--color-label); line-height: 15px; margin-top: 0; text-decoration: none; display: block; }
-    a.user-role:hover { color: var(--color-accent); }
+    
+    .user-details { 
+      min-width: 0; 
+      overflow: hidden; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 200px; 
+    }
+    .portal-shell.sidebar-collapsed .user-details { 
+      display: none; 
+    }
+    
+    .user-email { 
+      font-size: 12px; 
+      font-weight: 500; 
+      color: var(--color-text); 
+      line-height: 16px; 
+      word-break: break-all; 
+    }
+    .user-role { 
+      font-size: 10px; 
+      color: var(--color-label); 
+      line-height: 15px; 
+      margin-top: 0; 
+      text-decoration: none; 
+      display: block; 
+    }
+    
     .signout-btn {
-      width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 12px; border-radius: var(--radius); border: 1px solid var(--color-border);
-      background: transparent; color: var(--color-label); font-size: 12px; font-weight: 700;
-      cursor: pointer; font-family: var(--font);
-      transition: padding 0.2s ease, width 0.2s ease, height 0.2s ease;
+      width: 100%; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      gap: 8px;
+      padding: 12px; 
+      border-radius: var(--radius); 
+      border: 1px solid var(--color-border);
+      background: transparent; 
+      color: var(--color-label); 
+      font-size: 12px; 
+      font-weight: 700;
+      cursor: pointer; 
+      font-family: var(--font);
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1), height 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .signout-btn {
-      width: 40px; height: 40px; padding: 0; margin: 0 auto; gap: 0;
+      width: 40px; 
+      height: 40px; 
+      padding: 0; 
+      margin: 0 auto; 
+      gap: 0;
     }
-    .signout-btn:hover { color: var(--color-text); border-color: var(--color-border-2); }
-    .signout-btn svg { color: var(--color-label); flex-shrink: 0; }
-    .signout-label { white-space: nowrap; transition: opacity 0.15s, max-width 0.2s ease; max-width: 80px; overflow: hidden; }
-    .portal-shell.sidebar-collapsed .signout-label { opacity: 0; max-width: 0; }
+    .signout-btn:hover { 
+      color: var(--color-text); 
+      border-color: var(--color-border-2); 
+    }
+    .signout-btn svg { 
+      color: var(--color-label); 
+      flex-shrink: 0; 
+    }
+    .signout-label { 
+      white-space: nowrap; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 80px; 
+      overflow: hidden; 
+    }
+    .portal-shell.sidebar-collapsed .signout-label { 
+      opacity: 0; 
+      max-width: 0; 
+    }
 
-    /* Main */
-    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); }
+    /* Main content */
+    .main { 
+      flex: 1; 
+      min-width: 0; 
+      display: flex; 
+      flex-direction: column; 
+      background: var(--color-bg);
+      margin-left: var(--sidebar-width);
+      transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-shell.sidebar-collapsed .main {
+      margin-left: var(--sidebar-width-collapsed);
+    }
+
+    /* Tables */
+    .table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      overflow: hidden; 
+    }
+    .table th { 
+      text-align: left; 
+      padding: 0.65rem 1rem; 
+      font-size: 0.7rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      color: var(--color-muted); 
+      border-bottom: 1px solid var(--color-border); 
+      background: var(--color-bg); 
+    }
+    .table td { 
+      padding: 0.75rem 1rem; 
+      border-bottom: 1px solid var(--color-border); 
+      font-size: 0.875rem; 
+    }
+    .table tr:last-child td { 
+      border-bottom: none; 
+    }
+    .badge { 
+      display: inline-flex; 
+      align-items: center; 
+      padding: 0.2rem 0.6rem; 
+      border-radius: 999px; 
+      font-size: 0.7rem; 
+      font-weight: 600; 
+    }
+
+    /* Buttons */
+    .btn { 
+      border-radius: var(--radius); 
+      border: none; 
+      font-weight: 500; 
+      cursor: pointer; 
+      font-family: var(--font); 
+      padding: 0.5rem 1rem; 
+      font-size: 0.875rem; 
+      transition: all 0.15s ease; 
+    }
+    .btn-primary { 
+      background: var(--color-accent); 
+      color: var(--on-accent); 
+    }
+    .btn-primary:hover { 
+      background: var(--color-accent-hover); 
+    }
+    .btn-sm { 
+      padding: 0.35rem 0.8rem; 
+      font-size: 0.78rem; 
+    }
+
+    @media (max-width: 768px) {
+      .portal-shell { 
+        flex-direction: column; 
+      }
+      .portal-shell.sidebar-collapsed .sidebar { 
+        width: 100%; 
+      }
+      .sidebar { 
+        width: 100%; 
+        min-height: auto; 
+        border-right: none; 
+        border-bottom: 1px solid var(--color-border); 
+      }
+      .sidebar-top { 
+        padding: 20px 20px 0; 
+        gap: 24px; 
+      }
+      .sidebar-footer { 
+        display: none; 
+      }
+    }
+  </style>`;
+}
+
+/**
+ * Shared JavaScript for sidebar functionality with state persistence.
+ */
+function renderSidebarScript(): string {
+  return `<script>
+    // Load collapsed state from localStorage
+    (function() {
+      const collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+      if (collapsed) {
+        document.getElementById('portal-shell').classList.add('sidebar-collapsed');
+      }
+    })();
+
+    function toggleSidebar() {
+      const shell = document.getElementById('portal-shell');
+      if (shell) {
+        shell.classList.toggle('sidebar-collapsed');
+        const isCollapsed = shell.classList.contains('sidebar-collapsed');
+        localStorage.setItem('sidebar-collapsed', isCollapsed);
+      }
+    }
+    
+    function signOut() {
+      if (confirm('Are you sure you want to sign out?')) {
+        window.location.href = '/api/auth/sign-out';
+      }
+    }
+  </script>`;
+}
+
+/**
+ * Generate sidebar HTML for both portal and admin pages.
+ * Sidebar looks identical on both pages, only the active state differs.
+ * @param context - 'portal' for main portal, 'admin' for admin panel
+ * @param userEmail - User's email address
+ * @param userRole - User's role (optional, for display)
+ */
+function generateSidebar(opts: {
+  context: "portal" | "admin";
+  userEmail: string;
+  userRole?: string | null;
+}): string {
+  const { context, userEmail, userRole } = opts;
+  const isAdmin = userRole === "admin";
+  const accountLabel = formatAccountLabel(userRole);
+  const adminAccountHtml = `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
+  
+  const brandSubtitle = "Developer Portal";
+  
+  // Use actual links when in admin context, tab buttons when in portal context
+  const portalNav = context === "admin" ? `
+    <div class="nav-section">Menu</div>
+    ${portalNavLink("/portal#getting-started", "Getting Started", "rocket")}
+    ${portalNavLink("/portal#api-keys", "API Keys", "key")}
+    ${portalNavLink("/portal#authentication", "Authentication", "shield")}
+
+    <div class="nav-section" style="margin-top:18px">Resources</div>
+    ${portalNavLink("/portal#reference", "API Reference", "doc")}
+    ${portalNavLink("/docs", "API Docs", "doc")}
+    ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart")}
+  ` : `
+    <div class="nav-section">Menu</div>
+    ${portalNavButton("getting-started", "Getting Started", "rocket")}
+    ${portalNavButton("api-keys", "API Keys", "key")}
+    ${portalNavButton("authentication", "Authentication", "shield")}
+
+    <div class="nav-section" style="margin-top:18px">Resources</div>
+    ${portalNavButton("reference", "API Reference", "doc")}
+    ${portalNavLink("/docs", "API Docs", "doc")}
+    ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
+  `;
+  
+  // Admin navigation (only show if user is admin)
+  // Highlight "Admin Panel" when in admin context
+  const adminNav = isAdmin ? `
+    <div class="nav-section" style="margin-top:18px">Admin</div>
+    <a href="/portal/admin" class="nav-item nav-item--link${context === "admin" ? " active" : ""}" title="Admin Panel">
+      ${PORTAL_SVGS.shield}
+      <span class="nav-label">Admin Panel</span>
+    </a>
+  ` : "";
+  
+  return `
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
+          <div class="brand-text">
+            <div class="brand-title">Clear API</div>
+            <div class="brand-sub">${brandSubtitle}</div>
+          </div>
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+        </div>
+
+        <nav class="nav-list" aria-label="Portal navigation">
+          ${portalNav}
+          ${adminNav}
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="user-card">
+          ${generateAvatarHtml(userEmail)}
+          <div class="user-details">
+            <div class="user-email">${escapeHtml(userEmail)}</div>
+            ${adminAccountHtml}
+          </div>
+        </div>
+        <button type="button" class="signout-btn" onclick="signOut()" title="Sign out">
+          ${PORTAL_SVGS.signout}
+          <span class="signout-label">Sign Out</span>
+        </button>
+      </div>
+    </aside>
+  `;
+}
+
+export function renderPortal({ userEmail, userRole }: PortalOptions): string {
+  const sidebar = generateSidebar({ context: "portal", userEmail, userRole });
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer Portal</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderPortalStyles()}
+  <style>
+    /* Portal-specific styles */
     .main-header {
       display: flex; align-items: center; justify-content: flex-end;
       padding: 20px 32px; border-bottom: 1px solid var(--color-border);
@@ -527,50 +965,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
 </head>
 <body>
   <div class="portal-shell" id="portal-shell">
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <div class="sidebar-brand">
-          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
-          <div class="brand-text">
-            <div class="brand-title">Clear API</div>
-            <div class="brand-sub">Developer Portal</div>
-          </div>
-          <button type="button" class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-          </button>
-        </div>
-
-        <nav class="nav-list" aria-label="Portal navigation">
-          <div class="nav-section">Menu</div>
-          ${portalNavButton("getting-started", "Getting Started", "rocket")}
-          ${portalNavButton("api-keys", "API Keys", "key")}
-          ${portalNavButton("authentication", "Authentication", "shield")}
-
-          <div class="nav-section" style="margin-top:18px">Resources</div>
-          ${portalNavButton("reference", "API Reference", "doc")}
-          ${portalNavLink("/docs", "API Docs", "doc")}
-          ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
-          ${isAdmin ? `
-          <div class="nav-section" style="margin-top:18px">Admin</div>
-          ${portalNavLink("/portal/admin", "Admin Panel", "shield")}
-          ` : ""}
-        </nav>
-      </div>
-
-      <div class="sidebar-footer">
-        <div class="user-card">
-          ${generateAvatarHtml(userEmail)}
-          <div class="user-details">
-            <div class="user-email">${escapeHtml(userEmail)}</div>
-            ${adminAccountHtml}
-          </div>
-        </div>
-        <button type="button" class="signout-btn" onclick="signOut()" title="Sign out">
-          ${PORTAL_SVGS.signout}
-          <span class="signout-label">Sign Out</span>
-        </button>
-      </div>
-    </aside>
+    ${sidebar}
 
     <div class="main">
       <header class="main-header">
@@ -1234,6 +1629,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       return div.innerHTML;
     }
   </script>
+  ${renderSidebarScript()}
 </body>
 </html>`;
 }
@@ -1467,6 +1863,7 @@ interface AdminShellOptions {
  */
 function renderAdminShell(opts: AdminShellOptions): string {
   const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title } = opts;
+  const sidebar = generateSidebar({ context: "admin", userEmail: currentUserEmail, userRole: "admin" });
 
   const flashHtml = !flash
     ? ""
@@ -1496,96 +1893,219 @@ function renderAdminShell(opts: AdminShellOptions): string {
   <title>Admin · ${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderPortalStyles()}
   <style>
-    :root {
-      --color-bg: #0a0a0b; --color-surface: #141417; --color-border: #26262b;
-      --color-accent: #f2612a; --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6; --color-muted: #9a9ca3; --color-label: #75777e;
-      --on-accent: #0a0a0b;
-      --color-success: #22c55e; --color-danger: #ef4444; --color-warning: #f59e0b;
-      --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, monospace;
+    /* Admin-specific tabs */
+    .admin-tabs { 
+      display: flex; 
+      gap: 0; 
+      padding: 0 2rem; 
+      border-bottom: 1px solid var(--color-border); 
+      background: var(--color-surface); 
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
-    a { color: var(--color-accent); text-decoration: none; }
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; }
-    .nav-brand a { color: inherit; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-user { font-size: 0.8rem; color: var(--color-muted); }
+    .admin-tab { 
+      padding: 0.85rem 1.2rem; 
+      color: var(--color-muted); 
+      text-decoration: none; 
+      font-size: 0.875rem; 
+      font-weight: 500; 
+      border-bottom: 2px solid transparent; 
+      display: inline-flex; 
+      align-items: center; 
+      transition: all 0.15s ease; 
+    }
+    .admin-tab:hover { 
+      color: var(--color-text); 
+    }
+    .admin-tab.active { 
+      color: var(--color-accent); 
+      border-bottom-color: var(--color-accent); 
+    }
 
-    /* Tabs */
-    .admin-tabs { display: flex; gap: 0; padding: 0 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .admin-tab { padding: 0.85rem 1.2rem; color: var(--color-muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; transition: all 0.15s; }
-    .admin-tab:hover { color: var(--color-text); }
-    .admin-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+    /* Admin content adjustments */
+    .wrap { 
+      max-width: 1280px; 
+      margin: 0 auto; 
+      padding: 2.5rem 2rem; 
+      flex: 1; 
+    }
+    h1 { 
+      font-size: 1.4rem; 
+      margin-bottom: 0.4rem; 
+    }
+    h2 { 
+      font-size: 1rem; 
+      margin: 2rem 0 1rem; 
+      color: var(--color-muted); 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      font-weight: 600; 
+    }
+    .subtitle { 
+      color: var(--color-muted); 
+      margin-bottom: 1.5rem; 
+      font-size: 0.95rem; 
+    }
 
-    /* Content shell */
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 2rem; }
-    h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
-    h2 { font-size: 1rem; margin: 2rem 0 1rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-    .subtitle { color: var(--color-muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
-    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
-
-    /* Table */
-    .table { width: 100%; border-collapse: collapse; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); overflow: hidden; }
-    .table th { text-align: left; padding: 0.65rem 1rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); background: var(--color-bg); }
-    .table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
-    .table tr:last-child td { border-bottom: none; }
-    .badge { display: inline-flex; align-items: center; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; }
-
-    /* Buttons */
-    .btn { border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-family: var(--font); }
-    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
-    .btn-primary:hover { background: var(--color-accent-hover); }
-    .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.78rem; }
-
-    /* Metric cards */
-    .metric-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 0.5rem; }
-    .metric-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.1rem; transition: border-color 0.15s; }
-    .metric-card:hover { border-color: var(--color-border); }
-    .metric-card.accent { border-color: var(--color-accent); }
-    .metric-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted); font-weight: 600; margin-bottom: 0.5rem; }
-    .metric-value { font-size: 2rem; font-weight: 700; line-height: 1.1; color: var(--color-text); font-variant-numeric: tabular-nums; }
-    .metric-card.accent .metric-value { color: var(--color-accent); }
-    .metric-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.4rem; }
-    .metric-breakdown { display: flex; flex-wrap: wrap; gap: 0.4rem 0.85rem; margin-top: 0.75rem; font-size: 0.78rem; color: var(--color-muted); }
-    .metric-breakdown span strong { color: var(--color-text); font-weight: 600; }
+    /* Metric cards - 2 column layout */
+    .metric-grid { 
+      display: grid; 
+      gap: 1.5rem; 
+      grid-template-columns: repeat(2, 1fr); 
+      margin-bottom: 2rem; 
+    }
+    @media (max-width: 968px) {
+      .metric-grid { 
+        grid-template-columns: 1fr; 
+      }
+    }
+    .metric-card { 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      padding: 1.5rem; 
+      transition: border-color 0.15s ease; 
+    }
+    .metric-card:hover { 
+      border-color: var(--color-border); 
+    }
+    .metric-card.accent { 
+      border-color: var(--color-accent); 
+    }
+    .metric-label { 
+      font-size: 0.7rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.06em; 
+      color: var(--color-muted); 
+      font-weight: 600; 
+      margin-bottom: 0.75rem; 
+    }
+    .metric-value { 
+      font-size: 2.25rem; 
+      font-weight: 700; 
+      line-height: 1.1; 
+      color: var(--color-text); 
+      font-variant-numeric: tabular-nums; 
+    }
+    .metric-card.accent .metric-value { 
+      color: var(--color-accent); 
+    }
+    .metric-sub { 
+      font-size: 0.75rem; 
+      color: var(--color-muted); 
+      margin-top: 0.5rem; 
+    }
+    .metric-breakdown { 
+      display: flex; 
+      flex-wrap: wrap; 
+      gap: 0.5rem 1rem; 
+      margin-top: 1rem; 
+      font-size: 0.78rem; 
+      color: var(--color-muted); 
+    }
+    .metric-breakdown span strong { 
+      color: var(--color-text); 
+      font-weight: 600; 
+    }
 
     /* Forms */
-    .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1.5rem; }
-    .form-grid { display: grid; gap: 0.85rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); align-items: end; }
-    .form-field label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.35rem; font-weight: 600; }
-    .form-field input, .form-field select { width: 100%; padding: 0.55rem 0.7rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text); font-family: var(--font); font-size: 0.875rem; }
-    .form-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
-    .btn-danger { background: transparent; color: var(--color-danger); border: 1px solid var(--color-danger); }
-    .btn-danger:hover { background: #2a0c0c; }
-    .inline-form { display: inline-flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
-    .note { font-size: 0.8rem; color: var(--color-muted); margin: 0.75rem 0 0; }
-    .org-link { font-weight: 600; }
-    .team-card { margin-bottom: 1.5rem; }
-    .team-card h3 { font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--color-text); text-transform: none; letter-spacing: normal; font-weight: 600; }
-    .team-meta { font-size: 0.78rem; color: var(--color-muted); margin-bottom: 0.75rem; }
+    .form-card { 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      padding: 1.25rem; 
+      margin-bottom: 1.5rem; 
+    }
+    .form-grid { 
+      display: grid; 
+      gap: 0.85rem; 
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+      align-items: end; 
+    }
+    .form-field label { 
+      display: block; 
+      font-size: 0.72rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      color: var(--color-muted); 
+      margin-bottom: 0.35rem; 
+      font-weight: 600; 
+    }
+    .form-field input, .form-field select { 
+      width: 100%; 
+      padding: 0.55rem 0.7rem; 
+      border-radius: var(--radius); 
+      border: 1px solid var(--color-border); 
+      background: var(--color-bg); 
+      color: var(--color-text); 
+      font-family: var(--font); 
+      font-size: 0.875rem; 
+    }
+    .form-actions { 
+      display: flex; 
+      gap: 0.5rem; 
+      flex-wrap: wrap; 
+      align-items: center; 
+    }
+    .btn-danger { 
+      background: transparent; 
+      color: var(--color-danger); 
+      border: 1px solid var(--color-danger); 
+    }
+    .btn-danger:hover { 
+      background: #2a0c0c; 
+    }
+    .inline-form { 
+      display: inline-flex; 
+      gap: 0.35rem; 
+      align-items: center; 
+      flex-wrap: wrap; 
+    }
+    .note { 
+      font-size: 0.8rem; 
+      color: var(--color-muted); 
+      margin: 0.75rem 0 0; 
+    }
+    .org-link { 
+      font-weight: 600; 
+    }
+    .team-card { 
+      margin-bottom: 1.5rem; 
+    }
+    .team-card h3 { 
+      font-size: 0.95rem; 
+      margin: 0 0 0.75rem; 
+      color: var(--color-text); 
+      text-transform: none; 
+      letter-spacing: normal; 
+      font-weight: 600; 
+    }
+    .team-meta { 
+      font-size: 0.78rem; 
+      color: var(--color-muted); 
+      margin-bottom: 0.75rem; 
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-brand"><a href="/portal">CLEAR<span class="c">_</span>API</a> &nbsp;<span style="color: var(--color-muted); font-weight: 500;">· Admin</span></div>
-    <div class="nav-user">${escapeHtml(currentUserEmail)} &nbsp;|&nbsp; <a href="/portal">Portal</a></div>
-  </nav>
-  <div class="admin-tabs">
-    ${tabLink("dashboard", "Dashboard")}
-    ${tabLink("organisations", "Organisations")}
-    ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+  <div class="portal-shell" id="portal-shell">
+    ${sidebar}
+
+    <div class="main">
+      <div class="admin-tabs">
+        ${tabLink("dashboard", "Dashboard")}
+        ${tabLink("organisations", "Organisations")}
+        ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+      </div>
+      <main class="wrap">
+        <h1>${escapeHtml(title)}</h1>
+        <p class="subtitle">${subtitle}</p>
+        ${flashHtml}
+        ${content}
+      </main>
+    </div>
   </div>
-  <main class="wrap">
-    <h1>${escapeHtml(title)}</h1>
-    <p class="subtitle">${subtitle}</p>
-    ${flashHtml}
-    ${content}
-  </main>
+  ${renderSidebarScript()}
 </body>
 </html>`;
 }
