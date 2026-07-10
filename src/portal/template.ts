@@ -1837,7 +1837,7 @@ export interface AdminMetrics {
   };
 }
 
-export type AdminTab = "dashboard" | "pending" | "organisations";
+export type AdminTab = "dashboard" | "pending" | "organisations" | "webhooks";
 
 interface AdminShellOptions {
   currentUserEmail: string;
@@ -2096,6 +2096,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
         ${tabLink("dashboard", "Dashboard")}
         ${tabLink("organisations", "Organisations")}
         ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+        ${tabLink("webhooks", "Error Alerts")}
       </div>
       <main class="wrap">
         <h1>${escapeHtml(title)}</h1>
@@ -2104,7 +2105,6 @@ function renderAdminShell(opts: AdminShellOptions): string {
         ${content}
       </main>
     </div>
-  </div>
   ${renderSidebarScript()}
 </body>
 </html>`;
@@ -2740,6 +2740,408 @@ export function renderWaitingForApproval(opts: WaitingForApprovalOptions): strin
   </script>
 </body>
 </html>`;
+}
+
+// ─── Webhooks tab ──────────────────────────────────────────────────────
+// Shape shared between all three webhook pages (list, new, detail). The
+// route handler shapes prisma rows into these before passing in — keeps
+// the renderer prisma-free (and unit-testable if we ever add tests).
+
+/** Subscription row for the list table. */
+export interface AdminWebhookRow {
+  id: string;
+  name: string;
+  targetUrl: string;
+  active: boolean;
+  eventTypeFilter: string[];
+  createdAt: Date;
+  /** Total delivery attempts (all statuses). Shown next to the row so
+   *  admins can spot subscriptions that have never fired. */
+  deliveryCount: number;
+  /** Number of dead-lettered deliveries. Rendered as a warning badge if > 0. */
+  deadCount: number;
+}
+
+/** One delivery attempt-sequence for the detail page's history table. */
+export interface AdminWebhookDelivery {
+  id: string;
+  eventId: string;
+  eventType: string;
+  attemptNumber: number;
+  responseStatus: number | null;
+  error: string | null;
+  succeededAt: Date | null;
+  nextRetryAt: Date | null;
+  createdAt: Date;
+  status: "pending" | "succeeded" | "retrying" | "dead";
+}
+
+interface RenderAdminWebhooksListOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  rows: AdminWebhookRow[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * Webhooks list — one row per subscription. Rendered when the admin
+ * clicks the "Webhooks" tab. From here they can create a new
+ * subscription or drill into an existing one.
+ */
+export function renderAdminWebhooksList(
+  opts: RenderAdminWebhooksListOptions,
+): string {
+  const { currentUserEmail, pendingCount, rows, flash } = opts;
+
+  const tableRows = rows.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">
+          No error alert routes yet.
+          <a href="/portal/admin/webhooks/new" style="text-decoration:underline;">Create one</a>
+          to fan out GlitchTip alerts to a downstream endpoint.
+        </td></tr>`
+    : rows
+        .map((r) => {
+          const filterLabel =
+            r.eventTypeFilter.length === 0
+              ? `<span style="color:var(--color-muted);">all events</span>`
+              : r.eventTypeFilter.map((t) => `<code>${escapeHtml(t)}</code>`).join(" ");
+          const activeBadge = r.active
+            ? `<span class="badge" style="background:#0d2818;color:var(--color-success);">ACTIVE</span>`
+            : `<span class="badge" style="background:#2a2a2a;color:var(--color-muted);">PAUSED</span>`;
+          const deadBadge = r.deadCount > 0
+            ? ` <span class="badge" style="background:#2a0c0c;color:var(--color-danger);">${r.deadCount} DEAD</span>`
+            : "";
+          return `<tr>
+            <td>
+              <a href="/portal/admin/webhooks/${escapeHtml(r.id)}" style="font-weight:500;">${escapeHtml(r.name)}</a>
+              <div style="color:var(--color-muted);font-size:0.75rem;margin-top:0.15rem;"><code>${escapeHtml(r.targetUrl)}</code></div>
+            </td>
+            <td>${activeBadge}</td>
+            <td>${filterLabel}</td>
+            <td style="font-variant-numeric:tabular-nums;color:var(--color-muted);">${r.deliveryCount}${deadBadge}</td>
+            <td style="text-align:right;">
+              <a href="/portal/admin/webhooks/${escapeHtml(r.id)}" class="btn btn-primary btn-sm" style="text-decoration:none;">Manage</a>
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+  const content = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <p class="subtitle" style="margin:0;">
+        Downstream endpoints that clear-api fans GlitchTip error alerts
+        out to, with HMAC-SHA256 signing. Managed here; also exposed via
+        GraphQL for automation.
+      </p>
+      <a href="/portal/admin/webhooks/new" class="btn btn-primary btn-sm" style="text-decoration:none;white-space:nowrap;margin-left:1rem;">+ New route</a>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Endpoint</th>
+          <th>Status</th>
+          <th>Event filter</th>
+          <th>Deliveries</th>
+          <th style="text-align:right;">Action</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: "Error alerts",
+    subtitle: `${rows.length} route${rows.length === 1 ? "" : "s"} configured.`,
+  });
+}
+
+interface RenderAdminWebhookNewOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+  /** Repopulate form on validation failure. */
+  values?: { name?: string; targetUrl?: string; eventTypeFilter?: string; active?: boolean };
+}
+
+/**
+ * "New subscription" form. On successful create the route handler
+ * skips the redirect and instead renders the detail page with
+ * `revealedSecret` set — that's the one moment the plaintext secret is
+ * visible, so we want it in the response body, not a redirect target.
+ */
+export function renderAdminWebhookNew(
+  opts: RenderAdminWebhookNewOptions,
+): string {
+  const { currentUserEmail, pendingCount, flash, values = {} } = opts;
+  const v = {
+    name: values.name ?? "",
+    targetUrl: values.targetUrl ?? "",
+    eventTypeFilter: values.eventTypeFilter ?? "",
+    active: values.active ?? true,
+  };
+
+  const content = `
+    <form method="POST" action="/portal/admin/webhooks/create" style="max-width:640px;">
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Name</label>
+        <input name="name" type="text" required autofocus value="${escapeHtml(v.name)}"
+          placeholder="e.g. Slack #alerts, Notion pipeline, Ops on-call"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font);" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">Shown in this admin panel only. Not sent downstream.</p>
+      </div>
+
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Target URL</label>
+        <input name="targetUrl" type="url" required value="${escapeHtml(v.targetUrl)}"
+          placeholder="https://receiver.example.com/hook"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">Must be https (http allowed only for localhost).</p>
+      </div>
+
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Event type filter</label>
+        <input name="eventTypeFilter" type="text" value="${escapeHtml(v.eventTypeFilter)}"
+          placeholder="issue.new, issue.regression"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">
+          Comma-separated GlitchTip alias values (e.g. <code>issue.new</code>,
+          <code>issue.regression</code>, <code>issue.resolved</code>).
+          Leave empty to fire on <em>all</em> events.
+        </p>
+      </div>
+
+      <div style="margin-bottom:1.5rem;">
+        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;">
+          <input name="active" type="checkbox" ${v.active ? "checked" : ""} />
+          <span>Active — fire on matching events immediately</span>
+        </label>
+      </div>
+
+      <div style="display:flex;gap:0.5rem;">
+        <button type="submit" class="btn btn-primary btn-sm">Create route</button>
+        <a href="/portal/admin?tab=webhooks" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);text-decoration:none;padding:0.35rem 0.8rem;">Cancel</a>
+      </div>
+
+      <p style="font-size:0.75rem;color:var(--color-muted);margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid var(--color-border);">
+        The signing secret is generated automatically and revealed once
+        after creation. Copy it into the downstream receiver's verify
+        config at that moment — it can't be retrieved later. Use
+        "Rotate secret" on the detail page to generate a fresh one.
+      </p>
+    </form>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: "New error alert route",
+    subtitle: "Configure a downstream endpoint for signed GlitchTip error alerts.",
+  });
+}
+
+interface RenderAdminWebhookDetailOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  subscription: AdminWebhookRow & {
+    /** Non-null only immediately after create or rotate. Shown once in a
+     *  copy-me banner; subsequent detail page loads see null. */
+    revealedSecret: string | null;
+    /** Present on all reads so the admin can eyeball the redacted head.
+     *  Useful for verifying "which secret does the row currently hold". */
+    secretPrefix: string;
+  };
+  deliveries: AdminWebhookDelivery[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * Subscription detail — edit form, secret controls, delivery history,
+ * dangerous actions (delete, rotate).
+ */
+export function renderAdminWebhookDetail(
+  opts: RenderAdminWebhookDetailOptions,
+): string {
+  const { currentUserEmail, pendingCount, subscription, deliveries, flash } = opts;
+  const s = subscription;
+
+  const secretBanner = s.revealedSecret
+    ? `<div style="
+        margin-bottom:1.5rem;padding:1rem;border-radius:var(--radius);
+        background:#1a2418;border:1px solid var(--color-success);
+      ">
+        <div style="font-size:0.75rem;font-weight:600;color:var(--color-success);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">
+          Signing secret — copy now, never shown again
+        </div>
+        <code style="display:block;padding:0.6rem 0.75rem;background:var(--color-bg);border-radius:calc(var(--radius) - 4px);color:var(--color-text);word-break:break-all;font-size:0.8rem;">${escapeHtml(s.revealedSecret)}</code>
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.6rem;">
+          Configure this value in the downstream receiver's HMAC verification.
+          Reloading this page hides the secret; use "Rotate secret" below to
+          generate a new one.
+        </p>
+      </div>`
+    : "";
+
+  const filterCsv = s.eventTypeFilter.join(", ");
+
+  const editForm = `
+    <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/update" style="max-width:640px;">
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Name</label>
+        <input name="name" type="text" required value="${escapeHtml(s.name)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font);" />
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Target URL</label>
+        <input name="targetUrl" type="url" required value="${escapeHtml(s.targetUrl)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Event type filter (comma-separated, blank = all)</label>
+        <input name="eventTypeFilter" type="text" value="${escapeHtml(filterCsv)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+      </div>
+
+      <div style="margin-bottom:1.5rem;">
+        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;">
+          <input name="active" type="checkbox" ${s.active ? "checked" : ""} />
+          <span>Active</span>
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+    </form>`;
+
+  const dangerActions = `
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/test" style="display:inline;">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);">Send test event</button>
+      </form>
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/rotate-secret" style="display:inline;"
+        onsubmit="return confirm('Generate a new signing secret? The current one will stop working the moment this succeeds.');">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-warning);color:var(--color-warning);">Rotate secret</button>
+      </form>
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/delete" style="display:inline;"
+        onsubmit="return confirm('Delete this alert route and all its delivery history? Cannot be undone.');">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-danger);color:var(--color-danger);">Delete route</button>
+      </form>
+    </div>`;
+
+  const deliveryStatusBadge = (
+    status: "pending" | "succeeded" | "retrying" | "dead",
+  ): string => {
+    const map = {
+      pending: { bg: "#1c1f26", fg: "var(--color-muted)", label: "PENDING" },
+      succeeded: { bg: "#0d2818", fg: "var(--color-success)", label: "OK" },
+      retrying: { bg: "#2a1f0a", fg: "var(--color-warning)", label: "RETRY" },
+      dead: { bg: "#2a0c0c", fg: "var(--color-danger)", label: "DEAD" },
+    }[status];
+    return `<span class="badge" style="background:${map.bg};color:${map.fg};">${map.label}</span>`;
+  };
+
+  const deliveryRows = deliveries.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--color-muted);">No deliveries yet. Use "Send test event" above to verify the endpoint.</td></tr>`
+    : deliveries
+        .map((d) => {
+          const retryBtn = d.status === "dead"
+            ? `<form method="POST" action="/portal/admin/webhook-deliveries/${escapeHtml(d.id)}/retry" style="display:inline;">
+                <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);padding:0.2rem 0.55rem;font-size:0.72rem;">Retry</button>
+              </form>`
+            : "";
+          const detail = d.error
+            ? `<code style="color:var(--color-danger);font-size:0.72rem;">${escapeHtml(d.error.slice(0, 80))}</code>`
+            : d.responseStatus !== null
+              ? `<code style="color:var(--color-muted);font-size:0.72rem;">HTTP ${d.responseStatus}</code>`
+              : `<span style="color:var(--color-muted);font-size:0.72rem;">—</span>`;
+          return `<tr>
+            <td>${deliveryStatusBadge(d.status)}</td>
+            <td><code style="font-size:0.72rem;">${escapeHtml(d.eventType)}</code></td>
+            <td><code style="font-size:0.72rem;color:var(--color-muted);">${escapeHtml(d.eventId.slice(0, 12))}</code></td>
+            <td style="font-variant-numeric:tabular-nums;">${d.attemptNumber}</td>
+            <td>${detail}</td>
+            <td style="text-align:right;color:var(--color-muted);font-size:0.75rem;">
+              ${formatRelative(d.createdAt)}
+              ${retryBtn}
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+  const content = `
+    ${secretBanner}
+
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-bottom:1.5rem;">
+      <span style="color:var(--color-muted);font-size:0.85rem;">Signing secret:</span>
+      <code style="background:var(--color-surface);padding:0.35rem 0.6rem;border-radius:calc(var(--radius) - 4px);font-size:0.8rem;">${escapeHtml(s.secretPrefix)}…</code>
+      <span style="color:var(--color-muted);font-size:0.75rem;">(rotate below to change)</span>
+    </div>
+
+    <h2>Configuration</h2>
+    ${editForm}
+
+    <h2 style="margin-top:2.5rem;">Actions</h2>
+    ${dangerActions}
+
+    <h2 style="margin-top:2.5rem;">Recent deliveries (${deliveries.length})</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Event type</th>
+          <th>Event ID</th>
+          <th>Attempt</th>
+          <th>Detail</th>
+          <th style="text-align:right;">When</th>
+        </tr>
+      </thead>
+      <tbody>${deliveryRows}</tbody>
+    </table>
+
+    <p style="margin-top:1rem;">
+      <a href="/portal/admin?tab=webhooks" style="font-size:0.85rem;">← Back to error alerts</a>
+    </p>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: s.name,
+    subtitle: `<code>${escapeHtml(s.targetUrl)}</code>`,
+  });
+}
+
+/**
+ * Human-readable relative time. Same approach as the existing template
+ * helpers — pure string, no client-side JS.
+ */
+function formatRelative(when: Date): string {
+  const diffMs = Date.now() - when.getTime();
+  const s = Math.max(1, Math.floor(diffMs / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }
 
 const baseUrl = "https://your-api.example.com";

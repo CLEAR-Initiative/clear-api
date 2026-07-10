@@ -3,12 +3,20 @@
  *
  * Uses Prisma directly (same pattern as admin metrics + approve-user) so the
  * portal does not depend on GraphQL. Behaviour mirrors the organisation and
- * invitation resolvers; known divergences are documented in
- * docs/portal/superadmin-backend-gaps.md.
+ * invitation resolvers, with two deliberate divergences worth calling out
+ * inline where they apply:
+ *   - portalCreateTeam creates a team with NO members so operators can
+ *     populate it via invite/add flows (GraphQL createTeam auto-adds the
+ *     caller as team_admin instead).
+ *   - portalRemoveTeamMember refuses when the target would be left in
+ *     zero teams in the org, redirecting operators to the "Remove from
+ *     organisation" action instead (which cascades team memberships via
+ *     the shared removeOrgMember service).
  */
 import { randomBytes } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
+import { removeOrgMember as removeOrgMemberService } from "../services/team-membership.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import {
   organisationInvite,
@@ -301,19 +309,14 @@ export async function portalAddOrgMember(
 }
 
 export async function portalRemoveOrgMember(orgId: string, userId: string) {
-  try {
-    return await prisma.$transaction(async (tx) => {
-      await tx.organisationUsers.delete({
-        where: { userId_organisationId: { userId, organisationId: orgId } },
-      });
-      await tx.teamMembers.deleteMany({
-        where: { userId, team: { organisationId: orgId } },
-      });
-      return true;
-    });
-  } catch {
+  const result = await removeOrgMemberService(prisma, {
+    organisationId: orgId,
+    userId,
+  });
+  if (!result.removed) {
     throw new Error("Member not found in this organisation.");
   }
+  return true;
 }
 
 export async function portalUpdateOrgMemberRole(
@@ -651,7 +654,12 @@ export async function portalRemoveTeamMember(
   });
   if (!team) throw new Error("Team not found in this organisation.");
 
-  // Ensure the user remains in at least one team within the org
+  // Refuse when this would leave the user in zero teams — the
+  // SuperAdmin must explicitly remove them from the organisation to
+  // trigger that cascade. Deliberate warning: the "Remove from org"
+  // action carries a stronger confirmation dialog and cascades every
+  // team membership, which is what "no more access to this org"
+  // actually means. Silently cascading here would surprise operators.
   const teamCount = await prisma.teamMembers.count({
     where: { userId, team: { organisationId: orgId } },
   });

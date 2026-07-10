@@ -170,13 +170,20 @@ describe("Query.organisation", () => {
 });
 
 describe("Mutation.createOrganisation", () => {
-  it("creates the org and a same-named default team in one transaction", async () => {
+  it("creates the org, default team, and creator memberships in one transaction", async () => {
     const createdOrg = { id: "o1", name: "Acme", slug: "acme" };
     const orgCreate = vi.fn().mockResolvedValue(createdOrg);
     const teamCreate = vi.fn().mockResolvedValue({ id: "t1" });
+    // Gap #1 fix: creator gets org_admin + team_admin in the same
+    // transaction. Both writes go through the tx handle, so the mock
+    // must include organisationUsers.create and teamMembers.create.
+    const orgUserCreate = vi.fn().mockResolvedValue({ id: "ou1" });
+    const teamMemberCreate = vi.fn().mockResolvedValue({ id: "tm1" });
     const tx = {
       organisations: { create: orgCreate },
       teams: { create: teamCreate },
+      organisationUsers: { create: orgUserCreate },
+      teamMembers: { create: teamMemberCreate },
     };
     const $transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx));
     const ctx = buildContext(
@@ -201,6 +208,20 @@ describe("Mutation.createOrganisation", () => {
       organisationId: "o1",
       name: "Acme",
       slug: "acme",
+    });
+    expect(orgUserCreate).toHaveBeenCalledWith({
+      data: {
+        organisationId: "o1",
+        userId: "admin1",
+        role: "org_admin",
+      },
+    });
+    expect(teamMemberCreate).toHaveBeenCalledWith({
+      data: {
+        teamId: "t1",
+        userId: "admin1",
+        role: "team_admin",
+      },
     });
   });
 
@@ -385,19 +406,27 @@ describe("Mutation.addOrgMember", () => {
     callerOrgRole?: string | null; // org membership role for requireOrgAdmin
     foundUserByEmail?: { id: string } | null;
     teams?: Array<{ id: string }>;
+    /** Existing member count for the "first-member → org_admin" test. */
+    existingMemberCount?: number;
   }) {
     const orgUserCreate = vi.fn(async (a: { data: Record<string, unknown> }) => ({
       id: "ou1",
       ...a.data,
     }));
+    const orgUserCount = vi.fn().mockResolvedValue(opts.existingMemberCount ?? 1);
     const teamUpsert = vi.fn().mockResolvedValue({});
     const teamsFindMany = vi.fn().mockResolvedValue(opts.teams ?? []);
     const userFindFirst = vi
       .fn()
       .mockResolvedValue(opts.foundUserByEmail ?? null);
 
+    // `count` was added when Gap #2 introduced the "first-member → org_admin"
+    // heuristic in addOrgMember: an omitted role triggers a
+    // `tx.organisationUsers.count` inside the transaction. Default is 1 so
+    // tests that pass a role explicitly still see "existing members" and hit
+    // the "not first member" path.
     const tx = {
-      organisationUsers: { create: orgUserCreate },
+      organisationUsers: { create: orgUserCreate, count: orgUserCount },
       teams: { findMany: teamsFindMany },
       teamMembers: { upsert: teamUpsert },
     };
@@ -525,16 +554,30 @@ describe("Mutation.addOrgMember", () => {
 });
 
 describe("Mutation.removeOrgMember", () => {
-  it("deletes the membership and returns true", async () => {
+  /**
+   * `removeOrgMember` now delegates to `removeOrgMemberService`, which
+   * wraps its work in `prisma.$transaction`. These helpers stub that so
+   * the callback runs against the same prisma-like object the test set
+   * up — mirrors what a real transaction looks like from the caller's
+   * side while keeping the mocks flat.
+   */
+  function stubTransaction(prismaLike: Record<string, unknown>) {
+    return vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaLike));
+  }
+
+  it("deletes the membership + cascades team memberships and returns true", async () => {
     const del = vi.fn().mockResolvedValue({});
+    const teamDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const tx: Record<string, unknown> = {
+      organisationUsers: {
+        findUnique: vi.fn().mockResolvedValue({ role: "admin" }),
+        delete: del,
+      },
+      teamMembers: { deleteMany: teamDeleteMany },
+    };
     const ctx = buildContext(
       { id: "admin1", role: "admin" },
-      {
-        organisationUsers: {
-          findUnique: vi.fn().mockResolvedValue({ role: "admin" }),
-          delete: del,
-        },
-      },
+      { ...tx, $transaction: stubTransaction(tx) },
     );
 
     expect(await removeOrgMember(null, { orgId: "o1", userId: "u-target" }, ctx)).toBe(
@@ -543,27 +586,41 @@ describe("Mutation.removeOrgMember", () => {
     expect(del).toHaveBeenCalledWith({
       where: { userId_organisationId: { userId: "u-target", organisationId: "o1" } },
     });
+    expect(teamDeleteMany).toHaveBeenCalledWith({
+      where: { userId: "u-target", team: { organisationId: "o1" } },
+    });
   });
 
   it("returns false when the membership does not exist (Prisma P2025)", async () => {
     const err = Object.assign(new Error("Record not found"), { code: "P2025" });
     const del = vi.fn().mockRejectedValue(err);
+    const teamDeleteMany = vi.fn();
+    const tx: Record<string, unknown> = {
+      organisationUsers: { findUnique: vi.fn(), delete: del },
+      teamMembers: { deleteMany: teamDeleteMany },
+    };
     const ctx = buildContext(
       { id: "admin1", role: "admin" },
-      { organisationUsers: { findUnique: vi.fn(), delete: del } },
+      { ...tx, $transaction: stubTransaction(tx) },
     );
 
     expect(await removeOrgMember(null, { orgId: "o1", userId: "gone" }, ctx)).toBe(
       false,
     );
+    // Service exits early on P2025 — cascade never runs.
+    expect(teamDeleteMany).not.toHaveBeenCalled();
   });
 
   it("rethrows non-P2025 errors", async () => {
     const err = Object.assign(new Error("boom"), { code: "P9999" });
     const del = vi.fn().mockRejectedValue(err);
+    const tx: Record<string, unknown> = {
+      organisationUsers: { findUnique: vi.fn(), delete: del },
+      teamMembers: { deleteMany: vi.fn() },
+    };
     const ctx = buildContext(
       { id: "admin1", role: "admin" },
-      { organisationUsers: { findUnique: vi.fn(), delete: del } },
+      { ...tx, $transaction: stubTransaction(tx) },
     );
 
     await expect(
