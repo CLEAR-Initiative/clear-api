@@ -64,6 +64,10 @@ const envSchema = z.object({
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
 
+  // Buttondown newsletter — optional; powers the subscriber count on
+  // `/portal/admin`. Absent in dev → dashboard shows "not configured".
+  BUTTONDOWN_API_KEY: z.string().optional(),
+
   // ─── Dagster (knowledge-base manual ingest trigger) ──────────────
   // Used by `uploadKnowledgebaseDocument` to hand off freshly uploaded
   // PDFs to the `process_manual_document_job` in dagster-quickstart.
