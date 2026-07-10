@@ -72,9 +72,8 @@ function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SV
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   const isAdmin = userRole === "admin";
   const accountLabel = formatAccountLabel(userRole);
-  const adminAccountHtml = isAdmin
-    ? `<a href="/portal/admin" class="user-role">${escapeHtml(accountLabel)}</a>`
-    : `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
+  // Account label is non-clickable - admin panel access is via sidebar menu only
+  const adminAccountHtml = `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -578,7 +577,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         <div class="system-status" title="All systems operational"><span class="dot"></span> System Status: Operational</div>
       </header>
       <div class="main-content">
-  <div id="tab-getting-started" class="tab-panel active">
+  <div id="tab-getting-started" class="tab-panel">
     <h1>Getting Started</h1>
     <p class="subtitle">Start making authenticated API calls in minutes.</p>
 
@@ -624,7 +623,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   </div>
 
   <!-- API Keys -->
-  <div id="tab-api-keys" class="tab-panel">
+  <div id="tab-api-keys" class="tab-panel active">
     <div class="page-header">
       <div class="page-header-text">
         <h1>API Keys</h1>
@@ -897,7 +896,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     }
 
     // Init from hash
-    var initialTab = location.hash.slice(1) || 'getting-started';
+    var initialTab = location.hash.slice(1) || 'api-keys';
     if (document.getElementById('tab-' + initialTab)) {
       showTab(initialTab);
     }

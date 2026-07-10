@@ -75,6 +75,12 @@ portalRouter.get("/", async (req, res) => {
     return;
   }
 
+  // Super admins land on admin panel by default
+  if (user.role === "admin") {
+    res.redirect(303, "/portal/admin");
+    return;
+  }
+
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(renderPortal({ userEmail: user.email, userRole: user.role }));
 });
