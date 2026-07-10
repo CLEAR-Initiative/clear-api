@@ -33,8 +33,20 @@ const PORTAL_SVGS = {
 
 const PORTAL_ASSETS = {
   logo: "logo.png",
-  avatar: "avatar-default.png",
 } as const;
+
+/**
+ * Generate avatar HTML with initials on orange background (matching clear-mvp pattern).
+ * Falls back to first two characters of email if no proper name available.
+ */
+function generateAvatarHtml(email: string): string {
+  const initials = email
+    .split("@")[0]
+    .substring(0, 2)
+    .toUpperCase();
+  
+  return `<div class="user-avatar" style="background: #FF5C00; color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333; flex-shrink: 0;">${initials}</div>`;
+}
 
 function formatAccountLabel(role?: string | null): string {
   switch (role) {
@@ -196,8 +208,6 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .portal-shell.sidebar-collapsed .user-card {
       justify-content: center; gap: 0; padding: 0; margin-bottom: 0; background: transparent;
     }
-    .user-avatar-link { display: flex; flex-shrink: 0; border-radius: 9999px; }
-    .user-avatar-link:hover { opacity: 0.9; text-decoration: none; }
     .user-avatar {
       width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333;
       object-fit: cover; flex-shrink: 0; display: block;
@@ -541,14 +551,16 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
           ${portalNavButton("reference", "API Reference", "doc")}
           ${portalNavLink("/docs", "API Docs", "doc")}
           ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
+          ${isAdmin ? `
+          <div class="nav-section" style="margin-top:18px">Admin</div>
+          ${portalNavLink("/portal/admin", "Admin Panel", "shield")}
+          ` : ""}
         </nav>
       </div>
 
       <div class="sidebar-footer">
         <div class="user-card">
-          ${isAdmin ? `<a href="/portal/admin" class="user-avatar-link" title="Admin dashboard">` : ""}
-          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.avatar}" alt="" class="user-avatar" width="32" height="32">
-          ${isAdmin ? `</a>` : ""}
+          ${generateAvatarHtml(userEmail)}
           <div class="user-details">
             <div class="user-email">${escapeHtml(userEmail)}</div>
             ${adminAccountHtml}
