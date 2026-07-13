@@ -253,6 +253,40 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     knowledgebaseIngestJob(runId: String!): KnowledgebaseIngestJob
 
+    # ─── Structured datapoints — Layer 2 read path ─────────────────────
+    """One report's extracted structured datapoints. Returns null when
+    no extraction has been persisted yet (report ingested via vector
+    RAG but the datapoint pipeline hasn't caught up). Requires any
+    authenticated content reader."""
+    reportDatapoint(reportId: String!): ReportDatapoint
+
+    """True when at least one current \`aggregated_datapoints\` row
+    exists for the given schema version. Used by the Dagster
+    aggregation asset to distinguish first-run backfill (wide
+    lookback window) from routine weekly refreshes (narrow window).
+    Any authenticated content reader — this is a cheap existence
+    check with no sensitive data on it."""
+    hasAggregatedDatapoints(schemaVersion: String!): Boolean!
+
+    """Aggregated datapoints for a (window × window_kind × location)
+    scope. Cache-first: returns the pre-computed snapshot when one
+    is current (\`validTo IS NULL\` or covers the \`asOf\` timestamp);
+    otherwise assembles the bucket on-demand from \`report_datapoints\`
+    and returns it with \`onDemand = true\`. Returns null when no
+    contributing reports exist in scope."""
+    aggregatedDatapoint(
+      """Null = country-wide roll-up (yearly / all-time tiers)."""
+      locationId: String
+      windowStart: DateTime!
+      windowEnd: DateTime!
+      windowKind: String!
+      """Defaults to the currently-configured pipeline schema version."""
+      schemaVersion: String
+      """Historical snapshot lookup — return the version that was current
+      at this timestamp. Defaults to \`now\`."""
+      asOf: DateTime
+    ): AggregatedDatapoint
+
     # ─── Webhooks (platform admin only) ────────────────────────────────
     """All webhook subscriptions, newest first."""
     webhookSubscriptions: [WebhookSubscription!]!

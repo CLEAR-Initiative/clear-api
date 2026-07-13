@@ -26,6 +26,7 @@ import { activityLogTypeDef } from "./typeDefs/types/activityLog.js";
 import { pipelineCountryTypeDef } from "./typeDefs/types/pipelineCountry.js";
 import { translationTypeDef } from "./typeDefs/types/translation.js";
 import { knowledgebaseTypeDef } from "./typeDefs/types/knowledgebase.js";
+import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 
 export const typeDefs = [
@@ -57,5 +58,6 @@ export const typeDefs = [
   pipelineCountryTypeDef,
   translationTypeDef,
   knowledgebaseTypeDef,
+  datapointTypeDef,
   webhookTypeDef,
 ];

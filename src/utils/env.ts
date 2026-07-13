@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+/**
+ * Optional URL that treats the empty string as "not set". Needed because
+ * our env files (rendered by terraform from tfvars) always emit the
+ * variable even when the value is empty — e.g. `DAGSTER_URL=` when
+ * `dagster_enabled=false`. Bare `z.string().url().optional()` accepts
+ * `undefined` but rejects `""` with a Zod URL-validation error, which
+ * crashes clear-api on boot.
+ */
+const optionalUrl = () =>
+  z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().optional(),
+  );
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "staging", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
@@ -49,7 +63,7 @@ const envSchema = z.object({
   // approved users into the approved collection. All optional in dev so
   // the absence of these vars degrades cleanly (the CRM calls become
   // best-effort no-ops with a log line, not a startup failure).
-  EXPONENTIAL_API_URL: z.string().url().optional(),
+  EXPONENTIAL_API_URL: optionalUrl(),
   /** Long-lived JWT bearer token issued by Exponential. Used as
    *  `Authorization: Bearer <token>` on every Exponential request.
    *  Resolves to a user; that user must be a member of the workspace
@@ -75,7 +89,7 @@ const envSchema = z.object({
   // but returns a UNKNOWN-status job (i.e. no run is launched) — useful
   // when Dagster is offline and you just want to stage a PDF.
   /** Base URL of the Dagster webserver, e.g. http://localhost:3000. */
-  DAGSTER_URL: z.string().url().optional(),
+  DAGSTER_URL: optionalUrl(),
   /** Location name Dagster's UI shows for the dagster-quickstart code
    *  location. Typically `dagster_quickstart` (module name) or
    *  `dagster-quickstart` (project slug). Run
