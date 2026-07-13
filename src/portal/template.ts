@@ -6,11 +6,657 @@ export interface PortalOptions {
   userRole?: string | null;
 }
 
-export function renderPortal({ userEmail, userRole }: PortalOptions): string {
+const PORTAL_ICON_BASE = "/portal/icons";
+
+const PORTAL_SVGS = {
+  rocket:
+    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.284 10.525 3.439 9.68a.86.86 0 0 1-.21-.88c.082-.243.191-.56.323-.923H.658a.75.75 0 0 1-.57-1.33L1.528 4.465A2.1 2.1 0 0 1 3.22 3.5h2.25c.066-.11.132-.21.197-.309 2.24-3.303 5.575-3.412 7.566-3.046a.75.75 0 0 1 .623.623c.366 1.994.254 5.327-3.046 7.566-.096.066-.2.131-.31.197v2.25c0 .695-.366 1.34-.965 1.693l-2.42 1.435a.75.75 0 0 1-1.059-.32v-2.93a4.6 4.6 0 0 1-1.475.325.86.86 0 0 1-.87-.214ZM10.502 4.594a1.094 1.094 0 1 0 0-2.187 1.094 1.094 0 0 0 0 2.187Z"/></svg>',
+  key: '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9.188 9.625A4.812 4.812 0 1 0 4.602 6.28L.192 10.691a.656.656 0 0 0 0 .928.656.656 0 0 0 .465.193H2.844a.656.656 0 0 0 .656-.656V12.25h1.094a.656.656 0 0 0 .656-.656v-1.094h1.094c.175 0 .342-.068.465-.191l.91-.911a4.77 4.77 0 0 0 1.469.227Zm1.094-7a1.094 1.094 0 1 1-2.188 0 1.094 1.094 0 0 1 2.188 0Z"/></svg>',
+  shield:
+    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 0c.126 0 .252.027.366.079l5.149 2.185c.602.254 1.05.847 1.047 1.564-.014 2.712-1.129 7.675-5.84 9.931a1.75 1.75 0 0 1-1.444 0C1.567 11.504.451 6.54.438 3.828.435 3.112.883 2.518 1.485 2.264L6.636.08A.75.75 0 0 1 7 0Zm0 1.827v10.336C10.773 10.336 11.788 6.292 11.813 3.866L7 1.827Z"/></svg>',
+  doc: '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2.625 0C1.176 0 0 1.176 0 2.625v8.75C0 12.824 1.176 14 2.625 14h8.75c.484 0 .875-.391.875-.875a.875.875 0 0 0-.875-.875V10.5c.484 0 .875-.391.875-.875V.875A.875.875 0 0 0 11.375 0H2.625Zm0 10.5h7v1.75H2.625a.875.875 0 0 1-.875-.875c0-.484.391-.875.875-.875ZM3.5 3.938c0-.24.197-.438.438-.438h5.25a.438.438 0 0 1 0 .875h-5.25a.438.438 0 0 1-.438-.437Zm0 1.312a.438.438 0 0 0 0 .875h5.25a.438.438 0 0 0 0-.875h-5.25Z"/></svg>',
+  chart:
+    '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.375 2.188C4.375 1.463 4.963.875 5.688.875h.875C7.287.875 7.875 1.463 7.875 2.188v9.625c0 .725-.588 1.312-1.313 1.312h-.875c-.725 0-1.312-.587-1.312-1.312V2.188ZM0 7.438C0 6.713.588 6.125 1.313 6.125h.875C2.912 6.125 3.5 6.713 3.5 7.438v4.375c0 .725-.588 1.312-1.313 1.312h-.875C.588 13.125 0 12.537 0 11.812V7.438Zm10.063 2.625h.875c.725 0 1.312.588 1.312 1.313v4.375c0 .725-.587 1.312-1.312 1.312h-.875c-.725 0-1.313-.587-1.313-1.312V3.938c0-.725.588-1.313 1.313-1.313Z"/></svg>',
+  signout:
+    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
+  modalClose:
+    '<svg width="15" height="20" viewBox="0 0 15 20" aria-hidden="true"><path fill="currentColor" d="M2.5 2.5 12.5 12.5M12.5 2.5 2.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  modalInfo:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6.25" stroke="currentColor" stroke-width="1.25" fill="none"/><path fill="currentColor" d="M7 6.25a.75.75 0 0 0-.75.75v3.5a.75.75 0 0 0 1.5 0V7a.75.75 0 0 0-.75-.75ZM7 4.25a.875.875 0 1 0 0 1.75.875.875 0 0 0 0-1.75Z"/></svg>',
+  modalCopy:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="4.5" y="4.5" width="7.5" height="7.5" rx="1.25" stroke="currentColor" stroke-width="1.25" fill="none"/><path fill="currentColor" d="M3.25 9.5h-.5A1.25 1.25 0 0 1 1.5 8.25V3.25A1.25 1.25 0 0 1 2.75 2h5A1.25 1.25 0 0 1 9 3.25v.5"/></svg>',
+  modalCheck:
+    '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path fill="currentColor" d="M5.6 10.15 2.85 7.4l.95-.95 1.8 1.8 4.55-4.55.95.95-5.5 5.5Z"/></svg>',
+  modalCheckWatermark:
+    '<svg width="136" height="136" viewBox="0 0 136 136" aria-hidden="true"><path fill="#22c55e" d="M48 68 62 82 88 54" stroke="#22c55e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+} as const;
+
+const PORTAL_ASSETS = {
+  logo: "logo.png",
+} as const;
+
+/**
+ * Generate avatar HTML with initials on orange background (matching clear-mvp pattern).
+ * Falls back to first two characters of email if no proper name available.
+ */
+function generateAvatarHtml(email: string): string {
+  const initials = email
+    .split("@")[0]
+    .substring(0, 2)
+    .toUpperCase();
+  
+  return `<div class="user-avatar" style="background: #FF5C00; color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333; flex-shrink: 0;">${initials}</div>`;
+}
+
+function formatAccountLabel(role?: string | null): string {
+  switch (role) {
+    case "admin":
+      return "Admin Account";
+    case "analyst":
+      return "Analyst Account";
+    case "viewer":
+      return "Viewer Account";
+    default:
+      return "Developer Account";
+  }
+}
+
+function portalNavButton(tab: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
+  return `<button type="button" class="nav-item" data-tab="${tab}" title="${escapeHtml(label)}" onclick="showTab('${tab}')">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></button>`;
+}
+
+function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
+  return `<a href="${href}" class="nav-item nav-item--link" title="${escapeHtml(label)}">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
+}
+
+/**
+ * Complete shared styles for portal sidebar - used by both /portal and /portal/admin.
+ * This ensures visual consistency across all pages.
+ */
+function renderPortalStyles(): string {
+  return `  <style>
+    :root {
+      --color-bg: #0a0a0a;
+      --color-surface: #0d0d0d;
+      --color-surface-2: #111111;
+      --color-surface-3: #141414;
+      --color-border: #1f1f1f;
+      --color-border-2: #222222;
+      --color-accent: #ff5c00;
+      --color-accent-hover: #ff6a1a;
+      --color-accent-soft: rgba(255, 92, 0, 0.1);
+      --color-text: #ffffff;
+      --color-muted: #999999;
+      --color-label: #666666;
+      --color-section: #444444;
+      --on-accent: #ffffff;
+      --color-success: #22c55e;
+      --color-danger: #ef4444;
+      --color-warning: #f59e0b;
+      --color-code-bg: #0e0e10;
+      --radius: 12px;
+      --radius-sm: 6px;
+      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
+      --sidebar-width: 288px;
+      --sidebar-width-collapsed: 72px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    a { color: var(--color-accent); text-decoration: none; }
+    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
+
+    /* Portal shell layout */
+    .portal-shell { display: flex; min-height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width); flex-shrink: 0; background: var(--color-surface);
+      border-right: 1px solid var(--color-border); display: flex; flex-direction: column;
+      justify-content: space-between;
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      z-index: 100;
+    }
+    .portal-shell.sidebar-collapsed .sidebar { 
+      width: var(--sidebar-width-collapsed); 
+      justify-content: flex-start; 
+    }
+    
+    .sidebar-top { 
+      padding: 32px 32px 0; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 48px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      flex: 1;
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      /* Subtle scrollbar */
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .sidebar-top:hover {
+      scrollbar-color: var(--color-border) transparent;
+    }
+    .sidebar-top::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar-top::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .sidebar-top::-webkit-scrollbar-thumb {
+      background: transparent;
+      border-radius: 3px;
+    }
+    .sidebar-top:hover::-webkit-scrollbar-thumb {
+      background: var(--color-border);
+    }
+    .portal-shell.sidebar-collapsed .sidebar-top { 
+      padding: 20px 12px 0; 
+      gap: 24px; 
+    }
+    
+    .sidebar-brand {
+      display: flex; 
+      align-items: center; 
+      gap: 12px;
+      flex-shrink: 0;
+      transition: gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-shell.sidebar-collapsed .sidebar-brand {
+      flex-direction: column; 
+      gap: 10px; 
+      align-items: center;
+    }
+    
+    .brand-logo-img { 
+      width: 36px; 
+      height: 36px; 
+      border-radius: 12px; 
+      flex-shrink: 0; 
+      display: block; 
+    }
+    
+    .brand-text { 
+      min-width: 0; 
+      overflow: hidden; 
+      white-space: nowrap; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 200px; 
+    }
+    .portal-shell.sidebar-collapsed .brand-text { 
+      opacity: 0; 
+      max-width: 0; 
+      pointer-events: none; 
+    }
+    
+    .brand-title { 
+      font-weight: 700; 
+      font-size: 14px; 
+      letter-spacing: 1.4px; 
+      text-transform: uppercase; 
+      color: var(--color-text); 
+      line-height: 14px; 
+    }
+    .brand-sub { 
+      font-size: 10px; 
+      font-weight: 500; 
+      color: var(--color-label); 
+      margin-top: 4px; 
+      line-height: 15px; 
+    }
+    
+    .sidebar-toggle {
+      margin-left: auto; 
+      flex-shrink: 0;
+      width: 28px; 
+      height: 28px; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      border: 1px solid var(--color-border); 
+      border-radius: 6px; 
+      background: transparent;
+      color: var(--color-muted); 
+      cursor: pointer; 
+      font-family: var(--font);
+      transition: color 0.15s ease, border-color 0.15s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .sidebar-toggle:hover { 
+      color: var(--color-text); 
+      border-color: var(--color-border-2); 
+    }
+    .portal-shell.sidebar-collapsed .sidebar-toggle { 
+      margin-left: 0; 
+      transform: rotate(180deg); 
+    }
+
+    .nav-section {
+      font-size: 10px; 
+      font-weight: 700; 
+      letter-spacing: 2px;
+      text-transform: uppercase; 
+      color: var(--color-section);
+      padding: 0 16px; 
+      margin-bottom: 6px;
+      white-space: nowrap; 
+      overflow: hidden;
+      transition: opacity 0.2s ease, max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-height: 24px;
+    }
+    .portal-shell.sidebar-collapsed .nav-section {
+      opacity: 0; 
+      max-height: 0; 
+      margin: 0; 
+      padding: 0; 
+      pointer-events: none;
+    }
+    
+    .nav-list { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 6px; 
+    }
+    
+    .nav-item {
+      display: flex; 
+      align-items: center; 
+      gap: 12px; 
+      width: 100%;
+      min-height: 40px; 
+      padding: 10px 16px; 
+      border: none; 
+      background: none;
+      color: var(--color-muted); 
+      font-size: 14px; 
+      font-weight: 500;
+      cursor: pointer; 
+      text-align: left; 
+      font-family: var(--font);
+      border-right: 2px solid transparent; 
+      border-radius: var(--radius-sm);
+      transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      text-decoration: none;
+    }
+    .portal-shell.sidebar-collapsed .nav-item {
+      justify-content: center; 
+      padding: 10px 8px; 
+      gap: 0;
+      border-right-color: transparent !important;
+    }
+    
+    .nav-label {
+      white-space: nowrap; 
+      overflow: hidden;
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 180px;
+    }
+    .portal-shell.sidebar-collapsed .nav-label {
+      opacity: 0; 
+      max-width: 0; 
+      pointer-events: none;
+    }
+    
+    .nav-item:hover { 
+      color: var(--color-text); 
+      text-decoration: none; 
+    }
+    .nav-item.active {
+      color: var(--color-accent); 
+      border-right-color: var(--color-accent);
+      background: var(--color-accent-soft);
+    }
+    
+    .nav-icon-img { 
+      flex-shrink: 0; 
+      display: block; 
+      color: inherit; 
+      width: 18px;
+      height: 18px;
+    }
+    .nav-item:not(.active) .nav-icon-img { 
+      opacity: 0.6; 
+    }
+    .nav-item.active .nav-icon-img { 
+      opacity: 1; 
+      color: var(--color-accent); 
+    }
+
+    .sidebar-footer { 
+      padding: 24px; 
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0; 
+    }
+    .portal-shell.sidebar-collapsed .sidebar-footer {
+      padding: 0 12px 16px; 
+      margin-top: auto;
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      gap: 10px;
+    }
+    
+    .user-card {
+      display: flex; 
+      align-items: center; 
+      gap: 12px;
+      background: var(--color-surface-3); 
+      border-radius: 8px; 
+      padding: 8px; 
+      margin-bottom: 16px;
+      transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-shell.sidebar-collapsed .user-card {
+      justify-content: center; 
+      gap: 0; 
+      padding: 0; 
+      margin-bottom: 0; 
+      background: transparent;
+    }
+    
+    .user-avatar {
+      width: 32px; 
+      height: 32px; 
+      border-radius: 9999px; 
+      border: 1px solid #333;
+      object-fit: cover; 
+      flex-shrink: 0; 
+      display: block;
+    }
+    
+    .user-details { 
+      min-width: 0; 
+      overflow: hidden; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 200px; 
+    }
+    .portal-shell.sidebar-collapsed .user-details { 
+      display: none; 
+    }
+    
+    .user-email { 
+      font-size: 12px; 
+      font-weight: 500; 
+      color: var(--color-text); 
+      line-height: 16px; 
+      word-break: break-all; 
+    }
+    .user-role { 
+      font-size: 10px; 
+      color: var(--color-label); 
+      line-height: 15px; 
+      margin-top: 0; 
+      text-decoration: none; 
+      display: block; 
+    }
+    
+    .signout-btn {
+      width: 100%; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      gap: 8px;
+      padding: 12px; 
+      border-radius: var(--radius); 
+      border: 1px solid var(--color-border);
+      background: transparent; 
+      color: var(--color-label); 
+      font-size: 12px; 
+      font-weight: 700;
+      cursor: pointer; 
+      font-family: var(--font);
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1), height 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-shell.sidebar-collapsed .signout-btn {
+      width: 40px; 
+      height: 40px; 
+      padding: 0; 
+      margin: 0 auto; 
+      gap: 0;
+    }
+    .signout-btn:hover { 
+      color: var(--color-text); 
+      border-color: var(--color-border-2); 
+    }
+    .signout-btn svg { 
+      color: var(--color-label); 
+      flex-shrink: 0; 
+    }
+    .signout-label { 
+      white-space: nowrap; 
+      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 80px; 
+      overflow: hidden; 
+    }
+    .portal-shell.sidebar-collapsed .signout-label { 
+      opacity: 0; 
+      max-width: 0; 
+    }
+
+    /* Main content */
+    .main { 
+      flex: 1; 
+      min-width: 0; 
+      display: flex; 
+      flex-direction: column; 
+      background: var(--color-bg);
+      margin-left: var(--sidebar-width);
+      transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-shell.sidebar-collapsed .main {
+      margin-left: var(--sidebar-width-collapsed);
+    }
+
+    /* Tables */
+    .table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      overflow: hidden; 
+    }
+    .table th { 
+      text-align: left; 
+      padding: 0.65rem 1rem; 
+      font-size: 0.7rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      color: var(--color-muted); 
+      border-bottom: 1px solid var(--color-border); 
+      background: var(--color-bg); 
+    }
+    .table td { 
+      padding: 0.75rem 1rem; 
+      border-bottom: 1px solid var(--color-border); 
+      font-size: 0.875rem; 
+    }
+    .table tr:last-child td { 
+      border-bottom: none; 
+    }
+    .badge { 
+      display: inline-flex; 
+      align-items: center; 
+      padding: 0.2rem 0.6rem; 
+      border-radius: 999px; 
+      font-size: 0.7rem; 
+      font-weight: 600; 
+    }
+
+    /* Buttons */
+    .btn { 
+      border-radius: var(--radius); 
+      border: none; 
+      font-weight: 500; 
+      cursor: pointer; 
+      font-family: var(--font); 
+      padding: 0.5rem 1rem; 
+      font-size: 0.875rem; 
+      transition: all 0.15s ease; 
+    }
+    .btn-primary { 
+      background: var(--color-accent); 
+      color: var(--on-accent); 
+    }
+    .btn-primary:hover { 
+      background: var(--color-accent-hover); 
+    }
+    .btn-sm { 
+      padding: 0.35rem 0.8rem; 
+      font-size: 0.78rem; 
+    }
+
+    @media (max-width: 768px) {
+      .portal-shell { 
+        flex-direction: column; 
+      }
+      .portal-shell.sidebar-collapsed .sidebar { 
+        width: 100%; 
+      }
+      .sidebar { 
+        width: 100%; 
+        min-height: auto; 
+        border-right: none; 
+        border-bottom: 1px solid var(--color-border); 
+      }
+      .sidebar-top { 
+        padding: 20px 20px 0; 
+        gap: 24px; 
+      }
+      .sidebar-footer { 
+        display: none; 
+      }
+    }
+  </style>`;
+}
+
+/**
+ * Shared JavaScript for sidebar functionality with state persistence.
+ */
+function renderSidebarScript(): string {
+  return `<script>
+    // Load collapsed state from localStorage
+    (function() {
+      const collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+      if (collapsed) {
+        document.getElementById('portal-shell').classList.add('sidebar-collapsed');
+      }
+    })();
+
+    function toggleSidebar() {
+      const shell = document.getElementById('portal-shell');
+      if (shell) {
+        shell.classList.toggle('sidebar-collapsed');
+        const isCollapsed = shell.classList.contains('sidebar-collapsed');
+        localStorage.setItem('sidebar-collapsed', isCollapsed);
+      }
+    }
+    
+    function signOut() {
+      if (confirm('Are you sure you want to sign out?')) {
+        window.location.href = '/api/auth/sign-out';
+      }
+    }
+  </script>`;
+}
+
+/**
+ * Generate sidebar HTML for both portal and admin pages.
+ * Sidebar looks identical on both pages, only the active state differs.
+ * @param context - 'portal' for main portal, 'admin' for admin panel
+ * @param userEmail - User's email address
+ * @param userRole - User's role (optional, for display)
+ */
+function generateSidebar(opts: {
+  context: "portal" | "admin";
+  userEmail: string;
+  userRole?: string | null;
+}): string {
+  const { context, userEmail, userRole } = opts;
   const isAdmin = userRole === "admin";
-  const adminLink = isAdmin
-    ? `<a href="/portal/admin" style="color:var(--color-accent);font-size:0.8rem;font-weight:600;">Admin</a>`
-    : "";
+  const accountLabel = formatAccountLabel(userRole);
+  const adminAccountHtml = `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
+  
+  const brandSubtitle = "Developer Portal";
+  
+  // Use actual links when in admin context, tab buttons when in portal context
+  const portalNav = context === "admin" ? `
+    <div class="nav-section">Menu</div>
+    ${portalNavLink("/portal#getting-started", "Getting Started", "rocket")}
+    ${portalNavLink("/portal#api-keys", "API Keys", "key")}
+    ${portalNavLink("/portal#authentication", "Authentication", "shield")}
+
+    <div class="nav-section" style="margin-top:18px">Resources</div>
+    ${portalNavLink("/portal#reference", "API Reference", "doc")}
+    ${portalNavLink("/docs", "API Docs", "doc")}
+    ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart")}
+  ` : `
+    <div class="nav-section">Menu</div>
+    ${portalNavButton("getting-started", "Getting Started", "rocket")}
+    ${portalNavButton("api-keys", "API Keys", "key")}
+    ${portalNavButton("authentication", "Authentication", "shield")}
+
+    <div class="nav-section" style="margin-top:18px">Resources</div>
+    ${portalNavButton("reference", "API Reference", "doc")}
+    ${portalNavLink("/docs", "API Docs", "doc")}
+    ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
+  `;
+  
+  // Admin navigation (only show if user is admin)
+  // Highlight "Admin Panel" when in admin context
+  const adminNav = isAdmin ? `
+    <div class="nav-section" style="margin-top:18px">Admin</div>
+    <a href="/portal/admin" class="nav-item nav-item--link${context === "admin" ? " active" : ""}" title="Admin Panel">
+      ${PORTAL_SVGS.shield}
+      <span class="nav-label">Admin Panel</span>
+    </a>
+  ` : "";
+  
+  return `
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
+          <div class="brand-text">
+            <div class="brand-title">Clear API</div>
+            <div class="brand-sub">${brandSubtitle}</div>
+          </div>
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+        </div>
+
+        <nav class="nav-list" aria-label="Portal navigation">
+          ${portalNav}
+          ${adminNav}
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="user-card">
+          ${generateAvatarHtml(userEmail)}
+          <div class="user-details">
+            <div class="user-email">${escapeHtml(userEmail)}</div>
+            ${adminAccountHtml}
+          </div>
+        </div>
+        <button type="button" class="signout-btn" onclick="signOut()" title="Sign out">
+          ${PORTAL_SVGS.signout}
+          <span class="signout-label">Sign Out</span>
+        </button>
+      </div>
+    </aside>
+  `;
+}
+
+export function renderPortal({ userEmail, userRole }: PortalOptions): string {
+  const sidebar = generateSidebar({ context: "portal", userEmail, userRole });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,57 +668,213 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderPortalStyles()}
   <style>
-    :root {
-      --color-bg: #0a0a0b;
-      --color-surface: #141417;
-      --color-border: #26262b;
-      --color-accent: #f2612a;
-      --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6;
-      --color-muted: #9a9ca3;
-      --color-label: #75777e;
-      --on-accent: #0a0a0b;
-      --color-success: #22c55e;
-      --color-danger: #ef4444;
-      --color-warning: #f59e0b;
-      --color-code-bg: #0e0e10;
-      --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
+    /* Portal-specific styles */
+    .main-header {
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 20px 32px; border-bottom: 1px solid var(--color-border);
+      background: rgba(13, 13, 13, 0.8); backdrop-filter: blur(6px);
     }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
-    a { color: var(--color-accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
-    /* Nav */
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem; color: var(--color-text); }
-    .nav-brand a { color: inherit; text-decoration: none; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-brand .by { color: var(--color-label); font-weight: 500; font-size: 0.8rem; font-style: italic; }
-    .nav-user { font-size: 0.8rem; color: var(--color-muted); display: flex; align-items: center; gap: 1rem; }
-    .nav-user button { background: none; border: 1px solid var(--color-border); color: var(--color-muted); padding: 0.3rem 0.75rem; border-radius: var(--radius); cursor: pointer; font-size: 0.75rem; }
-    .nav-user button:hover { border-color: var(--color-danger); color: var(--color-danger); }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--color-border); padding: 0 2rem; background: var(--color-surface); }
-    .tab-btn { padding: 0.75rem 1.25rem; border: none; background: none; color: var(--color-muted); cursor: pointer; border-bottom: 2px solid transparent; font-size: 0.875rem; font-weight: 500; transition: all 0.15s; font-family: var(--font); }
-    .tab-btn:hover { color: var(--color-text); }
-    .tab-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+    .system-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 500; color: #aaaaaa;
+      background: #1a1a1a; border: 1px solid var(--color-border-2);
+      border-radius: 9999px; padding: 4px 12px;
+    }
+    .system-status .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); flex-shrink: 0;
+    }
+    .main-content { flex: 1; overflow-y: auto; padding: 32px; max-width: 1280px; width: 100%; }
 
     /* Tab panels */
-    .tab-panel { padding: 2.5rem 2rem; max-width: 860px; margin: 0 auto; display: none; }
+    .tab-panel { display: none; }
     .tab-panel.active { display: block; }
-    .tab-panel h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .tab-panel h1 { font-size: 24px; font-weight: 700; line-height: 32px; margin-bottom: 8px; letter-spacing: -0.02em; }
     .tab-panel h2 { font-size: 1.15rem; margin: 2rem 0 0.75rem; color: var(--color-text); }
     .tab-panel h3 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--color-muted); }
-    .tab-panel p { color: var(--color-muted); margin-bottom: 0.75rem; }
-    .tab-panel ul { padding-left: 1.5rem; color: var(--color-muted); }
+    .tab-panel p { color: #888888; margin-bottom: 0.75rem; font-size: 14px; line-height: 20px; }
+    .tab-panel ul { padding-left: 1.5rem; color: #888888; }
     .tab-panel li { margin: 0.4rem 0; }
-    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
+    .subtitle { font-size: 14px; color: #888888; margin-bottom: 0; line-height: 20px; }
+
+    /* Page header row */
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 24px; margin-bottom: 40px; flex-wrap: wrap;
+    }
+    .page-header-text { flex: 1; min-width: 240px; }
+
+    /* Create key button */
+    .btn-create-key {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      min-width: 202px; height: 48px; padding: 0 20px 0 16px;
+      background: var(--color-accent); color: var(--on-accent); border: none;
+      border-radius: var(--radius); font-size: 14px; font-weight: 700;
+      cursor: pointer; font-family: var(--font); white-space: nowrap;
+      box-shadow: 0 10px 15px -3px rgba(255, 92, 0, 0.1), 0 4px 6px -4px rgba(255, 92, 0, 0.1);
+      transition: background 0.15s;
+    }
+    .btn-create-key:hover { background: var(--color-accent-hover); }
+    .btn-create-key-plus { font-size: 24px; font-weight: 700; line-height: 1; margin-right: 2px; }
+
+    /* Keys panel */
+    .keys-panel {
+      background: var(--color-surface-2); border: 1px solid var(--color-border);
+      border-radius: var(--radius); min-height: 164px; overflow: hidden;
+    }
+    .keys-empty {
+      min-height: 164px; display: flex; align-items: center; justify-content: center;
+      color: #888888; font-size: 14px; line-height: 20px;
+    }
+    .keys-table { margin: 0; }
+    .keys-table th {
+      background: var(--color-bg); font-size: 10px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--color-label); font-weight: 700;
+      padding: 12px 20px; border-bottom: 1px solid var(--color-border);
+    }
+    .keys-table td {
+      padding: 14px 20px; border-bottom: 1px solid var(--color-border);
+      font-size: 14px; color: var(--color-text);
+    }
+    .keys-table tr:last-child td { border-bottom: none; }
+    .keys-table .actions-col { text-align: right; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; z-index: 200;
+    }
+    .modal {
+      width: 100%; max-width: 440px; background: var(--color-surface-3);
+      border: 1px solid var(--color-border); border-radius: var(--radius);
+      padding: 24px;
+    }
+    .modal.modal--key-created {
+      max-width: 520px; padding: 0; background: #111;
+      border: 1px solid #1f1f1f; border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      overflow: hidden; position: relative;
+    }
+    .modal h3 { font-size: 16px; font-weight: 700; color: var(--color-text); margin-bottom: 4px; }
+    .modal p { font-size: 13px; color: var(--color-label); margin-bottom: 20px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .btn-ghost {
+      padding: 10px 16px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);
+      background: transparent; color: var(--color-muted); font-size: 14px; font-weight: 500;
+      cursor: pointer; font-family: var(--font);
+    }
+    .btn-ghost:hover { color: var(--color-text); border-color: var(--color-border-2); }
+
+    /* Key created modal (Figma 87-1173 / 87-1956) */
+    .key-created-watermark {
+      position: absolute; right: 23px; top: 30px; width: 136px; height: 136px;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+    }
+    .key-created-modal.key-copied .key-created-watermark { opacity: 0.1; }
+    .key-created-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; padding: 24px 24px 16px;
+    }
+    .key-created-header h3 {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.5px; line-height: 30px;
+      color: #fff; margin: 0 0 8px;
+    }
+    .key-created-header p {
+      font-size: 14px; line-height: 20px; color: #888; margin: 0;
+    }
+    .modal-close-btn {
+      flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center;
+      justify-content: center; border: none; background: transparent; color: #666;
+      cursor: pointer; padding: 0; border-radius: 6px;
+    }
+    .modal-close-btn:hover { color: #fff; }
+    .key-created-body { padding: 8px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .key-created-warning {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 16px; border-radius: 12px;
+      background: rgba(255, 92, 0, 0.05); border: 1px solid rgba(255, 92, 0, 0.2);
+      color: #ff5c00; font-size: 13px; font-weight: 500; line-height: 19.5px;
+    }
+    .key-created-warning svg { flex-shrink: 0; margin-top: 2px; color: #ff5c00; }
+    .key-created-field-wrap label {
+      display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+      text-transform: uppercase; color: #666; margin-bottom: 8px;
+    }
+    .key-created-field {
+      display: flex; align-items: center; gap: 8px;
+      background: #0a0a0a; border: 1px solid #222; border-radius: 8px;
+      padding: 14px 16px; transition: border-color 0.2s, background 0.2s;
+    }
+    .key-created-modal.key-copied .key-created-field {
+      background: #0b120e; border-color: #166534;
+    }
+    .key-created-field code {
+      flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 14px;
+      line-height: 20px; color: #fff; letter-spacing: -0.027px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .key-created-modal.key-copied .key-created-field code { color: #22c55e; }
+    .key-field-copy-btn {
+      flex-shrink: 0; width: 28px; height: 28px; display: flex; align-items: center;
+      justify-content: center; border: none; background: transparent; color: #666;
+      cursor: pointer; padding: 0; border-radius: 4px;
+    }
+    .key-field-copy-btn:hover { color: #fff; }
+    .key-created-modal.key-copied .key-field-copy-btn { display: none; }
+    .key-created-footer {
+      display: flex; justify-content: flex-end; padding: 24px;
+    }
+    .btn-copy-key {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 32px; border: none; border-radius: 8px;
+      background: #ff5c00; color: #fff; font-size: 14px; font-weight: 600;
+      letter-spacing: 0.16px; cursor: pointer; font-family: var(--font);
+      box-shadow: 0 4px 6px rgba(255, 92, 0, 0.25);
+    }
+    .btn-copy-key:hover { background: #ff6a1a; }
+    .btn-copy-key svg { flex-shrink: 0; }
+
+    /* Confirm modal (revoke, etc.) */
+    .modal.modal--confirm {
+      max-width: 440px; padding: 0; background: #111;
+      border: 1px solid #1f1f1f; border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    }
+    .confirm-modal-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; padding: 24px 24px 0;
+    }
+    .confirm-modal-header h3 {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.5px; line-height: 30px;
+      color: #fff; margin: 0;
+    }
+    .confirm-modal-body { padding: 16px 24px 0; }
+    .confirm-modal-body p {
+      font-size: 14px; line-height: 20px; color: #888; margin: 0;
+    }
+    .confirm-modal-body strong { color: #fff; font-weight: 600; }
+    .confirm-modal-warning {
+      display: flex; gap: 12px; align-items: flex-start; margin-top: 16px;
+      padding: 16px; border-radius: 12px;
+      background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #f87171; font-size: 13px; font-weight: 500; line-height: 19.5px;
+    }
+    .confirm-modal-warning svg { flex-shrink: 0; margin-top: 1px; color: #f87171; }
+    .confirm-modal-footer {
+      display: flex; gap: 10px; justify-content: flex-end;
+      padding: 24px;
+    }
+    .btn-danger-solid {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 12px 24px; border: none; border-radius: 8px;
+      background: #ef4444; color: #fff; font-size: 14px; font-weight: 600;
+      cursor: pointer; font-family: var(--font);
+      box-shadow: 0 4px 6px rgba(239, 68, 68, 0.2);
+    }
+    .btn-danger-solid:hover { background: #dc2626; }
+    .btn-danger-solid:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Code blocks */
     pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
@@ -86,7 +888,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     /* Steps */
     .steps { margin-top: 1rem; }
     .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
-    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: #1a0a02; }
     .step-content h3 { margin: 0 0 0.25rem; color: var(--color-text); }
     .step-content p { margin: 0.25rem 0; }
 
@@ -99,6 +901,10 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .badge-revoked { background: #450a0a; color: #f87171; }
     .badge-expired { background: #431407; color: #fb923c; }
 
+    input[type="text"], input[type="date"] { padding: 0.5rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-code-bg); color: var(--color-text); font-size: 0.875rem; font-family: var(--font); }
+    input:focus { outline: none; border-color: var(--color-accent); }
+    .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
+
     /* Buttons */
     .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-size: 0.875rem; transition: all 0.15s; font-family: var(--font); }
     .btn-primary { background: var(--color-accent); color: var(--on-accent); }
@@ -108,22 +914,6 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Key reveal */
-    .key-reveal { background: #14532d; border: 1px solid #16a34a; border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1rem 0; display: none; }
-    .key-reveal.visible { display: block; }
-    .key-reveal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
-    .key-reveal-header strong { color: #4ade80; }
-    .key-reveal p { font-size: 0.8rem; color: #86efac; margin: 0; }
-    .key-reveal code { color: #4ade80; word-break: break-all; display: block; margin-top: 0.5rem; background: #0f2d1a; padding: 0.5rem 0.75rem; border-radius: 4px; }
-
-    /* Create form */
-    .create-form { margin: 1.5rem 0; padding: 1.25rem; background: var(--color-surface); border-radius: var(--radius); border: 1px solid var(--color-border); }
-    .create-form h3 { margin: 0 0 1rem; color: var(--color-text); }
-    .form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
-    .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
-    input[type="text"], input[type="date"] { padding: 0.5rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--color-border); background: var(--color-code-bg); color: var(--color-text); font-size: 0.875rem; font-family: var(--font); }
-    input:focus { outline: none; border-color: var(--color-accent); }
-
     /* Notices */
     .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
     .notice-warning { background: #451a03; border: 1px solid var(--color-warning); color: #fde68a; }
@@ -131,28 +921,58 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
 
     .error-text { color: var(--color-danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .empty-state { color: var(--color-muted); padding: 2rem; text-align: center; }
+
+    /* Usage analytics */
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1.5rem 0 2rem; }
+    .stat-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.1rem 1.2rem; }
+    .stat-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-label); font-weight: 600; margin-bottom: 0.35rem; }
+    .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.25rem; }
+
+    /* Getting started CTAs */
+    .getting-started-ctas {
+      display: flex; gap: 16px; flex-wrap: wrap; margin-top: 48px;
+    }
+    .btn-cta-secondary {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 12px 24px; border-radius: var(--radius);
+      border: 1px solid rgba(255, 92, 0, 0.4); background: rgba(204, 88, 23, 0.2);
+      color: var(--color-text); font-size: 14px; font-weight: 700;
+      text-decoration: none; font-family: var(--font);
+    }
+    .btn-cta-secondary:hover { text-decoration: none; border-color: var(--color-accent); }
+    .btn-cta-primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 12px 24px; border-radius: var(--radius);
+      border: none; background: var(--color-accent); color: var(--on-accent);
+      font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--font);
+      box-shadow: 0 10px 15px -3px rgba(255, 92, 0, 0.1), 0 4px 6px -4px rgba(255, 92, 0, 0.1);
+    }
+    .btn-cta-primary:hover { background: var(--color-accent-hover); }
+
+    @media (max-width: 768px) {
+      .portal-shell { flex-direction: column; }
+      .portal-shell.sidebar-collapsed .sidebar { width: 100%; }
+      .sidebar { width: 100%; min-height: auto; border-right: none; border-bottom: 1px solid var(--color-border); }
+      .sidebar-top { padding: 20px 20px 0; gap: 24px; }
+      .sidebar-footer { display: none; }
+      .main-content { padding: 20px; }
+      .main-header { padding: 16px 20px; }
+      .page-header { margin-bottom: 24px; }
+      .btn-create-key { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-brand"><a href="/"><span class="c">CLEAR</span> API</a> <span class="by">Developer Portal</span></div>
-    <div class="nav-user">
-      <a href="/docs" style="color:var(--color-muted);font-size:0.8rem;">Docs</a>
-      ${adminLink}
-      <span>${escapeHtml(userEmail)}</span>
-      <button onclick="signOut()">Sign Out</button>
-    </div>
-  </nav>
+  <div class="portal-shell" id="portal-shell">
+    ${sidebar}
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="getting-started" onclick="showTab('getting-started')">Getting Started</button>
-    <button class="tab-btn" data-tab="api-keys" onclick="showTab('api-keys')">API Keys</button>
-    <button class="tab-btn" data-tab="authentication" onclick="showTab('authentication')">Authentication</button>
-    <button class="tab-btn" data-tab="reference" onclick="showTab('reference')">API Reference</button>
-  </div>
-
-  <!-- Getting Started -->
-  <div id="tab-getting-started" class="tab-panel active">
+    <div class="main">
+      <header class="main-header">
+        <div class="system-status" title="All systems operational"><span class="dot"></span> System Status: Operational</div>
+      </header>
+      <div class="main-content">
+  <div id="tab-getting-started" class="tab-panel">
     <h1>Getting Started</h1>
     <p class="subtitle">Start making authenticated API calls in minutes.</p>
 
@@ -161,7 +981,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         <div class="step-num">1</div>
         <div class="step-content">
           <h3>Create an API Key</h3>
-          <p>Go to the <a href="#api-keys" onclick="showTab('api-keys')">API Keys</a> tab and click <strong>Create Key</strong>. Give it a descriptive name like <code>my-app-prod</code>.</p>
+          <p>Go to the <a href="#api-keys" onclick="showTab('api-keys')">API Keys</a> tab and click <strong>Create New API Key</strong>. Give it a descriptive name like <code>my-app-prod</code>.</p>
         </div>
       </div>
       <div class="step">
@@ -190,52 +1010,116 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         </div>
       </div>
     </div>
+
+    <div class="getting-started-ctas">
+      <a href="/docs" class="btn-cta-secondary">Read documentation</a>
+      <button type="button" class="btn-cta-primary" onclick="showTab('api-keys')">Manage API Keys &rarr;</button>
+    </div>
   </div>
 
   <!-- API Keys -->
-  <div id="tab-api-keys" class="tab-panel">
-    <h1>API Keys</h1>
-    <p>Manage your personal API keys. Maximum 10 active keys per account.</p>
-
-    <div id="new-key-reveal" class="key-reveal">
-      <div class="key-reveal-header">
-        <strong>New key created &mdash; save this now!</strong>
-        <button class="btn btn-primary btn-sm" onclick="copyText(document.getElementById('new-key-value').textContent, this)">Copy</button>
+  <div id="tab-api-keys" class="tab-panel active">
+    <div class="page-header">
+      <div class="page-header-text">
+        <h1>API Keys</h1>
+        <p class="subtitle">Manage your personal API keys. Maximum 10 active keys per account.</p>
       </div>
-      <p>This key is shown once and cannot be retrieved again.</p>
-      <code id="new-key-value"></code>
+      <button type="button" class="btn-create-key" onclick="openCreateKeyModal()">
+        <span class="btn-create-key-plus">+</span>
+        Create New API Key
+      </button>
     </div>
 
-    <div class="create-form">
-      <h3>Create New Key</h3>
-      <div class="form-row">
-        <div class="form-group">
+    <div class="keys-panel" id="keys-panel">
+      <div id="keys-empty" class="keys-empty">No API Keys yet.</div>
+      <table class="key-table keys-table" id="keys-table" style="display:none">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Last Used</th>
+            <th class="actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="key-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="create-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCreateKeyModal()">
+    <div class="modal" id="create-key-modal-panel" role="dialog" aria-labelledby="create-key-title">
+      <div id="create-key-form-view">
+        <h3 id="create-key-title">Create New Key</h3>
+        <p>Give your key a descriptive name. You can optionally set an expiry date.</p>
+        <div class="form-group" style="margin-bottom:12px">
           <label for="key-name">Name (required)</label>
-          <input type="text" id="key-name" placeholder="my-app-prod" style="width:220px">
+          <input type="text" id="key-name" placeholder="my-app-prod" style="width:100%">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:4px">
           <label for="key-expires">Expires (optional)</label>
-          <input type="date" id="key-expires">
+          <input type="date" id="key-expires" style="width:100%">
         </div>
-        <button class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
+        <div id="create-error" class="error-text"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeCreateKeyModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
+        </div>
       </div>
-      <div id="create-error" class="error-text"></div>
+      <div id="create-key-success-view" class="key-created-modal" style="display:none">
+        <div class="key-created-watermark">${PORTAL_SVGS.modalCheckWatermark}</div>
+        <div class="key-created-header">
+          <div>
+            <h3 id="create-key-success-title">Your API Key has been created</h3>
+            <p>Your API Key is a secure credential for accessing the API. Do not share it or expose it in browsers, or other client-side code.</p>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeCreateKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+        </div>
+        <div class="key-created-body">
+          <div class="key-created-warning">
+            ${PORTAL_SVGS.modalInfo}
+            <div>
+              <div>Important: your API Key will only be displayed once.</div>
+              <div>Please store it securely.</div>
+            </div>
+          </div>
+          <div class="key-created-field-wrap">
+            <label for="new-key-value">API Key</label>
+            <div class="key-created-field">
+              <code id="new-key-value"></code>
+              <button type="button" class="key-field-copy-btn" onclick="copyApiKey()" aria-label="Copy API key">${PORTAL_SVGS.modalCopy}</button>
+            </div>
+          </div>
+        </div>
+        <div class="key-created-footer">
+          <button type="button" class="btn-copy-key" id="copy-key-btn" onclick="copyApiKey()">
+            ${PORTAL_SVGS.modalCopy}
+            <span class="btn-copy-key-label">Copy Key</span>
+          </button>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <table class="key-table">
-      <thead>
-        <tr>
-          <th>Key</th>
-          <th>Name</th>
-          <th>Status</th>
-          <th>Last Used</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="key-table-body">
-        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
-      </tbody>
-    </table>
+  <div id="revoke-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRevokeKeyModal()">
+    <div class="modal modal--confirm" role="alertdialog" aria-labelledby="revoke-key-title" aria-describedby="revoke-key-desc">
+      <div class="confirm-modal-header">
+        <h3 id="revoke-key-title">Revoke API Key?</h3>
+        <button type="button" class="modal-close-btn" onclick="closeRevokeKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+      </div>
+      <div class="confirm-modal-body">
+        <p id="revoke-key-desc">Are you sure you want to revoke <strong id="revoke-key-name"></strong>? This action cannot be undone.</p>
+        <div class="confirm-modal-warning">
+          ${PORTAL_SVGS.modalInfo}
+          <div>Revoked keys stop working immediately. Any integrations using this key will fail until you create a new one.</div>
+        </div>
+        <div id="revoke-error" class="error-text" style="margin-top:12px"></div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn-ghost" onclick="closeRevokeKeyModal()">Cancel</button>
+        <button type="button" class="btn-danger-solid" id="revoke-confirm-btn" onclick="confirmRevokeKey()">Revoke Key</button>
+      </div>
+    </div>
   </div>
 
   <!-- Authentication -->
@@ -361,24 +1245,81 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     </table>
   </div>
 
+  <!-- Usage Analytics -->
+  <div id="tab-usage-analytics" class="tab-panel">
+    <h1>Usage Analytics</h1>
+    <p class="subtitle">API key activity for your account. Last-used timestamps update when a key authenticates a request.</p>
+
+    <div id="usage-stats" class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Active keys</div><div class="stat-value" id="stat-active">—</div></div>
+      <div class="stat-card"><div class="stat-label">Total keys</div><div class="stat-value" id="stat-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Last activity</div><div class="stat-value" id="stat-last" style="font-size:1.1rem">—</div><div class="stat-sub" id="stat-last-sub"></div></div>
+    </div>
+
+    <table class="key-table">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Last used</th>
+        </tr>
+      </thead>
+      <tbody id="usage-table-body">
+        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+      </div><!-- /.main-content -->
+    </div><!-- /.main -->
+  </div><!-- /.portal-shell -->
+
   <script>
     // --- Tab routing ---
     function showTab(name) {
       document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
-      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.nav-item[data-tab]').forEach(function(b) { b.classList.remove('active'); });
       var panel = document.getElementById('tab-' + name);
-      var btn = document.querySelector('[data-tab="' + name + '"]');
+      var btn = document.querySelector('.nav-item[data-tab="' + name + '"]');
       if (panel) panel.classList.add('active');
       if (btn) btn.classList.add('active');
       history.replaceState(null, '', '#' + name);
       if (name === 'api-keys') loadApiKeys();
+      if (name === 'usage-analytics') loadUsageAnalytics();
     }
 
     // Init from hash
-    var initialTab = location.hash.slice(1) || 'getting-started';
+    var initialTab = location.hash.slice(1) || 'api-keys';
     if (document.getElementById('tab-' + initialTab)) {
       showTab(initialTab);
     }
+
+    // --- Collapsible sidebar ---
+    function toggleSidebar() {
+      var shell = document.getElementById('portal-shell');
+      var collapsed = shell.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('portal-sidebar-collapsed', collapsed ? '1' : '0');
+      var toggleBtn = document.getElementById('sidebar-toggle');
+      if (toggleBtn) {
+        var label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        toggleBtn.setAttribute('aria-label', label);
+        toggleBtn.title = label;
+      }
+    }
+
+    (function initSidebar() {
+      if (localStorage.getItem('portal-sidebar-collapsed') === '1') {
+        var shell = document.getElementById('portal-shell');
+        shell.classList.add('sidebar-collapsed');
+        var toggleBtn = document.getElementById('sidebar-toggle');
+        if (toggleBtn) {
+          toggleBtn.setAttribute('aria-label', 'Expand sidebar');
+          toggleBtn.title = 'Expand sidebar';
+        }
+      }
+    })();
 
     // --- GraphQL helper ---
     async function gql(query, variables) {
@@ -396,25 +1337,111 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- API Key Management ---
     var keysLoaded = false;
 
+    function openCreateKeyModal() {
+      resetCreateKeyModal();
+      document.getElementById('create-key-modal').style.display = 'flex';
+      document.getElementById('key-name').focus();
+    }
+
+    function resetCreateKeyModal() {
+      var panel = document.getElementById('create-key-modal-panel');
+      var successView = document.getElementById('create-key-success-view');
+      panel.classList.remove('modal--key-created');
+      document.getElementById('create-key-form-view').style.display = '';
+      successView.style.display = 'none';
+      successView.classList.remove('key-copied');
+      document.getElementById('key-name').value = '';
+      document.getElementById('key-expires').value = '';
+      document.getElementById('new-key-value').textContent = '';
+      document.getElementById('new-key-value').removeAttribute('data-full-key');
+      var copyLabel = document.querySelector('#copy-key-btn .btn-copy-key-label');
+      if (copyLabel) copyLabel.textContent = 'Copy Key';
+      var copyBtn = document.getElementById('copy-key-btn');
+      if (copyBtn) copyBtn.innerHTML = '${PORTAL_SVGS.modalCopy.replace(/'/g, "\\'")}<span class="btn-copy-key-label">Copy Key</span>';
+      showCreateError('');
+      var btn = document.getElementById('create-btn');
+      btn.disabled = false;
+      btn.textContent = 'Create Key';
+    }
+
+    function closeCreateKeyModal() {
+      document.getElementById('create-key-modal').style.display = 'none';
+      resetCreateKeyModal();
+    }
+
+    function maskApiKey(key) {
+      if (!key || key.length < 16) return key;
+      var start = key.slice(0, 12);
+      var end = key.slice(-4);
+      var dotCount = Math.min(28, Math.max(12, key.length - 16));
+      return start + '.'.repeat(dotCount) + end;
+    }
+
+    function showKeyCreated(fullKey) {
+      var panel = document.getElementById('create-key-modal-panel');
+      var successView = document.getElementById('create-key-success-view');
+      var valueEl = document.getElementById('new-key-value');
+      valueEl.setAttribute('data-full-key', fullKey);
+      valueEl.textContent = maskApiKey(fullKey);
+      document.getElementById('create-key-form-view').style.display = 'none';
+      successView.style.display = '';
+      successView.classList.remove('key-copied');
+      panel.classList.add('modal--key-created');
+    }
+
+    async function copyApiKey() {
+      var valueEl = document.getElementById('new-key-value');
+      var fullKey = valueEl.getAttribute('data-full-key');
+      if (!fullKey) return;
+      try {
+        await navigator.clipboard.writeText(fullKey);
+      } catch (e) {
+        var ta = document.createElement('textarea');
+        ta.value = fullKey;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      var successView = document.getElementById('create-key-success-view');
+      successView.classList.add('key-copied');
+      valueEl.textContent = maskApiKey(fullKey) + ' ✓';
+      var copyBtn = document.getElementById('copy-key-btn');
+      if (copyBtn) {
+        copyBtn.innerHTML = '${PORTAL_SVGS.modalCheck.replace(/'/g, "\\'")}<span class="btn-copy-key-label">Key copied!</span>';
+      }
+    }
+
     async function loadApiKeys() {
       if (keysLoaded) return;
-      var tbody = document.getElementById('key-table-body');
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading...</td></tr>';
+      var empty = document.getElementById('keys-empty');
+      var table = document.getElementById('keys-table');
+      empty.style.display = 'flex';
+      empty.textContent = 'Loading...';
+      table.style.display = 'none';
       try {
         var data = await gql('query { myApiKeys { id name prefix expiresAt lastUsedAt revokedAt createdAt } }');
         keysLoaded = true;
         renderKeyTable(data.myApiKeys);
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="error-text">' + e.message + '</td></tr>';
+        empty.style.display = 'flex';
+        empty.textContent = e.message;
+        table.style.display = 'none';
       }
     }
 
     function renderKeyTable(keys) {
+      var empty = document.getElementById('keys-empty');
+      var table = document.getElementById('keys-table');
       var tbody = document.getElementById('key-table-body');
       if (!keys.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No API keys yet. Create one above.</td></tr>';
+        empty.style.display = 'flex';
+        empty.textContent = 'No API Keys yet.';
+        table.style.display = 'none';
         return;
       }
+      empty.style.display = 'none';
+      table.style.display = 'table';
       tbody.innerHTML = keys.map(function(k) {
         var now = new Date();
         var status = k.revokedAt ? 'revoked' : (k.expiresAt && new Date(k.expiresAt) < now) ? 'expired' : 'active';
@@ -424,8 +1451,8 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
           + '<td>' + escapeHtmlJs(k.name) + '</td>'
           + '<td><span class="badge badge-' + status + '">' + status + '</span></td>'
           + '<td>' + lastUsed + '</td>'
-          + '<td>' + (status === 'active'
-            ? '<button class="btn btn-danger btn-sm" onclick="revokeKey(' + k.id + ', \\'' + escapeHtmlJs(k.name).replace(/'/g, "\\\\'") + '\\')">Revoke</button>'
+          + '<td class="actions-col">' + (status === 'active'
+            ? '<button type="button" class="btn btn-danger btn-sm" data-revoke-id="' + escapeHtmlJs(k.id) + '" data-revoke-name="' + escapeHtmlJs(k.name) + '">Revoke</button>'
             : '&mdash;')
           + '</td></tr>';
       }).join('');
@@ -447,11 +1474,9 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
           'mutation CreateApiKey($input: CreateApiKeyInput!) { createApiKey(input: $input) { key apiKey { id name prefix createdAt } } }',
           { input: input }
         );
-        document.getElementById('new-key-value').textContent = data.createApiKey.key;
-        document.getElementById('new-key-reveal').classList.add('visible');
-        nameInput.value = '';
-        expiresInput.value = '';
+        showKeyCreated(data.createApiKey.key);
         keysLoaded = false;
+        usageLoaded = false;
         loadApiKeys();
       } catch (e) {
         showCreateError(e.message);
@@ -461,19 +1486,101 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       }
     }
 
-    async function revokeKey(id, name) {
-      if (!confirm('Revoke key "' + name + '"? This cannot be undone.')) return;
+    var pendingRevoke = { id: null, name: null };
+
+    function openRevokeKeyModal(id, name) {
+      pendingRevoke.id = id;
+      pendingRevoke.name = name;
+      document.getElementById('revoke-key-name').textContent = name;
+      document.getElementById('revoke-error').textContent = '';
+      var btn = document.getElementById('revoke-confirm-btn');
+      btn.disabled = false;
+      btn.textContent = 'Revoke Key';
+      document.getElementById('revoke-key-modal').style.display = 'flex';
+    }
+
+    function closeRevokeKeyModal() {
+      document.getElementById('revoke-key-modal').style.display = 'none';
+      pendingRevoke.id = null;
+      pendingRevoke.name = null;
+      document.getElementById('revoke-error').textContent = '';
+    }
+
+    async function confirmRevokeKey() {
+      if (!pendingRevoke.id) return;
+      var btn = document.getElementById('revoke-confirm-btn');
+      btn.disabled = true;
+      btn.textContent = 'Revoking...';
+      document.getElementById('revoke-error').textContent = '';
       try {
-        await gql('mutation RevokeApiKey($id: Int!) { revokeApiKey(id: $id) { id revokedAt } }', { id: id });
+        await gql('mutation RevokeApiKey($id: String!) { revokeApiKey(id: $id) { id revokedAt } }', { id: pendingRevoke.id });
+        closeRevokeKeyModal();
         keysLoaded = false;
-        loadApiKeys();
+        usageLoaded = false;
+        await loadApiKeys();
       } catch (e) {
-        alert('Failed to revoke: ' + e.message);
+        document.getElementById('revoke-error').textContent = e.message;
+        btn.disabled = false;
+        btn.textContent = 'Revoke Key';
       }
     }
 
+    document.getElementById('keys-table').addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-revoke-id]');
+      if (!btn) return;
+      openRevokeKeyModal(btn.getAttribute('data-revoke-id'), btn.getAttribute('data-revoke-name'));
+    });
+
     function showCreateError(msg) {
       document.getElementById('create-error').textContent = msg;
+    }
+
+    // --- Usage Analytics ---
+    var usageLoaded = false;
+
+    async function loadUsageAnalytics() {
+      if (usageLoaded) return;
+      var tbody = document.getElementById('usage-table-body');
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading...</td></tr>';
+      try {
+        var data = await gql('query { myApiKeys { id name prefix expiresAt lastUsedAt revokedAt createdAt } }');
+        usageLoaded = true;
+        renderUsageAnalytics(data.myApiKeys);
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="error-text">' + e.message + '</td></tr>';
+      }
+    }
+
+    function renderUsageAnalytics(keys) {
+      var now = new Date();
+      var active = keys.filter(function(k) {
+        return !k.revokedAt && (!k.expiresAt || new Date(k.expiresAt) >= now);
+      });
+      var lastUsedDates = keys.map(function(k) { return k.lastUsedAt ? new Date(k.lastUsedAt) : null; }).filter(Boolean);
+      var mostRecent = lastUsedDates.length ? new Date(Math.max.apply(null, lastUsedDates.map(function(d) { return d.getTime(); }))) : null;
+
+      document.getElementById('stat-active').textContent = String(active.length);
+      document.getElementById('stat-total').textContent = String(keys.length);
+      document.getElementById('stat-last').textContent = mostRecent ? mostRecent.toLocaleDateString() : 'Never';
+      document.getElementById('stat-last-sub').textContent = mostRecent ? mostRecent.toLocaleTimeString() : 'No authenticated requests yet';
+
+      var tbody = document.getElementById('usage-table-body');
+      if (!keys.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No API keys yet. Create one on the API Keys page.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = keys.map(function(k) {
+        var status = k.revokedAt ? 'revoked' : (k.expiresAt && new Date(k.expiresAt) < now) ? 'expired' : 'active';
+        var created = new Date(k.createdAt).toLocaleDateString();
+        var lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : 'Never';
+        return '<tr>'
+          + '<td><code>' + k.prefix + '...</code></td>'
+          + '<td>' + escapeHtmlJs(k.name) + '</td>'
+          + '<td><span class="badge badge-' + status + '">' + status + '</span></td>'
+          + '<td>' + created + '</td>'
+          + '<td>' + lastUsed + '</td>'
+          + '</tr>';
+      }).join('');
     }
 
     // --- Clipboard ---
@@ -522,6 +1629,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       return div.innerHTML;
     }
   </script>
+  ${renderSidebarScript()}
 </body>
 </html>`;
 }
@@ -722,9 +1830,14 @@ export interface AdminMetrics {
     organisations: number;
     teams: number;
   };
+  newsletter: {
+    configured: boolean;
+    count: number | null;
+    error?: string;
+  };
 }
 
-export type AdminTab = "dashboard" | "pending";
+export type AdminTab = "dashboard" | "pending" | "organisations" | "webhooks";
 
 interface AdminShellOptions {
   currentUserEmail: string;
@@ -750,6 +1863,7 @@ interface AdminShellOptions {
  */
 function renderAdminShell(opts: AdminShellOptions): string {
   const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title } = opts;
+  const sidebar = generateSidebar({ context: "admin", userEmail: currentUserEmail, userRole: "admin" });
 
   const flashHtml = !flash
     ? ""
@@ -779,80 +1893,219 @@ function renderAdminShell(opts: AdminShellOptions): string {
   <title>Admin · ${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderPortalStyles()}
   <style>
-    :root {
-      --color-bg: #0a0a0b; --color-surface: #141417; --color-border: #26262b;
-      --color-accent: #f2612a; --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6; --color-muted: #9a9ca3; --color-label: #75777e;
-      --on-accent: #0a0a0b;
-      --color-success: #22c55e; --color-danger: #ef4444; --color-warning: #f59e0b;
-      --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, monospace;
+    /* Admin-specific tabs */
+    .admin-tabs { 
+      display: flex; 
+      gap: 0; 
+      padding: 0 2rem; 
+      border-bottom: 1px solid var(--color-border); 
+      background: var(--color-surface); 
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
-    a { color: var(--color-accent); text-decoration: none; }
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; }
-    .nav-brand a { color: inherit; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-user { font-size: 0.8rem; color: var(--color-muted); }
+    .admin-tab { 
+      padding: 0.85rem 1.2rem; 
+      color: var(--color-muted); 
+      text-decoration: none; 
+      font-size: 0.875rem; 
+      font-weight: 500; 
+      border-bottom: 2px solid transparent; 
+      display: inline-flex; 
+      align-items: center; 
+      transition: all 0.15s ease; 
+    }
+    .admin-tab:hover { 
+      color: var(--color-text); 
+    }
+    .admin-tab.active { 
+      color: var(--color-accent); 
+      border-bottom-color: var(--color-accent); 
+    }
 
-    /* Tabs */
-    .admin-tabs { display: flex; gap: 0; padding: 0 2rem; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .admin-tab { padding: 0.85rem 1.2rem; color: var(--color-muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; transition: all 0.15s; }
-    .admin-tab:hover { color: var(--color-text); }
-    .admin-tab.active { color: var(--color-accent); border-bottom-color: var(--color-accent); }
+    /* Admin content adjustments */
+    .wrap { 
+      max-width: 1280px; 
+      margin: 0 auto; 
+      padding: 2.5rem 2rem; 
+      flex: 1; 
+    }
+    h1 { 
+      font-size: 1.4rem; 
+      margin-bottom: 0.4rem; 
+    }
+    h2 { 
+      font-size: 1rem; 
+      margin: 2rem 0 1rem; 
+      color: var(--color-muted); 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      font-weight: 600; 
+    }
+    .subtitle { 
+      color: var(--color-muted); 
+      margin-bottom: 1.5rem; 
+      font-size: 0.95rem; 
+    }
 
-    /* Content shell */
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 2rem; }
-    h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
-    h2 { font-size: 1rem; margin: 2rem 0 1rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-    .subtitle { color: var(--color-muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
-    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
+    /* Metric cards - 2 column layout */
+    .metric-grid { 
+      display: grid; 
+      gap: 1.5rem; 
+      grid-template-columns: repeat(2, 1fr); 
+      margin-bottom: 2rem; 
+    }
+    @media (max-width: 968px) {
+      .metric-grid { 
+        grid-template-columns: 1fr; 
+      }
+    }
+    .metric-card { 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      padding: 1.5rem; 
+      transition: border-color 0.15s ease; 
+    }
+    .metric-card:hover { 
+      border-color: var(--color-border); 
+    }
+    .metric-card.accent { 
+      border-color: var(--color-accent); 
+    }
+    .metric-label { 
+      font-size: 0.7rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.06em; 
+      color: var(--color-muted); 
+      font-weight: 600; 
+      margin-bottom: 0.75rem; 
+    }
+    .metric-value { 
+      font-size: 2.25rem; 
+      font-weight: 700; 
+      line-height: 1.1; 
+      color: var(--color-text); 
+      font-variant-numeric: tabular-nums; 
+    }
+    .metric-card.accent .metric-value { 
+      color: var(--color-accent); 
+    }
+    .metric-sub { 
+      font-size: 0.75rem; 
+      color: var(--color-muted); 
+      margin-top: 0.5rem; 
+    }
+    .metric-breakdown { 
+      display: flex; 
+      flex-wrap: wrap; 
+      gap: 0.5rem 1rem; 
+      margin-top: 1rem; 
+      font-size: 0.78rem; 
+      color: var(--color-muted); 
+    }
+    .metric-breakdown span strong { 
+      color: var(--color-text); 
+      font-weight: 600; 
+    }
 
-    /* Table */
-    .table { width: 100%; border-collapse: collapse; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); overflow: hidden; }
-    .table th { text-align: left; padding: 0.65rem 1rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); background: var(--color-bg); }
-    .table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
-    .table tr:last-child td { border-bottom: none; }
-    .badge { display: inline-flex; align-items: center; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; }
-
-    /* Buttons */
-    .btn { border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-family: var(--font); }
-    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
-    .btn-primary:hover { background: var(--color-accent-hover); }
-    .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.78rem; }
-
-    /* Metric cards */
-    .metric-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 0.5rem; }
-    .metric-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.1rem; transition: border-color 0.15s; }
-    .metric-card:hover { border-color: var(--color-border); }
-    .metric-card.accent { border-color: var(--color-accent); }
-    .metric-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted); font-weight: 600; margin-bottom: 0.5rem; }
-    .metric-value { font-size: 2rem; font-weight: 700; line-height: 1.1; color: var(--color-text); font-variant-numeric: tabular-nums; }
-    .metric-card.accent .metric-value { color: var(--color-accent); }
-    .metric-sub { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.4rem; }
-    .metric-breakdown { display: flex; flex-wrap: wrap; gap: 0.4rem 0.85rem; margin-top: 0.75rem; font-size: 0.78rem; color: var(--color-muted); }
-    .metric-breakdown span strong { color: var(--color-text); font-weight: 600; }
+    /* Forms */
+    .form-card { 
+      background: var(--color-surface); 
+      border: 1px solid var(--color-border); 
+      border-radius: var(--radius); 
+      padding: 1.25rem; 
+      margin-bottom: 1.5rem; 
+    }
+    .form-grid { 
+      display: grid; 
+      gap: 0.85rem; 
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+      align-items: end; 
+    }
+    .form-field label { 
+      display: block; 
+      font-size: 0.72rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      color: var(--color-muted); 
+      margin-bottom: 0.35rem; 
+      font-weight: 600; 
+    }
+    .form-field input, .form-field select { 
+      width: 100%; 
+      padding: 0.55rem 0.7rem; 
+      border-radius: var(--radius); 
+      border: 1px solid var(--color-border); 
+      background: var(--color-bg); 
+      color: var(--color-text); 
+      font-family: var(--font); 
+      font-size: 0.875rem; 
+    }
+    .form-actions { 
+      display: flex; 
+      gap: 0.5rem; 
+      flex-wrap: wrap; 
+      align-items: center; 
+    }
+    .btn-danger { 
+      background: transparent; 
+      color: var(--color-danger); 
+      border: 1px solid var(--color-danger); 
+    }
+    .btn-danger:hover { 
+      background: #2a0c0c; 
+    }
+    .inline-form { 
+      display: inline-flex; 
+      gap: 0.35rem; 
+      align-items: center; 
+      flex-wrap: wrap; 
+    }
+    .note { 
+      font-size: 0.8rem; 
+      color: var(--color-muted); 
+      margin: 0.75rem 0 0; 
+    }
+    .org-link { 
+      font-weight: 600; 
+    }
+    .team-card { 
+      margin-bottom: 1.5rem; 
+    }
+    .team-card h3 { 
+      font-size: 0.95rem; 
+      margin: 0 0 0.75rem; 
+      color: var(--color-text); 
+      text-transform: none; 
+      letter-spacing: normal; 
+      font-weight: 600; 
+    }
+    .team-meta { 
+      font-size: 0.78rem; 
+      color: var(--color-muted); 
+      margin-bottom: 0.75rem; 
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-brand"><a href="/portal">CLEAR<span class="c">_</span>API</a> &nbsp;<span style="color: var(--color-muted); font-weight: 500;">· Admin</span></div>
-    <div class="nav-user">${escapeHtml(currentUserEmail)} &nbsp;|&nbsp; <a href="/portal">Portal</a></div>
-  </nav>
-  <div class="admin-tabs">
-    ${tabLink("dashboard", "Dashboard")}
-    ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
-  </div>
-  <main class="wrap">
-    <h1>${escapeHtml(title)}</h1>
-    <p class="subtitle">${subtitle}</p>
-    ${flashHtml}
-    ${content}
-  </main>
+  <div class="portal-shell" id="portal-shell">
+    ${sidebar}
+
+    <div class="main">
+      <div class="admin-tabs">
+        ${tabLink("dashboard", "Dashboard")}
+        ${tabLink("organisations", "Organisations")}
+        ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+        ${tabLink("webhooks", "Error Alerts")}
+      </div>
+      <main class="wrap">
+        <h1>${escapeHtml(title)}</h1>
+        <p class="subtitle">${subtitle}</p>
+        ${flashHtml}
+        ${content}
+      </main>
+    </div>
+  ${renderSidebarScript()}
 </body>
 </html>`;
 }
@@ -862,9 +2115,18 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat("en-US").format(n);
 }
 
+function teamRoleSelectOptions(selected: string): string {
+  return ["team_member", "field_coordinator", "team_admin"]
+    .map(
+      (r) => `<option value="${r}"${selected === r ? " selected" : ""}>${r}</option>`,
+    )
+    .join("");
+}
+
 interface RenderAdminPendingOptions {
   currentUserEmail: string;
   pendingUsers: AdminPendingUser[];
+  pendingCount: number;
   flash?:
     | { kind: "success"; message: string }
     | { kind: "error"; message: string }
@@ -876,7 +2138,7 @@ interface RenderAdminPendingOptions {
  * shared tab shell.
  */
 export function renderAdminPending(opts: RenderAdminPendingOptions): string {
-  const { currentUserEmail, pendingUsers, flash } = opts;
+  const { currentUserEmail, pendingUsers, pendingCount, flash } = opts;
   const rows = pendingUsers.length === 0
     ? `<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--color-muted);">No pending users — every signup has been approved.</td></tr>`
     : pendingUsers
@@ -909,7 +2171,7 @@ export function renderAdminPending(opts: RenderAdminPendingOptions): string {
   return renderAdminShell({
     currentUserEmail,
     activeTab: "pending",
-    pendingCount: pendingUsers.length,
+    pendingCount,
     flash,
     content,
     title: "Pending user approvals",
@@ -934,7 +2196,7 @@ interface RenderAdminMetricsOptions {
  */
 export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
   const { currentUserEmail, metrics, pendingCount, flash } = opts;
-  const { engagement, content, org } = metrics;
+  const { engagement, content, org, newsletter } = metrics;
 
   const card = (
     label: string,
@@ -949,6 +2211,28 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
       ${opts2?.breakdownHtml ?? ""}
     </div>`;
 
+  const textCard = (
+    label: string,
+    value: string,
+    sub: string,
+    opts2?: { accent?: boolean },
+  ) => `
+    <div class="metric-card${opts2?.accent ? " accent" : ""}">
+      <div class="metric-label">${escapeHtml(label)}</div>
+      <div class="metric-value">${escapeHtml(value)}</div>
+      <div class="metric-sub">${escapeHtml(sub)}</div>
+    </div>`;
+
+  const newsletterValue =
+    newsletter.configured && newsletter.count !== null
+      ? formatNumber(newsletter.count)
+      : "—";
+  const newsletterSub = !newsletter.configured
+    ? "BUTTONDOWN_API_KEY not configured."
+    : newsletter.error
+      ? newsletter.error
+      : "Subscribers on the public Buttondown list.";
+
   const usersBreakdown = `
     <div class="metric-breakdown">
       <span><strong>${formatNumber(engagement.usersByRole.admin)}</strong> admin</span>
@@ -958,6 +2242,13 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
     </div>`;
 
   const html = `
+    <h2>Newsletter</h2>
+    <div class="metric-grid">
+      ${textCard("Newsletter subscribers", newsletterValue, newsletterSub, {
+        accent: newsletter.configured && newsletter.count !== null,
+      })}
+    </div>
+
     <h2>Engagement</h2>
     <div class="metric-grid">
       ${card("Daily active users", engagement.dau, "Distinct users active in the last 24 hours.", { accent: true })}
@@ -978,6 +2269,7 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
       ${card("Organisations", org.organisations, "Tenant accounts on the platform.")}
       ${card("Teams", org.teams, "Sub-tenants across every organisation.")}
     </div>
+    <p class="note" style="margin-top:0.25rem;"><a href="/portal/admin?tab=organisations">Manage organisations →</a></p>
   `;
 
   return renderAdminShell({
@@ -988,6 +2280,396 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
     content: html,
     title: "Platform dashboard",
     subtitle: "At-a-glance metrics for the CLEAR platform. Counts are live.",
+  });
+}
+
+// ─── Organisations tab (SuperAdmin) ───────────────────────────────────────
+
+export interface AdminOrgListRow {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  memberCount: number;
+  teamCount: number;
+  createdAt: Date;
+}
+
+export interface AdminOrgDetailView {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  createdAt: Date;
+  teams: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    members: {
+      userId: string;
+      email: string;
+      name: string;
+      teamRole: string;
+    }[];
+  }[];
+  members: {
+    userId: string;
+    email: string;
+    name: string;
+    globalRole: string | null;
+    orgRole: string;
+    joinedAt: Date;
+  }[];
+  importableTeams: { id: string; label: string; memberCount: number }[];
+}
+
+interface RenderAdminOrganisationsOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  organisations: AdminOrgListRow[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions): string {
+  const { currentUserEmail, pendingCount, organisations, flash } = opts;
+
+  const rows =
+    organisations.length === 0
+      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No organisations yet. Create one below.</td></tr>`
+      : organisations
+          .map(
+            (o) => `
+        <tr>
+          <td><a class="org-link" href="/portal/admin?tab=organisations&amp;org=${escapeHtml(o.id)}">${escapeHtml(o.name)}</a></td>
+          <td><code>${escapeHtml(o.slug)}</code></td>
+          <td>${formatNumber(o.memberCount)}</td>
+          <td>${formatNumber(o.teamCount)}</td>
+          <td style="color:var(--color-muted);font-size:0.8rem;">${escapeHtml(o.createdAt.toISOString().slice(0, 10))}</td>
+        </tr>`,
+          )
+          .join("");
+
+  const content = `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Slug</th>
+          <th>Members</th>
+          <th>Teams</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <h2>Create organisation</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/create">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="org-name">Name</label>
+            <input id="org-name" name="name" required placeholder="Acme Response" />
+          </div>
+          <div class="form-field">
+            <label for="org-slug">Slug</label>
+            <input id="org-slug" name="slug" required placeholder="acme-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Create</button>
+          </div>
+        </div>
+        <p class="note">A default team with the same name and slug is created automatically. The first member you invite or add becomes <code>org_admin</code> (portal convention — see backend gaps doc).</p>
+      </form>
+    </div>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "organisations",
+    pendingCount,
+    flash,
+    content,
+    title: "Organisations",
+    subtitle: "Create and manage tenant organisations. Open an organisation to invite users and set org-level roles.",
+  });
+}
+
+interface RenderAdminOrgDetailOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  org: AdminOrgDetailView;
+  defaultInviteOrgRole: "org_admin" | "member";
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string {
+  const { currentUserEmail, pendingCount, org, defaultInviteOrgRole, flash } = opts;
+  const orgParam = escapeHtml(org.id);
+
+  const inviteOrgRoleOptions = ["org_admin", "member"]
+    .map(
+      (r) =>
+        `<option value="${r}"${defaultInviteOrgRole === r ? " selected" : ""}>${r}</option>`,
+    )
+    .join("");
+
+  const importOptions =
+    org.importableTeams.length === 0
+      ? `<option value="" disabled>No teams available to import</option>`
+      : `<option value="">Select a team…</option>${org.importableTeams
+          .map(
+            (t) =>
+              `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)} (${formatNumber(t.memberCount)} members)</option>`,
+          )
+          .join("")}`;
+
+  // Build a per-user team count map for sole-team detection
+  const teamCountByUser = new Map<string, number>();
+  for (const t of org.teams) {
+    for (const m of t.members) {
+      teamCountByUser.set(m.userId, (teamCountByUser.get(m.userId) ?? 0) + 1);
+    }
+  }
+
+  const teamSections = org.teams
+    .map((team) => {
+      const teamParam = escapeHtml(team.id);
+      const memberRows =
+        team.members.length === 0
+          ? `<tr><td colspan="4" style="text-align:center;padding:1.25rem;color:var(--color-muted);font-size:0.85rem;">No members in this team yet.</td></tr>`
+          : team.members
+              .map((m) => `
+        <tr>
+          <td>${escapeHtml(m.name)}</td>
+          <td><code>${escapeHtml(m.email)}</code></td>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/teams/members/role">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="teamId" value="${teamParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <select name="teamRole">${teamRoleSelectOptions(m.teamRole)}</select>
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+            </form>
+          </td>
+          <td style="text-align:right;">
+            <form method="POST" action="${teamCountByUser.get(m.userId) === 1 ? "/portal/admin/orgs/members/remove" : "/portal/admin/orgs/teams/members/remove"}" onsubmit="return confirm('${teamCountByUser.get(m.userId) === 1 ? "User will be removed from the organisation if removed from this team. Do you want to proceed?" : "Remove this user from the team?"}');">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              ${teamCountByUser.get(m.userId) === 1 ? "" : `<input type="hidden" name="teamId" value="${teamParam}" />`}
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>`)
+              .join("");
+
+      return `
+    <div class="form-card team-card">
+      <h3>${escapeHtml(team.name)}</h3>
+      <p class="team-meta"><code>${escapeHtml(team.slug)}</code>${team.description ? ` · ${escapeHtml(team.description)}` : ""} · ${team.members.length} member${team.members.length === 1 ? "" : "s"}</p>
+      <form method="POST" action="/portal/admin/orgs/teams/delete" style="margin-bottom:1rem;" onsubmit="return confirm('Delete this team? Members stay in the organisation.');">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <input type="hidden" name="teamId" value="${teamParam}" />
+        <button type="submit" class="btn btn-danger btn-sm">Delete team</button>
+      </form>
+      <table class="table" style="margin-bottom:1rem;">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Team role</th>
+            <th style="text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>${memberRows}</tbody>
+      </table>
+      <div class="form-grid">
+        <div class="form-field" style="grid-column: 1 / -1;">
+          <label>Invite to this team</label>
+          <form method="POST" action="/portal/admin/orgs/invite">
+            <input type="hidden" name="orgId" value="${orgParam}" />
+            <input type="hidden" name="teamId" value="${teamParam}" />
+            <div class="form-grid">
+              <div class="form-field">
+                <input name="email" type="email" required placeholder="user@example.com" />
+              </div>
+              <div class="form-field">
+                <select name="orgRole">${inviteOrgRoleOptions}</select>
+              </div>
+              <div class="form-field">
+                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-sm">Send invite</button>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="form-field" style="grid-column: 1 / -1;">
+          <label>Add existing user to this team</label>
+          <form method="POST" action="/portal/admin/orgs/teams/members/add">
+            <input type="hidden" name="orgId" value="${orgParam}" />
+            <input type="hidden" name="teamId" value="${teamParam}" />
+            <div class="form-grid">
+              <div class="form-field">
+                <input name="email" type="email" required placeholder="existing-user@example.com" />
+              </div>
+              <div class="form-field">
+                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-sm">Add to team</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>`;
+    })
+    .join("");
+
+  const memberRows =
+    org.members.length === 0
+      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No org members yet. Invite or add a user to a team below — the first member should be the org admin.</td></tr>`
+      : org.members
+          .map((m) => {
+            const roleOptions = ["org_admin", "member"]
+              .map(
+                (r) =>
+                  `<option value="${r}"${m.orgRole === r ? " selected" : ""}>${r}</option>`,
+              )
+              .join("");
+            return `
+        <tr>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/members/name">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <input name="name" value="${escapeHtml(m.name)}" size="18" />
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Save</button>
+            </form>
+          </td>
+          <td><code>${escapeHtml(m.email)}</code></td>
+          <td><span class="badge" style="background:#1a1a22;color:var(--color-muted);">${escapeHtml(m.globalRole ?? "—")}</span></td>
+          <td>
+            <form class="inline-form" method="POST" action="/portal/admin/orgs/members/role">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <select name="role">${roleOptions}</select>
+              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+            </form>
+          </td>
+          <td style="text-align:right;">
+            <form method="POST" action="/portal/admin/orgs/members/remove" onsubmit="return confirm('Remove this member from the organisation?');">
+              <input type="hidden" name="orgId" value="${orgParam}" />
+              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>`;
+          })
+          .join("");
+
+  const content = `
+    <p style="margin-bottom:1.25rem;"><a href="/portal/admin?tab=organisations">← All organisations</a></p>
+
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/update">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="edit-name">Name</label>
+            <input id="edit-name" name="name" value="${escapeHtml(org.name)}" required />
+          </div>
+          <div class="form-field">
+            <label for="edit-slug">Slug</label>
+            <input id="edit-slug" name="slug" value="${escapeHtml(org.slug)}" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+          </div>
+        </div>
+      </form>
+      <form method="POST" action="/portal/admin/orgs/delete" style="margin-top:1rem;" onsubmit="return confirm('Delete this organisation and all its teams, members, and invitations?');">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <button type="submit" class="btn btn-danger btn-sm">Delete organisation</button>
+      </form>
+    </div>
+
+    <h2>Teams</h2>
+    ${teamSections || `<p class="note">No teams yet.</p>`}
+
+    <h2>Create team</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/teams/create">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="team-name">Name</label>
+            <input id="team-name" name="name" required placeholder="Field response" />
+          </div>
+          <div class="form-field">
+            <label for="team-slug">Slug</label>
+            <input id="team-slug" name="slug" required placeholder="field-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+          </div>
+          <div class="form-field">
+            <label for="team-desc">Description (optional)</label>
+            <input id="team-desc" name="description" placeholder="Optional" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm">Create empty team</button>
+          </div>
+        </div>
+        <p class="note">New teams start with no members. Add or invite users per team below.</p>
+      </form>
+    </div>
+
+    <h2>Import team</h2>
+    <div class="form-card">
+      <form method="POST" action="/portal/admin/orgs/teams/import">
+        <input type="hidden" name="orgId" value="${orgParam}" />
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="import-team">Team from another organisation</label>
+            <select id="import-team" name="sourceTeamId" required ${org.importableTeams.length === 0 ? "disabled" : ""}>${importOptions}</select>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-sm" ${org.importableTeams.length === 0 ? "disabled" : ""}>Import team &amp; members</button>
+          </div>
+        </div>
+        <p class="note">Copies the team into this organisation and adds all of its current members (creating org memberships when needed).</p>
+      </form>
+    </div>
+
+    <h2>Organisation members</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Global role</th>
+          <th>Org role</th>
+          <th style="text-align:right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>${memberRows}</tbody>
+    </table>
+    <p class="note">Org roles apply across all teams. Use the team sections above to add users to specific teams or send invites.</p>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "organisations",
+    pendingCount,
+    flash,
+    content,
+    title: org.name,
+    subtitle: `Organisation · <code>${escapeHtml(org.slug)}</code> · ${org.members.length} member${org.members.length === 1 ? "" : "s"} · ${org.teams.length} team${org.teams.length === 1 ? "" : "s"}`,
   });
 }
 
@@ -1058,6 +2740,408 @@ export function renderWaitingForApproval(opts: WaitingForApprovalOptions): strin
   </script>
 </body>
 </html>`;
+}
+
+// ─── Webhooks tab ──────────────────────────────────────────────────────
+// Shape shared between all three webhook pages (list, new, detail). The
+// route handler shapes prisma rows into these before passing in — keeps
+// the renderer prisma-free (and unit-testable if we ever add tests).
+
+/** Subscription row for the list table. */
+export interface AdminWebhookRow {
+  id: string;
+  name: string;
+  targetUrl: string;
+  active: boolean;
+  eventTypeFilter: string[];
+  createdAt: Date;
+  /** Total delivery attempts (all statuses). Shown next to the row so
+   *  admins can spot subscriptions that have never fired. */
+  deliveryCount: number;
+  /** Number of dead-lettered deliveries. Rendered as a warning badge if > 0. */
+  deadCount: number;
+}
+
+/** One delivery attempt-sequence for the detail page's history table. */
+export interface AdminWebhookDelivery {
+  id: string;
+  eventId: string;
+  eventType: string;
+  attemptNumber: number;
+  responseStatus: number | null;
+  error: string | null;
+  succeededAt: Date | null;
+  nextRetryAt: Date | null;
+  createdAt: Date;
+  status: "pending" | "succeeded" | "retrying" | "dead";
+}
+
+interface RenderAdminWebhooksListOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  rows: AdminWebhookRow[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * Webhooks list — one row per subscription. Rendered when the admin
+ * clicks the "Webhooks" tab. From here they can create a new
+ * subscription or drill into an existing one.
+ */
+export function renderAdminWebhooksList(
+  opts: RenderAdminWebhooksListOptions,
+): string {
+  const { currentUserEmail, pendingCount, rows, flash } = opts;
+
+  const tableRows = rows.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">
+          No error alert routes yet.
+          <a href="/portal/admin/webhooks/new" style="text-decoration:underline;">Create one</a>
+          to fan out GlitchTip alerts to a downstream endpoint.
+        </td></tr>`
+    : rows
+        .map((r) => {
+          const filterLabel =
+            r.eventTypeFilter.length === 0
+              ? `<span style="color:var(--color-muted);">all events</span>`
+              : r.eventTypeFilter.map((t) => `<code>${escapeHtml(t)}</code>`).join(" ");
+          const activeBadge = r.active
+            ? `<span class="badge" style="background:#0d2818;color:var(--color-success);">ACTIVE</span>`
+            : `<span class="badge" style="background:#2a2a2a;color:var(--color-muted);">PAUSED</span>`;
+          const deadBadge = r.deadCount > 0
+            ? ` <span class="badge" style="background:#2a0c0c;color:var(--color-danger);">${r.deadCount} DEAD</span>`
+            : "";
+          return `<tr>
+            <td>
+              <a href="/portal/admin/webhooks/${escapeHtml(r.id)}" style="font-weight:500;">${escapeHtml(r.name)}</a>
+              <div style="color:var(--color-muted);font-size:0.75rem;margin-top:0.15rem;"><code>${escapeHtml(r.targetUrl)}</code></div>
+            </td>
+            <td>${activeBadge}</td>
+            <td>${filterLabel}</td>
+            <td style="font-variant-numeric:tabular-nums;color:var(--color-muted);">${r.deliveryCount}${deadBadge}</td>
+            <td style="text-align:right;">
+              <a href="/portal/admin/webhooks/${escapeHtml(r.id)}" class="btn btn-primary btn-sm" style="text-decoration:none;">Manage</a>
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+  const content = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+      <p class="subtitle" style="margin:0;">
+        Downstream endpoints that clear-api fans GlitchTip error alerts
+        out to, with HMAC-SHA256 signing. Managed here; also exposed via
+        GraphQL for automation.
+      </p>
+      <a href="/portal/admin/webhooks/new" class="btn btn-primary btn-sm" style="text-decoration:none;white-space:nowrap;margin-left:1rem;">+ New route</a>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Endpoint</th>
+          <th>Status</th>
+          <th>Event filter</th>
+          <th>Deliveries</th>
+          <th style="text-align:right;">Action</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: "Error alerts",
+    subtitle: `${rows.length} route${rows.length === 1 ? "" : "s"} configured.`,
+  });
+}
+
+interface RenderAdminWebhookNewOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+  /** Repopulate form on validation failure. */
+  values?: { name?: string; targetUrl?: string; eventTypeFilter?: string; active?: boolean };
+}
+
+/**
+ * "New subscription" form. On successful create the route handler
+ * skips the redirect and instead renders the detail page with
+ * `revealedSecret` set — that's the one moment the plaintext secret is
+ * visible, so we want it in the response body, not a redirect target.
+ */
+export function renderAdminWebhookNew(
+  opts: RenderAdminWebhookNewOptions,
+): string {
+  const { currentUserEmail, pendingCount, flash, values = {} } = opts;
+  const v = {
+    name: values.name ?? "",
+    targetUrl: values.targetUrl ?? "",
+    eventTypeFilter: values.eventTypeFilter ?? "",
+    active: values.active ?? true,
+  };
+
+  const content = `
+    <form method="POST" action="/portal/admin/webhooks/create" style="max-width:640px;">
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Name</label>
+        <input name="name" type="text" required autofocus value="${escapeHtml(v.name)}"
+          placeholder="e.g. Slack #alerts, Notion pipeline, Ops on-call"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font);" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">Shown in this admin panel only. Not sent downstream.</p>
+      </div>
+
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Target URL</label>
+        <input name="targetUrl" type="url" required value="${escapeHtml(v.targetUrl)}"
+          placeholder="https://receiver.example.com/hook"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">Must be https (http allowed only for localhost).</p>
+      </div>
+
+      <div style="margin-bottom:1.25rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Event type filter</label>
+        <input name="eventTypeFilter" type="text" value="${escapeHtml(v.eventTypeFilter)}"
+          placeholder="issue.new, issue.regression"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.35rem;">
+          Comma-separated GlitchTip alias values (e.g. <code>issue.new</code>,
+          <code>issue.regression</code>, <code>issue.resolved</code>).
+          Leave empty to fire on <em>all</em> events.
+        </p>
+      </div>
+
+      <div style="margin-bottom:1.5rem;">
+        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;">
+          <input name="active" type="checkbox" ${v.active ? "checked" : ""} />
+          <span>Active — fire on matching events immediately</span>
+        </label>
+      </div>
+
+      <div style="display:flex;gap:0.5rem;">
+        <button type="submit" class="btn btn-primary btn-sm">Create route</button>
+        <a href="/portal/admin?tab=webhooks" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);text-decoration:none;padding:0.35rem 0.8rem;">Cancel</a>
+      </div>
+
+      <p style="font-size:0.75rem;color:var(--color-muted);margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid var(--color-border);">
+        The signing secret is generated automatically and revealed once
+        after creation. Copy it into the downstream receiver's verify
+        config at that moment — it can't be retrieved later. Use
+        "Rotate secret" on the detail page to generate a fresh one.
+      </p>
+    </form>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: "New error alert route",
+    subtitle: "Configure a downstream endpoint for signed GlitchTip error alerts.",
+  });
+}
+
+interface RenderAdminWebhookDetailOptions {
+  currentUserEmail: string;
+  pendingCount: number;
+  subscription: AdminWebhookRow & {
+    /** Non-null only immediately after create or rotate. Shown once in a
+     *  copy-me banner; subsequent detail page loads see null. */
+    revealedSecret: string | null;
+    /** Present on all reads so the admin can eyeball the redacted head.
+     *  Useful for verifying "which secret does the row currently hold". */
+    secretPrefix: string;
+  };
+  deliveries: AdminWebhookDelivery[];
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}
+
+/**
+ * Subscription detail — edit form, secret controls, delivery history,
+ * dangerous actions (delete, rotate).
+ */
+export function renderAdminWebhookDetail(
+  opts: RenderAdminWebhookDetailOptions,
+): string {
+  const { currentUserEmail, pendingCount, subscription, deliveries, flash } = opts;
+  const s = subscription;
+
+  const secretBanner = s.revealedSecret
+    ? `<div style="
+        margin-bottom:1.5rem;padding:1rem;border-radius:var(--radius);
+        background:#1a2418;border:1px solid var(--color-success);
+      ">
+        <div style="font-size:0.75rem;font-weight:600;color:var(--color-success);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem;">
+          Signing secret — copy now, never shown again
+        </div>
+        <code style="display:block;padding:0.6rem 0.75rem;background:var(--color-bg);border-radius:calc(var(--radius) - 4px);color:var(--color-text);word-break:break-all;font-size:0.8rem;">${escapeHtml(s.revealedSecret)}</code>
+        <p style="font-size:0.75rem;color:var(--color-muted);margin-top:0.6rem;">
+          Configure this value in the downstream receiver's HMAC verification.
+          Reloading this page hides the secret; use "Rotate secret" below to
+          generate a new one.
+        </p>
+      </div>`
+    : "";
+
+  const filterCsv = s.eventTypeFilter.join(", ");
+
+  const editForm = `
+    <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/update" style="max-width:640px;">
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Name</label>
+        <input name="name" type="text" required value="${escapeHtml(s.name)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font);" />
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Target URL</label>
+        <input name="targetUrl" type="url" required value="${escapeHtml(s.targetUrl)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block;font-size:0.8rem;color:var(--color-muted);margin-bottom:0.35rem;">Event type filter (comma-separated, blank = all)</label>
+        <input name="eventTypeFilter" type="text" value="${escapeHtml(filterCsv)}"
+          style="width:100%;padding:0.5rem 0.75rem;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);font-family:var(--font-mono);font-size:0.85rem;" />
+      </div>
+
+      <div style="margin-bottom:1.5rem;">
+        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;">
+          <input name="active" type="checkbox" ${s.active ? "checked" : ""} />
+          <span>Active</span>
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+    </form>`;
+
+  const dangerActions = `
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/test" style="display:inline;">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);">Send test event</button>
+      </form>
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/rotate-secret" style="display:inline;"
+        onsubmit="return confirm('Generate a new signing secret? The current one will stop working the moment this succeeds.');">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-warning);color:var(--color-warning);">Rotate secret</button>
+      </form>
+      <form method="POST" action="/portal/admin/webhooks/${escapeHtml(s.id)}/delete" style="display:inline;"
+        onsubmit="return confirm('Delete this alert route and all its delivery history? Cannot be undone.');">
+        <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-danger);color:var(--color-danger);">Delete route</button>
+      </form>
+    </div>`;
+
+  const deliveryStatusBadge = (
+    status: "pending" | "succeeded" | "retrying" | "dead",
+  ): string => {
+    const map = {
+      pending: { bg: "#1c1f26", fg: "var(--color-muted)", label: "PENDING" },
+      succeeded: { bg: "#0d2818", fg: "var(--color-success)", label: "OK" },
+      retrying: { bg: "#2a1f0a", fg: "var(--color-warning)", label: "RETRY" },
+      dead: { bg: "#2a0c0c", fg: "var(--color-danger)", label: "DEAD" },
+    }[status];
+    return `<span class="badge" style="background:${map.bg};color:${map.fg};">${map.label}</span>`;
+  };
+
+  const deliveryRows = deliveries.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--color-muted);">No deliveries yet. Use "Send test event" above to verify the endpoint.</td></tr>`
+    : deliveries
+        .map((d) => {
+          const retryBtn = d.status === "dead"
+            ? `<form method="POST" action="/portal/admin/webhook-deliveries/${escapeHtml(d.id)}/retry" style="display:inline;">
+                <button type="submit" class="btn btn-sm" style="background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);padding:0.2rem 0.55rem;font-size:0.72rem;">Retry</button>
+              </form>`
+            : "";
+          const detail = d.error
+            ? `<code style="color:var(--color-danger);font-size:0.72rem;">${escapeHtml(d.error.slice(0, 80))}</code>`
+            : d.responseStatus !== null
+              ? `<code style="color:var(--color-muted);font-size:0.72rem;">HTTP ${d.responseStatus}</code>`
+              : `<span style="color:var(--color-muted);font-size:0.72rem;">—</span>`;
+          return `<tr>
+            <td>${deliveryStatusBadge(d.status)}</td>
+            <td><code style="font-size:0.72rem;">${escapeHtml(d.eventType)}</code></td>
+            <td><code style="font-size:0.72rem;color:var(--color-muted);">${escapeHtml(d.eventId.slice(0, 12))}</code></td>
+            <td style="font-variant-numeric:tabular-nums;">${d.attemptNumber}</td>
+            <td>${detail}</td>
+            <td style="text-align:right;color:var(--color-muted);font-size:0.75rem;">
+              ${formatRelative(d.createdAt)}
+              ${retryBtn}
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+  const content = `
+    ${secretBanner}
+
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-bottom:1.5rem;">
+      <span style="color:var(--color-muted);font-size:0.85rem;">Signing secret:</span>
+      <code style="background:var(--color-surface);padding:0.35rem 0.6rem;border-radius:calc(var(--radius) - 4px);font-size:0.8rem;">${escapeHtml(s.secretPrefix)}…</code>
+      <span style="color:var(--color-muted);font-size:0.75rem;">(rotate below to change)</span>
+    </div>
+
+    <h2>Configuration</h2>
+    ${editForm}
+
+    <h2 style="margin-top:2.5rem;">Actions</h2>
+    ${dangerActions}
+
+    <h2 style="margin-top:2.5rem;">Recent deliveries (${deliveries.length})</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Event type</th>
+          <th>Event ID</th>
+          <th>Attempt</th>
+          <th>Detail</th>
+          <th style="text-align:right;">When</th>
+        </tr>
+      </thead>
+      <tbody>${deliveryRows}</tbody>
+    </table>
+
+    <p style="margin-top:1rem;">
+      <a href="/portal/admin?tab=webhooks" style="font-size:0.85rem;">← Back to error alerts</a>
+    </p>`;
+
+  return renderAdminShell({
+    currentUserEmail,
+    activeTab: "webhooks",
+    pendingCount,
+    flash,
+    content,
+    title: s.name,
+    subtitle: `<code>${escapeHtml(s.targetUrl)}</code>`,
+  });
+}
+
+/**
+ * Human-readable relative time. Same approach as the existing template
+ * helpers — pure string, no client-side JS.
+ */
+function formatRelative(when: Date): string {
+  const diffMs = Date.now() - when.getTime();
+  const s = Math.max(1, Math.floor(diffMs / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }
 
 const baseUrl = "https://your-api.example.com";

@@ -25,6 +25,9 @@ import { paginationResolvers } from "./pagination.resolver.js";
 import { activityLogResolvers } from "./activityLog.resolver.js";
 import { pipelineCountryResolvers } from "./pipelineCountry.resolver.js";
 import { translationResolvers } from "./translation.resolver.js";
+import { knowledgebaseResolvers } from "./knowledgebase.resolver.js";
+import { datapointResolvers } from "./datapoint.resolver.js";
+import { webhookResolvers } from "./webhook.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -53,4 +56,7 @@ export const resolvers: IResolvers[] = [
   activityLogResolvers,
   pipelineCountryResolvers,
   translationResolvers,
+  knowledgebaseResolvers,
+  datapointResolvers,
+  webhookResolvers,
 ];

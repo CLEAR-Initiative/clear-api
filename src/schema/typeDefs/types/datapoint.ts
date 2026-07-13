@@ -1,0 +1,157 @@
+import { gql } from "graphql-tag";
+
+/**
+ * Structured humanitarian datapoints — Layers 1 and 2 of the read path
+ * (see clear-context-pipeline/docs/humanitarian-datapoint-extraction.md).
+ *
+ * This file covers Layer 2 (per-report). Layer 1 (aggregated
+ * datapoints + runtime rollup) ships in Phase 2.
+ *
+ * The `data` payload is intentionally a JSON scalar — the exhaustive
+ * datapoint schema is defined and validated on the ingest side
+ * (Pydantic sub-schemas in `datapoints_schemas.py`); modelling it in
+ * GraphQL would double-encode a taxonomy that already evolves per
+ * `schemaVersion`. Clients that want typed access should key their
+ * TypeScript types off the same Pydantic models via codegen.
+ */
+export const datapointTypeDef = gql`
+  """One report's extracted structured datapoints. Keys inside
+  \`data\` are the six domain names: \`timing_and_scope\`,
+  \`casualties\`, \`displacement\`, \`needs_and_funding\`,
+  \`access_and_incidents\`, \`narrative_and_confidence\`. A domain
+  whose extraction failed is written as \`null\` — the operator can
+  re-run a targeted extraction on that domain later without touching
+  the successful ones."""
+  type ReportDatapoint {
+    id: String!
+
+    reportId: String!
+    reportTitle: String!
+    sourceUrl: String!
+    publishedAt: DateTime!
+
+    """Window the report CONTENT describes. Not the publication date."""
+    reportingPeriodStart: DateTime
+    reportingPeriodEnd: DateTime
+
+    """Resolved \`locations.id\` values, deduped."""
+    locationIds: [String!]!
+    """Raw pcodes the LLM emitted that the resolver couldn't tie to a
+    CLEAR location. A nightly backfill re-attempts these."""
+    locationPcodes: [String!]!
+
+    """Free-text event tags (\`conflict\`, \`flood\`, \`displacement\`,
+    \`disease-outbreak\`, …). Multi-hazard reports carry multiple."""
+    eventTypes: [String!]!
+
+    """Denormalised hot totals — cheap dashboard filter/sort keys.
+    NULL when the report doesn't headline the figure; DO NOT sum
+    these across rows (the JSON blob carries the incident-safe form)."""
+    totalAffected: Int
+    totalDisplaced: Int
+    totalKilled: Int
+
+    """Exhaustive per-report payload. See the Pydantic sub-schemas in
+    \`datapoints_schemas.py\` for shape."""
+    data: JSON!
+
+    """Extraction schema version, e.g. \`v1\`. Rows with different
+    versions must not be aggregated together."""
+    schemaVersion: String!
+
+    """LLM identifier that produced the extraction (e.g.
+    \`claude-sonnet-4-6\`). Used by the reviewer-audit workflow."""
+    extractedByModel: String!
+    extractedAt: DateTime!
+  }
+
+  """Input for \`upsertReportDatapoints\`. Field names / types
+  mirror the ReportDatapoint output so a client can echo one back
+  into the other with minimal transformation."""
+  input UpsertReportDatapointsInput {
+    reportId: String!
+    reportTitle: String!
+    sourceUrl: String!
+    publishedAt: DateTime!
+
+    reportingPeriodStart: DateTime
+    reportingPeriodEnd: DateTime
+
+    locationIds: [String!]!
+    locationPcodes: [String!]!
+    eventTypes: [String!]!
+
+    totalAffected: Int
+    totalDisplaced: Int
+    totalKilled: Int
+
+    data: JSON!
+    schemaVersion: String!
+    extractedByModel: String!
+  }
+
+  """Result of \`upsertReportDatapoints\` — summary for logs."""
+  type UpsertReportDatapointsResult {
+    reportId: String!
+    schemaVersion: String!
+    """\`true\` when the mutation replaced a previously extracted row,
+    \`false\` when it created the first row for the report."""
+    createdOrReplaced: Boolean!
+  }
+
+  # ─── Layer 1 — Aggregated cache ─────────────────────────────────────
+
+  """One aggregated bucket — the roll-up of every contributing
+  \`report_datapoint\` for a scope (window × window_kind × location).
+  Consumed by the situation-analysis dashboard tiles and by chatbot
+  factual queries. See \`AggregatedField\` docstring for the JSON
+  \`data\` shape."""
+  type AggregatedDatapoint {
+    id: String!
+
+    windowStart: DateTime!
+    windowEnd: DateTime!
+    """One of \`weekly\` | \`monthly\` | \`yearly\` | \`all\`."""
+    windowKind: String!
+    """Null when the bucket rolls up to a country (yearly, all-time
+    tiers). Otherwise references \`locations.id\`."""
+    locationId: String
+
+    """Flat map keyed by field label. Each value is either a
+    QualityEnvelope (for numeric fields — \`{ value, unit,
+    quality_score, confidence_mix, newest_report_at, oldest_report_at,
+    contributing_report_ids }\`), a SetUnionEnvelope (for label
+    fields — \`{ values, contributing_report_ids }\`), or \`null\`
+    when no report in scope reported that field."""
+    data: JSON!
+
+    contributingReportIds: [String!]!
+    newestSourceAt: DateTime!
+    oldestSourceAt: DateTime!
+    dataQualityScore: Float!
+    reportCount: Int!
+
+    """Bitemporal validity — this snapshot's lifetime as a "current"
+    row. \`validTo\` is null when the row is still the current one for
+    its bucket; else it carries the timestamp when a newer computation
+    superseded it."""
+    validFrom: DateTime!
+    validTo: DateTime
+
+    schemaVersion: String!
+    computedAt: DateTime!
+
+    """True when the resolver assembled this bucket on-demand from
+    \`report_datapoints\` rather than serving it from the pre-compute
+    cache. The dashboard can render a "just computed" indicator so
+    users know the number reflects the freshest possible view."""
+    onDemand: Boolean!
+  }
+
+  """Summary counts from a \`refreshAggregatedDatapoints\` run."""
+  type RefreshAggregatedDatapointsResult {
+    computedBuckets: Int!
+    supersededBuckets: Int!
+    schemaVersion: String!
+  }
+`;

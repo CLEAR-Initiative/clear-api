@@ -218,5 +218,81 @@ export const queryTypeDef = gql`
     out of date) are NOT returned here — they're rare and handled by
     the per-entity enrichment hooks."""
     entitiesMissingTranslation(entityType: String!, locale: String!): [ID!]!
+
+    # ─── Knowledge base ────────────────────────────────────────────────────────
+    """Resolve a knowledge-base location reference to a \`locations.id\`.
+    Pcode wins over name; \`adminLevel\` narrows the name match so a
+    village that shares its state's name doesn't collide. Returns null
+    when neither the pcode nor the name matches — the ingest keeps the
+    raw pcode on the row so a future backfill can re-resolve. Admin /
+    pipeline only."""
+    resolveKnowledgebaseLocation(
+      pcode: String
+      name: String
+      adminLevel: Int
+    ): String
+
+    """Hybrid dense + BM25 retrieval over the knowledge base, fused
+    with Reciprocal Rank Fusion (k=60) and returned in descending
+    score order. Both retrievers run in parallel over the same filter
+    set; each contributes up to 50 candidates before fusion. The
+    embedding provider is the one configured in the environment —
+    keep the write and read sides on the same provider or turn on
+    \`filters.currentEmbeddingModelOnly\` to guarantee vector-space
+    consistency. Requires any authenticated content reader."""
+    searchKnowledgebase(
+      query: String!
+      filters: KnowledgebaseFilters
+      limit: Int = 10
+    ): [KnowledgebaseHit!]!
+
+    """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.
+    Returns null when the runId doesn't exist on this Dagster instance
+    (e.g. Dagster was restarted with a fresh instance store, or the
+    runId was recorded against a different DAGSTER_URL). Requires any
+    authenticated content reader."""
+    knowledgebaseIngestJob(runId: String!): KnowledgebaseIngestJob
+
+    # ─── Structured datapoints — Layer 2 read path ─────────────────────
+    """One report's extracted structured datapoints. Returns null when
+    no extraction has been persisted yet (report ingested via vector
+    RAG but the datapoint pipeline hasn't caught up). Requires any
+    authenticated content reader."""
+    reportDatapoint(reportId: String!): ReportDatapoint
+
+    """True when at least one current \`aggregated_datapoints\` row
+    exists for the given schema version. Used by the Dagster
+    aggregation asset to distinguish first-run backfill (wide
+    lookback window) from routine weekly refreshes (narrow window).
+    Any authenticated content reader — this is a cheap existence
+    check with no sensitive data on it."""
+    hasAggregatedDatapoints(schemaVersion: String!): Boolean!
+
+    """Aggregated datapoints for a (window × window_kind × location)
+    scope. Cache-first: returns the pre-computed snapshot when one
+    is current (\`validTo IS NULL\` or covers the \`asOf\` timestamp);
+    otherwise assembles the bucket on-demand from \`report_datapoints\`
+    and returns it with \`onDemand = true\`. Returns null when no
+    contributing reports exist in scope."""
+    aggregatedDatapoint(
+      """Null = country-wide roll-up (yearly / all-time tiers)."""
+      locationId: String
+      windowStart: DateTime!
+      windowEnd: DateTime!
+      windowKind: String!
+      """Defaults to the currently-configured pipeline schema version."""
+      schemaVersion: String
+      """Historical snapshot lookup — return the version that was current
+      at this timestamp. Defaults to \`now\`."""
+      asOf: DateTime
+    ): AggregatedDatapoint
+
+    # ─── Webhooks (platform admin only) ────────────────────────────────
+    """All webhook subscriptions, newest first."""
+    webhookSubscriptions: [WebhookSubscription!]!
+    """One subscription by ID, or null if not found."""
+    webhookSubscription(id: String!): WebhookSubscription
+    """Recent delivery attempts for a subscription, newest first."""
+    webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
   }
 `;

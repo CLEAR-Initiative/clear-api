@@ -22,6 +22,8 @@ import { homeRouter } from "./home/index.js";
 import { createDocsRouter } from "./docs/index.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
+import { webhooksRouter } from "./routes/webhooks.js";
+import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -61,6 +63,16 @@ app.use("/", homeRouter);
 // Media upload (multipart/form-data → S3)
 app.use("/api/upload", uploadRouter);
 
+// External webhook receiver (GlitchTip → clear-api). Scoped
+// express.json() because the global GraphQL mount does its own — we
+// want a small body limit here (webhooks are tiny) and to avoid
+// coupling to the global handler.
+app.use(
+  "/webhooks",
+  express.json({ limit: "1mb" }),
+  webhooksRouter,
+);
+
 // Health check
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
@@ -79,6 +91,10 @@ app.use(
 httpServer.listen(env.PORT, () => {
   console.log(`Server ready at http://localhost:${env.PORT}/graphql`);
   console.log(`Auth API at http://localhost:${env.PORT}/api/auth`);
+  // Start the webhook retry poller — checks `webhook_deliveries` for
+  // due retries every 15s. Safe to start unconditionally; if there are
+  // no rows, the tick is essentially free.
+  startWebhookRetryWorker(prisma);
 });
 
 const shutdown = async () => {

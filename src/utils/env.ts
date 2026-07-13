@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+/**
+ * Optional URL that treats the empty string as "not set". Needed because
+ * our env files (rendered by terraform from tfvars) always emit the
+ * variable even when the value is empty — e.g. `DAGSTER_URL=` when
+ * `dagster_enabled=false`. Bare `z.string().url().optional()` accepts
+ * `undefined` but rejects `""` with a Zod URL-validation error, which
+ * crashes clear-api on boot.
+ */
+const optionalUrl = () =>
+  z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().optional(),
+  );
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "staging", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
@@ -49,7 +63,7 @@ const envSchema = z.object({
   // approved users into the approved collection. All optional in dev so
   // the absence of these vars degrades cleanly (the CRM calls become
   // best-effort no-ops with a log line, not a startup failure).
-  EXPONENTIAL_API_URL: z.string().url().optional(),
+  EXPONENTIAL_API_URL: optionalUrl(),
   /** Long-lived JWT bearer token issued by Exponential. Used as
    *  `Authorization: Bearer <token>` on every Exponential request.
    *  Resolves to a user; that user must be a member of the workspace
@@ -63,6 +77,38 @@ const envSchema = z.object({
   /** Collection id holding admin-approved contacts. The approval action
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
+
+  // Buttondown newsletter — optional; powers the subscriber count on
+  // `/portal/admin`. Absent in dev → dashboard shows "not configured".
+  BUTTONDOWN_API_KEY: z.string().optional(),
+
+  // ─── Dagster (knowledge-base manual ingest trigger) ──────────────
+  // Used by `uploadKnowledgebaseDocument` to hand off freshly uploaded
+  // PDFs to the `process_manual_document_job` in dagster-quickstart.
+  // All optional in dev: when unset, the mutation still uploads to S3
+  // but returns a UNKNOWN-status job (i.e. no run is launched) — useful
+  // when Dagster is offline and you just want to stage a PDF.
+  /** Base URL of the Dagster webserver, e.g. http://localhost:3000. */
+  DAGSTER_URL: optionalUrl(),
+  /** Location name Dagster's UI shows for the dagster-quickstart code
+   *  location. Typically `dagster_quickstart` (module name) or
+   *  `dagster-quickstart` (project slug). Run
+   *  `curl <dagster_url>/graphql -d '{"query":"{ repositoryLocations{ id name } }"}'`
+   *  to check. */
+  DAGSTER_REPOSITORY_LOCATION_NAME: z.string().default("clear-context-pipeline"),
+  /** Repository name inside that location. Dagster auto-names it
+   *  `__repository__` when the module uses `@definitions`. */
+  DAGSTER_REPOSITORY_NAME: z.string().default("__repository__"),
+
+  // ─── Webhook receiver (GlitchTip → clear-api) ────────────────────
+  /** Shared secret required as `?token=` query param on
+   *  POST /webhooks/glitchtip. Rotates via redeploy — set it in the
+   *  environment env, and re-configure each GlitchTip project's Alert
+   *  Rule webhook URL to include the new token. Empty value disables
+   *  the endpoint (returns 503) — used in tests + local dev when the
+   *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
+   *  when set (`openssl rand -hex 32`). */
+  GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
 });
 
 const parsed = envSchema.parse(process.env);
