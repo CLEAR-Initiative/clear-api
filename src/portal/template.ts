@@ -558,10 +558,19 @@ function renderSidebarScript(): string {
       }
     }
     
-    function signOut() {
-      if (confirm('Are you sure you want to sign out?')) {
-        window.location.href = '/api/auth/sign-out';
-      }
+    // Better Auth only accepts POST on /api/auth/sign-out. A GET via
+    // location.href returns 404. Fetch, then redirect to the login page.
+    async function signOut() {
+      if (!confirm('Are you sure you want to sign out?')) return;
+      try {
+        await fetch('/api/auth/sign-out', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+      } catch (e) {}
+      window.location.href = '/portal';
     }
   </script>`;
 }
@@ -1609,20 +1618,8 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       }
     }
 
-    // --- Sign Out ---
-    async function signOut() {
-      try {
-        await fetch('/api/auth/sign-out', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-      } catch (e) {}
-      window.location.href = '/portal';
-    }
-
     // --- Escape helper (client-side) ---
+    // Sign-out lives in renderSidebarScript() (shared with admin).
     function escapeHtmlJs(str) {
       var div = document.createElement('div');
       div.textContent = str;
