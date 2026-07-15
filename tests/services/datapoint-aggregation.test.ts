@@ -452,3 +452,122 @@ describe("aggregateReports — malformed inputs", () => {
     expect(result!.data.killed_total).toBeNull();
   });
 });
+
+/**
+ * Known defects — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
+ * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
+ *
+ * Both are marked `it.fails`, so the suite stays green while the defects
+ * exist AND trips the moment either is fixed — `it.fails` reports a
+ * failure when the body starts passing. When you fix one, delete the
+ * `.fails` and this comment; do not delete the test.
+ *
+ * Reports are ANALYTICAL: a figure is a total already aggregated at source
+ * over a Figure Scope — (location, admin_level, period, event-type set).
+ * Deduplication is only for competing observations of the same scope.
+ */
+describe("KNOWN DEFECT — report-level figure fanned across mentioned locations", () => {
+  // A report states one scoped total ("10 killed in El Fasher") but
+  // `locations` holds every place it discusses — the country for context,
+  // the state, the town. Nothing records which one the figure is scoped
+  // to, so extractNumericMentions fans the value to all three. At country
+  // scope each copy lands in its own incident group and additive_count
+  // sums them: 10 becomes 30, inflated by however many places the report
+  // happened to name. Fixed by extracting Figure Scope (ADR-0002).
+  it.fails("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
+        casualties: { killed: { total: nf(10) } },
+      }),
+    ];
+    const result = aggregateReports(rows, null);
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(10);
+  });
+
+  it("location-scoped aggregation is correct today — only country scope inflates", () => {
+    // Pins the blast radius: the defect above is country-scope-only, so a
+    // stopgap there (clear-api ADR-0001) need not touch this path.
+    //
+    // REVISIT when Figure Scope lands: this row carries no scope, so the
+    // figure reaches SD0201 only via the fan-out. Once a figure declares
+    // its scope, it reaches that location and no other — a figure scoped
+    // to SDN would correctly return null here. Do not read this test as a
+    // requirement to keep fan-out alive.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
+        casualties: { killed: { total: nf(10) } },
+      }),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(10);
+  });
+});
+
+describe("KNOWN DEFECT — incident key omits event type", () => {
+  // §6.4.1 specifies the key as (event, location, time_bucket); the
+  // implementation builds `${locationId}|${bucketDate(...)}`. Two distinct
+  // event types in one place on one day are therefore treated as competing
+  // observations of one thing, and all but the freshest are discarded.
+  // Deduplication is only for the SAME (location, period, event type) —
+  // a conflict total and a flood total are different phenomena and sum.
+  it.fails("clash (5) + flood (3), same place same day → 8, not 3", () => {
+    const rows = [
+      row("r-clash", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-flood", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"), // same incident date → same day bucket
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(8);
+  });
+
+  it.fails("both reports stay in provenance — neither event is silently dropped", () => {
+    // The sharper symptom: the discarded report vanishes from
+    // contributing_report_ids while event_types still unions to both, so
+    // the payload asserts two event types occurred and cites one report.
+    const rows = [
+      row("r-clash", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-flood", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.contributing_report_ids.sort()).toEqual(["r-clash", "r-flood"]);
+  });
+
+  it("dedup still applies within one event type — competing observations collapse", () => {
+    // Guards the fix from over-correcting: two reports on the SAME
+    // (location, day, event type) are one thing seen twice → latest wins,
+    // not 5 + 3 = 8.
+    const rows = [
+      row("r-early", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-late", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(3); // latest_wins
+  });
+});
