@@ -260,6 +260,28 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     reportDatapoint(reportId: String!): ReportDatapoint
 
+    # ─── Situation analysis ──────────────────────────────────────────
+    """Current situation-analysis snapshot for a (country, year).
+    \`year\` derives \`windowStart = Jan 1\` / \`windowEnd = Dec 31\`
+    server-side. Falls back to \`year(now())\` when \`year\` is null.
+    Returns null when no snapshot exists — the dashboard should
+    render an empty state and wait for the next weekly generation.
+    Requires any authenticated content reader."""
+    situationAnalysis(
+      countryLocationId: String!
+      year: Int
+      """Historical read — return the version that was current at
+      this timestamp (defaults to now)."""
+      asOf: DateTime
+    ): SituationAnalysis
+
+    """Trend / history view — one row per year for a country, current
+    versions only, newest year first."""
+    situationAnalysesForCountry(
+      countryLocationId: String!
+      limit: Int = 5
+    ): [SituationAnalysis!]!
+
     """True when at least one current \`aggregated_datapoints\` row
     exists for the given schema version. Used by the Dagster
     aggregation asset to distinguish first-run backfill (wide

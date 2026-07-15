@@ -27,6 +27,7 @@ import { pipelineCountryResolvers } from "./pipelineCountry.resolver.js";
 import { translationResolvers } from "./translation.resolver.js";
 import { knowledgebaseResolvers } from "./knowledgebase.resolver.js";
 import { datapointResolvers } from "./datapoint.resolver.js";
+import { situationAnalysisResolvers } from "./situationAnalysis.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
 
 export const resolvers: IResolvers[] = [
@@ -58,5 +59,6 @@ export const resolvers: IResolvers[] = [
   translationResolvers,
   knowledgebaseResolvers,
   datapointResolvers,
+  situationAnalysisResolvers,
   webhookResolvers,
 ];

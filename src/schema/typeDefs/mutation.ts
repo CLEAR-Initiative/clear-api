@@ -398,6 +398,17 @@ export const mutationTypeDef = gql`
       input: UpsertReportDatapointsInput!
     ): UpsertReportDatapointsResult!
 
+    """Insert a fresh situation-analysis snapshot for
+    (\`input.countryLocationId\`, \`input.windowStart\`,
+    \`input.windowEnd\`) and stamp \`validTo = now()\` on the
+    previous current row for the same bucket in the same
+    transaction. History rows are preserved. Admin / pipeline only —
+    the Dagster \`weekly_situation_analyses\` asset is the primary
+    caller."""
+    upsertSituationAnalysis(
+      input: UpsertSituationAnalysisInput!
+    ): UpsertSituationAnalysisResult!
+
     """Pre-compute all four aggregation tiers (weekly × A2, monthly × A1,
     yearly × country, all-time × country) for reports whose
     \`reportingPeriodEnd\` falls in \`[from, to]\`. Each computed

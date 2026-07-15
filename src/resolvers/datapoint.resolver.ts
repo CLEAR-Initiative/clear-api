@@ -344,6 +344,7 @@ export const datapointResolvers = {
     ): Promise<{
       computedBuckets: number;
       supersededBuckets: number;
+      situationAnalysesInvalidated: number;
       schemaVersion: string;
     }> => {
       requireRole(context, ["admin", "pipeline"]);
@@ -357,7 +358,12 @@ export const datapointResolvers = {
         },
       });
       if (reports.length === 0) {
-        return { computedBuckets: 0, supersededBuckets: 0, schemaVersion };
+        return {
+          computedBuckets: 0,
+          supersededBuckets: 0,
+          situationAnalysesInvalidated: 0,
+          schemaVersion,
+        };
       }
 
       // ── 2. Resolve A0/A1/A2 attribution for every location cited ─
@@ -449,8 +455,21 @@ export const datapointResolvers = {
       // invariant intact even under concurrent refreshes. Batching
       // would be faster but adds correctness risk we don't need for
       // POC scale.
+      //
+      // Cascade: when a yearly-country bucket is written, stamp
+      // `validTo` on the corresponding `situation_analyses` current
+      // row inside the same transaction — the situation analysis
+      // depends transitively on that bucket, so writing a fresh
+      // aggregation makes the situation snapshot stale by definition.
+      // The next weekly Dagster regen picks up the invalidated row
+      // and produces a fresh snapshot; between the two, the dashboard
+      // gets no current row (empty-state UX). The cascade ignores
+      // schema_version — situation_analyses versioning is independent
+      // of aggregation versioning, and there is at most one current
+      // row per schema version anyway.
       let computedBuckets = 0;
       let supersededBuckets = 0;
+      let situationAnalysesInvalidated = 0;
       const now = new Date();
 
       for (const { key, rows } of buckets.values()) {
@@ -488,10 +507,36 @@ export const datapointResolvers = {
             },
           });
           computedBuckets++;
+
+          // Cascade invalidation to situation_analyses. Only the
+          // yearly-country tier drives situation-analysis snapshots
+          // (weekly-A2 and monthly-A1 changes don't invalidate the
+          // yearly snapshot until they roll up into a fresh yearly
+          // bucket write, which this branch handles). A NULL
+          // locationId at this tier would mean a country-wide roll-up
+          // whose situation-analysis we don't materialise today, so
+          // the `!= null` guard is deliberate.
+          if (key.windowKind === "yearly" && key.locationId != null) {
+            const invalidated = await tx.situationAnalysis.updateMany({
+              where: {
+                countryLocationId: key.locationId,
+                windowStart: key.windowStart,
+                windowEnd: key.windowEnd,
+                validTo: null,
+              },
+              data: { validTo: now },
+            });
+            situationAnalysesInvalidated += invalidated.count;
+          }
         });
       }
 
-      return { computedBuckets, supersededBuckets, schemaVersion };
+      return {
+        computedBuckets,
+        supersededBuckets,
+        situationAnalysesInvalidated,
+        schemaVersion,
+      };
     },
   },
 };
