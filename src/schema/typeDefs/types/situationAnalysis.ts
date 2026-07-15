@@ -27,6 +27,11 @@ export const situationAnalysisTypeDef = gql`
     windowStart: DateTime!
     windowEnd: DateTime!
 
+    """Granularity of the analysis window — \`yearly\` today. Part of the
+    bucket key alongside \`countryLocationId\` and \`windowStart\`;
+    \`windowEnd\` is a derived detail and is never matched on."""
+    windowKind: String!
+
     """Full analysis blob. Top-level keys: \`datapoints\`,
     \`ai_summary\`, \`context_risks\`, \`hazards_and_vulnerabilities\`,
     \`displacement\`, \`sectors\`, \`sources\`. LLM-generated
@@ -67,6 +72,10 @@ export const situationAnalysisTypeDef = gql`
     countryLocationId: String!
     windowStart: DateTime!
     windowEnd: DateTime!
+    """Window granularity — \`yearly\` today. Required: it is part of the
+    bucket key, so a wrong or missing value writes a row no reader will
+    ask for. Not defaulted, deliberately."""
+    windowKind: String!
     data: JSON!
     sourceReportIds: [String!]!
     aggregatedDatapointId: String

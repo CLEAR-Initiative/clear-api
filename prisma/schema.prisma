@@ -1383,8 +1383,19 @@ model situationAnalysis {
   /// Analysis window — currently Jan 1..Dec 31 of the target year,
   /// but stored as a general range so a future switch to rolling-12-
   /// month windows doesn't need a schema migration.
+  ///
+  /// Reads key on (countryLocationId, windowKind, windowStart) and never
+  /// on windowEnd. windowEnd is a derived detail: the pipeline and the
+  /// resolver each build the calendar window independently, and matching
+  /// it on exact equality meant the writer's 23:59:59.000 never met the
+  /// reader's 23:59:59.999. windowStart is unambiguous.
   windowStart            DateTime @map("window_start")
   windowEnd              DateTime @map("window_end")
+
+  /// "yearly" today. Mirrors `aggregatedDatapoint.windowKind` so a
+  /// monthly or weekly analysis needs no migration, and so the bucket
+  /// key states its granularity instead of implying it from two dates.
+  windowKind             String   @map("window_kind")
 
   /// The full analysis payload keyed by component name. See docstring
   /// above and the Python schemas for shape.
@@ -1426,7 +1437,12 @@ model situationAnalysis {
   ///   UNIQUE (country_location_id, window_start, window_end, schema_version)
   ///   WHERE valid_to IS NULL NULLS NOT DISTINCT
   /// History rows (validTo NOT NULL) don't participate.
-  @@index([countryLocationId, windowStart])
+  /// Read path filters on (countryLocationId, windowKind, windowStart) —
+  /// never on windowEnd. `map:` is explicit because Prisma's derived name
+  /// for these three columns exceeds Postgres's 63-char identifier limit
+  /// and would be silently truncated into something that doesn't match
+  /// the hand-authored migration.
+  @@index([countryLocationId, windowKind, windowStart], map: "situation_analyses_country_window_kind_window_start_idx")
   @@index([validTo])
   @@index([schemaVersion])
   @@map("situation_analyses")

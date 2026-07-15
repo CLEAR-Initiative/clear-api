@@ -2499,6 +2499,12 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>windowKind</code></td>
+    <td><code>String!</code></td>
+    <td>Window granularity — `yearly` today. Required: it is part of the
+bucket key, so a wrong or missing value writes a row no reader will
+ask for. Not defaulted, deliberately.</td>
+  </tr><tr>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
     <td>—</td>
@@ -4064,6 +4070,12 @@ reads.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Des
     <td><code>windowEnd</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>windowKind</code></td>
+    <td><code>String!</code></td>
+    <td>Granularity of the analysis window — `yearly` today. Part of the
+bucket key alongside `countryLocationId` and `windowStart`;
+`windowEnd` is a derived detail and is never matched on.</td>
   </tr><tr>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>

@@ -65,10 +65,10 @@ describe("Query.situationAnalysis", () => {
     ).rejects.toThrow(GraphQLError);
   });
 
-  it("derives Jan 1 → Dec 31 UTC window from `year`", async () => {
-    // The dashboard passes year=2026 and expects the server to
-    // expand into a calendar window. Test the derivation is UTC and
-    // covers the whole year.
+  it("derives Jan 1 UTC from `year` and keys on windowKind", async () => {
+    // The dashboard passes year=2026 and expects the server to expand it.
+    // Only the START is derived: the bucket key is
+    // (country, windowKind, windowStart).
     const findFirst = vi.fn().mockResolvedValue(null);
     const ctx = buildContext(VIEWER, { situationAnalysis: { findFirst } });
     await situationAnalysis(
@@ -76,13 +76,23 @@ describe("Query.situationAnalysis", () => {
     );
     const call = findFirst.mock.calls[0]![0];
     const start = call.where.windowStart as Date;
-    const end = call.where.windowEnd as Date;
-    expect(start.getUTCFullYear()).toBe(2026);
-    expect(start.getUTCMonth()).toBe(0);
-    expect(start.getUTCDate()).toBe(1);
-    expect(end.getUTCFullYear()).toBe(2026);
-    expect(end.getUTCMonth()).toBe(11);
-    expect(end.getUTCDate()).toBe(31);
+    expect(start.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    expect(call.where.windowKind).toBe("yearly");
+  });
+
+  it("never matches on windowEnd", async () => {
+    // REGRESSION GUARD. The pipeline builds the window in Python
+    // (23:59:59.000) and this resolver used to build it in TS
+    // (23:59:59.999). Prisma's bare-value `where` is exact equality, so
+    // the 999ms gap meant every read returned null while every write
+    // succeeded — a permanently empty dashboard with nothing erroring.
+    // windowEnd is a derived detail; it must never key a read.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, { situationAnalysis: { findFirst } });
+    await situationAnalysis(
+      null, { countryLocationId: "sudan", year: 2026 }, ctx,
+    );
+    expect(findFirst.mock.calls[0]![0].where).not.toHaveProperty("windowEnd");
   });
 
   it("defaults `year` to now.getUTCFullYear() when omitted", async () => {
@@ -306,7 +316,12 @@ describe("Mutation.upsertSituationAnalysis", () => {
   const validInput = {
     countryLocationId: "sudan-a0",
     windowStart: new Date("2026-01-01T00:00:00Z"),
+    // Deliberately .000, matching what the Python writer actually sends
+    // (`datetime(y, 12, 31, 23, 59, 59)`). It must stay that way: this
+    // fixture is the canary for the bug where the resolver looked for
+    // .999 and no read ever matched. windowEnd is never keyed on now.
     windowEnd: new Date("2026-12-31T23:59:59Z"),
+    windowKind: "yearly",
     data: { datapoints: { population_displaced: 6_500_000 } } as any,
     sourceReportIds: ["r-1", "r-2"],
     aggregatedDatapointId: "agg-abc",
@@ -390,10 +405,16 @@ describe("Mutation.upsertSituationAnalysis", () => {
     expect(result.supersededPrevious).toBe(false);
   });
 
-  it("supersede filter targets the same bucket key + version", async () => {
-    // If the filter drifts (e.g. drops schemaVersion), an old row of
-    // a different version would collide with the partial unique
-    // index. This test locks the filter shape.
+  it("supersede filter matches the partial unique index exactly", async () => {
+    // The filter must be the index's key —
+    // (country, windowKind, windowStart, schemaVersion) WHERE valid_to IS
+    // NULL. Too narrow and the prior row isn't stamped, so the insert
+    // collides with it; too broad and it supersedes rows of another
+    // version or granularity. This test locks the shape.
+    //
+    // windowEnd is deliberately ABSENT: it is a derived detail, and
+    // including it would mean a writer whose end-of-day shifted by a
+    // millisecond failed to supersede its own previous row.
     const updateMany = vi.fn().mockResolvedValue({ count: 0 });
     const create = vi.fn().mockResolvedValue({
       id: "sit-x", countryLocationId: "sudan-a0",
@@ -409,10 +430,24 @@ describe("Mutation.upsertSituationAnalysis", () => {
 
     const where = updateMany.mock.calls[0]![0].where;
     expect(where.countryLocationId).toBe("sudan-a0");
+    expect(where.windowKind).toBe("yearly");
     expect(where.windowStart).toEqual(validInput.windowStart);
-    expect(where.windowEnd).toEqual(validInput.windowEnd);
     expect(where.schemaVersion).toBe("v1");
     expect(where.validTo).toBeNull();
+    expect(where).not.toHaveProperty("windowEnd");
+  });
+
+  it("rejects a missing windowKind rather than defaulting it", async () => {
+    // windowKind keys the bucket. Defaulting a missing one would write a
+    // row under a granularity the caller never meant, which no reader
+    // would then ask for — a silent write to nowhere.
+    const ctx = buildContext(PIPELINE, {
+      $transaction: vi.fn(),
+    });
+    const { windowKind: _omitted, ...withoutKind } = validInput;
+    await expect(
+      upsertSituationAnalysis(null, { input: withoutKind as any }, ctx),
+    ).rejects.toThrow(GraphQLError);
   });
 
   it("admin role passes the requireRole gate (equivalent to pipeline)", async () => {

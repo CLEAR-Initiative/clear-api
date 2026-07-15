@@ -27,21 +27,30 @@ import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 // redeploy. That lockstep is not enforceable across repos, so don't
 // reintroduce it.
 
-/** Compute Jan 1 → Dec 31 of `year` in UTC. Dashboard queries pass
- *  a year integer; we expand server-side so a client can't accidentally
- *  request a partial-year window that skips the pre-computed cache
- *  bucket. */
-function calendarYearWindow(year: number): { windowStart: Date; windowEnd: Date } {
-  return {
-    windowStart: new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0)),
-    windowEnd: new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999)),
-  };
+const YEARLY = "yearly";
+
+/** Jan 1 of `year`, UTC. Dashboard queries pass a year integer; we expand
+ *  server-side so a client can't accidentally request a partial-year
+ *  window that skips the pre-computed cache bucket.
+ *
+ *  Only the START is derived. Reads key on
+ *  (countryLocationId, windowKind, windowStart) — never on windowEnd.
+ *  windowEnd is a derived detail that the pipeline and this resolver each
+ *  compute independently, in different languages: the writer produced
+ *  23:59:59.000 and this file used to look for 23:59:59.999, so exact
+ *  equality never matched and every read returned null while every write
+ *  succeeded. windowStart has no such ambiguity — both sides agree on
+ *  midnight — and windowKind carries the granularity explicitly rather
+ *  than implying it from a pair of timestamps. */
+function calendarYearStart(year: number): Date {
+  return new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
 }
 
 interface UpsertSituationAnalysisInput {
   countryLocationId: string;
   windowStart: Date;
   windowEnd: Date;
+  windowKind: string;
   data: Prisma.InputJsonValue;
   sourceReportIds: string[];
   aggregatedDatapointId?: string | null;
@@ -67,7 +76,7 @@ export const situationAnalysisResolvers = {
       // Default to the current calendar year — the dashboard's
       // most common call passes no year at all and expects "now".
       const targetYear = args.year ?? new Date().getUTCFullYear();
-      const { windowStart, windowEnd } = calendarYearWindow(targetYear);
+      const windowStart = calendarYearStart(targetYear);
 
       const asOf = args.asOf ?? new Date();
 
@@ -84,8 +93,8 @@ export const situationAnalysisResolvers = {
       return context.prisma.situationAnalysis.findFirst({
         where: {
           countryLocationId: args.countryLocationId,
+          windowKind: YEARLY,
           windowStart,
-          windowEnd,
           ...(args.schemaVersion ? { schemaVersion: args.schemaVersion } : {}),
           validFrom: { lte: asOf },
           OR: [{ validTo: null }, { validTo: { gt: asOf } }],
@@ -114,6 +123,10 @@ export const situationAnalysisResolvers = {
       // Older versions stay queryable — pass `schemaVersion` to chart a
       // historical payload shape.
       //
+      // Scoped to yearly rows: one point per year is what a trend means
+      // here, and a future monthly analysis must not silently interleave
+      // itself into the same series.
+      //
       // Bounded to keep a chart's data payload predictable — 5 rows
       // covers a rolling half-decade, which is the natural horizon
       // for situation-analysis comparisons.
@@ -122,7 +135,11 @@ export const situationAnalysisResolvers = {
       let schemaVersion = args.schemaVersion ?? null;
       if (!schemaVersion) {
         const newest = await context.prisma.situationAnalysis.findFirst({
-          where: { countryLocationId: args.countryLocationId, validTo: null },
+          where: {
+            countryLocationId: args.countryLocationId,
+            windowKind: YEARLY,
+            validTo: null,
+          },
           orderBy: { validFrom: "desc" },
           select: { schemaVersion: true },
         });
@@ -133,6 +150,7 @@ export const situationAnalysisResolvers = {
       return context.prisma.situationAnalysis.findMany({
         where: {
           countryLocationId: args.countryLocationId,
+          windowKind: YEARLY,
           schemaVersion,
           validTo: null,
         },
@@ -162,6 +180,18 @@ export const situationAnalysisResolvers = {
         );
       }
 
+      // windowKind is part of the bucket key, so a wrong value writes a
+      // row no reader will ever ask for. Reject rather than default: the
+      // pipeline knows its own granularity, and a silent default is what
+      // lets a write land somewhere nobody reads.
+      const windowKind = input.windowKind;
+      if (!windowKind) {
+        throw new GraphQLError(
+          "upsertSituationAnalysis: windowKind is required",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
       const now = new Date();
 
       return context.prisma.$transaction(async (tx) => {
@@ -169,11 +199,17 @@ export const situationAnalysisResolvers = {
         // The partial unique index (WHERE valid_to IS NULL) rejects
         // the insert below unless the prior current row is already
         // stamped as superseded — ordering matters.
+        // Supersede on the same key the unique index enforces —
+        // (country, windowKind, windowStart, schemaVersion). windowEnd is
+        // deliberately absent: it is a derived detail, and including it
+        // here would mean a writer that shifted its end-of-day by a
+        // millisecond would fail to supersede its own previous row and
+        // then collide with it on insert.
         const superseded = await tx.situationAnalysis.updateMany({
           where: {
             countryLocationId: input.countryLocationId,
+            windowKind,
             windowStart: input.windowStart,
-            windowEnd: input.windowEnd,
             schemaVersion: input.schemaVersion,
             validTo: null,
           },
@@ -183,6 +219,7 @@ export const situationAnalysisResolvers = {
         const created = await tx.situationAnalysis.create({
           data: {
             countryLocationId: input.countryLocationId,
+            windowKind,
             windowStart: input.windowStart,
             windowEnd: input.windowEnd,
             data: input.data,
