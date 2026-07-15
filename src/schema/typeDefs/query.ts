@@ -273,13 +273,25 @@ export const queryTypeDef = gql`
       """Historical read — return the version that was current at
       this timestamp (defaults to now)."""
       asOf: DateTime
+      """Pin the read to a payload schema version. Defaults to the most
+      recently written version for the bucket. Versions coexist rather
+      than supersede — an older payload shape stays readable, so pass
+      this to keep a client on a shape it understands. Read
+      \`schemaVersion\` off the returned row to see what you got."""
+      schemaVersion: String
     ): SituationAnalysis
 
     """Trend / history view — one row per year for a country, current
-    versions only, newest year first."""
+    versions only, newest year first. Never mixes schema versions: a
+    bump changes what the numbers mean, so one series is always one
+    version. Requires any authenticated content reader."""
     situationAnalysesForCountry(
       countryLocationId: String!
       limit: Int = 5
+      """Pin the trend to a payload schema version. Defaults to the
+      country's most recently written version. Pass an older one to
+      chart a historical payload shape."""
+      schemaVersion: String
     ): [SituationAnalysis!]!
 
     """True when at least one current \`aggregated_datapoints\` row

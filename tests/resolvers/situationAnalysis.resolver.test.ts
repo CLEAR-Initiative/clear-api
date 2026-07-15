@@ -118,6 +118,34 @@ describe("Query.situationAnalysis", () => {
     expect(result).toEqual(cached);
   });
 
+  it("defaults to the newest write when no schema version is asked for", async () => {
+    // The pipeline owns SCHEMA_VERSION and bumps it independently. A
+    // constant here would keep writes succeeding while every read
+    // returned null: an empty dashboard, no signal, until this repo
+    // redeployed. Versions coexist (the uniqueness index is per-version),
+    // so validFrom desc picks the most recent write and the client reads
+    // schemaVersion off the row.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, { situationAnalysis: { findFirst } });
+    await situationAnalysis(
+      null, { countryLocationId: "sudan", year: 2026 }, ctx,
+    );
+    const call = findFirst.mock.calls[0]![0];
+    expect(call.where).not.toHaveProperty("schemaVersion");
+    expect(call.orderBy).toEqual({ validFrom: "desc" });
+  });
+
+  it("pins to the requested schema version when the caller asks", async () => {
+    // Older versions stay valid alongside newer ones — a client on the v1
+    // payload shape must be able to keep reading v1 after v2 lands.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, { situationAnalysis: { findFirst } });
+    await situationAnalysis(
+      null, { countryLocationId: "sudan", year: 2026, schemaVersion: "v1" }, ctx,
+    );
+    expect(findFirst.mock.calls[0]![0].where.schemaVersion).toBe("v1");
+  });
+
   it("returns null when no row matches (dashboard renders empty state)", async () => {
     // Between an invalidation cascade and the next regen, no current
     // row exists. Dashboard shows empty rather than a stale value.
@@ -174,9 +202,18 @@ describe("Query.situationAnalysesForCountry", () => {
     ).rejects.toThrow(GraphQLError);
   });
 
-  it("filters to current-version rows only", async () => {
+  /** The trend view resolves its schema version from the newest current
+   *  row before querying, so every test here needs that probe stubbed. */
+  function trendCtx(role: typeof VIEWER, schemaVersion: string | null = "v1") {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { situationAnalysis: { findMany } });
+    const findFirst = vi.fn().mockResolvedValue(
+      schemaVersion === null ? null : { schemaVersion },
+    );
+    return { ctx: buildContext(role, { situationAnalysis: { findMany, findFirst } }), findMany, findFirst };
+  }
+
+  it("filters to current-version rows only", async () => {
+    const { ctx, findMany } = trendCtx(VIEWER);
     await situationAnalysesForCountry(
       null, { countryLocationId: "sudan" }, ctx,
     );
@@ -184,9 +221,50 @@ describe("Query.situationAnalysesForCountry", () => {
     expect(call.where.validTo).toBeNull();
   });
 
+  it("resolves the trend's schema version from the newest current row", async () => {
+    // Guards the cross-repo failure mode: the pipeline owns SCHEMA_VERSION
+    // and bumps independently. Pinning a constant here meant a bump left
+    // writes succeeding while the chart silently emptied.
+    const { ctx, findMany, findFirst } = trendCtx(VIEWER, "v2");
+    await situationAnalysesForCountry(
+      null, { countryLocationId: "sudan" }, ctx,
+    );
+    expect(findFirst.mock.calls[0]![0].orderBy).toEqual({ validFrom: "desc" });
+    expect(findMany.mock.calls[0]![0].where.schemaVersion).toBe("v2");
+  });
+
+  it("never mixes schema versions on a trend", async () => {
+    // A chart spanning v1 and v2 rows would plot two different quantities
+    // as one series. Exactly one version must reach the query.
+    const { ctx, findMany } = trendCtx(VIEWER, "v3");
+    await situationAnalysesForCountry(
+      null, { countryLocationId: "sudan" }, ctx,
+    );
+    expect(findMany.mock.calls[0]![0].where.schemaVersion).toBe("v3");
+  });
+
+  it("pins the trend to the requested version without probing", async () => {
+    // Caller asked for v1 explicitly — chart the older payload shape and
+    // skip the newest-version lookup entirely.
+    const { ctx, findMany, findFirst } = trendCtx(VIEWER, "v2");
+    await situationAnalysesForCountry(
+      null, { countryLocationId: "sudan", schemaVersion: "v1" }, ctx,
+    );
+    expect(findFirst).not.toHaveBeenCalled();
+    expect(findMany.mock.calls[0]![0].where.schemaVersion).toBe("v1");
+  });
+
+  it("returns empty without querying when the country has no current rows", async () => {
+    const { ctx, findMany } = trendCtx(VIEWER, null);
+    const result = await situationAnalysesForCountry(
+      null, { countryLocationId: "sudan" }, ctx,
+    );
+    expect(result).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
   it("clamps limit between 1 and 20", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { situationAnalysis: { findMany } });
+    const { ctx, findMany } = trendCtx(VIEWER);
     // Well above the ceiling → clamped to 20.
     await situationAnalysesForCountry(
       null, { countryLocationId: "sudan", limit: 500 }, ctx,
@@ -204,8 +282,7 @@ describe("Query.situationAnalysesForCountry", () => {
   });
 
   it("defaults limit to 5 when omitted", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { situationAnalysis: { findMany } });
+    const { ctx, findMany } = trendCtx(VIEWER);
     await situationAnalysesForCountry(
       null, { countryLocationId: "sudan" }, ctx,
     );
@@ -213,8 +290,7 @@ describe("Query.situationAnalysesForCountry", () => {
   });
 
   it("orders windowStart desc (newest year first)", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { situationAnalysis: { findMany } });
+    const { ctx, findMany } = trendCtx(VIEWER);
     await situationAnalysesForCountry(
       null, { countryLocationId: "sudan" }, ctx,
     );

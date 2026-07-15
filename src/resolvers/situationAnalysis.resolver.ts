@@ -18,10 +18,14 @@ import type { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 
-// Mirrors the SCHEMA_VERSION constant in
-// `clear-context-pipeline/src/clear_context_pipeline/defs/situation/schemas.py`.
-// Keep in sync when the Python side bumps.
-const DEFAULT_SCHEMA_VERSION = "v1";
+// Reads resolve the schema version from the data rather than pinning a
+// constant. The pipeline
+// (`clear-context-pipeline/.../situation/schemas.py`) owns SCHEMA_VERSION
+// and bumps it independently; a constant here would mean writes keep
+// succeeding while every read returns null — an empty dashboard with no
+// signal, until someone remembers to bump a constant in another repo and
+// redeploy. That lockstep is not enforceable across repos, so don't
+// reintroduce it.
 
 /** Compute Jan 1 → Dec 31 of `year` in UTC. Dashboard queries pass
  *  a year integer; we expand server-side so a client can't accidentally
@@ -54,6 +58,7 @@ export const situationAnalysisResolvers = {
         countryLocationId: string;
         year?: number | null;
         asOf?: Date | null;
+        schemaVersion?: string | null;
       },
       context: Context,
     ) => {
@@ -69,12 +74,19 @@ export const situationAnalysisResolvers = {
       // Bitemporal read — return the row whose validity window covers
       // asOf. Order-by validFrom desc handles a mid-transaction race
       // where two rows momentarily overlap (never expected but safe).
+      //
+      // Schema version: pin it if the caller asked for one, otherwise the
+      // newest write wins. Versions coexist rather than supersede — the
+      // uniqueness index is per-version, so a v1 and a v2 row can both be
+      // current for one bucket, and a client that wants the older payload
+      // shape can still ask for it. The client reads `schemaVersion` off
+      // the row to know what it got.
       return context.prisma.situationAnalysis.findFirst({
         where: {
           countryLocationId: args.countryLocationId,
           windowStart,
           windowEnd,
-          schemaVersion: DEFAULT_SCHEMA_VERSION,
+          ...(args.schemaVersion ? { schemaVersion: args.schemaVersion } : {}),
           validFrom: { lte: asOf },
           OR: [{ validTo: null }, { validTo: { gt: asOf } }],
         },
@@ -84,20 +96,44 @@ export const situationAnalysisResolvers = {
 
     situationAnalysesForCountry: async (
       _parent: unknown,
-      args: { countryLocationId: string; limit?: number | null },
+      args: {
+        countryLocationId: string;
+        limit?: number | null;
+        schemaVersion?: string | null;
+      },
       context: Context,
     ) => {
       requireContentReader(context);
 
-      // Trend view: current-version rows only, newest year first.
+      // Trend view: current rows of a SINGLE schema version, newest year
+      // first. A trend must not mix versions — a bump changes what the
+      // numbers mean, so a chart spanning v1 and v2 rows would plot two
+      // different quantities as one series. That constraint is about
+      // mixing, not about which version: pin it if the caller asked,
+      // otherwise default to the country's most recently written one.
+      // Older versions stay queryable — pass `schemaVersion` to chart a
+      // historical payload shape.
+      //
       // Bounded to keep a chart's data payload predictable — 5 rows
       // covers a rolling half-decade, which is the natural horizon
       // for situation-analysis comparisons.
       const limit = Math.min(Math.max(args.limit ?? 5, 1), 20);
+
+      let schemaVersion = args.schemaVersion ?? null;
+      if (!schemaVersion) {
+        const newest = await context.prisma.situationAnalysis.findFirst({
+          where: { countryLocationId: args.countryLocationId, validTo: null },
+          orderBy: { validFrom: "desc" },
+          select: { schemaVersion: true },
+        });
+        if (!newest) return [];
+        schemaVersion = newest.schemaVersion;
+      }
+
       return context.prisma.situationAnalysis.findMany({
         where: {
           countryLocationId: args.countryLocationId,
-          schemaVersion: DEFAULT_SCHEMA_VERSION,
+          schemaVersion,
           validTo: null,
         },
         orderBy: { windowStart: "desc" },
