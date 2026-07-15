@@ -152,6 +152,12 @@ export const datapointTypeDef = gql`
   type RefreshAggregatedDatapointsResult {
     computedBuckets: Int!
     supersededBuckets: Int!
+    """Count of \`situation_analyses\` current rows that had their
+    \`validTo\` stamped as a cascade of the yearly-country
+    aggregation writes in this run. Zero means either no yearly
+    buckets were touched or no situation-analysis snapshot existed
+    yet for the affected countries."""
+    situationAnalysesInvalidated: Int!
     schemaVersion: String!
   }
 `;

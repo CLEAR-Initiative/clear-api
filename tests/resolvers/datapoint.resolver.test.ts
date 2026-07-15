@@ -17,7 +17,7 @@
  *                                          the four-tier bucket enumeration.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 
 import { datapointResolvers } from "../../src/resolvers/datapoint.resolver.js";
@@ -27,7 +27,11 @@ type User = { id: string; role: string } | null;
 
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    // `unknown` shim — the generated PrismaClient shape is huge and
+    // stub tests only touch a couple of delegates; casting directly
+    // through `Context["prisma"]` trips the newer strict overlap
+    // check. Same pattern crisis.resolver.test.ts and friends use.
+    prisma: prisma as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -313,7 +317,10 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     });
     const result = await refreshAggregatedDatapoints(null, args, ctx);
     expect(result).toEqual({
-      computedBuckets: 0, supersededBuckets: 0, schemaVersion: "v1",
+      computedBuckets: 0,
+      supersededBuckets: 0,
+      situationAnalysesInvalidated: 0,
+      schemaVersion: "v1",
     });
   });
 
@@ -355,11 +362,15 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       ]);
     // Transaction body is invoked with a tx handle; stub it so
     // updateMany/create record into per-tx handles as expected.
+    // Also stub situationAnalysis.updateMany — the yearly-country
+    // bucket iteration now cascades to it.
     const updateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const createTx = vi.fn().mockResolvedValue({});
+    const situationUpdateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const transactionRun = vi.fn().mockImplementation(async (cb) => {
       await cb({
         aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+        situationAnalysis: { updateMany: situationUpdateManyTx },
       });
     });
     const ctx = buildContext(PIPELINE, {
@@ -428,9 +439,14 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       opOrder.push("create");
       return {};
     });
+    // situation_analysis cascade is unrelated to the ordering
+    // assertion — stub with a no-op so the resolver's yearly-tier
+    // branch has something to call.
+    const situationUpdateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const transactionRun = vi.fn().mockImplementation(async (cb) => {
       await cb({
         aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+        situationAnalysis: { updateMany: situationUpdateManyTx },
       });
     });
     const ctx = buildContext(PIPELINE, {
@@ -500,6 +516,131 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     expect(createTx).not.toHaveBeenCalled();
   });
 
+  it("cascades validTo on situation_analyses for yearly-country buckets only", async () => {
+    // The refresh mutation writes four tiers. Only the yearly-country
+    // tier should trigger the situation_analyses cascade — weekly-A2
+    // / monthly-A1 changes must NOT invalidate the yearly snapshot
+    // until they roll up. Locks the cascade guard from the resolver.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1", reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sd0701"],
+        data: {
+          casualties: {
+            killed: {
+              total: {
+                value: 3, unit: "people", confidence: "reported",
+                source_quote: "…", chunk_index: 0, page_number: 1,
+              },
+            },
+          },
+        },
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+      ])
+      .mockResolvedValueOnce([
+        { id: "sdn10", level: 1 }, { id: "sdn0", level: 0 },
+      ]);
+
+    // Track every situation_analysis.updateMany call — we assert
+    // it fires only inside yearly-country iterations.
+    const situationUpdateCalls: Array<Record<string, unknown>> = [];
+
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+          situationAnalysis: {
+            updateMany: vi.fn().mockImplementation(async (args) => {
+              situationUpdateCalls.push(args.where as Record<string, unknown>);
+              return { count: 1 };
+            }),
+          },
+        });
+      }),
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-01-01T00:00:00Z"),
+      to: new Date("2026-12-31T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    // Only ONE situation_analyses cascade — the yearly-country tier.
+    // The other three (weekly-A2, monthly-A1, all-time-country)
+    // should NOT trigger it. all-time-country has locationId non-
+    // null so it COULD trigger but shouldn't — the resolver guards
+    // with `windowKind === "yearly"`.
+    expect(situationUpdateCalls).toHaveLength(1);
+    expect(situationUpdateCalls[0]!.countryLocationId).toBe("sdn0");
+    expect(situationUpdateCalls[0]!.validTo).toBeNull();
+
+    // The result carries the invalidation count back to the caller
+    // (Dagster surfaces it as an asset metadata field).
+    expect(result.situationAnalysesInvalidated).toBe(1);
+    // Bucket write counts unchanged.
+    expect(result.computedBuckets).toBe(4);
+  });
+
+  it("cascade skips when no situation_analysis current row exists yet", async () => {
+    // Fresh env — no situation_analyses row for (country, year) yet.
+    // The yearly-country bucket write still succeeds; updateMany
+    // returns count=0; `situationAnalysesInvalidated` = 0.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1", reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sd0701"],
+        data: {},
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+      ])
+      .mockResolvedValueOnce([
+        { id: "sdn10", level: 1 }, { id: "sdn0", level: 0 },
+      ]);
+
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+          situationAnalysis: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
+        });
+      }),
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-01-01T00:00:00Z"),
+      to: new Date("2026-12-31T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    expect(result.situationAnalysesInvalidated).toBe(0);
+    expect(result.computedBuckets).toBe(4);
+  });
+
   it("shared parent A1 collapses into one monthly-A1 bucket across A2 siblings", async () => {
     // Two reports touching two A2 siblings that share the same A1
     // parent + same country. Weekly-A2 tier gets 2 buckets (one per
@@ -541,6 +682,11 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
           aggregatedDatapoint: {
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
             create: createTx,
+          },
+          situationAnalysis: {
+            // Yearly-country iterations cascade to this; no-op is
+            // fine for the collapse-count assertions below.
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
           },
         });
       }),
