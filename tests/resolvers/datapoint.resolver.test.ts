@@ -153,6 +153,22 @@ describe("Query.aggregatedDatapoint", () => {
     expect(result?.id).toBe("agg1");
   });
 
+  it("defaults to schema v2 when the query omits schemaVersion", async () => {
+    // A version-less query must read the version the current pipeline
+    // writes (v2) — otherwise freshly-aggregated buckets go unread.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst },
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await aggregatedDatapoint(null, args, ctx);
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ schemaVersion: "v2" }),
+      }),
+    );
+  });
+
   it("falls through to on-demand aggregation on a miss", async () => {
     const findFirst = vi.fn().mockResolvedValue(null);
     const findMany = vi.fn().mockResolvedValue([
