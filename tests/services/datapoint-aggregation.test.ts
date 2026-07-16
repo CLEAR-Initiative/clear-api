@@ -454,27 +454,29 @@ describe("aggregateReports — malformed inputs", () => {
 });
 
 /**
- * Known defects — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
+ * Aggregation invariants — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
  * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
  *
- * Both are marked `it.fails`, so the suite stays green while the defects
- * exist AND trips the moment either is fixed — `it.fails` reports a
- * failure when the body starts passing. When you fix one, delete the
- * `.fails` and this comment; do not delete the test.
+ * Both the country-scope inflation defect (#269) and the missing
+ * event-type key dimension (#270) are now FIXED — the tests below assert
+ * the corrected behaviour. They remain as regression guards; the guard
+ * tests interleaved with them pin the blast radius so a later change
+ * can't silently over- or under-correct.
  *
  * Reports are ANALYTICAL: a figure is a total already aggregated at source
  * over a Figure Scope — (location, admin_level, period, event-type set).
  * Deduplication is only for competing observations of the same scope.
  */
-describe("KNOWN DEFECT — report-level figure fanned across mentioned locations", () => {
-  // A report states one scoped total ("10 killed in El Fasher") but
-  // `locations` holds every place it discusses — the country for context,
-  // the state, the town. Nothing records which one the figure is scoped
-  // to, so extractNumericMentions fans the value to all three. At country
-  // scope each copy lands in its own incident group and additive_count
-  // sums them: 10 becomes 30, inflated by however many places the report
-  // happened to name. Fixed by extracting Figure Scope (ADR-0002).
-  it.fails("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
+describe("country-scope inflation — FIXED (#269): dedup by report", () => {
+  // A report states one figure ("10 killed") but `locations` holds every
+  // place it discusses — the country for context, the state, the town.
+  // Nothing records which one the figure is scoped to, so
+  // extractNumericMentions fans the value to all three. At country scope
+  // this used to give each copy its own incident group, and additive_count
+  // summed them: 10 became 30. Fixed by keying country-scope groups on
+  // reportId instead of locationId (ADR-0001) — a stopgap until Figure
+  // Scope (ADR-0002) removes the fan-out entirely.
+  it("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
         casualties: { killed: { total: nf(10) } },
@@ -507,14 +509,14 @@ describe("KNOWN DEFECT — report-level figure fanned across mentioned locations
   });
 });
 
-describe("KNOWN DEFECT — incident key omits event type", () => {
-  // §6.4.1 specifies the key as (event, location, time_bucket); the
-  // implementation builds `${locationId}|${bucketDate(...)}`. Two distinct
-  // event types in one place on one day are therefore treated as competing
-  // observations of one thing, and all but the freshest are discarded.
-  // Deduplication is only for the SAME (location, period, event type) —
-  // a conflict total and a flood total are different phenomena and sum.
-  it.fails("clash (5) + flood (3), same place same day → 8, not 3", () => {
+describe("event-type key dimension — FIXED (#270)", () => {
+  // §6.4.1 specifies the key as (event, location, time_bucket). The
+  // implementation now builds `${keyHead}|${bucket}|${eventKey}`. Two
+  // distinct event types in one place on one day are different phenomena,
+  // not competing observations of one thing, so they sum rather than
+  // collapse. Deduplication remains only for the SAME
+  // (location, period, event type).
+  it("clash (5) + flood (3), same place same day → 8, not 3", () => {
     const rows = [
       row("r-clash", "2026-07-02T00:00:00Z", ["SD0201"], {
         timing_and_scope: { event_types: ["conflict"] },
@@ -531,7 +533,7 @@ describe("KNOWN DEFECT — incident key omits event type", () => {
     expect(field.value).toBe(8);
   });
 
-  it.fails("both reports stay in provenance — neither event is silently dropped", () => {
+  it("both reports stay in provenance — neither event is silently dropped", () => {
     // The sharper symptom: the discarded report vanishes from
     // contributing_report_ids while event_types still unions to both, so
     // the payload asserts two event types occurred and cites one report.
@@ -569,5 +571,150 @@ describe("KNOWN DEFECT — incident key omits event type", () => {
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
     expect(field.value).toBe(3); // latest_wins
+  });
+
+  it("event-type set is canonicalised — case and order don't split a key", () => {
+    // The set is normalised (lowercase, sorted) before it enters the key,
+    // so {"Conflict","FLOOD"} and {"flood","conflict"} are the SAME
+    // phenomenon. Without canonicalisation these two reports would form
+    // distinct keys and wrongly sum to 8 instead of deduping to 3.
+    const rows = [
+      row("r-early", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["Conflict", "FLOOD"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-late", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood", "conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(3); // one incident, latest wins — not 8
+  });
+
+  it("differing event-type SETS are distinct — {conflict} vs {conflict,flood} sum", () => {
+    // Atomic set: a multi-hazard total is not the same phenomenon as a
+    // single-hazard total, so these do not collapse.
+    const rows = [
+      row("r-a", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-b", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict", "flood"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(8);
+  });
+});
+
+describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", () => {
+  const kt = (r: ReturnType<typeof aggregateReports>) => {
+    const f = r!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    return f.value;
+  };
+
+  it("untyped report does NOT double-count against a typed one (the regression)", () => {
+    // Empty event-type set means 'unknown', not 'a distinct phenomenon' —
+    // it merges into the sole typed group at the same location+bucket.
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // deduped, not 8
+  });
+
+  it("leaves the untyped group separate when MULTIPLE typed groups share the bucket", () => {
+    // conflict + flood are two distinct phenomena; an untyped figure can't
+    // be assigned to one, so it is not merged (documented, ADR-0002).
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+      row("r-flood", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(2) } },
+      }),
+    ];
+    // conflict(3) + flood(2) + untyped(5), all distinct groups → 10.
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(10);
+  });
+
+  it("country scope is unaffected — a report has one event-type set", () => {
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0301"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+    ];
+    // Two reports, different places → still sum to 8 country-wide.
+    expect(kt(aggregateReports(rows, null))).toBe(8);
+  });
+
+  it("a bare-string event_types is tolerated, not treated as untyped", () => {
+    // `"conflict"` (not `["conflict"]`) must canonicalise the same way, so
+    // it dedups with an array-tagged report of the same incident.
+    const rows = [
+      row("r-str", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: "conflict" },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-arr", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // same phenomenon, deduped
+  });
+
+  it("key and published event_types agree on case", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["Conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r2", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201")!;
+    // One incident group (deduped) …
+    expect(kt(result)).toBe(3);
+    // … and the published set is canonicalised to match — one entry, not two.
+    const et = result.data.event_types;
+    if (!et || !("values" in et)) throw new Error("expected set-union field");
+    expect(et.values).toEqual(["conflict"]);
+  });
+
+  it("active_clusters keeps its display casing (not blanket-lowercased)", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { active_clusters: ["Protection", "WASH"] },
+      }),
+    ];
+    const result = aggregateReports(rows, "SD0201")!;
+    const ac = result.data.active_clusters;
+    if (!ac || !("values" in ac)) throw new Error("expected set-union field");
+    expect(ac.values).toEqual(["Protection", "WASH"]);
   });
 });

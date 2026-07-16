@@ -79,6 +79,14 @@ export interface FieldRule {
   /** Ignored for set_union / non_aggregatable. */
   timeBucket?: TimeBucket;
   withinGroupPolicy: WithinGroupPolicy;
+  /**
+   * set_union only: canonicalise members through `canonicaliseEventTypes`
+   * (lowercase, tolerate a bare string) so the published set matches the
+   * incident key's casing. Set on `event_types`, which feeds the key.
+   * Left off for label sets like `active_clusters` where display casing
+   * is preserved.
+   */
+  canonicaliseCase?: boolean;
 }
 
 /**
@@ -229,6 +237,7 @@ export const FIELD_RULES: FieldRule[] = [
     label: "event_types",
     kind: "set_union",
     withinGroupPolicy: "set_union_all",
+    canonicaliseCase: true,
   },
   {
     path: "timing_and_scope.active_clusters",
@@ -349,6 +358,71 @@ interface Mention {
   value: number;
   unit: string | null;
   confidence: ConfidenceTier;
+  // Canonicalised, sorted event-type set for the report this mention
+  // came from, joined into one string. Part of the incident key: two
+  // reports at the same location and time bucket but describing
+  // different phenomena (a conflict total vs a flood total) are distinct
+  // incidents and must not collapse into one. Empty string when the
+  // report carries no event types. See eventKeyFor().
+  eventKey: string;
+}
+
+/** Canonicalise a report's `event_types` into one incident-key
+ *  component. Lowercased, trimmed, de-duplicated, and sorted so
+ *  {"flood","conflict"} and {"Conflict","FLOOD"} yield the same key.
+ *
+ *  The set is treated ATOMICALLY — a report stating a figure totalled
+ *  across {conflict, flood} cannot be split between them, so its whole
+ *  set is one key component. Fanning a figure across its member types
+ *  would repeat the location fan-out defect in a second dimension.
+ *
+ *  Deliberately NOT glide-code canonicalisation: §6.4.1 folds
+ *  "armed clash" / "battle" / "armed confrontation" to a single
+ *  `disaster_types` glide code, but that needs a DB lookup and this
+ *  routine is a pure function over `ReportRow`. Raw normalisation is
+ *  enough to separate genuinely different event types; folding synonyms
+ *  is a follow-up that must pass the taxonomy in rather than query it. */
+/**
+ * Canonicalise a raw `event_types` value into a sorted, de-duplicated,
+ * lowercased set. The ONE place event-type casing is decided, so the
+ * incident key and the published `event_types` set can never disagree.
+ *
+ * Tolerates a bare string (`event_types: "conflict"` — a common LLM slip)
+ * by treating it as a single-element set. `null` / `undefined` / `[]`
+ * yield `[]` (genuine absence). Any other shape (number, object) also
+ * yields `[]` but fires `onMalformed` — a shape we don't understand
+ * shifts published figures, so it must not degrade silently.
+ */
+function canonicaliseEventTypes(
+  raw: unknown,
+  onMalformed?: (kind: string) => void,
+): string[] {
+  if (raw == null) return [];
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? [raw]
+      : null;
+  if (list === null) {
+    onMalformed?.(typeof raw);
+    return [];
+  }
+  const set = new Set<string>();
+  for (const v of list) {
+    if (typeof v === "string" && v.trim()) set.add(v.trim().toLowerCase());
+  }
+  return Array.from(set).sort();
+}
+
+function eventKeyFor(row: ReportRow): string {
+  const raw = dig(row.data, "timing_and_scope.event_types");
+  return canonicaliseEventTypes(raw, (kind) =>
+    // Deterministic output is preserved (still ""); this is only a
+    // data-quality signal for a shape the extractor shouldn't emit.
+    console.warn(
+      `[datapoint-aggregation] event_types malformed for report ${row.reportId}: ${kind}`,
+    ),
+  ).join(",");
 }
 
 /** Explode one report row into per-location mentions for the given
@@ -372,12 +446,14 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   const incidentDate = row.reportingPeriodEnd ?? row.publishedAt;
   const unit = typeof nf.unit === "string" ? nf.unit : null;
   const confidence = normaliseConfidence(nf.confidence);
+  // Report-level: every mention this report emits carries the same set.
+  const eventKey = eventKeyFor(row);
 
   if (row.locationIds.length === 0) {
     // Unlocated row — recorded under an empty-string location so the
     // bucket exists but is separable from country-wide sums.
     return [
-      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence },
+      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence, eventKey },
     ];
   }
   return row.locationIds.map((locationId) => ({
@@ -388,6 +464,7 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
     value,
     unit,
     confidence,
+    eventKey,
   }));
 }
 
@@ -436,21 +513,83 @@ function aggregateNumericField(
 ): QualityEnvelope | null {
   const mentions: Mention[] = rows.flatMap((r) => extractNumericMentions(r, rule));
 
-  // Filter by location scope. `null` means country-wide → keep everything.
-  const scoped = locationScope
-    ? mentions.filter((m) => m.locationId === locationScope)
-    : mentions;
+  // Filter by location scope. A falsy scope (null, or the empty-string
+  // unlocated bucket) means country-wide → keep everything.
+  const isCountryWide = !locationScope;
+  const scoped = isCountryWide
+    ? mentions
+    : mentions.filter((m) => m.locationId === locationScope);
   if (scoped.length === 0) return null;
 
   const bucket = rule.timeBucket ?? "day";
 
   // Group by incident key.
+  //
+  // Location-scoped buckets key on locationId: `extractNumericMentions`
+  // fans a report-level figure across every location the report mentions,
+  // and that fan-out is exactly what lets a sub-national bucket see the
+  // report at all.
+  //
+  // Country-wide keys on reportId instead. Without Figure Scope, the same
+  // fan-out means one report's single figure appears once per mentioned
+  // place, so locationId-keying would count each copy as its own incident
+  // and additive_count would sum them — 10 killed reported across 3 named
+  // places became a country-wide 30. reportId-keying collapses a report's
+  // fanned copies back to one contribution per time bucket.
+  //
+  // Stopgap, not the destination: at country scope, absent per-figure
+  // location, this cannot distinguish two reports of the SAME incident
+  // (should dedup) from two genuinely distinct incidents (should sum) —
+  // it treats every report as distinct. That bounds the error to
+  // one-per-report, where the old bug was one-per-place-mention. Figure
+  // Scope removes the fan-out and retires this branch (#273).
+  // See docs/adr/0001-country-scope-dedups-by-report.md.
+  //
+  // The eventKey is the third key dimension (§6.4.1's event type). Two
+  // reports at the same location and time bucket but with different
+  // event-type sets are distinct phenomena — a conflict toll and a flood
+  // toll are not competing observations of one incident — so they must
+  // NOT collapse. At country scope the eventKey is redundant (a report
+  // has one set), so it changes nothing there; it only separates
+  // co-located, same-bucket reports at location scope.
+  // NUL joins the key components. It cannot appear in a cuid, an ISO
+  // bucket date, or a canonicalised event type, so unlike "|" it can't
+  // let a component's own separator forge a collision across groups.
+  const SEP = "\u0000";
   const groups = new Map<string, Mention[]>();
+  // Track, per (keyHead, bucket) base, which event-key groups exist, so
+  // an untyped mention can be merged into a lone typed sibling below.
+  const groupsByBase = new Map<string, Set<string>>();
   for (const m of scoped) {
-    const key = `${m.locationId}|${bucketDate(m.incidentDate, bucket)}`;
+    const keyHead = isCountryWide ? m.reportId : m.locationId;
+    const base = `${keyHead}${SEP}${bucketDate(m.incidentDate, bucket)}`;
+    const key = `${base}${SEP}${m.eventKey}`;
     const bucketList = groups.get(key);
     if (bucketList) bucketList.push(m);
     else groups.set(key, [m]);
+    const siblings = groupsByBase.get(base);
+    if (siblings) siblings.add(key);
+    else groupsByBase.set(base, new Set([key]));
+  }
+
+  // Merge each untyped ("") group into its sole typed sibling. An empty
+  // event-type set means "the extractor didn't tell us", NOT "a distinct
+  // phenomenon" — so it must not form its own additive group when there
+  // is exactly one typed group at the same (location/report, bucket) that
+  // it plausibly belongs to. Without this, an untyped and a typed report
+  // covering the same place and day are summed instead of deduped,
+  // re-inflating additive_count (the #269 failure class). When several
+  // typed groups share the base we can't disambiguate, so the untyped
+  // group is left standing. Country scope is unaffected: a report has one
+  // event-type set, so no base there has both an untyped and a typed key.
+  // See docs/adr/0002-event-type-incident-key.md.
+  for (const [base, keys] of groupsByBase) {
+    const emptyKey = `${base}${SEP}`;
+    if (keys.size < 2 || !groups.has(emptyKey)) continue;
+    const typed = [...keys].filter((k) => k !== emptyKey);
+    if (typed.length !== 1) continue; // ambiguous — leave the untyped group
+    groups.get(typed[0]!)!.push(...groups.get(emptyKey)!);
+    groups.delete(emptyKey);
   }
 
   // Within-group winner + collect winners
@@ -503,12 +642,18 @@ function aggregateSetUnionField(
   const contributing = new Set<string>();
   for (const r of rows) {
     const raw = dig(r.data, rule.path);
-    if (Array.isArray(raw)) {
-      for (const v of raw) {
-        if (typeof v === "string" && v.trim()) union.add(v.trim());
-      }
-      if (raw.length > 0) contributing.add(r.reportId);
-    }
+    // For a case-canonicalised field (event_types) run members through the
+    // same helper the incident key uses — so the published set and the key
+    // agree on casing, and a bare string is tolerated in both. Other label
+    // sets (active_clusters) keep their display casing: trim only.
+    const values = rule.canonicaliseCase
+      ? canonicaliseEventTypes(raw)
+      : Array.isArray(raw)
+        ? raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+            .map((v) => v.trim())
+        : [];
+    for (const v of values) union.add(v);
+    if (values.length > 0) contributing.add(r.reportId);
   }
   if (union.size === 0) return null;
   return {
