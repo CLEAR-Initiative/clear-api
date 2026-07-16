@@ -454,27 +454,29 @@ describe("aggregateReports — malformed inputs", () => {
 });
 
 /**
- * Known defects — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
+ * Aggregation invariants — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
  * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
  *
- * Both are marked `it.fails`, so the suite stays green while the defects
- * exist AND trips the moment either is fixed — `it.fails` reports a
- * failure when the body starts passing. When you fix one, delete the
- * `.fails` and this comment; do not delete the test.
+ * The country-scope inflation defect below is FIXED (#269) — its test now
+ * asserts the corrected behaviour. The event-type-key defect is still
+ * marked `it.fails`, so the suite stays green while it exists AND trips
+ * the moment it's fixed (`it.fails` reports a failure when the body starts
+ * passing). When you fix it, delete the `.fails`; do not delete the test.
  *
  * Reports are ANALYTICAL: a figure is a total already aggregated at source
  * over a Figure Scope — (location, admin_level, period, event-type set).
  * Deduplication is only for competing observations of the same scope.
  */
-describe("KNOWN DEFECT — report-level figure fanned across mentioned locations", () => {
-  // A report states one scoped total ("10 killed in El Fasher") but
-  // `locations` holds every place it discusses — the country for context,
-  // the state, the town. Nothing records which one the figure is scoped
-  // to, so extractNumericMentions fans the value to all three. At country
-  // scope each copy lands in its own incident group and additive_count
-  // sums them: 10 becomes 30, inflated by however many places the report
-  // happened to name. Fixed by extracting Figure Scope (ADR-0002).
-  it.fails("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
+describe("country-scope inflation — FIXED (#269): dedup by report", () => {
+  // A report states one figure ("10 killed") but `locations` holds every
+  // place it discusses — the country for context, the state, the town.
+  // Nothing records which one the figure is scoped to, so
+  // extractNumericMentions fans the value to all three. At country scope
+  // this used to give each copy its own incident group, and additive_count
+  // summed them: 10 became 30. Fixed by keying country-scope groups on
+  // reportId instead of locationId (ADR-0001) — a stopgap until Figure
+  // Scope (ADR-0002) removes the fan-out entirely.
+  it("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
         casualties: { killed: { total: nf(10) } },

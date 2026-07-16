@@ -436,18 +436,41 @@ function aggregateNumericField(
 ): QualityEnvelope | null {
   const mentions: Mention[] = rows.flatMap((r) => extractNumericMentions(r, rule));
 
-  // Filter by location scope. `null` means country-wide → keep everything.
-  const scoped = locationScope
-    ? mentions.filter((m) => m.locationId === locationScope)
-    : mentions;
+  // Filter by location scope. A falsy scope (null, or the empty-string
+  // unlocated bucket) means country-wide → keep everything.
+  const isCountryWide = !locationScope;
+  const scoped = isCountryWide
+    ? mentions
+    : mentions.filter((m) => m.locationId === locationScope);
   if (scoped.length === 0) return null;
 
   const bucket = rule.timeBucket ?? "day";
 
   // Group by incident key.
+  //
+  // Location-scoped buckets key on locationId: `extractNumericMentions`
+  // fans a report-level figure across every location the report mentions,
+  // and that fan-out is exactly what lets a sub-national bucket see the
+  // report at all.
+  //
+  // Country-wide keys on reportId instead. Without Figure Scope, the same
+  // fan-out means one report's single figure appears once per mentioned
+  // place, so locationId-keying would count each copy as its own incident
+  // and additive_count would sum them — 10 killed reported across 3 named
+  // places became a country-wide 30. reportId-keying collapses a report's
+  // fanned copies back to one contribution per time bucket.
+  //
+  // Stopgap, not the destination: at country scope, absent per-figure
+  // location, this cannot distinguish two reports of the SAME incident
+  // (should dedup) from two genuinely distinct incidents (should sum) —
+  // it treats every report as distinct. That bounds the error to
+  // one-per-report, where the old bug was one-per-place-mention. Figure
+  // Scope removes the fan-out and retires this branch (#273).
+  // See docs/adr/0001-country-scope-dedups-by-report.md.
   const groups = new Map<string, Mention[]>();
   for (const m of scoped) {
-    const key = `${m.locationId}|${bucketDate(m.incidentDate, bucket)}`;
+    const keyHead = isCountryWide ? m.reportId : m.locationId;
+    const key = `${keyHead}|${bucketDate(m.incidentDate, bucket)}`;
     const bucketList = groups.get(key);
     if (bucketList) bucketList.push(m);
     else groups.set(key, [m]);
