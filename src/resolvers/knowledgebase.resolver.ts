@@ -253,13 +253,10 @@ export const knowledgebaseResolvers = {
 
       if (!name) return null;
 
-      // Case-insensitive name match, optionally scoped to a level so a
-      // village that shares its state's name doesn't collide. We cap
-      // at level 3 because L4 (point) rows carry non-place labels
-      // (signal titles, "TEST PT — …") that we never want the LLM to
-      // land on. If adminLevel is provided, use only that; else scan
-      // 0..3 and prefer the deeper match (LIMIT 1 with ORDER by level
-      // DESC).
+      // Case-insensitive name match. We cap at level 3 because L4 (point)
+      // rows carry non-place labels (signal titles, "TEST PT — …") that we
+      // never want the LLM to land on. When `adminLevel` is given, use only
+      // that level.
       if (args.adminLevel != null) {
         const rows = await context.prisma.$queryRaw<Array<{ id: string }>>`
           SELECT id FROM "locations"
@@ -269,13 +266,23 @@ export const knowledgebaseResolvers = {
         `;
         return rows[0]?.id ?? null;
       }
-      const rows = await context.prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "locations"
+      // No level hint: a name that exists at more than one admin level
+      // (e.g. "Kassala" as both a state and a locality) is AMBIGUOUS. We
+      // used to prefer the deepest match, which silently bucketed a
+      // state-level figure to the same-named locality — the exact
+      // wrong-bucket the datapoint Figure-Scope work exists to prevent.
+      // Return null on ambiguity so the caller treats the figure as
+      // unscoped (the established fail-safe for an unresolved name) rather
+      // than trusting a coin-flip. A name unique to one level resolves as
+      // before.
+      const rows = await context.prisma.$queryRaw<Array<{ id: string; level: number }>>`
+        SELECT id, level FROM "locations"
         WHERE lower(name) = lower(${name})
           AND level BETWEEN 0 AND 3
         ORDER BY level DESC
-        LIMIT 1
       `;
+      const distinctLevels = new Set(rows.map((r) => r.level));
+      if (distinctLevels.size > 1) return null; // ambiguous across levels
       return rows[0]?.id ?? null;
     },
 

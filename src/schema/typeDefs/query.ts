@@ -224,8 +224,11 @@ export const queryTypeDef = gql`
     Pcode wins over name; \`adminLevel\` narrows the name match so a
     village that shares its state's name doesn't collide. Returns null
     when neither the pcode nor the name matches — the ingest keeps the
-    raw pcode on the row so a future backfill can re-resolve. Admin /
-    pipeline only."""
+    raw pcode on the row so a future backfill can re-resolve. A name given
+    without \`adminLevel\` that matches more than one admin level is
+    ambiguous and also returns null (rather than guessing the deepest
+    match), so an unlevelled name never silently lands on the wrong tier.
+    Admin / pipeline only."""
     resolveKnowledgebaseLocation(
       pcode: String
       name: String
