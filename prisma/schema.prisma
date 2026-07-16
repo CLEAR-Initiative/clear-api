@@ -1348,3 +1348,103 @@ model aggregatedDatapoint {
   @@map("aggregated_datapoints")
 }
 
+/// Pre-computed situation-analysis snapshot per (country × year).
+/// Consumed by the situation-analysis dashboard as a single-row read;
+/// regenerated weekly by the Dagster `weekly_situation_analyses` asset
+/// downstream of the aggregation refresh.
+///
+/// The `data` blob carries seven top-level components — see the
+/// situation-analysis design in
+/// `clear-context-pipeline/docs/humanitarian-datapoint-extraction.md`
+/// (extension pending) and the Pydantic schemas in
+/// `clear-context-pipeline/src/clear_context_pipeline/defs/situation/schemas.py`:
+///
+///   1. datapoints                     (deterministic — hoisted from aggregated_datapoints)
+///   2. ai_summary                     (LLM — narrative prose)
+///   3. context_risks                  (LLM — 8 sub-domains × bullets)
+///   4. hazards_and_vulnerabilities    (LLM — bullets)
+///   5. displacement                   (LLM — push_factors + return_intention)
+///   6. sectors                        (LLM — 6 SAF sectors × severity + top_needs + interventions + info_coverage)
+///   7. sources                        (deterministic — union of contributing_report_ids joined with report titles)
+///
+/// Every LLM-generated section carries its own `source_report_ids`
+/// so the sources tab renders from a single JSON walk without a
+/// second query. The top-level `sourceReportIds` column is the
+/// denormalised union for cheap admin-side filtering.
+model situationAnalysis {
+  id                     String   @id @default(cuid())
+
+  /// FK to `locations.id` — the country (A0) this analysis covers.
+  /// Not enforced as a Prisma relation because the situation-analysis
+  /// pipeline should keep working even when locations are pruned /
+  /// reshuffled during backfills.
+  countryLocationId      String   @map("country_location_id")
+
+  /// Analysis window — currently Jan 1..Dec 31 of the target year,
+  /// but stored as a general range so a future switch to rolling-12-
+  /// month windows doesn't need a schema migration.
+  ///
+  /// Reads key on (countryLocationId, windowKind, windowStart) and never
+  /// on windowEnd. windowEnd is a derived detail: the pipeline and the
+  /// resolver each build the calendar window independently, and matching
+  /// it on exact equality meant the writer's 23:59:59.000 never met the
+  /// reader's 23:59:59.999. windowStart is unambiguous.
+  windowStart            DateTime @map("window_start")
+  windowEnd              DateTime @map("window_end")
+
+  /// "yearly" today. Mirrors `aggregatedDatapoint.windowKind` so a
+  /// monthly or weekly analysis needs no migration, and so the bucket
+  /// key states its granularity instead of implying it from two dates.
+  windowKind             String   @map("window_kind")
+
+  /// The full analysis payload keyed by component name. See docstring
+  /// above and the Python schemas for shape.
+  data                   Json
+
+  /// Denormalised union of every contributing report id across all
+  /// components. Enables cheap "which reports fed this analysis" +
+  /// bulk admin queries without opening the JSON blob.
+  sourceReportIds        String[] @map("source_report_ids")
+
+  /// FK-ish reference to the `aggregated_datapoints.id` this analysis
+  /// was generated against. Optional because early runs may fire
+  /// before aggregations exist for the country-year. Kept as a plain
+  /// text column (no @relation) so aggregation-side cleanups don't
+  /// cascade-delete analyses.
+  aggregatedDatapointId  String?  @map("aggregated_datapoint_id")
+
+  /// LLM identifier (e.g. `claude-sonnet-4-6`). Deterministic-only
+  /// runs (Phase B) record a synthetic value like `deterministic:v1`.
+  generatedByModel       String   @map("generated_by_model")
+  /// Total LLM cost across all component calls, if the caller tracks it.
+  /// Null for deterministic-only runs.
+  generationCostUsd      Float?   @map("generation_cost_usd")
+  generatedAt            DateTime @default(now()) @map("generated_at")
+
+  /// Bitemporal validity — same pattern as aggregated_datapoints.
+  /// Every weekly regeneration inserts a new row and stamps the
+  /// previous "current" row's validTo. History is preserved for the
+  /// "compare to last week" dashboard UX and for audit.
+  validFrom              DateTime @default(now()) @map("valid_from")
+  validTo                DateTime? @map("valid_to")
+
+  /// Bumped when either the output taxonomy OR the prompt set
+  /// changes. Rows of different schema versions never mix on trend
+  /// views; a version bump triggers full regeneration.
+  schemaVersion          String   @map("schema_version")
+
+  /// Partial unique index in the migration SQL:
+  ///   UNIQUE (country_location_id, window_start, window_end, schema_version)
+  ///   WHERE valid_to IS NULL NULLS NOT DISTINCT
+  /// History rows (validTo NOT NULL) don't participate.
+  /// Read path filters on (countryLocationId, windowKind, windowStart) —
+  /// never on windowEnd. `map:` is explicit because Prisma's derived name
+  /// for these three columns exceeds Postgres's 63-char identifier limit
+  /// and would be silently truncated into something that doesn't match
+  /// the hand-authored migration.
+  @@index([countryLocationId, windowKind, windowStart], map: "situation_analyses_country_window_kind_window_start_idx")
+  @@index([validTo])
+  @@index([schemaVersion])
+  @@map("situation_analyses")
+}
+

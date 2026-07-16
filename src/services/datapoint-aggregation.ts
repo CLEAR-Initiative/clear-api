@@ -79,6 +79,14 @@ export interface FieldRule {
   /** Ignored for set_union / non_aggregatable. */
   timeBucket?: TimeBucket;
   withinGroupPolicy: WithinGroupPolicy;
+  /**
+   * set_union only: canonicalise members through `canonicaliseEventTypes`
+   * (lowercase, tolerate a bare string) so the published set matches the
+   * incident key's casing. Set on `event_types`, which feeds the key.
+   * Left off for label sets like `active_clusters` where display casing
+   * is preserved.
+   */
+  canonicaliseCase?: boolean;
 }
 
 /**
@@ -229,6 +237,7 @@ export const FIELD_RULES: FieldRule[] = [
     label: "event_types",
     kind: "set_union",
     withinGroupPolicy: "set_union_all",
+    canonicaliseCase: true,
   },
   {
     path: "timing_and_scope.active_clusters",
@@ -349,13 +358,83 @@ interface Mention {
   value: number;
   unit: string | null;
   confidence: ConfidenceTier;
+  // Canonicalised, sorted event-type set for the report this mention
+  // came from, joined into one string. Part of the incident key: two
+  // reports at the same location and time bucket but describing
+  // different phenomena (a conflict total vs a flood total) are distinct
+  // incidents and must not collapse into one. Empty string when the
+  // report carries no event types. See eventKeyFor().
+  eventKey: string;
 }
 
-/** Explode one report row into per-location mentions for the given
- *  numeric-field rule. A report tagged with multiple locations emits
- *  one mention per location — the extractor doesn't attribute per
- *  location today, so we broadcast the same value across each. Phase 3
- *  can refine this by parsing per-location breakdowns from the LLM. */
+/** Canonicalise a report's `event_types` into one incident-key
+ *  component. Lowercased, trimmed, de-duplicated, and sorted so
+ *  {"flood","conflict"} and {"Conflict","FLOOD"} yield the same key.
+ *
+ *  The set is treated ATOMICALLY — a report stating a figure totalled
+ *  across {conflict, flood} cannot be split between them, so its whole
+ *  set is one key component. Fanning a figure across its member types
+ *  would repeat the location fan-out defect in a second dimension.
+ *
+ *  Deliberately NOT glide-code canonicalisation: §6.4.1 folds
+ *  "armed clash" / "battle" / "armed confrontation" to a single
+ *  `disaster_types` glide code, but that needs a DB lookup and this
+ *  routine is a pure function over `ReportRow`. Raw normalisation is
+ *  enough to separate genuinely different event types; folding synonyms
+ *  is a follow-up that must pass the taxonomy in rather than query it. */
+/**
+ * Canonicalise a raw `event_types` value into a sorted, de-duplicated,
+ * lowercased set. The ONE place event-type casing is decided, so the
+ * incident key and the published `event_types` set can never disagree.
+ *
+ * Tolerates a bare string (`event_types: "conflict"` — a common LLM slip)
+ * by treating it as a single-element set. `null` / `undefined` / `[]`
+ * yield `[]` (genuine absence). Any other shape (number, object) also
+ * yields `[]` but fires `onMalformed` — a shape we don't understand
+ * shifts published figures, so it must not degrade silently.
+ */
+function canonicaliseEventTypes(
+  raw: unknown,
+  onMalformed?: (kind: string) => void,
+): string[] {
+  if (raw == null) return [];
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? [raw]
+      : null;
+  if (list === null) {
+    onMalformed?.(typeof raw);
+    return [];
+  }
+  const set = new Set<string>();
+  for (const v of list) {
+    if (typeof v === "string" && v.trim()) set.add(v.trim().toLowerCase());
+  }
+  return Array.from(set).sort();
+}
+
+function eventKeyFor(row: ReportRow): string {
+  const raw = dig(row.data, "timing_and_scope.event_types");
+  return canonicaliseEventTypes(raw, (kind) =>
+    // Deterministic output is preserved (still ""); this is only a
+    // data-quality signal for a shape the extractor shouldn't emit.
+    console.warn(
+      `[datapoint-aggregation] event_types malformed for report ${row.reportId}: ${kind}`,
+    ),
+  ).join(",");
+}
+
+/** Turn one report's numeric field into a mention at its FIGURE SCOPE —
+ *  the single `locations` id the figure is a total for (`scope_location_id`,
+ *  resolved at extraction; see clear-context-pipeline's Figure Scope work).
+ *
+ *  Exactly one mention per figure, keyed on its scope. A figure with no
+ *  resolved scope — the LLM couldn't pin one, or the name didn't resolve —
+ *  is EXCLUDED: it isn't attributed to any location, so it never rolls up
+ *  (matching §6.4.1's rule for unresolved locations). This replaces the
+ *  old fan-out across every location the report mentioned, which
+ *  double-counted at country scope and needed the report-keying stopgap. */
 function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   const raw = dig(row.data, rule.path);
   if (!raw || typeof raw !== "object") return [];
@@ -363,32 +442,37 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
     value?: number;
     unit?: string;
     confidence?: string;
+    scope_location_id?: unknown;
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
+
+  // The figure's scope. No scope → unattributed → excluded from every
+  // bucket (never rolled up).
+  const scopeLocationId =
+    typeof nf.scope_location_id === "string" && nf.scope_location_id
+      ? nf.scope_location_id
+      : null;
+  if (!scopeLocationId) return [];
 
   // Incident date defaults to reportingPeriodEnd (the CONTENT date),
   // falling back to publishedAt. This is the input to bucketDate.
   const incidentDate = row.reportingPeriodEnd ?? row.publishedAt;
   const unit = typeof nf.unit === "string" ? nf.unit : null;
   const confidence = normaliseConfidence(nf.confidence);
+  // Report-level: every mention this report emits carries the same set.
+  const eventKey = eventKeyFor(row);
 
-  if (row.locationIds.length === 0) {
-    // Unlocated row — recorded under an empty-string location so the
-    // bucket exists but is separable from country-wide sums.
-    return [
-      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence },
-    ];
-  }
-  return row.locationIds.map((locationId) => ({
+  return [{
     reportId: row.reportId,
     publishedAt: row.publishedAt,
     incidentDate,
-    locationId,
+    locationId: scopeLocationId,
     value,
     unit,
     confidence,
-  }));
+    eventKey,
+  }];
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -436,21 +520,64 @@ function aggregateNumericField(
 ): QualityEnvelope | null {
   const mentions: Mention[] = rows.flatMap((r) => extractNumericMentions(r, rule));
 
-  // Filter by location scope. `null` means country-wide → keep everything.
-  const scoped = locationScope
-    ? mentions.filter((m) => m.locationId === locationScope)
-    : mentions;
+  // Keep only the figures scoped to this bucket's location. Every mention
+  // now carries its Figure Scope as `locationId`, so this is an exact
+  // match — a figure scoped to Kordofan lands in Kordofan's bucket and
+  // nowhere else. A null/absent scope never reaches here (excluded in
+  // extractNumericMentions), and a null `locationScope` matches nothing:
+  // a scope is required — there is no "aggregate every location at once"
+  // roll-up (it would double-count; see #273 / ADR-0003).
+  const scoped = mentions.filter((m) => m.locationId === locationScope);
   if (scoped.length === 0) return null;
 
   const bucket = rule.timeBucket ?? "day";
 
-  // Group by incident key.
+  // Group by incident key: (figure scope location, time bucket, event-type
+  // set) — the shape §6.4.1 always specified, now reachable because each
+  // figure carries its own scope. #269's country-scope reportId stopgap is
+  // gone: with per-figure scope there is no fan-out to collapse, so no
+  // report can double-count across the places it merely mentioned.
+  // See docs/adr/0001-country-scope-dedups-by-report.md (superseded).
+  //
+  // The eventKey is the third key dimension. Two figures at the same scope
+  // and time bucket but with different event-type sets are distinct
+  // phenomena (a conflict toll vs a flood toll) and must not collapse.
+  //
+  // NUL joins the key components. It cannot appear in a cuid, an ISO bucket
+  // date, or a canonicalised event type, so unlike "|" it can't let a
+  // component's own separator forge a collision across groups.
+  const SEP = "\u0000";
   const groups = new Map<string, Mention[]>();
+  // Track, per (location, bucket) base, which event-key groups exist, so
+  // an untyped mention can be merged into a lone typed sibling below.
+  const groupsByBase = new Map<string, Set<string>>();
   for (const m of scoped) {
-    const key = `${m.locationId}|${bucketDate(m.incidentDate, bucket)}`;
+    const base = `${m.locationId}${SEP}${bucketDate(m.incidentDate, bucket)}`;
+    const key = `${base}${SEP}${m.eventKey}`;
     const bucketList = groups.get(key);
     if (bucketList) bucketList.push(m);
     else groups.set(key, [m]);
+    const siblings = groupsByBase.get(base);
+    if (siblings) siblings.add(key);
+    else groupsByBase.set(base, new Set([key]));
+  }
+
+  // Merge each untyped ("") group into its sole typed sibling. An empty
+  // event-type set means "the extractor didn't tell us", NOT "a distinct
+  // phenomenon" — so it must not form its own additive group when there
+  // is exactly one typed group at the same (location, bucket) that it
+  // plausibly belongs to. Without this, an untyped and a typed figure at
+  // the same scope and day are summed instead of deduped, re-inflating
+  // additive_count. When several typed groups share the base we can't
+  // disambiguate, so the untyped group is left standing.
+  // See docs/adr/0002-event-type-incident-key.md.
+  for (const [base, keys] of groupsByBase) {
+    const emptyKey = `${base}${SEP}`;
+    if (keys.size < 2 || !groups.has(emptyKey)) continue;
+    const typed = [...keys].filter((k) => k !== emptyKey);
+    if (typed.length !== 1) continue; // ambiguous — leave the untyped group
+    groups.get(typed[0]!)!.push(...groups.get(emptyKey)!);
+    groups.delete(emptyKey);
   }
 
   // Within-group winner + collect winners
@@ -503,12 +630,18 @@ function aggregateSetUnionField(
   const contributing = new Set<string>();
   for (const r of rows) {
     const raw = dig(r.data, rule.path);
-    if (Array.isArray(raw)) {
-      for (const v of raw) {
-        if (typeof v === "string" && v.trim()) union.add(v.trim());
-      }
-      if (raw.length > 0) contributing.add(r.reportId);
-    }
+    // For a case-canonicalised field (event_types) run members through the
+    // same helper the incident key uses — so the published set and the key
+    // agree on casing, and a bare string is tolerated in both. Other label
+    // sets (active_clusters) keep their display casing: trim only.
+    const values = rule.canonicaliseCase
+      ? canonicaliseEventTypes(raw)
+      : Array.isArray(raw)
+        ? raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+            .map((v) => v.trim())
+        : [];
+    for (const v of values) union.add(v);
+    if (values.length > 0) contributing.add(r.reportId);
   }
   if (union.size === 0) return null;
   return {

@@ -446,6 +446,14 @@ export const alertResolvers = {
       if (parent.event !== undefined) return parent.event;
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
+    representativePoint: (
+      parent: { eventId: string; representativePoint?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.representativePoint !== undefined) return parent.representativePoint;
+      return context.representativePointLoader.load(parent.eventId);
+    },
     userAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userAlerts.findMany({ where: { alertId: parent.id } });
     },

@@ -14,6 +14,10 @@ import {
   type TranslationLoader,
   type TranslatableEntityType,
 } from "./utils/translation-loader.js";
+import {
+  createRepresentativePointLoader,
+  type RepresentativePointLoader,
+} from "./utils/representative-point-loader.js";
 import { bufferTranslationRequest } from "./services/celery.js";
 
 export interface Context {
@@ -34,6 +38,13 @@ export interface Context {
    * no-op when locale === "en".
    */
   translationLoader: TranslationLoader;
+  /**
+   * Per-request batched loader for an event's representative marker point
+   * (its first signal's location). Keyed by eventId so a page of events
+   * costs two queries, not 2·N. Used by Event.representativePoint and
+   * Alert.representativePoint.
+   */
+  representativePointLoader: RepresentativePointLoader;
 }
 
 /**
@@ -146,5 +157,6 @@ export async function createContext(
       // every English read.
       locale === DEFAULT_LOCALE ? undefined : enqueueTranslation,
     ),
+    representativePointLoader: createRepresentativePointLoader(prisma, locale),
   };
 }

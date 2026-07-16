@@ -27,6 +27,7 @@ import { pipelineCountryTypeDef } from "./typeDefs/types/pipelineCountry.js";
 import { translationTypeDef } from "./typeDefs/types/translation.js";
 import { knowledgebaseTypeDef } from "./typeDefs/types/knowledgebase.js";
 import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
+import { situationAnalysisTypeDef } from "./typeDefs/types/situationAnalysis.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 
 export const typeDefs = [
@@ -59,5 +60,6 @@ export const typeDefs = [
   translationTypeDef,
   knowledgebaseTypeDef,
   datapointTypeDef,
+  situationAnalysisTypeDef,
   webhookTypeDef,
 ];

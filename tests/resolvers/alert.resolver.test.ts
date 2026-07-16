@@ -430,3 +430,26 @@ describe("Alert.event field resolver", () => {
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "e1" } });
   });
 });
+
+describe("Alert.representativePoint — delegates to the loader by eventId", () => {
+  const rp = alertResolvers.Alert.representativePoint;
+
+  function ctxWithLoader(load: ReturnType<typeof vi.fn>) {
+    return { representativePointLoader: { load } } as unknown as Context;
+  }
+
+  it("returns the eager-loaded value without touching the loader", async () => {
+    const load = vi.fn();
+    const preset = { id: "loc-pre" };
+    expect(await rp({ eventId: "e1", representativePoint: preset }, {}, ctxWithLoader(load)))
+      .toBe(preset);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("loads by the alert's eventId (same point as the event)", async () => {
+    const loc = { id: "loc-first" };
+    const load = vi.fn().mockResolvedValue(loc);
+    expect(await rp({ eventId: "e1" }, {}, ctxWithLoader(load))).toBe(loc);
+    expect(load).toHaveBeenCalledWith("e1");
+  });
+});

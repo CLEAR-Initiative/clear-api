@@ -594,3 +594,28 @@ describe("Event scalar transforms", () => {
     expect(eventResolvers.Event.populationDisplaced({ populationDisplaced: null })).toBeNull();
   });
 });
+
+describe("Event.representativePoint — delegates to the loader", () => {
+  const rp = eventResolvers.Event.representativePoint;
+
+  // The resolver only touches context.representativePointLoader; the
+  // first-signal / cascade logic lives in the loader's own test.
+  function ctxWithLoader(load: ReturnType<typeof vi.fn>) {
+    return { representativePointLoader: { load } } as unknown as Context;
+  }
+
+  it("returns the eager-loaded value without touching the loader", async () => {
+    const load = vi.fn();
+    const preset = { id: "loc-pre" };
+    expect(await rp({ id: "e1", representativePoint: preset }, {}, ctxWithLoader(load)))
+      .toBe(preset);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("loads by the event's id and returns the loader result", async () => {
+    const loc = { id: "loc-first" };
+    const load = vi.fn().mockResolvedValue(loc);
+    expect(await rp({ id: "e1" }, {}, ctxWithLoader(load))).toBe(loc);
+    expect(load).toHaveBeenCalledWith("e1");
+  });
+});

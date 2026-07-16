@@ -224,8 +224,11 @@ export const queryTypeDef = gql`
     Pcode wins over name; \`adminLevel\` narrows the name match so a
     village that shares its state's name doesn't collide. Returns null
     when neither the pcode nor the name matches — the ingest keeps the
-    raw pcode on the row so a future backfill can re-resolve. Admin /
-    pipeline only."""
+    raw pcode on the row so a future backfill can re-resolve. A name given
+    without \`adminLevel\` that matches more than one admin level is
+    ambiguous and also returns null (rather than guessing the deepest
+    match), so an unlevelled name never silently lands on the wrong tier.
+    Admin / pipeline only."""
     resolveKnowledgebaseLocation(
       pcode: String
       name: String
@@ -259,6 +262,40 @@ export const queryTypeDef = gql`
     RAG but the datapoint pipeline hasn't caught up). Requires any
     authenticated content reader."""
     reportDatapoint(reportId: String!): ReportDatapoint
+
+    # ─── Situation analysis ──────────────────────────────────────────
+    """Current situation-analysis snapshot for a (country, year).
+    \`year\` derives \`windowStart = Jan 1\` / \`windowEnd = Dec 31\`
+    server-side. Falls back to \`year(now())\` when \`year\` is null.
+    Returns null when no snapshot exists — the dashboard should
+    render an empty state and wait for the next weekly generation.
+    Requires any authenticated content reader."""
+    situationAnalysis(
+      countryLocationId: String!
+      year: Int
+      """Historical read — return the version that was current at
+      this timestamp (defaults to now)."""
+      asOf: DateTime
+      """Pin the read to a payload schema version. Defaults to the most
+      recently written version for the bucket. Versions coexist rather
+      than supersede — an older payload shape stays readable, so pass
+      this to keep a client on a shape it understands. Read
+      \`schemaVersion\` off the returned row to see what you got."""
+      schemaVersion: String
+    ): SituationAnalysis
+
+    """Trend / history view — one row per year for a country, current
+    versions only, newest year first. Never mixes schema versions: a
+    bump changes what the numbers mean, so one series is always one
+    version. Requires any authenticated content reader."""
+    situationAnalysesForCountry(
+      countryLocationId: String!
+      limit: Int = 5
+      """Pin the trend to a payload schema version. Defaults to the
+      country's most recently written version. Pass an older one to
+      chart a historical payload shape."""
+      schemaVersion: String
+    ): [SituationAnalysis!]!
 
     """True when at least one current \`aggregated_datapoints\` row
     exists for the given schema version. Used by the Dagster

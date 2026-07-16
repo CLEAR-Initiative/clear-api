@@ -801,6 +801,14 @@ export const eventResolvers = {
         ...(include ? { include } : {}),
       });
     },
+    representativePoint: (
+      parent: { id: string; representativePoint?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.representativePoint !== undefined) return parent.representativePoint;
+      return context.representativePointLoader.load(parent.id);
+    },
     alerts: (
       parent: { id: string; alerts?: unknown[] },
       _args: unknown,

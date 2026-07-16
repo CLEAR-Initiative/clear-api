@@ -18,6 +18,12 @@ export const alertTypeDef = gql`
     id: String!
     """The event this alert was created from."""
     event: Event!
+    """Location of the alert's event's FIRST signal — the same point as
+    \`event.representativePoint\`, surfaced directly on the alert so a
+    marker can be placed without walking into the event. Null when the
+    first signal has no located point. Requires any authenticated
+    content reader."""
+    representativePoint: Location
     status: AlertStatus!
     """When the alert row was first created."""
     createdAt: DateTime!

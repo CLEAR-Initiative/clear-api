@@ -17,7 +17,7 @@
  *                                          the four-tier bucket enumeration.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 
 import { datapointResolvers } from "../../src/resolvers/datapoint.resolver.js";
@@ -27,7 +27,11 @@ type User = { id: string; role: string } | null;
 
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    // `unknown` shim — the generated PrismaClient shape is huge and
+    // stub tests only touch a couple of delegates; casting directly
+    // through `Context["prisma"]` trips the newer strict overlap
+    // check. Same pattern crisis.resolver.test.ts and friends use.
+    prisma: prisma as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -147,6 +151,22 @@ describe("Query.aggregatedDatapoint", () => {
     expect(result).not.toBeNull();
     expect(result?.onDemand).toBe(false);
     expect(result?.id).toBe("agg1");
+  });
+
+  it("defaults to schema v2 when the query omits schemaVersion", async () => {
+    // A version-less query must read the version the current pipeline
+    // writes (v2) — otherwise freshly-aggregated buckets go unread.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst },
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await aggregatedDatapoint(null, args, ctx);
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ schemaVersion: "v2" }),
+      }),
+    );
   });
 
   it("falls through to on-demand aggregation on a miss", async () => {
@@ -313,14 +333,22 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     });
     const result = await refreshAggregatedDatapoints(null, args, ctx);
     expect(result).toEqual({
-      computedBuckets: 0, supersededBuckets: 0, schemaVersion: "v1",
+      computedBuckets: 0,
+      supersededBuckets: 0,
+      situationAnalysesInvalidated: 0,
+      schemaVersion: "v1",
     });
   });
 
-  it("walks four tiers per report via hierarchy resolution", async () => {
-    // One report in Kordofan (A2 SD0701) → contributes to weekly-A2,
-    // monthly-A1 (parent SDN10), yearly-country (SDN0), all-time-country.
-    // That's 4 distinct bucket keys per report.
+  it("routes each figure to its own scope's tier (A2→weekly, A1→monthly, A0→yearly+all)", async () => {
+    // One report carrying three figures at three scopes. No roll-up: each
+    // lands in the tier for its OWN admin level, so we still see four
+    // bucket kinds — but from three distinct scopes, not one A2 fanned up.
+    const fig = (value: number, scope: string) => ({
+      value, unit: "people", confidence: "reported",
+      source_quote: "…", chunk_index: 0, page_number: 1,
+      scope_location_id: scope,
+    });
     const findManyReports = vi.fn().mockResolvedValue([
       {
         id: "row1",
@@ -331,23 +359,19 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
         locationIds: ["sd0701"],
         data: {
           casualties: {
-            killed: {
-              total: {
-                value: 3, unit: "people", confidence: "reported",
-                source_quote: "…", chunk_index: 0, page_number: 1,
-              },
-            },
+            killed: { total: fig(3, "sd0701") },   // A2 → weekly
+            injured: { total: fig(2, "sdn10") },    // A1 → monthly
           },
+          needs_and_funding: { overall_pin: fig(1000, "sdn0") }, // A0 → yearly + all
         },
       },
     ]);
-    // First locations.findMany: {sd0701} — its ancestorIds chain
-    // walks up through the A1 and A0.
-    // Second locations.findMany: the ancestor rows so we can label
-    // each by its `level` field.
+    // Hierarchy resolves the three SCOPE ids (not the report's locationIds).
     const findManyLocations = vi.fn()
       .mockResolvedValueOnce([
         { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+        { id: "sdn10", level: 1, ancestorIds: ["sdn0"] },
+        { id: "sdn0", level: 0, ancestorIds: [] },
       ])
       .mockResolvedValueOnce([
         { id: "sdn10", level: 1 },
@@ -355,11 +379,15 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       ]);
     // Transaction body is invoked with a tx handle; stub it so
     // updateMany/create record into per-tx handles as expected.
+    // Also stub situationAnalysis.updateMany — the yearly-country
+    // bucket iteration now cascades to it.
     const updateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const createTx = vi.fn().mockResolvedValue({});
+    const situationUpdateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const transactionRun = vi.fn().mockImplementation(async (cb) => {
       await cb({
         aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+        situationAnalysis: { updateMany: situationUpdateManyTx },
       });
     });
     const ctx = buildContext(PIPELINE, {
@@ -402,6 +430,7 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
               total: {
                 value: 3, unit: "people", confidence: "reported",
                 source_quote: "…", chunk_index: 0, page_number: 1,
+                scope_location_id: "sd0701",
               },
             },
           },
@@ -428,9 +457,14 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       opOrder.push("create");
       return {};
     });
+    // situation_analysis cascade is unrelated to the ordering
+    // assertion — stub with a no-op so the resolver's yearly-tier
+    // branch has something to call.
+    const situationUpdateManyTx = vi.fn().mockResolvedValue({ count: 0 });
     const transactionRun = vi.fn().mockImplementation(async (cb) => {
       await cb({
         aggregatedDatapoint: { updateMany: updateManyTx, create: createTx },
+        situationAnalysis: { updateMany: situationUpdateManyTx },
       });
     });
     const ctx = buildContext(PIPELINE, {
@@ -445,14 +479,10 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       schemaVersion: "v1",
     }, ctx);
 
-    // 4 buckets × (1 updateMany + 1 create) = 8 total ops, alternating.
-    expect(opOrder).toEqual([
-      "updateMany", "create", "updateMany", "create",
-      "updateMany", "create", "updateMany", "create",
-    ]);
-    // supersededBuckets sums the updateMany counts (1 per tier).
-    expect(result.supersededBuckets).toBe(4);
-    expect(result.computedBuckets).toBe(4);
+    // One A2-scoped figure → one weekly bucket → supersede-then-insert.
+    expect(opOrder).toEqual(["updateMany", "create"]);
+    expect(result.supersededBuckets).toBe(1);
+    expect(result.computedBuckets).toBe(1);
   });
 
   it("skips higher tiers when a report location has no A0/A1 ancestor", async () => {
@@ -500,11 +530,11 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     expect(createTx).not.toHaveBeenCalled();
   });
 
-  it("shared parent A1 collapses into one monthly-A1 bucket across A2 siblings", async () => {
-    // Two reports touching two A2 siblings that share the same A1
-    // parent + same country. Weekly-A2 tier gets 2 buckets (one per
-    // A2), but monthly-A1 / yearly-country / all-time-country should
-    // collapse — only one bucket per shared parent per window.
+  it("cascades validTo on situation_analyses for yearly-country buckets only", async () => {
+    // The refresh mutation writes four tiers. Only the yearly-country
+    // tier should trigger the situation_analyses cascade — weekly-A2
+    // / monthly-A1 changes must NOT invalidate the yearly snapshot
+    // until they roll up. Locks the cascade guard from the resolver.
     const findManyReports = vi.fn().mockResolvedValue([
       {
         id: "row1", reportId: "r1",
@@ -512,25 +542,155 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
         reportingPeriodStart: null,
         reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
         locationIds: ["sd0701"],
-        data: {},
+        data: {
+          // A country-scoped (A0) figure → yearly + all-time buckets.
+          needs_and_funding: {
+            overall_pin: {
+              value: 2_000_000, unit: "people", confidence: "reported",
+              source_quote: "…", chunk_index: 0, page_number: 1,
+              scope_location_id: "sdn0",
+            },
+          },
+        },
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sdn0", level: 0, ancestorIds: [] },
+      ])
+      .mockResolvedValueOnce([]);
+
+    // Track every situation_analysis.updateMany call — we assert
+    // it fires only inside yearly-country iterations.
+    const situationUpdateCalls: Array<Record<string, unknown>> = [];
+
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+          situationAnalysis: {
+            updateMany: vi.fn().mockImplementation(async (args) => {
+              situationUpdateCalls.push(args.where as Record<string, unknown>);
+              return { count: 1 };
+            }),
+          },
+        });
+      }),
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-01-01T00:00:00Z"),
+      to: new Date("2026-12-31T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    // The A0 figure makes two buckets (yearly + all-time), but only the
+    // yearly one triggers the situation_analyses cascade. all-time also
+    // has a non-null country locationId, so it COULD trigger — the
+    // resolver guards with `windowKind === "yearly"`.
+    expect(situationUpdateCalls).toHaveLength(1);
+    expect(situationUpdateCalls[0]!.countryLocationId).toBe("sdn0");
+    expect(situationUpdateCalls[0]!.validTo).toBeNull();
+
+    // The result carries the invalidation count back to the caller
+    // (Dagster surfaces it as an asset metadata field).
+    expect(result.situationAnalysesInvalidated).toBe(1);
+    // Yearly + all-time = 2 buckets from the one A0 figure.
+    expect(result.computedBuckets).toBe(2);
+  });
+
+  it("cascade skips when no situation_analysis current row exists yet", async () => {
+    // Fresh env — no situation_analyses row for (country, year) yet.
+    // The yearly-country bucket write still succeeds; updateMany
+    // returns count=0; `situationAnalysesInvalidated` = 0.
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1", reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sdn0"],
+        data: {
+          needs_and_funding: {
+            overall_pin: {
+              value: 2_000_000, unit: "people", confidence: "reported",
+              source_quote: "…", chunk_index: 0, page_number: 1,
+              scope_location_id: "sdn0",
+            },
+          },
+        },
+      },
+    ]);
+    const findManyLocations = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "sdn0", level: 0, ancestorIds: [] },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: findManyReports },
+      locations: { findMany: findManyLocations },
+      $transaction: vi.fn().mockImplementation(async (cb) => {
+        await cb({
+          aggregatedDatapoint: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+          situationAnalysis: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
+        });
+      }),
+    });
+
+    const result = await refreshAggregatedDatapoints(null, {
+      from: new Date("2026-01-01T00:00:00Z"),
+      to: new Date("2026-12-31T00:00:00Z"),
+      schemaVersion: "v1",
+    }, ctx);
+
+    // Yearly bucket exists (A0 figure), but no current situation row →
+    // updateMany count 0 → nothing invalidated. Yearly + all-time = 2.
+    expect(result.situationAnalysesInvalidated).toBe(0);
+    expect(result.computedBuckets).toBe(2);
+  });
+
+  it("two reports scoping figures to the SAME location share one bucket", async () => {
+    // No roll-up (#273): two figures both scoped to the same A1 (sdn10)
+    // land in ONE monthly-A1 bucket — not two, not rolled up to A0.
+    const fig = (value: number, scope: string) => ({
+      value, unit: "people", confidence: "reported",
+      source_quote: "…", chunk_index: 0, page_number: 1,
+      scope_location_id: scope,
+    });
+    const findManyReports = vi.fn().mockResolvedValue([
+      {
+        id: "row1", reportId: "r1",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        reportingPeriodStart: null,
+        reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+        locationIds: ["sdn10"],
+        data: { casualties: { killed: { total: fig(3, "sdn10") } } },
       },
       {
         id: "row2", reportId: "r2",
         publishedAt: new Date("2026-07-11T00:00:00Z"),
         reportingPeriodStart: null,
         reportingPeriodEnd: new Date("2026-07-09T00:00:00Z"),
-        locationIds: ["sd0702"], // sibling A2 under same A1
-        data: {},
+        locationIds: ["sdn10"],
+        data: { casualties: { killed: { total: fig(5, "sdn10") } } },
       },
     ]);
     const findManyLocations = vi.fn()
       .mockResolvedValueOnce([
-        { id: "sd0701", level: 2, ancestorIds: ["sdn10", "sdn0"] },
-        { id: "sd0702", level: 2, ancestorIds: ["sdn10", "sdn0"] },
+        { id: "sdn10", level: 1, ancestorIds: ["sdn0"] },
       ])
-      .mockResolvedValueOnce([
-        { id: "sdn10", level: 1 }, { id: "sdn0", level: 0 },
-      ]);
+      .mockResolvedValueOnce([{ id: "sdn0", level: 0 }]);
 
     const createTx = vi.fn().mockResolvedValue({});
     const ctx = buildContext(PIPELINE, {
@@ -541,6 +701,9 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
           aggregatedDatapoint: {
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
             create: createTx,
+          },
+          situationAnalysis: {
+            updateMany: vi.fn().mockResolvedValue({ count: 0 }),
           },
         });
       }),
@@ -559,11 +722,13 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       const d = (call[0] as { data: { windowKind: string; locationId: string } }).data;
       bucketsByKind[d.windowKind]?.add(d.locationId);
     }
-    // Both siblings write to their own weekly bucket — 2 distinct A2s.
-    expect(bucketsByKind.weekly!.size).toBe(2);
-    // But the shared parents collapse to one bucket each.
+    // Both A1-scoped figures → one shared monthly-A1 bucket. No weekly,
+    // no roll-up to yearly/all.
     expect(bucketsByKind.monthly!.size).toBe(1);
-    expect(bucketsByKind.yearly!.size).toBe(1);
-    expect(bucketsByKind.all!.size).toBe(1);
+    expect(bucketsByKind.weekly!.size).toBe(0);
+    expect(bucketsByKind.yearly!.size).toBe(0);
+    expect(bucketsByKind.all!.size).toBe(0);
+    // One bucket total, holding both reports.
+    expect(createTx).toHaveBeenCalledTimes(1);
   });
 });
