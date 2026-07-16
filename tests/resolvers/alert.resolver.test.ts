@@ -430,3 +430,46 @@ describe("Alert.event field resolver", () => {
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "e1" } });
   });
 });
+
+describe("Alert.representativePoint — delegates to the event's first signal", () => {
+  const rp = alertResolvers.Alert.representativePoint;
+  const D1 = new Date("2026-07-01T00:00:00Z");
+
+  function sig(publishedAt: Date, generalLocation: unknown) {
+    return { publishedAt, originLocation: null, destinationLocation: null, generalLocation };
+  }
+
+  it("returns the eager-loaded value without querying", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    const preset = { id: "loc-pre" };
+    expect(await rp({ eventId: "e1", representativePoint: preset }, {}, ctx)).toBe(preset);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("resolves via the alert's eventId, using the preloaded event timestamp", async () => {
+    const findMany = vi.fn().mockResolvedValue([sig(D1, { id: "loc-first" })]);
+    // event preloaded → helper should NOT call events.findUnique.
+    const findUnique = vi.fn();
+    const ctx = buildContext(VIEWER, { signals: { findMany }, events: { findUnique } });
+    const out = await rp(
+      { eventId: "e1", event: { firstSignalCreatedAt: D1 } }, {}, ctx,
+    );
+    expect(out).toEqual({ id: "loc-first" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { signalEvents: { some: { eventId: "e1" } } },
+    }));
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("loads the event's timestamp when the event isn't preloaded", async () => {
+    const findMany = vi.fn().mockResolvedValue([sig(D1, { id: "loc-first" })]);
+    const findUnique = vi.fn().mockResolvedValue({ firstSignalCreatedAt: D1 });
+    const ctx = buildContext(VIEWER, { signals: { findMany }, events: { findUnique } });
+    const out = await rp({ eventId: "e1" }, {}, ctx);
+    expect(out).toEqual({ id: "loc-first" });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "e1" }, select: { firstSignalCreatedAt: true },
+    });
+  });
+});

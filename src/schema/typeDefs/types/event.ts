@@ -18,6 +18,13 @@ export const eventTypeDef = gql`
     destinationLocation: Location
     """General location (when no origin/destination)."""
     generalLocation: Location
+    """Location of the event's FIRST signal (the one recorded in
+    \`firstSignalCreatedAt\`) — a single point ready to drop as a map
+    marker, so a client doesn't have to fetch every signal and pick one.
+    The first non-null of the signal's origin → destination → general
+    location; null when the first signal has no located point.
+    Requires any authenticated content reader."""
+    representativePoint: Location
     """Event type tags."""
     types: [String!]!
     """Severity score (1–5). Aggregated from signal severities."""
