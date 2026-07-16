@@ -431,45 +431,25 @@ describe("Alert.event field resolver", () => {
   });
 });
 
-describe("Alert.representativePoint — delegates to the event's first signal", () => {
+describe("Alert.representativePoint — delegates to the loader by eventId", () => {
   const rp = alertResolvers.Alert.representativePoint;
-  const D1 = new Date("2026-07-01T00:00:00Z");
 
-  function sig(publishedAt: Date, generalLocation: unknown) {
-    return { publishedAt, originLocation: null, destinationLocation: null, generalLocation };
+  function ctxWithLoader(load: ReturnType<typeof vi.fn>) {
+    return { representativePointLoader: { load } } as unknown as Context;
   }
 
-  it("returns the eager-loaded value without querying", async () => {
-    const findMany = vi.fn();
-    const ctx = buildContext(VIEWER, { signals: { findMany } });
+  it("returns the eager-loaded value without touching the loader", async () => {
+    const load = vi.fn();
     const preset = { id: "loc-pre" };
-    expect(await rp({ eventId: "e1", representativePoint: preset }, {}, ctx)).toBe(preset);
-    expect(findMany).not.toHaveBeenCalled();
+    expect(await rp({ eventId: "e1", representativePoint: preset }, {}, ctxWithLoader(load)))
+      .toBe(preset);
+    expect(load).not.toHaveBeenCalled();
   });
 
-  it("resolves via the alert's eventId, using the preloaded event timestamp", async () => {
-    const findMany = vi.fn().mockResolvedValue([sig(D1, { id: "loc-first" })]);
-    // event preloaded → helper should NOT call events.findUnique.
-    const findUnique = vi.fn();
-    const ctx = buildContext(VIEWER, { signals: { findMany }, events: { findUnique } });
-    const out = await rp(
-      { eventId: "e1", event: { firstSignalCreatedAt: D1 } }, {}, ctx,
-    );
-    expect(out).toEqual({ id: "loc-first" });
-    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { signalEvents: { some: { eventId: "e1" } } },
-    }));
-    expect(findUnique).not.toHaveBeenCalled();
-  });
-
-  it("loads the event's timestamp when the event isn't preloaded", async () => {
-    const findMany = vi.fn().mockResolvedValue([sig(D1, { id: "loc-first" })]);
-    const findUnique = vi.fn().mockResolvedValue({ firstSignalCreatedAt: D1 });
-    const ctx = buildContext(VIEWER, { signals: { findMany }, events: { findUnique } });
-    const out = await rp({ eventId: "e1" }, {}, ctx);
-    expect(out).toEqual({ id: "loc-first" });
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { id: "e1" }, select: { firstSignalCreatedAt: true },
-    });
+  it("loads by the alert's eventId (same point as the event)", async () => {
+    const loc = { id: "loc-first" };
+    const load = vi.fn().mockResolvedValue(loc);
+    expect(await rp({ eventId: "e1" }, {}, ctxWithLoader(load))).toBe(loc);
+    expect(load).toHaveBeenCalledWith("e1");
   });
 });
