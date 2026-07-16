@@ -349,6 +349,38 @@ interface Mention {
   value: number;
   unit: string | null;
   confidence: ConfidenceTier;
+  // Canonicalised, sorted event-type set for the report this mention
+  // came from, joined into one string. Part of the incident key: two
+  // reports at the same location and time bucket but describing
+  // different phenomena (a conflict total vs a flood total) are distinct
+  // incidents and must not collapse into one. Empty string when the
+  // report carries no event types. See eventKeyFor().
+  eventKey: string;
+}
+
+/** Canonicalise a report's `event_types` into one incident-key
+ *  component. Lowercased, trimmed, de-duplicated, and sorted so
+ *  {"flood","conflict"} and {"Conflict","FLOOD"} yield the same key.
+ *
+ *  The set is treated ATOMICALLY — a report stating a figure totalled
+ *  across {conflict, flood} cannot be split between them, so its whole
+ *  set is one key component. Fanning a figure across its member types
+ *  would repeat the location fan-out defect in a second dimension.
+ *
+ *  Deliberately NOT glide-code canonicalisation: §6.4.1 folds
+ *  "armed clash" / "battle" / "armed confrontation" to a single
+ *  `disaster_types` glide code, but that needs a DB lookup and this
+ *  routine is a pure function over `ReportRow`. Raw normalisation is
+ *  enough to separate genuinely different event types; folding synonyms
+ *  is a follow-up that must pass the taxonomy in rather than query it. */
+function eventKeyFor(row: ReportRow): string {
+  const raw = dig(row.data, "timing_and_scope.event_types");
+  if (!Array.isArray(raw)) return "";
+  const canon = new Set<string>();
+  for (const v of raw) {
+    if (typeof v === "string" && v.trim()) canon.add(v.trim().toLowerCase());
+  }
+  return Array.from(canon).sort().join(",");
 }
 
 /** Explode one report row into per-location mentions for the given
@@ -372,12 +404,14 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   const incidentDate = row.reportingPeriodEnd ?? row.publishedAt;
   const unit = typeof nf.unit === "string" ? nf.unit : null;
   const confidence = normaliseConfidence(nf.confidence);
+  // Report-level: every mention this report emits carries the same set.
+  const eventKey = eventKeyFor(row);
 
   if (row.locationIds.length === 0) {
     // Unlocated row — recorded under an empty-string location so the
     // bucket exists but is separable from country-wide sums.
     return [
-      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence },
+      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence, eventKey },
     ];
   }
   return row.locationIds.map((locationId) => ({
@@ -388,6 +422,7 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
     value,
     unit,
     confidence,
+    eventKey,
   }));
 }
 
@@ -467,10 +502,18 @@ function aggregateNumericField(
   // one-per-report, where the old bug was one-per-place-mention. Figure
   // Scope removes the fan-out and retires this branch (#273).
   // See docs/adr/0001-country-scope-dedups-by-report.md.
+  //
+  // The eventKey is the third key dimension (§6.4.1's event type). Two
+  // reports at the same location and time bucket but with different
+  // event-type sets are distinct phenomena — a conflict toll and a flood
+  // toll are not competing observations of one incident — so they must
+  // NOT collapse. At country scope the eventKey is redundant (a report
+  // has one set), so it changes nothing there; it only separates
+  // co-located, same-bucket reports at location scope.
   const groups = new Map<string, Mention[]>();
   for (const m of scoped) {
     const keyHead = isCountryWide ? m.reportId : m.locationId;
-    const key = `${keyHead}|${bucketDate(m.incidentDate, bucket)}`;
+    const key = `${keyHead}|${bucketDate(m.incidentDate, bucket)}|${m.eventKey}`;
     const bucketList = groups.get(key);
     if (bucketList) bucketList.push(m);
     else groups.set(key, [m]);

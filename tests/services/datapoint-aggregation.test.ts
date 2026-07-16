@@ -457,11 +457,11 @@ describe("aggregateReports — malformed inputs", () => {
  * Aggregation invariants — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
  * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
  *
- * The country-scope inflation defect below is FIXED (#269) — its test now
- * asserts the corrected behaviour. The event-type-key defect is still
- * marked `it.fails`, so the suite stays green while it exists AND trips
- * the moment it's fixed (`it.fails` reports a failure when the body starts
- * passing). When you fix it, delete the `.fails`; do not delete the test.
+ * Both the country-scope inflation defect (#269) and the missing
+ * event-type key dimension (#270) are now FIXED — the tests below assert
+ * the corrected behaviour. They remain as regression guards; the guard
+ * tests interleaved with them pin the blast radius so a later change
+ * can't silently over- or under-correct.
  *
  * Reports are ANALYTICAL: a figure is a total already aggregated at source
  * over a Figure Scope — (location, admin_level, period, event-type set).
@@ -509,14 +509,14 @@ describe("country-scope inflation — FIXED (#269): dedup by report", () => {
   });
 });
 
-describe("KNOWN DEFECT — incident key omits event type", () => {
-  // §6.4.1 specifies the key as (event, location, time_bucket); the
-  // implementation builds `${locationId}|${bucketDate(...)}`. Two distinct
-  // event types in one place on one day are therefore treated as competing
-  // observations of one thing, and all but the freshest are discarded.
-  // Deduplication is only for the SAME (location, period, event type) —
-  // a conflict total and a flood total are different phenomena and sum.
-  it.fails("clash (5) + flood (3), same place same day → 8, not 3", () => {
+describe("event-type key dimension — FIXED (#270)", () => {
+  // §6.4.1 specifies the key as (event, location, time_bucket). The
+  // implementation now builds `${keyHead}|${bucket}|${eventKey}`. Two
+  // distinct event types in one place on one day are different phenomena,
+  // not competing observations of one thing, so they sum rather than
+  // collapse. Deduplication remains only for the SAME
+  // (location, period, event type).
+  it("clash (5) + flood (3), same place same day → 8, not 3", () => {
     const rows = [
       row("r-clash", "2026-07-02T00:00:00Z", ["SD0201"], {
         timing_and_scope: { event_types: ["conflict"] },
@@ -533,7 +533,7 @@ describe("KNOWN DEFECT — incident key omits event type", () => {
     expect(field.value).toBe(8);
   });
 
-  it.fails("both reports stay in provenance — neither event is silently dropped", () => {
+  it("both reports stay in provenance — neither event is silently dropped", () => {
     // The sharper symptom: the discarded report vanishes from
     // contributing_report_ids while event_types still unions to both, so
     // the payload asserts two event types occurred and cites one report.
@@ -571,5 +571,45 @@ describe("KNOWN DEFECT — incident key omits event type", () => {
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
     expect(field.value).toBe(3); // latest_wins
+  });
+
+  it("event-type set is canonicalised — case and order don't split a key", () => {
+    // The set is normalised (lowercase, sorted) before it enters the key,
+    // so {"Conflict","FLOOD"} and {"flood","conflict"} are the SAME
+    // phenomenon. Without canonicalisation these two reports would form
+    // distinct keys and wrongly sum to 8 instead of deduping to 3.
+    const rows = [
+      row("r-early", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["Conflict", "FLOOD"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-late", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood", "conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(3); // one incident, latest wins — not 8
+  });
+
+  it("differing event-type SETS are distinct — {conflict} vs {conflict,flood} sum", () => {
+    // Atomic set: a multi-hazard total is not the same phenomenon as a
+    // single-hazard total, so these do not collapse.
+    const rows = [
+      row("r-a", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-b", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict", "flood"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201");
+    const field = result!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(8);
   });
 });
