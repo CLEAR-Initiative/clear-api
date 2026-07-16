@@ -141,6 +141,25 @@ async function resolveLocationHierarchy(
   return result;
 }
 
+/** Collect the distinct Figure-Scope location ids across a report's
+ *  `data` blob — every `scope_location_id` a NumericField carries. These,
+ *  not the report's mentioned `locationIds`, are what a figure is bucketed
+ *  by (#273). A NumericField is a leaf, so we don't recurse into one. */
+function collectFigureScopeIds(data: unknown, out: Set<string>): void {
+  if (Array.isArray(data)) {
+    for (const v of data) collectFigureScopeIds(v, out);
+    return;
+  }
+  if (data && typeof data === "object") {
+    const o = data as Record<string, unknown>;
+    if (typeof o.scope_location_id === "string" && o.scope_location_id) {
+      out.add(o.scope_location_id);
+      return;
+    }
+    for (const v of Object.values(o)) collectFigureScopeIds(v, out);
+  }
+}
+
 /** Turn a Prisma `reportDatapoint` row into the aggregator's
  *  `ReportRow` shape. Isolated so the aggregator stays decoupled
  *  from Prisma's model types. */
@@ -224,11 +243,13 @@ export const datapointResolvers = {
       }
 
       // ── On-demand fallback ────────────────────────────────────────
-      // Pull the report_datapoints in scope and aggregate here in the
-      // resolver. Same math as the pre-compute path.
-      const locationFilter: Prisma.reportDatapointWhereInput["locationIds"] =
-        args.locationId ? { has: args.locationId } : undefined;
-
+      // Pull the report_datapoints in this window and aggregate here.
+      // Selection is by window only — NOT by the report's mentioned
+      // `locationIds`. A report is relevant to `locationId` when a FIGURE
+      // is scoped there, which needn't coincide with the places the report
+      // names (#273); the aggregator's scope filter keeps only the figures
+      // scoped to `locationId`, so a coarse window fetch + exact scope
+      // filter is both correct and simpler than a JSON scope query.
       const rows = await context.prisma.reportDatapoint.findMany({
         where: {
           schemaVersion,
@@ -236,7 +257,6 @@ export const datapointResolvers = {
             gte: args.windowStart,
             lte: args.windowEnd,
           },
-          ...(locationFilter ? { locationIds: locationFilter } : {}),
         },
       });
       if (rows.length === 0) return null;
@@ -366,18 +386,24 @@ export const datapointResolvers = {
         };
       }
 
-      // ── 2. Resolve A0/A1/A2 attribution for every location cited ─
-      // A report tagged with only A2 SD0201 still contributes to the
-      // monthly-A1 bucket for its parent A1 and to the yearly + all-time
-      // country buckets for its A0. resolveLocationHierarchy runs a
-      // single locations query then a single ancestor query — O(1)
-      // round trips regardless of report count.
-      const allLocationIds = Array.from(
-        new Set(reports.flatMap((r) => r.locationIds)),
-      );
+      // ── 2. Collect every figure's scope, resolve its admin level ─
+      // Buckets are keyed by FIGURE SCOPE now (#273), not by the places a
+      // report merely mentions. A figure scoped to Kordofan belongs in
+      // Kordofan's bucket and nowhere else — no roll-up into ancestors.
+      // We resolve the hierarchy of the scope ids only to read each
+      // scope's OWN admin level (its window tier); the chain returns the
+      // id itself at its level, so `chain.aN === scopeId` identifies it.
+      const scopeIdsByReport = new Map<string, string[]>();
+      const allScopeIds = new Set<string>();
+      for (const r of reports) {
+        const set = new Set<string>();
+        collectFigureScopeIds(r.data, set);
+        scopeIdsByReport.set(r.reportId, [...set]);
+        for (const id of set) allScopeIds.add(id);
+      }
       const hierarchy = await resolveLocationHierarchy(
         context.prisma,
-        allLocationIds,
+        [...allScopeIds],
       );
 
       // ── 3. Group reports into the four bucket tiers ──────────────
@@ -408,44 +434,22 @@ export const datapointResolvers = {
         const month = monthOf(anchor);
         const year = yearOf(anchor);
 
-        for (const locId of r.locationIds) {
-          const chain = hierarchy.get(locId);
+        // Route each of the report's figure scopes to ITS OWN bucket, at
+        // the window tier for the scope's admin level — no roll-up. The
+        // aggregator's scope filter then keeps only this report's figures
+        // that are scoped to that location. Window tier by level: A0 →
+        // yearly + all-time, A1 → monthly, A2 (or deeper) → weekly.
+        for (const scopeId of scopeIdsByReport.get(r.reportId) ?? []) {
+          const chain = hierarchy.get(scopeId);
           if (!chain) continue;
-          // weekly × A2 — atomic tier
-          if (chain.a2) {
-            push({
-              windowStart: week.start,
-              windowEnd: week.end,
-              windowKind: "weekly",
-              locationId: chain.a2,
-            }, row);
-          }
-          // monthly × A1
-          if (chain.a1) {
-            push({
-              windowStart: month.start,
-              windowEnd: month.end,
-              windowKind: "monthly",
-              locationId: chain.a1,
-            }, row);
-          }
-          // yearly × country
-          if (chain.a0) {
-            push({
-              windowStart: year.start,
-              windowEnd: year.end,
-              windowKind: "yearly",
-              locationId: chain.a0,
-            }, row);
-          }
-          // all-time × country
-          if (chain.a0) {
-            push({
-              windowStart: ALL_TIME_START,
-              windowEnd: ALL_TIME_END,
-              windowKind: "all",
-              locationId: chain.a0,
-            }, row);
+          if (chain.a0 === scopeId) {
+            push({ windowStart: year.start, windowEnd: year.end, windowKind: "yearly", locationId: scopeId }, row);
+            push({ windowStart: ALL_TIME_START, windowEnd: ALL_TIME_END, windowKind: "all", locationId: scopeId }, row);
+          } else if (chain.a1 === scopeId) {
+            push({ windowStart: month.start, windowEnd: month.end, windowKind: "monthly", locationId: scopeId }, row);
+          } else {
+            // A2 or deeper — atomic weekly tier at the scope itself.
+            push({ windowStart: week.start, windowEnd: week.end, windowKind: "weekly", locationId: scopeId }, row);
           }
         }
       }

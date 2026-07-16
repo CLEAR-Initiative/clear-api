@@ -425,11 +425,16 @@ function eventKeyFor(row: ReportRow): string {
   ).join(",");
 }
 
-/** Explode one report row into per-location mentions for the given
- *  numeric-field rule. A report tagged with multiple locations emits
- *  one mention per location — the extractor doesn't attribute per
- *  location today, so we broadcast the same value across each. Phase 3
- *  can refine this by parsing per-location breakdowns from the LLM. */
+/** Turn one report's numeric field into a mention at its FIGURE SCOPE —
+ *  the single `locations` id the figure is a total for (`scope_location_id`,
+ *  resolved at extraction; see clear-context-pipeline's Figure Scope work).
+ *
+ *  Exactly one mention per figure, keyed on its scope. A figure with no
+ *  resolved scope — the LLM couldn't pin one, or the name didn't resolve —
+ *  is EXCLUDED: it isn't attributed to any location, so it never rolls up
+ *  (matching §6.4.1's rule for unresolved locations). This replaces the
+ *  old fan-out across every location the report mentioned, which
+ *  double-counted at country scope and needed the report-keying stopgap. */
 function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   const raw = dig(row.data, rule.path);
   if (!raw || typeof raw !== "object") return [];
@@ -437,9 +442,18 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
     value?: number;
     unit?: string;
     confidence?: string;
+    scope_location_id?: unknown;
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
+
+  // The figure's scope. No scope → unattributed → excluded from every
+  // bucket (never rolled up).
+  const scopeLocationId =
+    typeof nf.scope_location_id === "string" && nf.scope_location_id
+      ? nf.scope_location_id
+      : null;
+  if (!scopeLocationId) return [];
 
   // Incident date defaults to reportingPeriodEnd (the CONTENT date),
   // falling back to publishedAt. This is the input to bucketDate.
@@ -449,23 +463,16 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   // Report-level: every mention this report emits carries the same set.
   const eventKey = eventKeyFor(row);
 
-  if (row.locationIds.length === 0) {
-    // Unlocated row — recorded under an empty-string location so the
-    // bucket exists but is separable from country-wide sums.
-    return [
-      { reportId: row.reportId, publishedAt: row.publishedAt, incidentDate, locationId: "", value, unit, confidence, eventKey },
-    ];
-  }
-  return row.locationIds.map((locationId) => ({
+  return [{
     reportId: row.reportId,
     publishedAt: row.publishedAt,
     incidentDate,
-    locationId,
+    locationId: scopeLocationId,
     value,
     unit,
     confidence,
     eventKey,
-  }));
+  }];
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -513,56 +520,39 @@ function aggregateNumericField(
 ): QualityEnvelope | null {
   const mentions: Mention[] = rows.flatMap((r) => extractNumericMentions(r, rule));
 
-  // Filter by location scope. A falsy scope (null, or the empty-string
-  // unlocated bucket) means country-wide → keep everything.
-  const isCountryWide = !locationScope;
-  const scoped = isCountryWide
-    ? mentions
-    : mentions.filter((m) => m.locationId === locationScope);
+  // Keep only the figures scoped to this bucket's location. Every mention
+  // now carries its Figure Scope as `locationId`, so this is an exact
+  // match — a figure scoped to Kordofan lands in Kordofan's bucket and
+  // nowhere else. A null/absent scope never reaches here (excluded in
+  // extractNumericMentions), and a null `locationScope` matches nothing:
+  // a scope is required — there is no "aggregate every location at once"
+  // roll-up (it would double-count; see #273 / ADR-0003).
+  const scoped = mentions.filter((m) => m.locationId === locationScope);
   if (scoped.length === 0) return null;
 
   const bucket = rule.timeBucket ?? "day";
 
-  // Group by incident key.
+  // Group by incident key: (figure scope location, time bucket, event-type
+  // set) — the shape §6.4.1 always specified, now reachable because each
+  // figure carries its own scope. #269's country-scope reportId stopgap is
+  // gone: with per-figure scope there is no fan-out to collapse, so no
+  // report can double-count across the places it merely mentioned.
+  // See docs/adr/0001-country-scope-dedups-by-report.md (superseded).
   //
-  // Location-scoped buckets key on locationId: `extractNumericMentions`
-  // fans a report-level figure across every location the report mentions,
-  // and that fan-out is exactly what lets a sub-national bucket see the
-  // report at all.
+  // The eventKey is the third key dimension. Two figures at the same scope
+  // and time bucket but with different event-type sets are distinct
+  // phenomena (a conflict toll vs a flood toll) and must not collapse.
   //
-  // Country-wide keys on reportId instead. Without Figure Scope, the same
-  // fan-out means one report's single figure appears once per mentioned
-  // place, so locationId-keying would count each copy as its own incident
-  // and additive_count would sum them — 10 killed reported across 3 named
-  // places became a country-wide 30. reportId-keying collapses a report's
-  // fanned copies back to one contribution per time bucket.
-  //
-  // Stopgap, not the destination: at country scope, absent per-figure
-  // location, this cannot distinguish two reports of the SAME incident
-  // (should dedup) from two genuinely distinct incidents (should sum) —
-  // it treats every report as distinct. That bounds the error to
-  // one-per-report, where the old bug was one-per-place-mention. Figure
-  // Scope removes the fan-out and retires this branch (#273).
-  // See docs/adr/0001-country-scope-dedups-by-report.md.
-  //
-  // The eventKey is the third key dimension (§6.4.1's event type). Two
-  // reports at the same location and time bucket but with different
-  // event-type sets are distinct phenomena — a conflict toll and a flood
-  // toll are not competing observations of one incident — so they must
-  // NOT collapse. At country scope the eventKey is redundant (a report
-  // has one set), so it changes nothing there; it only separates
-  // co-located, same-bucket reports at location scope.
-  // NUL joins the key components. It cannot appear in a cuid, an ISO
-  // bucket date, or a canonicalised event type, so unlike "|" it can't
-  // let a component's own separator forge a collision across groups.
+  // NUL joins the key components. It cannot appear in a cuid, an ISO bucket
+  // date, or a canonicalised event type, so unlike "|" it can't let a
+  // component's own separator forge a collision across groups.
   const SEP = "\u0000";
   const groups = new Map<string, Mention[]>();
-  // Track, per (keyHead, bucket) base, which event-key groups exist, so
+  // Track, per (location, bucket) base, which event-key groups exist, so
   // an untyped mention can be merged into a lone typed sibling below.
   const groupsByBase = new Map<string, Set<string>>();
   for (const m of scoped) {
-    const keyHead = isCountryWide ? m.reportId : m.locationId;
-    const base = `${keyHead}${SEP}${bucketDate(m.incidentDate, bucket)}`;
+    const base = `${m.locationId}${SEP}${bucketDate(m.incidentDate, bucket)}`;
     const key = `${base}${SEP}${m.eventKey}`;
     const bucketList = groups.get(key);
     if (bucketList) bucketList.push(m);
@@ -575,13 +565,11 @@ function aggregateNumericField(
   // Merge each untyped ("") group into its sole typed sibling. An empty
   // event-type set means "the extractor didn't tell us", NOT "a distinct
   // phenomenon" — so it must not form its own additive group when there
-  // is exactly one typed group at the same (location/report, bucket) that
-  // it plausibly belongs to. Without this, an untyped and a typed report
-  // covering the same place and day are summed instead of deduped,
-  // re-inflating additive_count (the #269 failure class). When several
-  // typed groups share the base we can't disambiguate, so the untyped
-  // group is left standing. Country scope is unaffected: a report has one
-  // event-type set, so no base there has both an untyped and a typed key.
+  // is exactly one typed group at the same (location, bucket) that it
+  // plausibly belongs to. Without this, an untyped and a typed figure at
+  // the same scope and day are summed instead of deduped, re-inflating
+  // additive_count. When several typed groups share the base we can't
+  // disambiguate, so the untyped group is left standing.
   // See docs/adr/0002-event-type-incident-key.md.
   for (const [base, keys] of groupsByBase) {
     const emptyKey = `${base}${SEP}`;
