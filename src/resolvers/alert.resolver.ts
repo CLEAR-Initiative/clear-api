@@ -8,7 +8,6 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
-import { representativePointForEvent } from "./event.resolver.js";
 import {
   severityToLabel,
   formatCount,
@@ -448,24 +447,12 @@ export const alertResolvers = {
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
     representativePoint: (
-      parent: {
-        eventId: string;
-        event?: { firstSignalCreatedAt?: Date | string | null } | null;
-        representativePoint?: unknown;
-      },
+      parent: { eventId: string; representativePoint?: unknown },
       _args: unknown,
       context: Context,
     ) => {
       if (parent.representativePoint !== undefined) return parent.representativePoint;
-      // Reuse the event's firstSignalCreatedAt when the event was
-      // preloaded (avoids a lookup); otherwise the helper reads it.
-      const preloaded = parent.event as
-        | { firstSignalCreatedAt?: Date | string | null }
-        | null
-        | undefined;
-      return representativePointForEvent(
-        context, parent.eventId, preloaded?.firstSignalCreatedAt,
-      );
+      return context.representativePointLoader.load(parent.eventId);
     },
     userAlerts: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
       return prisma.userAlerts.findMany({ where: { alertId: parent.id } });

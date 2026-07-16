@@ -23,62 +23,6 @@ import { bufferTranslationRequest } from "../services/celery.js";
  * per-request translation loader (one extra round-trip per resolver
  * pass + the lazy-enqueue side path).
  */
-/**
- * The representative marker point for an event: the location of its
- * FIRST signal — the signal recorded in `firstSignalCreatedAt`, not
- * whatever currently has the earliest publishedAt (those differ only if
- * an older-dated signal is attached after the event is created; we want
- * the original). Returns the first non-null location in the
- * origin → destination → general cascade — the same order the map's
- * marker logic uses — or null when the first signal has no located
- * point. Signals are point-located, so in practice this is a Point
- * geometry ready to drop as a marker.
- *
- * Shared by Event.representativePoint and Alert.representativePoint.
- * `firstSignalCreatedAt` may be passed when the caller already has it
- * (Event); pass undefined and it is read from the event (Alert).
- */
-export async function representativePointForEvent(
-  context: Context,
-  eventId: string,
-  firstSignalCreatedAt?: Date | string | null,
-): Promise<unknown> {
-  const include = context.locale === DEFAULT_LOCALE
-    ? undefined
-    : { translations: { where: { locale: context.locale } } };
-  const locInclude = include ? { include } : {};
-
-  let firstTs: Date | string | null | undefined = firstSignalCreatedAt;
-  if (firstTs === undefined) {
-    const ev = await context.prisma.events.findUnique({
-      where: { id: eventId },
-      select: { firstSignalCreatedAt: true },
-    });
-    firstTs = ev?.firstSignalCreatedAt ?? null;
-  }
-
-  const signals = await context.prisma.signals.findMany({
-    where: { signalEvents: { some: { eventId } } },
-    orderBy: { publishedAt: "asc" },
-    include: {
-      originLocation: locInclude,
-      destinationLocation: locInclude,
-      generalLocation: locInclude,
-    },
-  });
-  if (signals.length === 0) return null;
-
-  // Prefer the signal recorded as the event's first; fall back to the
-  // earliest published when timestamps don't line up exactly.
-  const firstMs = firstTs ? new Date(firstTs).getTime() : null;
-  const first =
-    (firstMs !== null
-      ? signals.find((s) => s.publishedAt.getTime() === firstMs)
-      : undefined) ?? signals[0];
-
-  return first.originLocation ?? first.destinationLocation ?? first.generalLocation ?? null;
-}
-
 function eventTranslationsInclude(locale: Locale):
   | { translations: { where: { locale: string } } }
   | undefined {
@@ -858,16 +802,12 @@ export const eventResolvers = {
       });
     },
     representativePoint: (
-      parent: {
-        id: string;
-        firstSignalCreatedAt?: Date | string | null;
-        representativePoint?: unknown;
-      },
+      parent: { id: string; representativePoint?: unknown },
       _args: unknown,
       context: Context,
     ) => {
       if (parent.representativePoint !== undefined) return parent.representativePoint;
-      return representativePointForEvent(context, parent.id, parent.firstSignalCreatedAt);
+      return context.representativePointLoader.load(parent.id);
     },
     alerts: (
       parent: { id: string; alerts?: unknown[] },
