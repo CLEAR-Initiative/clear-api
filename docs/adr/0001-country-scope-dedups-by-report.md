@@ -1,6 +1,11 @@
 ---
-status: accepted
+status: superseded by 0003-bucket-by-figure-scope
 ---
+
+> **Superseded (#273).** This described the country-scope reportId-keying
+> *stopgap*. Figure Scope now attributes each figure to one location, so
+> there is no fan-out to collapse and no country-scope special case — both
+> are gone. Kept for history; see `0003-bucket-by-figure-scope.md`.
 
 # Country-wide aggregation dedups by report, not by location
 

@@ -26,8 +26,10 @@ import {
   type ReportRow,
 } from "../../src/services/datapoint-aggregation.js";
 
-/** Convenience — build a NumericField dict as the LLM emits it. */
-function nf(value: number, confidence = "reported", unit = "people") {
+/** Convenience — build a NumericField dict as the LLM emits it. Pass
+ *  `scope` to pin this figure's Figure Scope explicitly; otherwise `row`
+ *  stamps the report's primary location onto it. */
+function nf(value: number, confidence = "reported", unit = "people", scope?: string) {
   return {
     value,
     unit,
@@ -35,11 +37,32 @@ function nf(value: number, confidence = "reported", unit = "people") {
     source_quote: "…",
     chunk_index: 0,
     page_number: 1,
+    ...(scope !== undefined ? { scope_location_id: scope } : {}),
   };
 }
 
-/** Convenience — build a minimal ReportRow. `data` receives whatever
- *  shape the caller wants to test (the aggregator walks it by path). */
+/** Post-#273 every numeric figure carries its own `scope_location_id`.
+ *  Stamp the report's primary location onto every figure that doesn't
+ *  already declare one, so single-scope tests read naturally. */
+function stampScope(data: unknown, scope: string | null): void {
+  if (Array.isArray(data)) {
+    for (const v of data) stampScope(v, scope);
+    return;
+  }
+  if (data && typeof data === "object") {
+    const o = data as Record<string, unknown>;
+    if ("value" in o && "confidence" in o && "source_quote" in o) {
+      if (o.scope_location_id === undefined && scope !== null) o.scope_location_id = scope;
+      return;
+    }
+    for (const v of Object.values(o)) stampScope(v, scope);
+  }
+}
+
+/** Convenience — build a minimal ReportRow. The `locationIds` array's
+ *  first entry is the report's primary Figure Scope, stamped onto each
+ *  figure that doesn't pin its own (via `nf(..., scope)`). `locationIds`
+ *  is retained on the row but no longer drives bucketing. */
 function row(
   reportId: string,
   publishedAt: string,
@@ -47,6 +70,7 @@ function row(
   data: Record<string, unknown>,
   reportingPeriodEnd?: string,
 ): ReportRow {
+  stampScope(data, locationIds[0] ?? null);
   return {
     reportId,
     publishedAt: new Date(publishedAt),
@@ -168,10 +192,9 @@ describe("aggregateReports — set union (event_types)", () => {
   });
 });
 
-describe("aggregateReports — location scoping", () => {
-  it("filters to the target location before aggregating", () => {
-    // Two locations, two reports each. Scoping to SD0201 must only
-    // aggregate its reports, ignoring the SD0301 pair.
+describe("aggregateReports — scope filtering (#273)", () => {
+  it("keeps only the figures scoped to the queried location", () => {
+    // Two figures at two scopes. A bucket sees only figures scoped to it.
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3) } },
@@ -180,17 +203,41 @@ describe("aggregateReports — location scoping", () => {
         casualties: { killed: { total: nf(100) } },
       }, "2026-07-04T00:00:00Z"),
     ];
-    const scoped = aggregateReports(rows, "SD0201");
-    const scopedField = scoped!.data.killed_total;
-    if (!scopedField || !("value" in scopedField)) throw new Error("expected numeric field");
-    expect(scopedField.value).toBe(3);
+    const a = aggregateReports(rows, "SD0201");
+    const fa = a!.data.killed_total;
+    if (!fa || !("value" in fa)) throw new Error("expected numeric field");
+    expect(fa.value).toBe(3);
 
-    // Country-wide (null) sees both.
-    const countryWide = aggregateReports(rows, null);
-    const cwField = countryWide!.data.killed_total;
-    if (!cwField || !("value" in cwField)) throw new Error("expected numeric field");
-    // Different day buckets → both incidents count.
-    expect(cwField.value).toBe(103);
+    const b = aggregateReports(rows, "SD0301");
+    const fb = b!.data.killed_total;
+    if (!fb || !("value" in fb)) throw new Error("expected numeric field");
+    expect(fb.value).toBe(100);
+  });
+
+  it("a null scope aggregates nothing — there is no cross-location roll-up", () => {
+    // Every figure has a scope; null matches none. A country total is read
+    // from the country-scoped bucket (the A0 id), never by summing scopes.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(3) } },
+      }),
+    ];
+    expect(aggregateReports(rows, null)!.data.killed_total).toBeNull();
+  });
+
+  it("a figure with no resolved scope is excluded entirely", () => {
+    // scope_location_id null (LLM abstained / name unresolved) → the
+    // figure is attributed nowhere and never rolled up.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(9, "reported", "people", undefined) } },
+        // pin an explicit null scope on the field, overriding stampScope
+      }),
+    ];
+    // Override: null out the scope the helper stamped.
+    (rows[0]!.data as { casualties: { killed: { total: { scope_location_id?: unknown } } } })
+      .casualties.killed.total.scope_location_id = null;
+    expect(aggregateReports(rows, "SD0201")!.data.killed_total).toBeNull();
   });
 });
 
@@ -308,8 +355,8 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
     expect(field.value).toBe(20000);
   });
 
-  it("distinct locations don't share incident keys even in the same week", () => {
-    // Same week but different A2s → distinct incidents → both sum.
+  it("figures at distinct scopes live in distinct buckets", () => {
+    // Two figures, same week, different scopes → each in its own bucket.
     const rows = [
       row("r1", "2026-07-08T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3) } },
@@ -318,51 +365,25 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
         casualties: { killed: { total: nf(5) } },
       }, "2026-07-08T00:00:00Z"),
     ];
-    // Country-wide roll-up should sum across both locations.
-    const result = aggregateReports(rows, null);
-    const field = result!.data.killed_total;
-    if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(8);
+    const a = aggregateReports(rows, "SD0201")!.data.killed_total;
+    const b = aggregateReports(rows, "SD0301")!.data.killed_total;
+    if (!a || !("value" in a) || !b || !("value" in b)) throw new Error("expected numeric field");
+    expect(a.value).toBe(3);
+    expect(b.value).toBe(5);
   });
 
-  it("unlocated report (empty locationIds) contributes under empty-location bucket", () => {
-    // When the LLM emits data but the resolver couldn't tie ANY
-    // location, the row still contributes to country-wide roll-ups
-    // via the empty-string location. Prevents silent data loss on
-    // locate-fail reports.
+  it("two figures at the SAME scope + week dedupe (latest wins), not sum", () => {
     const rows = [
-      row("r1", "2026-07-05T00:00:00Z", [], {
-        casualties: { killed: { total: nf(7) } },
-      }, "2026-07-05T00:00:00Z"),
+      row("r1", "2026-07-08T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(3, "reported") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r2", "2026-07-10T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5, "verified") } },
+      }, "2026-07-08T00:00:00Z"), // same day bucket → competing observations
     ];
-    // Location-scoped query: the empty-location bucket doesn't match
-    // "SD0201" scope → null.
-    const scoped = aggregateReports(rows, "SD0201");
-    expect(scoped!.data.killed_total).toBeNull();
-    // Country-wide (null) sees it.
-    const cw = aggregateReports(rows, null);
-    const field = cw!.data.killed_total;
-    if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(7);
-  });
-
-  it("multi-location report contributes to each location scope", () => {
-    // One report tagged with two A2s. Scoping to A2-1 gets the
-    // report's value; scoping to A2-2 also gets it. Country-wide
-    // sees TWO mentions but they dedupe to one incident-per-location.
-    const rows = [
-      row("r-multi", "2026-07-05T00:00:00Z", ["SD0201", "SD0301"], {
-        casualties: { killed: { total: nf(4) } },
-      }, "2026-07-05T00:00:00Z"),
-    ];
-    const scoped1 = aggregateReports(rows, "SD0201");
-    const scoped2 = aggregateReports(rows, "SD0301");
-    const field1 = scoped1!.data.killed_total;
-    const field2 = scoped2!.data.killed_total;
-    if (!field1 || !("value" in field1)) throw new Error("expected numeric field");
-    if (!field2 || !("value" in field2)) throw new Error("expected numeric field");
-    expect(field1.value).toBe(4);
-    expect(field2.value).toBe(4);
+    const f = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(5); // latest publishedAt wins, not 8
   });
 });
 
@@ -467,45 +488,45 @@ describe("aggregateReports — malformed inputs", () => {
  * over a Figure Scope — (location, admin_level, period, event-type set).
  * Deduplication is only for competing observations of the same scope.
  */
-describe("country-scope inflation — FIXED (#269): dedup by report", () => {
-  // A report states one figure ("10 killed") but `locations` holds every
-  // place it discusses — the country for context, the state, the town.
-  // Nothing records which one the figure is scoped to, so
-  // extractNumericMentions fans the value to all three. At country scope
-  // this used to give each copy its own incident group, and additive_count
-  // summed them: 10 became 30. Fixed by keying country-scope groups on
-  // reportId instead of locationId (ADR-0001) — a stopgap until Figure
-  // Scope (ADR-0002) removes the fan-out entirely.
-  it("one report, 10 killed, 3 places mentioned → country-wide is 10, not 30", () => {
+describe("Figure Scope bucketing — no fan-out (#273, retires #269 stopgap)", () => {
+  // A figure carries ONE scope. It lands in that scope's bucket and
+  // nowhere else, regardless of every other place the report mentions —
+  // so there's no fan-out to double-count and no country-scope stopgap.
+  it("a figure scoped to SDN reaches SDN and returns null for SD0201", () => {
+    // The report mentions three places but the figure is scoped to SDN
+    // (the national total). It appears ONLY in SDN's bucket. This is the
+    // resolution of the old REVISIT guard.
     const rows = [
-      row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
-        casualties: { killed: { total: nf(10) } },
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201", "SD02", "SDN"], {
+        casualties: { killed: { total: nf(10, "reported", "people", "SDN") } },
       }),
     ];
-    const result = aggregateReports(rows, null);
-    const field = result!.data.killed_total;
-    if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(10);
+    const atSDN = aggregateReports(rows, "SDN")!.data.killed_total;
+    if (!atSDN || !("value" in atSDN)) throw new Error("expected numeric field");
+    expect(atSDN.value).toBe(10);
+    // Not attributed to the sub-national places it merely mentioned.
+    expect(aggregateReports(rows, "SD0201")!.data.killed_total).toBeNull();
+    expect(aggregateReports(rows, "SD02")!.data.killed_total).toBeNull();
   });
 
-  it("location-scoped aggregation is correct today — only country scope inflates", () => {
-    // Pins the blast radius: the defect above is country-scope-only, so a
-    // stopgap there (clear-api ADR-0001) need not touch this path.
-    //
-    // REVISIT when Figure Scope lands: this row carries no scope, so the
-    // figure reaches SD0201 only via the fan-out. Once a figure declares
-    // its scope, it reaches that location and no other — a figure scoped
-    // to SDN would correctly return null here. Do not read this test as a
-    // requirement to keep fan-out alive.
+  it("one report can carry figures at different scopes", () => {
+    // killed scoped to El Fasher, PIN scoped to Sudan — each in its own
+    // bucket, no cross-attribution.
     const rows = [
-      row("r1", "2026-07-02T00:00:00Z", ["SDN", "SD02", "SD0201"], {
-        casualties: { killed: { total: nf(10) } },
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(10, "reported", "people", "SD0201") } },
+        needs_and_funding: { overall_pin: nf(2_000_000, "reported", "people", "SDN") },
       }),
     ];
-    const result = aggregateReports(rows, "SD0201");
-    const field = result!.data.killed_total;
-    if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(10);
+    const killedAtTown = aggregateReports(rows, "SD0201")!.data.killed_total;
+    const pinAtCountry = aggregateReports(rows, "SDN")!.data.overall_pin;
+    if (!killedAtTown || !("value" in killedAtTown)) throw new Error("expected numeric field");
+    if (!pinAtCountry || !("value" in pinAtCountry)) throw new Error("expected numeric field");
+    expect(killedAtTown.value).toBe(10);
+    expect(pinAtCountry.value).toBe(2_000_000);
+    // The town bucket has no PIN; the country bucket has no killed.
+    expect(aggregateReports(rows, "SD0201")!.data.overall_pin).toBeNull();
+    expect(aggregateReports(rows, "SDN")!.data.killed_total).toBeNull();
   });
 });
 
@@ -656,7 +677,9 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
     expect(kt(aggregateReports(rows, "SD0201"))).toBe(10);
   });
 
-  it("country scope is unaffected — a report has one event-type set", () => {
+  it("untyped and typed figures at DIFFERENT scopes never interact", () => {
+    // The untyped-merge is per (scope, bucket); figures at different
+    // scopes are in different buckets, so nothing merges across them.
     const rows = [
       row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(5) } },
@@ -666,8 +689,8 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
         casualties: { killed: { total: nf(3) } },
       }),
     ];
-    // Two reports, different places → still sum to 8 country-wide.
-    expect(kt(aggregateReports(rows, null))).toBe(8);
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(5);
+    expect(kt(aggregateReports(rows, "SD0301"))).toBe(3);
   });
 
   it("a bare-string event_types is tolerated, not treated as untyped", () => {
