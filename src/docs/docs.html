@@ -2717,6 +2717,14 @@ users know the number reflects the freshest possible view.</td>
     <td><code>Event!</code></td>
     <td>The event this alert was created from.</td>
   </tr><tr>
+    <td><code>representativePoint</code></td>
+    <td><code>Location</code></td>
+    <td>Location of the alert's event's FIRST signal — the same point as
+`event.representativePoint`, surfaced directly on the alert so a
+marker can be placed without walking into the event. Null when the
+first signal has no located point. Requires any authenticated
+content reader.</td>
+  </tr><tr>
     <td><code>status</code></td>
     <td><code>AlertStatus!</code></td>
     <td>—</td>
@@ -3121,6 +3129,15 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>generalLocation</code></td>
     <td><code>Location</code></td>
     <td>General location (when no origin/destination).</td>
+  </tr><tr>
+    <td><code>representativePoint</code></td>
+    <td><code>Location</code></td>
+    <td>Location of the event's FIRST signal (the one recorded in
+`firstSignalCreatedAt`) — a single point ready to drop as a map
+marker, so a client doesn't have to fetch every signal and pick one.
+The first non-null of the signal's origin → destination → general
+location; null when the first signal has no located point.
+Requires any authenticated content reader.</td>
   </tr><tr>
     <td><code>types</code></td>
     <td><code>[String!]!</code></td>

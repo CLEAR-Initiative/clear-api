@@ -594,3 +594,91 @@ describe("Event scalar transforms", () => {
     expect(eventResolvers.Event.populationDisplaced({ populationDisplaced: null })).toBeNull();
   });
 });
+
+describe("Event.representativePoint — first signal's marker location", () => {
+  const rp = eventResolvers.Event.representativePoint;
+  const D1 = new Date("2026-07-01T00:00:00Z");
+  const D2 = new Date("2026-07-03T00:00:00Z");
+
+  // A signal row as prisma returns it with the location cascade included.
+  function sig(publishedAt: Date, locs: {
+    originLocation?: unknown; destinationLocation?: unknown; generalLocation?: unknown;
+  }) {
+    return {
+      publishedAt,
+      originLocation: locs.originLocation ?? null,
+      destinationLocation: locs.destinationLocation ?? null,
+      generalLocation: locs.generalLocation ?? null,
+    };
+  }
+
+  it("returns the eager-loaded value without querying", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    const preset = { id: "loc-pre" };
+    expect(await rp({ id: "e1", representativePoint: preset }, {}, ctx)).toBe(preset);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("picks the signal matching firstSignalCreatedAt, not just the earliest", async () => {
+    // Two signals; the event's recorded first is the LATER-published one.
+    const findMany = vi.fn().mockResolvedValue([
+      sig(D1, { generalLocation: { id: "loc-early" } }),
+      sig(D2, { generalLocation: { id: "loc-first" } }),
+    ]);
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    const out = await rp({ id: "e1", firstSignalCreatedAt: D2 }, {}, ctx);
+    expect(out).toEqual({ id: "loc-first" });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { signalEvents: { some: { eventId: "e1" } } },
+      orderBy: { publishedAt: "asc" },
+    }));
+  });
+
+  it("falls back to the earliest signal when no publishedAt matches", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      sig(D1, { generalLocation: { id: "loc-early" } }),
+      sig(D2, { generalLocation: { id: "loc-late" } }),
+    ]);
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    // firstSignalCreatedAt matches neither → earliest (D1) wins.
+    const out = await rp({ id: "e1", firstSignalCreatedAt: new Date("2020-01-01T00:00:00Z") }, {}, ctx);
+    expect(out).toEqual({ id: "loc-early" });
+  });
+
+  it("uses the origin → destination → general cascade", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      sig(D1, { destinationLocation: { id: "loc-dest" }, generalLocation: { id: "loc-gen" } }),
+    ]);
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    // No origin → destination wins over general.
+    expect(await rp({ id: "e1", firstSignalCreatedAt: D1 }, {}, ctx)).toEqual({ id: "loc-dest" });
+  });
+
+  it("returns null when the event has no signals", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    expect(await rp({ id: "e1", firstSignalCreatedAt: D1 }, {}, ctx)).toBeNull();
+  });
+
+  it("returns null when the first signal has no located point", async () => {
+    const findMany = vi.fn().mockResolvedValue([sig(D1, {})]);
+    const ctx = buildContext(VIEWER, { signals: { findMany } });
+    expect(await rp({ id: "e1", firstSignalCreatedAt: D1 }, {}, ctx)).toBeNull();
+  });
+
+  it("reads firstSignalCreatedAt from the event when the parent lacks it", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      sig(D1, { generalLocation: { id: "loc-early" } }),
+      sig(D2, { generalLocation: { id: "loc-first" } }),
+    ]);
+    const findUnique = vi.fn().mockResolvedValue({ firstSignalCreatedAt: D2 });
+    const ctx = buildContext(VIEWER, { signals: { findMany }, events: { findUnique } });
+    // parent has no firstSignalCreatedAt → helper loads it (D2) → loc-first.
+    const out = await rp({ id: "e1" }, {}, ctx);
+    expect(out).toEqual({ id: "loc-first" });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "e1" }, select: { firstSignalCreatedAt: true },
+    });
+  });
+});
