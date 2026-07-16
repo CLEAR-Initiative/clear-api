@@ -613,3 +613,108 @@ describe("event-type key dimension — FIXED (#270)", () => {
     expect(field.value).toBe(8);
   });
 });
+
+describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", () => {
+  const kt = (r: ReturnType<typeof aggregateReports>) => {
+    const f = r!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    return f.value;
+  };
+
+  it("untyped report does NOT double-count against a typed one (the regression)", () => {
+    // Empty event-type set means 'unknown', not 'a distinct phenomenon' —
+    // it merges into the sole typed group at the same location+bucket.
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // deduped, not 8
+  });
+
+  it("leaves the untyped group separate when MULTIPLE typed groups share the bucket", () => {
+    // conflict + flood are two distinct phenomena; an untyped figure can't
+    // be assigned to one, so it is not merged (documented, ADR-0002).
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+      row("r-flood", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(2) } },
+      }),
+    ];
+    // conflict(3) + flood(2) + untyped(5), all distinct groups → 10.
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(10);
+  });
+
+  it("country scope is unaffected — a report has one event-type set", () => {
+    const rows = [
+      row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0301"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+    ];
+    // Two reports, different places → still sum to 8 country-wide.
+    expect(kt(aggregateReports(rows, null))).toBe(8);
+  });
+
+  it("a bare-string event_types is tolerated, not treated as untyped", () => {
+    // `"conflict"` (not `["conflict"]`) must canonicalise the same way, so
+    // it dedups with an array-tagged report of the same incident.
+    const rows = [
+      row("r-str", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: "conflict" },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r-arr", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // same phenomenon, deduped
+  });
+
+  it("key and published event_types agree on case", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["Conflict"] },
+        casualties: { killed: { total: nf(5) } },
+      }),
+      row("r2", "2026-07-04T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD0201")!;
+    // One incident group (deduped) …
+    expect(kt(result)).toBe(3);
+    // … and the published set is canonicalised to match — one entry, not two.
+    const et = result.data.event_types;
+    if (!et || !("values" in et)) throw new Error("expected set-union field");
+    expect(et.values).toEqual(["conflict"]);
+  });
+
+  it("active_clusters keeps its display casing (not blanket-lowercased)", () => {
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { active_clusters: ["Protection", "WASH"] },
+      }),
+    ];
+    const result = aggregateReports(rows, "SD0201")!;
+    const ac = result.data.active_clusters;
+    if (!ac || !("values" in ac)) throw new Error("expected set-union field");
+    expect(ac.values).toEqual(["Protection", "WASH"]);
+  });
+});
