@@ -86,8 +86,8 @@ export const situationAnalysisResolvers = {
       //
       // Schema version: pin it if the caller asked for one, otherwise the
       // newest write wins. Versions coexist rather than supersede — the
-      // uniqueness index is per-version, so a v1 and a v2 row can both be
-      // current for one bucket, and a client that wants the older payload
+      // uniqueness index is per-version, so rows of two schema versions can
+      // both be current for one bucket, and a client that wants the older payload
       // shape can still ask for it. The client reads `schemaVersion` off
       // the row to know what it got.
       return context.prisma.situationAnalysis.findFirst({
@@ -116,7 +116,7 @@ export const situationAnalysisResolvers = {
 
       // Trend view: current rows of a SINGLE schema version, newest year
       // first. A trend must not mix versions — a bump changes what the
-      // numbers mean, so a chart spanning v1 and v2 rows would plot two
+      // numbers mean, so a chart spanning two schema versions would plot two
       // different quantities as one series. That constraint is about
       // mixing, not about which version: pin it if the caller asked,
       // otherwise default to the country's most recently written one.

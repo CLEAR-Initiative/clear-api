@@ -168,6 +168,36 @@ describe("aggregateReports — latest state (idp_stock)", () => {
   });
 });
 
+describe("aggregateReports — max (overall_affected)", () => {
+  it("takes the largest affected figure across the window, not the latest", () => {
+    // Population Affected is Max, not latest_state: a later, narrower
+    // report must not shrink the widest evidenced reach. The two figures
+    // fall in different month buckets, so they form separate incident
+    // groups and the cross-group combine is Math.max.
+    const rows = [
+      row("r-may", "2026-05-20T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(1_000_000, "reported") },
+      }, "2026-05-31T00:00:00Z"),
+      row("r-jul", "2026-07-08T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(600_000, "verified") },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01");
+    const field = result!.data.overall_affected;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(1_000_000); // max, not the fresher 600k
+    expect(field.contributing_report_ids.sort()).toEqual(["r-jul", "r-may"]);
+  });
+
+  it("is null when no report states an affected figure", () => {
+    const rows = [row("r1", "2026-07-01T00:00:00Z", ["SD01"], {
+      needs_and_funding: { overall_pin: nf(500_000) },
+    })];
+    const result = aggregateReports(rows, "SD01");
+    expect(result!.data.overall_affected).toBeNull();
+  });
+});
+
 describe("aggregateReports — set union (event_types)", () => {
   it("unions labels across every contributing report", () => {
     const rows = [
