@@ -42,11 +42,12 @@ interface UpsertReportDatapointsInput {
 }
 
 // Default schema version — matches the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py). Keep in sync
-// when bumping: a version-less `aggregatedDatapoint` query reads buckets
-// of this version, so it must point at the version the current pipeline
-// writes, or freshly-aggregated buckets go unread.
-const DEFAULT_SCHEMA_VERSION = "v2";
+// Python-side extraction module (datapoints_schemas.py). A version-less
+// `aggregatedDatapoint` query reads buckets of this version, so it must
+// point at the version the current pipeline writes, or freshly-aggregated
+// buckets go unread. Pre-launch we keep a single "v1" and re-extract on
+// schema changes rather than bumping; keep this in sync if that changes.
+const DEFAULT_SCHEMA_VERSION = "v1";
 
 /** Compute the four higher-tier windows a given `windowStart`
  *  belongs to. Used by the refresh mutation to enumerate all
