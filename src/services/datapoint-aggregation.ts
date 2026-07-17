@@ -217,7 +217,7 @@ export const FIELD_RULES: FieldRule[] = [
     withinGroupPolicy: "latest_wins",
   },
   {
-    // Population Affected — widest circle of crisis impact (v3+). Max, not
+    // Population Affected — widest circle of crisis impact. Max, not
     // latest: the largest evidenced affected figure across the window is the
     // best estimate of total reach; a later, narrower report shouldn't shrink
     // it. Within a report take the max figure, then latest across reports
