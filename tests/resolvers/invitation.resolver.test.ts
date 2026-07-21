@@ -16,8 +16,9 @@
  *     org member fast-path (direct team add, no invite email, "already in all
  *     teams" guard), duplicate pending-invite guard, and the happy path
  *     (invite created + email sent).
- *   - Mutation.acceptInvite: invalid token, already-accepted, expired, new-user
- *     signup + verify, org/team membership creation, legacy teamId fallback.
+ *   - Mutation.acceptInvite: invalid token, already-accepted, expired, minting
+ *     a new user via the internal adapter with an approved role, org/team
+ *     membership creation, legacy teamId fallback.
  *   - Mutation.cancelInvite: NOT_FOUND, admin gate, delete.
  *   - Mutation.resendInvite: NOT_FOUND, admin gate, accepted guard, token reset
  *     + email resend.
@@ -34,9 +35,11 @@ import { GraphQLError } from "graphql";
 
 // ─── Mocks (must precede the resolver import) ──────────────────────────────────
 
-const { sendMock, signUpEmailMock } = vi.hoisted(() => ({
+const { sendMock, hashMock, createUserMock, linkAccountMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
-  signUpEmailMock: vi.fn(),
+  hashMock: vi.fn(),
+  createUserMock: vi.fn(),
+  linkAccountMock: vi.fn(),
 }));
 
 vi.mock("../../src/services/messaging/registry.js", () => ({
@@ -46,8 +49,17 @@ vi.mock("../../src/services/messaging/templates.js", () => ({
   organisationInvite: () => ({ subject: "invite", textBody: "t", htmlBody: "<p>" }),
   teamInviteNotification: () => ({ subject: "added", textBody: "t", htmlBody: "<p>" }),
 }));
+// acceptInvite mints new users via the internal adapter (mirrors seed.ts'
+// getOrCreateUser, see fix(seed) b94e7f1) rather than the public sign-up
+// endpoint, so the mock surfaces $context.password.hash + internalAdapter
+// instead of api.signUpEmail.
 vi.mock("../../src/lib/auth.js", () => ({
-  auth: { api: { signUpEmail: signUpEmailMock } },
+  auth: {
+    $context: Promise.resolve({
+      password: { hash: hashMock },
+      internalAdapter: { createUser: createUserMock, linkAccount: linkAccountMock },
+    }),
+  },
 }));
 
 import { invitationResolvers } from "../../src/resolvers/invitation.resolver.js";
@@ -73,7 +85,11 @@ const InvitationFields = invitationResolvers.Invitation;
 beforeEach(() => {
   sendMock.mockReset();
   sendMock.mockResolvedValue(undefined);
-  signUpEmailMock.mockReset();
+  hashMock.mockReset();
+  hashMock.mockResolvedValue("hashed");
+  createUserMock.mockReset();
+  linkAccountMock.mockReset();
+  linkAccountMock.mockResolvedValue(undefined);
 });
 
 // ─── requireOrgAdmin gate (via pendingInvites) ─────────────────────────────────
@@ -548,13 +564,12 @@ describe("Mutation.acceptInvite", () => {
     });
   });
 
-  it("creates a new user, verifies email, joins org + teams, marks accepted", async () => {
-    signUpEmailMock.mockResolvedValue({ user: { id: "u-new" } });
-    const userUpdate = vi.fn().mockResolvedValue({ id: "u-new" });
-    const findUnique = vi.fn().mockResolvedValue(null); // no existing user
-    const findUniqueOrThrow = vi
+  it("mints a new user via the internal adapter, joins org + teams, marks accepted", async () => {
+    createUserMock.mockResolvedValue({ id: "u-new", email: "a@b.dev" });
+    const userUpdate = vi
       .fn()
-      .mockResolvedValue({ id: "u-new", email: "a@b.dev" });
+      .mockResolvedValue({ id: "u-new", email: "a@b.dev", role: "viewer" });
+    const findUnique = vi.fn().mockResolvedValue(null); // no existing user
     const orgCreate = vi.fn().mockResolvedValue({});
     const teamUpsert = vi.fn().mockResolvedValue({});
     const invUpdate = vi.fn().mockResolvedValue({});
@@ -573,7 +588,7 @@ describe("Mutation.acceptInvite", () => {
         }),
         update: invUpdate,
       },
-      user: { findUnique, findUniqueOrThrow, update: userUpdate },
+      user: { findUnique, update: userUpdate },
       organisationUsers: {
         findUnique: vi.fn().mockResolvedValue(null),
         create: orgCreate,
@@ -587,9 +602,20 @@ describe("Mutation.acceptInvite", () => {
     });
 
     await expect(acceptInvite(null, { input }, ctx)).resolves.toBe(true);
-    expect(signUpEmailMock).toHaveBeenCalledOnce();
-    // Email marked verified for the freshly created user.
-    expect(userUpdate.mock.calls[0][0].data).toEqual({ emailVerified: true });
+    // Minted via the internal adapter, not the public sign-up endpoint.
+    expect(hashMock).toHaveBeenCalledWith("longenough");
+    expect(createUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "a@b.dev", name: "New", emailVerified: true }),
+    );
+    expect(linkAccountMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "u-new",
+        providerId: "credential",
+        password: "hashed",
+      }),
+    );
+    // Approved-tier role granted immediately — the invite is the approval.
+    expect(userUpdate.mock.calls[0][0].data).toEqual({ role: "viewer" });
     expect(orgCreate).toHaveBeenCalledOnce();
     expect(teamUpsert).toHaveBeenCalledOnce();
     expect(teamUpsert.mock.calls[0][0].create).toEqual({
@@ -600,7 +626,7 @@ describe("Mutation.acceptInvite", () => {
     expect(invUpdate.mock.calls[0][0].data.acceptedAt).toBeInstanceOf(Date);
   });
 
-  it("uses the legacy single teamId when the join table is empty, and skips signup for an existing user", async () => {
+  it("uses the legacy single teamId when the join table is empty, and skips minting for an existing user", async () => {
     const teamUpsert = vi.fn().mockResolvedValue({});
     const orgCreate = vi.fn().mockResolvedValue({});
     const ctx = buildContext(null, {
@@ -627,7 +653,7 @@ describe("Mutation.acceptInvite", () => {
     });
 
     await expect(acceptInvite(null, { input }, ctx)).resolves.toBe(true);
-    expect(signUpEmailMock).not.toHaveBeenCalled();
+    expect(createUserMock).not.toHaveBeenCalled();
     expect(orgCreate).not.toHaveBeenCalled(); // already a member
     expect(teamUpsert.mock.calls[0][0].create).toEqual({
       teamId: "t-legacy",
