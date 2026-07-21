@@ -17,3 +17,7 @@ dist
 .exponential/
 
 ven_agesex_structures_2026_CN_100m_R2025A_v1
+
+# GeoNames gazetteer raw extracts — imported into Postgres, not tracked in git.
+# See src/geonames/README.md for the download + import steps.
+/src/geonames/**/*.txt
