@@ -454,7 +454,15 @@ async function seed() {
     }),
   ]);
 
-  console.log("Created 4 data sources");
+  // Manual-entry source for signals filed through the UI. The Create Signal
+  // modal's Source dropdown lists only data sources whose name is a manual
+  // source (field_officer/partner/government), not the automated feeds above,
+  // so at least one must exist for a manual signal to be filed.
+  await prisma.dataSources.create({
+    data: { name: "field_officer", type: "manual", isActive: true },
+  });
+
+  console.log("Created 4 data sources + 1 manual source");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
