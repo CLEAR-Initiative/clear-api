@@ -365,17 +365,37 @@ export const invitationResolvers = {
       });
 
       if (!existingUser) {
-        // Create new user via Better Auth
-        const signup = await auth.api.signUpEmail({
-          body: { name, email: invitation.email, password },
+        // Mint the user the same low-level way seed.ts does (see
+        // fix(seed) b94e7f1): via better-auth's internal adapter rather
+        // than the public sign-up endpoint. Self-signup here would land
+        // the account with the model's default global role ("pending"),
+        // stuck behind requireContentReader's approval wall until a
+        // platform admin separately approves them — even though an org
+        // admin's invite already vouches for them. Minting directly lets
+        // us set the approved "viewer" role up front. This also decouples
+        // invite-acceptance from whatever the public sign-up endpoint's
+        // policy happens to be (open-with-pending-role today; disabled
+        // entirely in the past), so it can't be silently broken again by
+        // a future signup-policy change.
+        const authCtx = await auth.$context;
+        const hash = await authCtx.password.hash(password);
+        const user = await authCtx.internalAdapter.createUser({
+          email: invitation.email,
+          name,
+          emailVerified: true,
         });
-        // Mark email as verified (admin vouched for it)
-        await context.prisma.user.update({
-          where: { id: signup.user.id },
-          data: { emailVerified: true },
+        await authCtx.internalAdapter.linkAccount({
+          userId: user.id,
+          providerId: "credential",
+          accountId: user.id,
+          password: hash,
         });
-        existingUser = await context.prisma.user.findUniqueOrThrow({
-          where: { id: signup.user.id },
+        // Approved-tier role: an org admin's invite is the approval, so
+        // this account shouldn't wait on a separate platform-admin
+        // approval the way a self-signup would.
+        existingUser = await context.prisma.user.update({
+          where: { id: user.id },
+          data: { role: "viewer" },
         });
       }
 
