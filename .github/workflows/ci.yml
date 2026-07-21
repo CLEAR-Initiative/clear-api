@@ -23,14 +23,16 @@ jobs:
       - name: Docs HTML is in sync with template
         run: bun run build:docs && git diff --exit-code src/docs/docs.html
 
-      # Run the DB-free test suite. The DB-backed integration tests need a
-      # seeded Postgres + PostGIS (specific dev-DB UUIDs and Sudan admin
-      # polygons), so they're skipped here via SKIP_DB_TESTS=1. The dummy env
-      # vars below only need to satisfy the src/utils/env.ts schema parse at
-      # import time — no real services are contacted, since those describe
-      # blocks are skipped.
-      - name: Test (DB-free)
-        run: bun run test:ci
+      # Run the DB-free test suite WITH coverage, and gate on the thresholds in
+      # vitest.config.ts (calibrated to the DB-free baseline). The DB-backed
+      # integration tests need a seeded Postgres + PostGIS (specific dev-DB
+      # UUIDs and Sudan admin polygons), so they're skipped here via
+      # SKIP_DB_TESTS=1. The dummy env vars below only need to satisfy the
+      # src/utils/env.ts schema parse at import time — no real services are
+      # contacted, since those describe blocks are skipped. Running the full
+      # DB-backed suite in CI (reusing the E2E Postgres) is a noted fast follow.
+      - name: Test (DB-free) + coverage gate
+        run: bun run test:ci:coverage
         env:
           DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
           BETTER_AUTH_SECRET: ci-dummy-secret-at-least-32-chars-long-xxxx
