@@ -235,6 +235,20 @@ export const queryTypeDef = gql`
       adminLevel: Int
     ): String
 
+    """Resolve a place name against the offline GeoNames gazetteer — the
+    first tier of the hybrid geo-resolver. Tries an exact normalised-name
+    match, then a \`pg_trgm\` fuzzy match, preferring populated places / admin
+    areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
+    (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
+    loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
+    Returns null on no match — the geoparser then falls back to LocationIQ
+    for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
+    resolveGazetteerLocation(
+      name: String!
+      countryCode: String
+      minSimilarity: Float
+    ): GazetteerHit
+
     """Hybrid dense + BM25 retrieval over the knowledge base, fused
     with Reciprocal Rank Fusion (k=60) and returned in descending
     score order. Both retrievers run in parallel over the same filter
