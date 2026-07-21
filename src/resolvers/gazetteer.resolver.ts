@@ -1,5 +1,6 @@
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
+import { normalizeGazetteerName } from "../utils/geonames-normalize.js";
 
 interface Row {
   geonamesId: number;
@@ -11,21 +12,6 @@ interface Row {
   countryCode: string;
   population: bigint;
   sim?: number;
-}
-
-/**
- * unaccent + lowercase + strip punctuation. MUST stay in lockstep with the
- * normaliser in `scripts/import-geonames.ts` — the stored `name_norm` is
- * produced there, so a divergence here silently breaks every lookup.
- */
-function norm(s: string): string {
-  return s
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function toHit(r: Row, score: number, exact: boolean) {
@@ -52,10 +38,13 @@ export const gazetteerResolvers = {
     ) => {
       requireRole(context, ["admin", "pipeline"]);
 
-      const q = norm(args.name);
+      const q = normalizeGazetteerName(args.name);
       if (!q) return null;
       const cc = args.countryCode ? args.countryCode.toUpperCase() : null;
-      const minSim = args.minSimilarity ?? 0.4;
+      // Clamp to pg_trgm's valid [0, 1] range — the field is a GraphQL Float,
+      // so a caller could pass -1 (which would disable the floor entirely) or
+      // >1 (which would match nothing). Defaults to 0.4.
+      const minSim = Math.min(1, Math.max(0, args.minSimilarity ?? 0.4));
 
       // 1. Exact normalised-name hit. Prefer populated places / admin areas
       //    over hydro/terrain/POI features, then the most-populous tie-break.
@@ -72,23 +61,30 @@ export const gazetteerResolvers = {
       `;
       if (exact.length > 0) return toHit(exact[0], 1.0, true);
 
-      // 2. Fuzzy trigram fallback. The `%` operator is GIN-indexed
-      //    (pg_trgm) and prunes to the session similarity threshold; the
-      //    explicit `>= minSim` raises the floor. Ranked by similarity,
-      //    then settlement importance.
-      const fuzzy = await context.prisma.$queryRaw<Row[]>`
-        SELECT g.geonames_id AS "geonamesId", g.name, g.latitude, g.longitude,
-               g.feature_class AS "featureClass", g.feature_code AS "featureCode",
-               g.country_code AS "countryCode", g.population,
-               similarity(n.name_norm, ${q}) AS sim
-        FROM "geonames_name" n
-        JOIN "geonames" g ON g.geonames_id = n.geonames_id
-        WHERE (${cc}::text IS NULL OR n.country_code = ${cc})
-          AND n.name_norm % ${q}
-          AND similarity(n.name_norm, ${q}) >= ${minSim}
-        ORDER BY sim DESC, (g.feature_class IN ('P', 'A')) DESC, g.population DESC
-        LIMIT 1
-      `;
+      // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator.
+      //    `%` prunes by pg_trgm's similarity-threshold GUC, NOT by any
+      //    value in the query — its default is 0.3, so a caller passing
+      //    minSimilarity < 0.3 would otherwise still be floored at 0.3 with
+      //    no error. Lower the threshold to minSim for this query only:
+      //    set_config(..., is_local => true) scopes it to the transaction so
+      //    it reverts on commit and can't leak onto the pooled connection.
+      //    With `%` now honouring minSim, the explicit `>= minSim` filter is
+      //    redundant and `similarity()` is computed once (aliased `sim`).
+      const fuzzy = await context.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('pg_trgm.similarity_threshold', ${minSim}::text, true)`;
+        return tx.$queryRaw<Row[]>`
+          SELECT g.geonames_id AS "geonamesId", g.name, g.latitude, g.longitude,
+                 g.feature_class AS "featureClass", g.feature_code AS "featureCode",
+                 g.country_code AS "countryCode", g.population,
+                 similarity(n.name_norm, ${q}) AS sim
+          FROM "geonames_name" n
+          JOIN "geonames" g ON g.geonames_id = n.geonames_id
+          WHERE (${cc}::text IS NULL OR n.country_code = ${cc})
+            AND n.name_norm % ${q}
+          ORDER BY sim DESC, (g.feature_class IN ('P', 'A')) DESC, g.population DESC
+          LIMIT 1
+        `;
+      });
       if (fuzzy.length > 0) return toHit(fuzzy[0], Number(fuzzy[0].sim), false);
 
       return null;

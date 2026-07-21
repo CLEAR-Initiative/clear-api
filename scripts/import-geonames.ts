@@ -14,21 +14,10 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
+import { normalizeGazetteerName as norm } from "../src/utils/geonames-normalize.js";
 
 const COUNTRIES = ["SD", "VE", "AF"] as const;
 const GEONAMES_DIR = join(process.cwd(), "src", "geonames");
-
-/** unaccent + lowercase + strip punctuation. Keep in lockstep with the
- *  resolver's normaliser. */
-function norm(s: string): string {
-  return s
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /** Multi-row INSERT, chunked to stay under Postgres's 65535-parameter cap. */
 async function insertRows(
@@ -57,6 +46,11 @@ async function main() {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   const client = await pool.connect();
   try {
+    // Atomic reload: TRUNCATE + all inserts run inside one transaction, so a
+    // failure partway (a missing country file, a dropped connection) rolls
+    // back to the previously loaded gazetteer instead of leaving it
+    // half-populated and silently serving incomplete results in production.
+    await client.query("BEGIN");
     console.log("Truncating geonames tables…");
     await client.query("TRUNCATE geonames, geonames_name RESTART IDENTITY CASCADE");
 
@@ -107,9 +101,17 @@ async function main() {
       console.log(`  ${cc}: ${placeRows.length.toLocaleString()} places, ${nameRows.length.toLocaleString()} name variants`);
     }
 
+    await client.query("COMMIT");
+
+    // ANALYZE after COMMIT — refreshing planner stats isn't part of the
+    // atomic load, and running it outside the transaction sidesteps the
+    // ANALYZE-in-transaction-block caveat entirely.
     await client.query("ANALYZE geonames");
     await client.query("ANALYZE geonames_name");
     console.log(`\nDone: ${totalPlaces.toLocaleString()} places, ${totalNames.toLocaleString()} name variants.`);
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
   } finally {
     client.release();
     await pool.end();
