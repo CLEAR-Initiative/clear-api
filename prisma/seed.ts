@@ -570,6 +570,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["conflict"],
       rank: 0.91,
+      severity: 5, // critical (pipeline normally sets this; seeded for demo/E2E)
       originId: elFasher.id,
       locationId: northDarfur.id,
     },
@@ -585,6 +586,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["displacement"],
       rank: 0.85,
+      severity: 3, // medium
       originId: northDarfur.id,
       destinationId: nyala.id,
       locationId: southDarfur.id,
@@ -602,6 +604,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["natural_disaster", "flood"],
       rank: 0.87,
+      severity: 4, // high
       locationId: khartoum.id,
     },
   });
@@ -616,6 +619,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["food_security"],
       rank: 0.82,
+      severity: 2, // low
       locationId: northDarfur.id,
       populationAffected: BigInt(120000),
     },
