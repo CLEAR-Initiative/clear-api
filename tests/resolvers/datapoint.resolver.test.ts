@@ -340,10 +340,11 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     });
   });
 
-  it("routes each figure to its own scope's tier (A2→weekly, A1→monthly, A0→yearly+all)", async () => {
+  it("routes each figure to its own scope's tier (A2→weekly, A1→monthly, A0→yearly+monthly+all)", async () => {
     // One report carrying three figures at three scopes. No roll-up: each
-    // lands in the tier for its OWN admin level, so we still see four
-    // bucket kinds — but from three distinct scopes, not one A2 fanned up.
+    // lands in the tier for its OWN admin level. A0 now emits three windows
+    // (yearly + monthly + all-time), A1 monthly, A2 weekly — five buckets
+    // from three distinct scopes, not one A2 fanned up.
     const fig = (value: number, scope: string) => ({
       value, unit: "people", confidence: "reported",
       source_quote: "…", chunk_index: 0, page_number: 1,
@@ -397,18 +398,18 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     });
 
     const result = await refreshAggregatedDatapoints(null, args, ctx);
-    // 4 tiers × 1 report = 4 bucket create calls
-    expect(createTx).toHaveBeenCalledTimes(4);
-    expect(result.computedBuckets).toBe(4);
+    // A0 → yearly+monthly+all (3), A1 → monthly (1), A2 → weekly (1) = 5 buckets
+    expect(createTx).toHaveBeenCalledTimes(5);
+    expect(result.computedBuckets).toBe(5);
     expect(result.schemaVersion).toBe("v1");
 
-    // Verify the window kinds materialised are the four we expect —
-    // any regression that stops emitting one of the tiers should
-    // surface here.
+    // Verify the window kinds materialised are the five we expect (two
+    // monthly: one from A0, one from A1) — any regression that stops
+    // emitting one of the tiers should surface here.
     const windowKinds = createTx.mock.calls
       .map((c) => (c[0] as { data: { windowKind: string } }).data.windowKind)
       .sort();
-    expect(windowKinds).toEqual(["all", "monthly", "weekly", "yearly"]);
+    expect(windowKinds).toEqual(["all", "monthly", "monthly", "weekly", "yearly"]);
   });
 
   it("supersedes any current row BEFORE inserting the new one", async () => {
@@ -530,11 +531,12 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     expect(createTx).not.toHaveBeenCalled();
   });
 
-  it("cascades validTo on situation_analyses for yearly-country buckets only", async () => {
-    // The refresh mutation writes four tiers. Only the yearly-country
-    // tier should trigger the situation_analyses cascade — weekly-A2
-    // / monthly-A1 changes must NOT invalidate the yearly snapshot
-    // until they roll up. Locks the cascade guard from the resolver.
+  it("cascades validTo on situation_analyses for yearly- and monthly-country buckets", async () => {
+    // A country-scoped (A0) figure writes yearly + monthly + all-time.
+    // The yearly-country AND monthly-country tiers each trigger the
+    // situation_analyses cascade (both have snapshots); the all-time
+    // tier must NOT, even though it too carries a country locationId.
+    // Locks the cascade guard (windowKind yearly|monthly) from the resolver.
     const findManyReports = vi.fn().mockResolvedValue([
       {
         id: "row1", reportId: "r1",
@@ -589,25 +591,31 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       schemaVersion: "v1",
     }, ctx);
 
-    // The A0 figure makes two buckets (yearly + all-time), but only the
-    // yearly one triggers the situation_analyses cascade. all-time also
-    // has a non-null country locationId, so it COULD trigger — the
-    // resolver guards with `windowKind === "yearly"`.
-    expect(situationUpdateCalls).toHaveLength(1);
-    expect(situationUpdateCalls[0]!.countryLocationId).toBe("sdn0");
-    expect(situationUpdateCalls[0]!.validTo).toBeNull();
+    // The A0 figure makes three buckets (yearly + monthly + all-time);
+    // the yearly and monthly ones each trigger the situation_analyses
+    // cascade. all-time also has a non-null country locationId, so it
+    // COULD trigger — the resolver guards with
+    // `windowKind === "yearly" || windowKind === "monthly"`.
+    expect(situationUpdateCalls).toHaveLength(2);
+    for (const where of situationUpdateCalls) {
+      expect(where.countryLocationId).toBe("sdn0");
+      expect(where.validTo).toBeNull();
+    }
+    expect(
+      situationUpdateCalls.map((w) => w.windowKind).sort(),
+    ).toEqual(["monthly", "yearly"]);
 
     // The result carries the invalidation count back to the caller
     // (Dagster surfaces it as an asset metadata field).
-    expect(result.situationAnalysesInvalidated).toBe(1);
-    // Yearly + all-time = 2 buckets from the one A0 figure.
-    expect(result.computedBuckets).toBe(2);
+    expect(result.situationAnalysesInvalidated).toBe(2);
+    // Yearly + monthly + all-time = 3 buckets from the one A0 figure.
+    expect(result.computedBuckets).toBe(3);
   });
 
   it("cascade skips when no situation_analysis current row exists yet", async () => {
-    // Fresh env — no situation_analyses row for (country, year) yet.
-    // The yearly-country bucket write still succeeds; updateMany
-    // returns count=0; `situationAnalysesInvalidated` = 0.
+    // Fresh env — no situation_analyses rows for (country, year) or
+    // (country, month) yet. The yearly- and monthly-country bucket writes
+    // still succeed; updateMany returns count=0; `situationAnalysesInvalidated` = 0.
     const findManyReports = vi.fn().mockResolvedValue([
       {
         id: "row1", reportId: "r1",
@@ -654,10 +662,11 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
       schemaVersion: "v1",
     }, ctx);
 
-    // Yearly bucket exists (A0 figure), but no current situation row →
-    // updateMany count 0 → nothing invalidated. Yearly + all-time = 2.
+    // Yearly + monthly buckets exist (A0 figure), but no current situation
+    // rows → updateMany count 0 → nothing invalidated. Yearly + monthly +
+    // all-time = 3.
     expect(result.situationAnalysesInvalidated).toBe(0);
-    expect(result.computedBuckets).toBe(2);
+    expect(result.computedBuckets).toBe(3);
   });
 
   it("two reports scoping figures to the SAME location share one bucket", async () => {
