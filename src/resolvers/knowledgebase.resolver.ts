@@ -457,29 +457,24 @@ export const knowledgebaseResolvers = {
           args.reportId,
         );
 
+        // Insert all chunks in ONE multi-row statement rather than N serial
+        // round-trips. A report with hundreds of chunks otherwise holds its
+        // pooled connection across the whole DELETE + N INSERTs (up to the
+        // 60s transaction timeout); batching returns the connection to the
+        // pool far sooner, which is what keeps a concurrent pipeline run from
+        // starving the pool. 20 params/row × KB_MAX_CHUNKS_PER_REPORT stays
+        // well under Postgres's 65535-parameter cap.
+        const rows: string[] = [];
+        const params: unknown[] = [];
+        let p = 1;
         for (const chunk of args.chunks) {
-          await tx.$executeRawUnsafe(
-            `
-              INSERT INTO "knowledgebase" (
-                "id", "report_id", "report_title", "source_url", "s3_key",
-                "published_at",
-                "chunk_index", "page_start", "page_end",
-                "chunk_text", "context_prefix", "embedded_text",
-                "embedding_provider", "embedding_model", "embedding",
-                "location_ids", "location_pcodes",
-                "time_range_start", "time_range_end",
-                "event_types", "need_sectors"
-              ) VALUES (
-                gen_random_uuid()::text, $1, $2, $3, $4,
-                $5,
-                $6, $7, $8,
-                $9, $10, $11,
-                $12, $13, $14::vector(1024),
-                $15::text[], $16::text[],
-                $17, $18,
-                $19::text[], $20::text[]
-              )
-            `,
+          rows.push(
+            `(gen_random_uuid()::text, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
+              `$${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
+              `$${p++}, $${p++}, $${p++}::vector(1024), $${p++}::text[], $${p++}::text[], ` +
+              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[])`,
+          );
+          params.push(
             args.reportId,
             args.reportTitle,
             args.sourceUrl,
@@ -502,6 +497,22 @@ export const knowledgebaseResolvers = {
             chunk.needSectors,
           );
         }
+
+        await tx.$executeRawUnsafe(
+          `
+            INSERT INTO "knowledgebase" (
+              "id", "report_id", "report_title", "source_url", "s3_key",
+              "published_at",
+              "chunk_index", "page_start", "page_end",
+              "chunk_text", "context_prefix", "embedded_text",
+              "embedding_provider", "embedding_model", "embedding",
+              "location_ids", "location_pcodes",
+              "time_range_start", "time_range_end",
+              "event_types", "need_sectors"
+            ) VALUES ${rows.join(", ")}
+          `,
+          ...params,
+        );
 
         return {
           reportId: args.reportId,
