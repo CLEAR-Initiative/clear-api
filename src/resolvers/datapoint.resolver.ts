@@ -442,12 +442,16 @@ export const datapointResolvers = {
         // the window tier for the scope's admin level — no roll-up. The
         // aggregator's scope filter then keeps only this report's figures
         // that are scoped to that location. Window tier by level: A0 →
-        // yearly + all-time, A1 → monthly, A2 (or deeper) → weekly.
+        // yearly + monthly + all-time, A1 → monthly, A2 (or deeper) → weekly.
+        // A0 also gets a monthly tier (alongside yearly) so the
+        // situation-analysis pipeline can build a monthly country snapshot;
+        // it aggregates only country-scoped figures, same as yearly-A0.
         for (const scopeId of scopeIdsByReport.get(r.reportId) ?? []) {
           const chain = hierarchy.get(scopeId);
           if (!chain) continue;
           if (chain.a0 === scopeId) {
             push({ windowStart: year.start, windowEnd: year.end, windowKind: "yearly", locationId: scopeId }, row);
+            push({ windowStart: month.start, windowEnd: month.end, windowKind: "monthly", locationId: scopeId }, row);
             push({ windowStart: ALL_TIME_START, windowEnd: ALL_TIME_END, windowKind: "all", locationId: scopeId }, row);
           } else if (chain.a1 === scopeId) {
             push({ windowStart: month.start, windowEnd: month.end, windowKind: "monthly", locationId: scopeId }, row);
@@ -516,20 +520,31 @@ export const datapointResolvers = {
           });
           computedBuckets++;
 
-          // Cascade invalidation to situation_analyses. Only the
-          // yearly-country tier drives situation-analysis snapshots
-          // (weekly-A2 and monthly-A1 changes don't invalidate the
-          // yearly snapshot until they roll up into a fresh yearly
-          // bucket write, which this branch handles). A NULL
-          // locationId at this tier would mean a country-wide roll-up
-          // whose situation-analysis we don't materialise today, so
-          // the `!= null` guard is deliberate.
-          if (key.windowKind === "yearly" && key.locationId != null) {
+          // Cascade invalidation to situation_analyses. The yearly-country
+          // AND monthly-country tiers each drive a situation-analysis
+          // snapshot, so a fresh bucket write at either tier makes the
+          // matching snapshot stale. (weekly-A2 and monthly-A1 changes
+          // don't — they roll up into a country bucket write handled here.
+          // A monthly-A1 (state) bucket also reaches this branch but
+          // no-ops: situation analyses are keyed by countryLocationId, so a
+          // state locationId matches no row.) Match on
+          // (countryLocationId, windowKind, windowStart) — the situation
+          // bucket key. windowKind (not windowEnd) is deliberate: window
+          // ends drift by a millisecond between this aggregator (.999) and
+          // the pipeline's situation upsert (.000), so an end-based match
+          // would silently invalidate nothing. windowStart is midnight-
+          // aligned on both sides, so it matches exactly. A NULL locationId
+          // (country-wide roll-up) has no materialised situation-analysis,
+          // hence the `!= null` guard.
+          if (
+            (key.windowKind === "yearly" || key.windowKind === "monthly") &&
+            key.locationId != null
+          ) {
             const invalidated = await tx.situationAnalysis.updateMany({
               where: {
                 countryLocationId: key.locationId,
+                windowKind: key.windowKind,
                 windowStart: key.windowStart,
-                windowEnd: key.windowEnd,
                 validTo: null,
               },
               data: { validTo: now },
