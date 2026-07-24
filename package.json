@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "bun run build:docs && tsc -p tsconfig.build.json",
-    "build:docs": "bun run scripts/build-docs.ts",
+    "build:docs": "tsx scripts/build-docs.ts",
     "start": "node dist/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",

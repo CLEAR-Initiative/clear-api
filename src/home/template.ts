@@ -149,7 +149,7 @@ export function renderHomePage(): string {
     <a class="nav-brand" href="/"><span class="c">CLEAR</span> API<span class="by">by NRC</span></a>
     <div class="nav-links">
       <a href="/docs">Docs</a>
-      <a href="/graphql">Sandbox</a>
+      <a href="/graphql" target="_blank" rel="noopener noreferrer">Sandbox</a>
       <a href="/portal">Portal</a>
       <a href="/portal" class="nav-cta">Get an API key</a>
     </div>
@@ -163,7 +163,7 @@ export function renderHomePage(): string {
         <p class="lead"><strong>CLEAR API</strong> is the developer interface to the CLEAR data commons &mdash; one GraphQL endpoint for verified crisis <strong>signals</strong>, <strong>events</strong>, <strong>alerts</strong>, and the geography they happen in. Built and operated by NRC.</p>
         <div class="hero-actions">
           <a href="/docs#guide" class="btn btn-primary">Read the Guide &rarr;</a>
-          <a href="/graphql" class="btn btn-outline">Open the Sandbox</a>
+          <a href="/graphql" class="btn btn-outline" target="_blank" rel="noopener noreferrer">Open the Sandbox</a>
         </div>
         <p class="terminal-hint"><span class="prompt">$</span> curl api.clearinitiative.io/graphql</p>
       </div>
@@ -414,7 +414,7 @@ export function renderHomePage(): string {
             <p>The mental model, your first authenticated request, and two real queries &mdash; end to end.</p>
             <span class="arrow">Build your first integration &rarr;</span>
           </a>
-          <a class="door" href="/graphql">
+          <a class="door" href="/graphql" target="_blank" rel="noopener noreferrer">
             <div class="d-num">02</div>
             <h3>Open the Sandbox</h3>
             <p>Browse the full schema with autocomplete and run live GraphQL queries in your browser.</p>
@@ -448,7 +448,7 @@ export function renderHomePage(): string {
         <div class="footer-links">
           <a href="/docs">Docs</a>
           <a href="/docs#guide">Guide</a>
-          <a href="/graphql">Sandbox</a>
+          <a href="/graphql" target="_blank" rel="noopener noreferrer">Sandbox</a>
           <a href="/portal">Portal</a>
           <a href="https://clearinitiative.io" target="_blank" rel="noopener">clearinitiative.io</a>
         </div>

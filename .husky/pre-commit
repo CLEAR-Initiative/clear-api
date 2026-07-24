@@ -1,4 +1,4 @@
-# Regenerate the GraphQL docs HTML when something that could affect the
+# Regenerate the GraphQL docs body HTML when something that could affect the
 # schema is part of the commit, then re-stage the regenerated file.
 #
 # Mirrors the docs-sync check in .github/workflows/ci.yml — without this
@@ -19,7 +19,7 @@ if ! git diff --cached --name-only | grep -qE "$SCHEMA_PATTERN"; then
   exit 0
 fi
 
-echo "[pre-commit] schema-affecting files staged — rebuilding src/docs/docs.html"
+echo "[pre-commit] schema-affecting files staged — rebuilding src/docs/docs-body.html"
 if ! bun run build:docs; then
   echo "[pre-commit] bun run build:docs failed — fix the schema and try again." >&2
   exit 1
@@ -28,7 +28,7 @@ fi
 # Stage the regenerated file only when it actually changed; quietly
 # proceed otherwise so unrelated touches to resolver/schema files
 # don't bloat every commit with a no-op diff.
-if ! git diff --quiet src/docs/docs.html; then
-  git add src/docs/docs.html
-  echo "[pre-commit] re-staged src/docs/docs.html"
+if ! git diff --quiet -- src/docs/docs-body.html; then
+  git add -- src/docs/docs-body.html
+  echo "[pre-commit] re-staged src/docs/docs-body.html"
 fi

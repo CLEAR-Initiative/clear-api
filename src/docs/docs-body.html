@@ -1,185 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CLEAR API — Documentation</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#0a0a0b">
-  <style>
-    :root {
-      --color-bg: #0a0a0b;
-      --color-surface: #141417;
-      --color-border: #26262b;
-      --color-accent: #f2612a;
-      --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6;
-      --color-muted: #9a9ca3;
-      --color-label: #75777e;
-      --color-code-bg: #0e0e10;
-      --on-accent: #0a0a0b;
-      --radius: 10px;
-      --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Inter, Arial, sans-serif;
-      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
-      --sidebar-width: 240px;
-      --toc-width: 200px;
-    }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
-    a { color: var(--color-accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
-    /* Nav */
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 1rem 2rem; border-bottom: 1px solid var(--color-border); background: rgba(10,10,11,0.85); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 100; }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; color: var(--color-text); text-decoration: none; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-brand .by { color: var(--color-label); font-weight: 500; font-size: 0.8rem; font-style: italic; margin-left: 0.4rem; }
-    .nav-links { display: flex; align-items: center; gap: 1.75rem; }
-    .nav-links a { font-size: 0.85rem; color: var(--color-muted); }
-    .nav-links a:hover { color: var(--color-text); text-decoration: none; }
-    .nav-cta { border: 1px solid var(--color-border); border-radius: 8px; padding: 0.45rem 0.9rem !important; color: var(--color-text) !important; }
-    .nav-cta:hover { border-color: var(--color-accent); color: var(--color-accent) !important; }
-
-    /* Layout */
-    .layout { display: flex; min-height: calc(100vh - 49px); }
-
-    /* Left sidebar */
-    .sidebar { width: var(--sidebar-width); flex-shrink: 0; border-right: 1px solid var(--color-border); background: var(--color-surface); padding: 1.5rem 0; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
-    .sidebar-section { padding: 0 1.25rem; margin-bottom: 1.5rem; }
-    .sidebar-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
-    .sidebar-link { display: block; font-size: 0.85rem; color: var(--color-muted); padding: 0.25rem 0; transition: color 0.1s; }
-    .sidebar-link:hover { color: var(--color-text); text-decoration: none; }
-    .sidebar-link.active { color: var(--color-accent); }
-    .sidebar-link.depth-2 { padding-left: 0.75rem; font-size: 0.8rem; }
-
-    /* Subtle, hover-reveal scrollbars (sidebar, TOC, page) */
-    .sidebar, .toc { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-    .sidebar:hover, .toc:hover { scrollbar-color: var(--color-border) transparent; }
-    .sidebar::-webkit-scrollbar, .toc::-webkit-scrollbar { width: 8px; }
-    .sidebar::-webkit-scrollbar-track, .toc::-webkit-scrollbar-track { background: transparent; }
-    .sidebar::-webkit-scrollbar-thumb, .toc::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-    .sidebar:hover::-webkit-scrollbar-thumb, .toc:hover::-webkit-scrollbar-thumb { background: var(--color-border); background-clip: content-box; }
-    .sidebar:hover::-webkit-scrollbar-thumb:hover, .toc:hover::-webkit-scrollbar-thumb:hover { background: #3a3a42; background-clip: content-box; }
-    body { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
-    body::-webkit-scrollbar { width: 10px; }
-    body::-webkit-scrollbar-track { background: transparent; }
-    body::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-    body::-webkit-scrollbar-thumb:hover { background: #3a3a42; background-clip: content-box; }
-
-    /* Main content */
-    .content { flex: 1; max-width: 780px; padding: 2.5rem 3rem; min-width: 0; }
-    .content h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    .content h2 { font-size: 1.3rem; margin: 2.5rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
-    .content h2:first-of-type { border-top: none; padding-top: 0; }
-    .content h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
-    .content p { color: var(--color-muted); margin-bottom: 0.75rem; }
-    .content ul { padding-left: 1.5rem; color: var(--color-muted); margin-bottom: 0.75rem; }
-    .content li { margin: 0.3rem 0; }
-    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
-
-    /* Right TOC */
-    .toc { width: var(--toc-width); flex-shrink: 0; padding: 1.5rem 1rem; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
-    .toc-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
-    .toc a { display: block; font-size: 0.78rem; color: var(--color-muted); padding: 0.2rem 0; }
-    .toc a:hover { color: var(--color-text); text-decoration: none; }
-    .toc a.active { color: var(--color-accent); }
-
-    /* Code */
-    pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
-    code { font-family: var(--font-mono); font-size: 0.85rem; color: #cdd1d6; }
-    p code, li code, td code { background: var(--color-code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
-    .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; background: var(--color-border); border: none; border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 0.75rem; font-family: var(--font); }
-    .copy-btn:hover { background: var(--color-accent); color: var(--on-accent); }
-
-    /* Reference tables */
-    .ref-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
-    .ref-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
-    .ref-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; vertical-align: top; }
-    .ref-table td:first-child { white-space: nowrap; }
-
-    /* Field args */
-    .field-args { margin-top: 0.35rem; }
-    .field-args .arg { display: block; font-size: 0.78rem; color: var(--color-muted); padding-left: 0.5rem; border-left: 2px solid var(--color-border); margin-top: 0.2rem; }
-
-    /* Type badge */
-    .type-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; background: var(--color-border); color: var(--color-muted); }
-
-    /* Feature table */
-    .feature-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-    .feature-table th { text-align: left; padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
-    .feature-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
-    .feature-table td:first-child a { font-weight: 500; }
-
-    /* Steps */
-    .steps { margin-top: 1rem; }
-    .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
-    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
-    .step-content h4 { margin: 0 0 0.25rem; color: var(--color-text); font-size: 0.95rem; }
-    .step-content p { margin: 0.25rem 0; }
-
-    /* Notice */
-    .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
-    .notice-info { background: #11151c; border: 1px solid #2b3340; color: #aeb6c2; }
-    .notice-warning { background: #451a03; border: 1px solid #f59e0b; color: #fde68a; }
-
-    /* Responsive */
-    @media (max-width: 1100px) {
-      .toc { display: none; }
-    }
-    @media (max-width: 800px) {
-      .sidebar { display: none; }
-      .content { padding: 1.5rem; }
-    }
-  </style>
-</head>
-<body>
-  <nav class="nav">
-    <a class="nav-brand" href="/"><span class="c">CLEAR</span> API<span class="by">by NRC</span></a>
-    <div class="nav-links">
-      <a href="/">Home</a>
-      <a href="/graphql">Sandbox</a>
-      <a href="/portal">Portal</a>
-      <a href="/portal" class="nav-cta">Get an API key</a>
-    </div>
-  </nav>
-
-  <div class="layout">
-    <!-- Left sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Start Here</div>
-        <a href="#guide" class="sidebar-link">Build Your First Integration</a>
-        <a href="#guide-model" class="sidebar-link depth-2">The mental model</a>
-        <a href="#guide-setup" class="sidebar-link depth-2">Get set up</a>
-        <a href="#guide-first-request" class="sidebar-link depth-2">Your first request</a>
-        <a href="#guide-real-query" class="sidebar-link depth-2">Pull real data</a>
-        <a href="#guide-by-location" class="sidebar-link depth-2">Slice by location</a>
-        <a href="#guide-next" class="sidebar-link depth-2">Where to go next</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Get Started</div>
-        <a href="#introduction" class="sidebar-link">Introduction</a>
-        <a href="#quick-start" class="sidebar-link">Quick Start</a>
-        <a href="#authentication" class="sidebar-link">Authentication</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Features</div>
-        <a href="#features" class="sidebar-link">Overview</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">API Reference</div>
-        <a href="#queries" class="sidebar-link">Queries</a>
-        <a href="#mutations" class="sidebar-link">Mutations</a>
-        <a href="#types" class="sidebar-link">Types</a>
-        <a href="#type-datetime" class="sidebar-link depth-2">DateTime</a><a href="#type-geojson" class="sidebar-link depth-2">GeoJSON</a><a href="#type-json" class="sidebar-link depth-2">JSON</a><a href="#type-upload" class="sidebar-link depth-2">Upload</a><a href="#type-alertorderby" class="sidebar-link depth-2">AlertOrderBy</a><a href="#type-alertstatus" class="sidebar-link depth-2">AlertStatus</a><a href="#type-channel" class="sidebar-link depth-2">Channel</a><a href="#type-detectionstatus" class="sidebar-link depth-2">DetectionStatus</a><a href="#type-entitykind" class="sidebar-link depth-2">EntityKind</a><a href="#type-eventorderby" class="sidebar-link depth-2">EventOrderBy</a><a href="#type-frequency" class="sidebar-link depth-2">Frequency</a><a href="#type-invitationstatus" class="sidebar-link depth-2">InvitationStatus</a><a href="#type-knowledgebaseingeststatus" class="sidebar-link depth-2">KnowledgebaseIngestStatus</a><a href="#type-notificationstatus" class="sidebar-link depth-2">NotificationStatus</a><a href="#type-orgmemberrole" class="sidebar-link depth-2">OrgMemberRole</a><a href="#type-signalorderby" class="sidebar-link depth-2">SignalOrderBy</a><a href="#type-statsgroupby" class="sidebar-link depth-2">StatsGroupBy</a><a href="#type-teammemberrole" class="sidebar-link depth-2">TeamMemberRole</a><a href="#type-webhookdeliverystatus" class="sidebar-link depth-2">WebhookDeliveryStatus</a><a href="#type-acceptinviteinput" class="sidebar-link depth-2">AcceptInviteInput</a><a href="#type-activitylogfilterinput" class="sidebar-link depth-2">ActivityLogFilterInput</a><a href="#type-addcommentinput" class="sidebar-link depth-2">AddCommentInput</a><a href="#type-addfeedbackinput" class="sidebar-link depth-2">AddFeedbackInput</a><a href="#type-alertdigestinput" class="sidebar-link depth-2">AlertDigestInput</a><a href="#type-alertnotifyinput" class="sidebar-link depth-2">AlertNotifyInput</a><a href="#type-alertspageinput" class="sidebar-link depth-2">AlertsPageInput</a><a href="#type-createalertinput" class="sidebar-link depth-2">CreateAlertInput</a><a href="#type-createapikeyinput" class="sidebar-link depth-2">CreateApiKeyInput</a><a href="#type-createbulknotificationsinput" class="sidebar-link depth-2">CreateBulkNotificationsInput</a><a href="#type-createcrisisfromeventsinput" class="sidebar-link depth-2">CreateCrisisFromEventsInput</a><a href="#type-createdatasourceinput" class="sidebar-link depth-2">CreateDataSourceInput</a><a href="#type-createdevuserinput" class="sidebar-link depth-2">CreateDevUserInput</a><a href="#type-createeventinput" class="sidebar-link depth-2">CreateEventInput</a><a href="#type-createlocationinput" class="sidebar-link depth-2">CreateLocationInput</a><a href="#type-createmanualsignalinput" class="sidebar-link depth-2">CreateManualSignalInput</a><a href="#type-createnotificationinput" class="sidebar-link depth-2">CreateNotificationInput</a><a href="#type-createorganisationinput" class="sidebar-link depth-2">CreateOrganisationInput</a><a href="#type-createpubliceventlinkinput" class="sidebar-link depth-2">CreatePublicEventLinkInput</a><a href="#type-createsignalinput" class="sidebar-link depth-2">CreateSignalInput</a><a href="#type-createteaminput" class="sidebar-link depth-2">CreateTeamInput</a><a href="#type-createwebhooksubscriptioninput" class="sidebar-link depth-2">CreateWebhookSubscriptionInput</a><a href="#type-daterangeinput" class="sidebar-link depth-2">DateRangeInput</a><a href="#type-entitystatsinput" class="sidebar-link depth-2">EntityStatsInput</a><a href="#type-eventspageinput" class="sidebar-link depth-2">EventsPageInput</a><a href="#type-findorcreatelandmarkl4input" class="sidebar-link depth-2">FindOrCreateLandmarkL4Input</a><a href="#type-inviteuserinput" class="sidebar-link depth-2">InviteUserInput</a><a href="#type-knowledgebasechunkinput" class="sidebar-link depth-2">KnowledgebaseChunkInput</a><a href="#type-knowledgebasefilters" class="sidebar-link depth-2">KnowledgebaseFilters</a><a href="#type-localetranslationinput" class="sidebar-link depth-2">LocaleTranslationInput</a><a href="#type-replytocommentinput" class="sidebar-link depth-2">ReplyToCommentInput</a><a href="#type-signalspageinput" class="sidebar-link depth-2">SignalsPageInput</a><a href="#type-subscribetoalertsbatchinput" class="sidebar-link depth-2">SubscribeToAlertsBatchInput</a><a href="#type-subscribetoalertsinput" class="sidebar-link depth-2">SubscribeToAlertsInput</a><a href="#type-teamassignmentinput" class="sidebar-link depth-2">TeamAssignmentInput</a><a href="#type-updatealertinput" class="sidebar-link depth-2">UpdateAlertInput</a><a href="#type-updatealertsubscriptioninput" class="sidebar-link depth-2">UpdateAlertSubscriptionInput</a><a href="#type-updatecrisispopulationinput" class="sidebar-link depth-2">UpdateCrisisPopulationInput</a><a href="#type-updatedatasourceinput" class="sidebar-link depth-2">UpdateDataSourceInput</a><a href="#type-updateeventinput" class="sidebar-link depth-2">UpdateEventInput</a><a href="#type-updatelocationinput" class="sidebar-link depth-2">UpdateLocationInput</a><a href="#type-updateorganisationinput" class="sidebar-link depth-2">UpdateOrganisationInput</a><a href="#type-updateprofileinput" class="sidebar-link depth-2">UpdateProfileInput</a><a href="#type-updateteaminput" class="sidebar-link depth-2">UpdateTeamInput</a><a href="#type-updatewebhooksubscriptioninput" class="sidebar-link depth-2">UpdateWebhookSubscriptionInput</a><a href="#type-upsertlocationmetadatainput" class="sidebar-link depth-2">UpsertLocationMetadataInput</a><a href="#type-upsertnominatimcacheinput" class="sidebar-link depth-2">UpsertNominatimCacheInput</a><a href="#type-upsertreportdatapointsinput" class="sidebar-link depth-2">UpsertReportDatapointsInput</a><a href="#type-upsertsituationanalysisinput" class="sidebar-link depth-2">UpsertSituationAnalysisInput</a><a href="#type-upserttranslationsinput" class="sidebar-link depth-2">UpsertTranslationsInput</a><a href="#type-activitycountsbyaction" class="sidebar-link depth-2">ActivityCountsByAction</a><a href="#type-activitylog" class="sidebar-link depth-2">ActivityLog</a><a href="#type-activitystats" class="sidebar-link depth-2">ActivityStats</a><a href="#type-aggregateddatapoint" class="sidebar-link depth-2">AggregatedDatapoint</a><a href="#type-alert" class="sidebar-link depth-2">Alert</a><a href="#type-alertspage" class="sidebar-link depth-2">AlertsPage</a><a href="#type-alertsubscription" class="sidebar-link depth-2">AlertSubscription</a><a href="#type-apikey" class="sidebar-link depth-2">ApiKey</a><a href="#type-approveuserresult" class="sidebar-link depth-2">ApproveUserResult</a><a href="#type-archivestalealertsresult" class="sidebar-link depth-2">ArchiveStaleAlertsResult</a><a href="#type-commenttag" class="sidebar-link depth-2">CommentTag</a><a href="#type-createapikeypayload" class="sidebar-link depth-2">CreateApiKeyPayload</a><a href="#type-createdevuserresult" class="sidebar-link depth-2">CreateDevUserResult</a><a href="#type-createpubliceventlinkresult" class="sidebar-link depth-2">CreatePublicEventLinkResult</a><a href="#type-crisis" class="sidebar-link depth-2">Crisis</a><a href="#type-dailyactivitycount" class="sidebar-link depth-2">DailyActivityCount</a><a href="#type-datasource" class="sidebar-link depth-2">DataSource</a><a href="#type-daupoint" class="sidebar-link depth-2">DauPoint</a><a href="#type-disasterlevel1" class="sidebar-link depth-2">DisasterLevel1</a><a href="#type-disasterlevel2" class="sidebar-link depth-2">DisasterLevel2</a><a href="#type-disastertype" class="sidebar-link depth-2">DisasterType</a><a href="#type-entitystats" class="sidebar-link depth-2">EntityStats</a><a href="#type-event" class="sidebar-link depth-2">Event</a><a href="#type-eventcrisis" class="sidebar-link depth-2">EventCrisis</a><a href="#type-eventescalation" class="sidebar-link depth-2">EventEscalation</a><a href="#type-eventspage" class="sidebar-link depth-2">EventsPage</a><a href="#type-featureflag" class="sidebar-link depth-2">FeatureFlag</a><a href="#type-findorcreatelandmarkl4result" class="sidebar-link depth-2">FindOrCreateLandmarkL4Result</a><a href="#type-gazetteerhit" class="sidebar-link depth-2">GazetteerHit</a><a href="#type-invitation" class="sidebar-link depth-2">Invitation</a><a href="#type-invitationinfo" class="sidebar-link depth-2">InvitationInfo</a><a href="#type-invitationinfoteam" class="sidebar-link depth-2">InvitationInfoTeam</a><a href="#type-invitationteam" class="sidebar-link depth-2">InvitationTeam</a><a href="#type-knowledgebasehit" class="sidebar-link depth-2">KnowledgebaseHit</a><a href="#type-knowledgebaseingestjob" class="sidebar-link depth-2">KnowledgebaseIngestJob</a><a href="#type-location" class="sidebar-link depth-2">Location</a><a href="#type-locationmetadata" class="sidebar-link depth-2">LocationMetadata</a><a href="#type-maupoint" class="sidebar-link depth-2">MauPoint</a><a href="#type-nominatimcacheentry" class="sidebar-link depth-2">NominatimCacheEntry</a><a href="#type-notification" class="sidebar-link depth-2">Notification</a><a href="#type-organisation" class="sidebar-link depth-2">Organisation</a><a href="#type-organisationuser" class="sidebar-link depth-2">OrganisationUser</a><a href="#type-orgmember" class="sidebar-link depth-2">OrgMember</a><a href="#type-pipelinecountry" class="sidebar-link depth-2">PipelineCountry</a><a href="#type-publicevent" class="sidebar-link depth-2">PublicEvent</a><a href="#type-publiceventsignalpoint" class="sidebar-link depth-2">PublicEventSignalPoint</a><a href="#type-refreshaggregateddatapointsresult" class="sidebar-link depth-2">RefreshAggregatedDatapointsResult</a><a href="#type-reportdatapoint" class="sidebar-link depth-2">ReportDatapoint</a><a href="#type-rotatedevuserapikeyresult" class="sidebar-link depth-2">RotateDevUserApiKeyResult</a><a href="#type-signal" class="sidebar-link depth-2">Signal</a><a href="#type-signalspage" class="sidebar-link depth-2">SignalsPage</a><a href="#type-situationanalysis" class="sidebar-link depth-2">SituationAnalysis</a><a href="#type-statsbucket" class="sidebar-link depth-2">StatsBucket</a><a href="#type-team" class="sidebar-link depth-2">Team</a><a href="#type-teammember" class="sidebar-link depth-2">TeamMember</a><a href="#type-translationcoverage" class="sidebar-link depth-2">TranslationCoverage</a><a href="#type-translationrow" class="sidebar-link depth-2">TranslationRow</a><a href="#type-upsertknowledgebaseresult" class="sidebar-link depth-2">UpsertKnowledgebaseResult</a><a href="#type-upsertreportdatapointsresult" class="sidebar-link depth-2">UpsertReportDatapointsResult</a><a href="#type-upsertsituationanalysisresult" class="sidebar-link depth-2">UpsertSituationAnalysisResult</a><a href="#type-upserttranslationsresult" class="sidebar-link depth-2">UpsertTranslationsResult</a><a href="#type-user" class="sidebar-link depth-2">User</a><a href="#type-useractivitysummary" class="sidebar-link depth-2">UserActivitySummary</a><a href="#type-useralert" class="sidebar-link depth-2">UserAlert</a><a href="#type-usercomment" class="sidebar-link depth-2">UserComment</a><a href="#type-userengagementmetrics" class="sidebar-link depth-2">UserEngagementMetrics</a><a href="#type-userfeedback" class="sidebar-link depth-2">UserFeedback</a><a href="#type-webhookdelivery" class="sidebar-link depth-2">WebhookDelivery</a><a href="#type-webhooksubscription" class="sidebar-link depth-2">WebhookSubscription</a>
-      </div>
-    </aside>
-
-    <!-- Main content -->
-    <main class="content">
       <div id="section-guide">
-        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; START HERE &rsaquo; <strong>Build Your First Integration</strong></p>
         <h1 id="guide">Build Your First Integration</h1>
         <p class="subtitle">From zero knowledge to live humanitarian data in about ten minutes &mdash; the mental model, your first authenticated request, and two real queries.</p>
 
@@ -277,8 +97,7 @@
         </ul>
       </div>
 
-      <div id="section-introduction">
-        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
+      <div id="section-introduction" class="docs-section-block">
         <h1 id="introduction">Introduction</h1>
         <p class="subtitle">Welcome to the CLEAR API - your gateway to humanitarian intelligence.</p>
 
@@ -736,15 +555,15 @@ at this timestamp. Defaults to `now`.</span></div></td>
     <h2 id="mutations">Mutations</h2>
     <table class="ref-table">
       <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
-      <tbody><tr>
+      <tbody><tr id="mutation-createapikey">
     <td><code>createApiKey</code></td>
     <td><code>CreateApiKeyPayload!</code></td>
     <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-revokeapikey">
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
     <td>Revoke an API key by ID. Only the key owner or an admin can revoke.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
     <td>Mint a Redis-backed share token for an event. The snapshot of the
@@ -754,7 +573,7 @@ the eventId + token and lives for `ttlDays` days (default 30, max
 the `publicEvent(eventId, token)` query. Caller must be able to
 read the event normally (admin / analyst / viewer); pending users
 are blocked.<div class="field-args"><span class="arg"><code>input: CreatePublicEventLinkInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-revokepubliceventlink">
     <td><code>revokePublicEventLink</code></td>
     <td><code>Boolean!</code></td>
     <td>Invalidate a public share token by deleting the cached snapshot.
@@ -762,7 +581,7 @@ Idempotent — revoking a missing key returns true. Caller must be
 an approved user; ownership of the original link is not checked
 because the link is by definition unauthenticated and the only
 state to delete is the cache entry itself.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>token: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createdevuser">
     <td><code>createDevUser</code></td>
     <td><code>CreateDevUserResult!</code></td>
     <td>Provision a developer account from an approved waitlist application.
@@ -770,12 +589,12 @@ Creates the user, mints an initial API key (no expiry), issues a
 long-lived set-password verification token, and sends the welcome
 email. Requires global `admin`. The CRM write-back is the caller's
 responsibility.<div class="field-args"><span class="arg"><code>input: CreateDevUserInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-rotatedevuserapikey">
     <td><code>rotateDevUserApiKey</code></td>
     <td><code>RotateDevUserApiKeyResult!</code></td>
     <td>Revoke every active API key for a dev user and issue a fresh one.
 Notifies the user by email. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-approveuser">
     <td><code>approveUser</code></td>
     <td><code>ApproveUserResult!</code></td>
     <td>Approve a self-signed-up user. Flips their role from `pending`
@@ -785,50 +604,50 @@ into the approved collection — which fires Exponential's welcome
 automation. The local role flip is authoritative; CRM updates are
 best-effort and surface as fields on the result so the admin UI
 can offer a retry. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-requestemailverification">
     <td><code>requestEmailVerification</code></td>
     <td><code>Boolean!</code></td>
     <td>Request an email verification link for the authenticated user.</td>
-  </tr><tr>
+  </tr><tr id="mutation-verifyemail">
     <td><code>verifyEmail</code></td>
     <td><code>Boolean!</code></td>
     <td>Verify email using a token from the verification link.<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateprofile">
     <td><code>updateProfile</code></td>
     <td><code>User!</code></td>
     <td>Update the authenticated user's profile and notification preferences.<div class="field-args"><span class="arg"><code>input: UpdateProfileInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createalert">
     <td><code>createAlert</code></td>
     <td><code>Alert!</code></td>
     <td>Create an alert from an event, notifying subscribers.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatealert">
     <td><code>updateAlert</code></td>
     <td><code>Alert!</code></td>
     <td>Update an existing alert.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAlertInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletealert">
     <td><code>deleteAlert</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete an alert.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-archivestalealerts">
     <td><code>archiveStaleAlerts</code></td>
     <td><code>ArchiveStaleAlertsResult!</code></td>
     <td>Archive published alerts whose event.lastSignalCreatedAt is older than
 olderThanDays (default: 14). Sets alerts.status to 'archived'. Admin or
 pipeline only. Returns the number of rows affected.<div class="field-args"><span class="arg"><code>olderThanDays: Int</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createsignal">
     <td><code>createSignal</code></td>
     <td><code>Signal!</code></td>
     <td>Create a signal from a data source.<div class="field-args"><span class="arg"><code>input: CreateSignalInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>
     <td>Create a manual signal from a field officer, partner, or government source.
 Persists the signal and sends it to the pipeline for event grouping and auto-escalation.<div class="field-args"><span class="arg"><code>input: CreateManualSignalInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatesignalseverity">
     <td><code>updateSignalSeverity</code></td>
     <td><code>Signal!</code></td>
     <td>Update a signal's severity score.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>severity: Int!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatesignalgeoparseddata">
     <td><code>updateSignalGeoparsedData</code></td>
     <td><code>Signal!</code></td>
     <td>Attach the clear-pipeline geoparser's result to an existing signal.
@@ -836,7 +655,7 @@ Used for the manual-signal flow, where the signal is created via
 createManualSignal before the pipeline has a chance to run the geoparser.
 Stores the structured candidate verbatim; does not change locationId.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>geoparsedData: JSON!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatesignallocation">
     <td><code>updateSignalLocation</code></td>
     <td><code>Signal!</code></td>
     <td>Set (or replace) an existing signal's generalLocation. Used by the
@@ -845,23 +664,23 @@ the geoparser resolved a landmark, we promote it to an L4 via
 findOrCreateLandmarkL4 and then wire the signal to it so downstream
 event grouping can key on the resolved admin-2 district instead of
 creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletesignal">
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
     <td>Create a new event from signals.<div class="field-args"><span class="arg"><code>input: CreateEventInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateevent">
     <td><code>updateEvent</code></td>
     <td><code>Event!</code></td>
     <td>Update an existing event.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateEventInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deleteevent">
     <td><code>deleteEvent</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete an event.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-escalateevent">
     <td><code>escalateEvent</code></td>
     <td><code>EventEscalation!</code></td>
     <td>Escalate an event: creates an alert (published) and records the user escalation.
@@ -869,64 +688,64 @@ If the event already has a published alert, just records the user escalation.
 teamId (optional) admits a team_admin or field_coordinator on that team
 even without a global admin/analyst role — purely an authorisation hint,
 not stored on the event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createdatasource">
     <td><code>createDataSource</code></td>
     <td><code>DataSource!</code></td>
     <td>Create a new data source.<div class="field-args"><span class="arg"><code>input: CreateDataSourceInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatedatasource">
     <td><code>updateDataSource</code></td>
     <td><code>DataSource!</code></td>
     <td>Update an existing data source.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateDataSourceInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletedatasource">
     <td><code>deleteDataSource</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a data source.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>
     <td>Create a new location.<div class="field-args"><span class="arg"><code>input: CreateLocationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-ensurecountrylocation">
     <td><code>ensureCountryLocation</code></td>
     <td><code>Location!</code></td>
     <td>Idempotently resolve a level-0 Country location by exact name, creating it
 with a bounding-box MULTIPOLYGON geometry if absent (admin/pipeline only).
 bbox is [minLng, minLat, maxLng, maxLat]. Returns the (found or created)
 Country — doubles as the pipeline's name→id resolution.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>bbox: [Float!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatelocation">
     <td><code>updateLocation</code></td>
     <td><code>Location!</code></td>
     <td>Update an existing location.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateLocationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletelocation">
     <td><code>deleteLocation</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a location.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatelocationgeometry">
     <td><code>updateLocationGeometry</code></td>
     <td><code>Location!</code></td>
     <td>Replace a location's geometry with the given GeoJSON (admin/pipeline only).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>geometry: GeoJSON!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatelocationpopulation">
     <td><code>updateLocationPopulation</code></td>
     <td><code>Location!</code></td>
     <td>Set a location's cached population (admin/pipeline only).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>population: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatecrisispopulation">
     <td><code>updateCrisisPopulation</code></td>
     <td><code>Crisis!</code></td>
     <td>Set a crisis's populationAffected + populationInArea (admin/pipeline only).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateCrisisPopulationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertlocationmetadata">
     <td><code>upsertLocationMetadata</code></td>
     <td><code>LocationMetadata!</code></td>
     <td>Create or update a location's metadata entry for a given type (admin/pipeline only).
 Upsert keyed by (locationId, type).<div class="field-args"><span class="arg"><code>input: UpsertLocationMetadataInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertlocationmetadatabatch">
     <td><code>upsertLocationMetadataBatch</code></td>
     <td><code>[LocationMetadata!]!</code></td>
     <td>Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
 Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently.<div class="field-args"><span class="arg"><code>inputs: [UpsertLocationMetadataInput!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletelocationmetadata">
     <td><code>deleteLocationMetadata</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a location's metadata entry for a given type (admin only).<div class="field-args"><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>type: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-findorcreatelandmarkl4">
     <td><code>findOrCreateLandmarkL4</code></td>
     <td><code>FindOrCreateLandmarkL4Result!</code></td>
     <td>Find an existing level-4 location matching a geoparsed candidate, or
@@ -937,12 +756,12 @@ and sourceLng are provided, the resolver verifies that the candidate's
 containing A2 matches the source coord's containing A2 — on mismatch it
 aborts with abortedReason=&quot;different_a2&quot; so the caller can fall back to
 source coords. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertnominatimcache">
     <td><code>upsertNominatimCache</code></td>
     <td><code>NominatimCacheEntry!</code></td>
     <td>Upsert a Nominatim geocoder cache entry (admin/pipeline only).
 Replaces any existing row with the same queryHash, resetting the TTL.<div class="field-args"><span class="arg"><code>input: UpsertNominatimCacheInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-setfeatureflag">
     <td><code>setFeatureFlag</code></td>
     <td><code>FeatureFlag!</code></td>
     <td>Set the enabled state of a feature flag, identified by its string key.
@@ -950,165 +769,165 @@ Upserts the row so the same call works whether the key is already present.
 Admin only — toggling features is an org-wide change, not a per-user
 preference. Returns the persisted flag so callers can update local state
 without an extra round-trip.<div class="field-args"><span class="arg"><code>key: String!</code></span><span class="arg"><code>enabled: Boolean!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createnotification">
     <td><code>createNotification</code></td>
     <td><code>Notification!</code></td>
     <td>Create a notification for a user.<div class="field-args"><span class="arg"><code>input: CreateNotificationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createbulknotifications">
     <td><code>createBulkNotifications</code></td>
     <td><code>Int!</code></td>
     <td>Create notifications for multiple users at once. Returns the count of notifications created.<div class="field-args"><span class="arg"><code>input: CreateBulkNotificationsInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-notifyalertsubscribers">
     <td><code>notifyAlertSubscribers</code></td>
     <td><code>Int!</code></td>
     <td>Notify all subscribers of a single alert (immediate frequency). Matches on event types and locations.<div class="field-args"><span class="arg"><code>input: AlertNotifyInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-notifyalertdigest">
     <td><code>notifyAlertDigest</code></td>
     <td><code>Int!</code></td>
     <td>Send a digest notification for multiple alerts to subscribers of the given frequency (daily/weekly/monthly).<div class="field-args"><span class="arg"><code>input: AlertDigestInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletenotification">
     <td><code>deleteNotification</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a notification.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-marknotificationread">
     <td><code>markNotificationRead</code></td>
     <td><code>Notification!</code></td>
     <td>Mark a notification as read.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-markallnotificationsread">
     <td><code>markAllNotificationsRead</code></td>
     <td><code>Boolean!</code></td>
     <td>Mark all notifications as read for the authenticated user.</td>
-  </tr><tr>
+  </tr><tr id="mutation-addfeedback">
     <td><code>addFeedback</code></td>
     <td><code>UserFeedback!</code></td>
     <td>Add feedback (rating + optional text) to a signal or event.<div class="field-args"><span class="arg"><code>input: AddFeedbackInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletefeedback">
     <td><code>deleteFeedback</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete your own feedback.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-addcomment">
     <td><code>addComment</code></td>
     <td><code>UserComment!</code></td>
     <td>Add a comment to a signal or event.<div class="field-args"><span class="arg"><code>input: AddCommentInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-replytocomment">
     <td><code>replyToComment</code></td>
     <td><code>UserComment!</code></td>
     <td>Reply to an existing comment.<div class="field-args"><span class="arg"><code>input: ReplyToCommentInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletecomment">
     <td><code>deleteComment</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete your own comment.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-tagusersincomment">
     <td><code>tagUsersInComment</code></td>
     <td><code>UserComment!</code></td>
     <td>Tag users in a comment.<div class="field-args"><span class="arg"><code>commentId: String!</code></span><span class="arg"><code>userIds: [String!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createorganisation">
     <td><code>createOrganisation</code></td>
     <td><code>Organisation!</code></td>
     <td>Create a new organisation. The creator becomes the first org_admin.<div class="field-args"><span class="arg"><code>input: CreateOrganisationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateorganisation">
     <td><code>updateOrganisation</code></td>
     <td><code>Organisation!</code></td>
     <td>Update an existing organisation. Requires org_admin (or platform admin).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateOrganisationInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-addorgmember">
     <td><code>addOrgMember</code></td>
     <td><code>OrgMember!</code></td>
     <td>Add a member to an organisation.<div class="field-args"><span class="arg"><code>orgId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: OrgMemberRole</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-removeorgmember">
     <td><code>removeOrgMember</code></td>
     <td><code>Boolean!</code></td>
     <td>Remove a member from an organisation.<div class="field-args"><span class="arg"><code>orgId: String!</code></span><span class="arg"><code>userId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateorgmemberrole">
     <td><code>updateOrgMemberRole</code></td>
     <td><code>OrgMember!</code></td>
     <td>Change a member's role within an organisation. Requires the caller to be
 a platform admin or an org_admin of the target organisation.<div class="field-args"><span class="arg"><code>orgId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: OrgMemberRole!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deleteorganisation">
     <td><code>deleteOrganisation</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete an organisation and all its teams, members, and invitations. Requires global admin.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createteam">
     <td><code>createTeam</code></td>
     <td><code>Team!</code></td>
     <td>Create a new team within an organisation. Requires org_admin (or platform admin).<div class="field-args"><span class="arg"><code>input: CreateTeamInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateteam">
     <td><code>updateTeam</code></td>
     <td><code>Team!</code></td>
     <td>Update an existing team.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateTeamInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deleteteam">
     <td><code>deleteTeam</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a team.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-addteammember">
     <td><code>addTeamMember</code></td>
     <td><code>TeamMember!</code></td>
     <td>Add a member to a team.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-removeteammember">
     <td><code>removeTeamMember</code></td>
     <td><code>Boolean!</code></td>
     <td>Remove a member from a team.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updateteammemberrole">
     <td><code>updateTeamMemberRole</code></td>
     <td><code>TeamMember!</code></td>
     <td>Update a team member's role.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-setteamlocations">
     <td><code>setTeamLocations</code></td>
     <td><code>Team!</code></td>
     <td>Set the locations a team is scoped to. Replaces all existing locations.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>locationIds: [String!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-setdefaultteam">
     <td><code>setDefaultTeam</code></td>
     <td><code>Team!</code></td>
     <td>Set the authenticated user's default team (for frontend convenience).<div class="field-args"><span class="arg"><code>teamId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-inviteuser">
     <td><code>inviteUser</code></td>
     <td><code>Invitation!</code></td>
     <td>Invite a user to an organisation (and optionally a team). Sends invite email.<div class="field-args"><span class="arg"><code>input: InviteUserInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-acceptinvite">
     <td><code>acceptInvite</code></td>
     <td><code>Boolean!</code></td>
     <td>Accept an invitation. Creates user account if new, adds to org and team.<div class="field-args"><span class="arg"><code>input: AcceptInviteInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-cancelinvite">
     <td><code>cancelInvite</code></td>
     <td><code>Boolean!</code></td>
     <td>Cancel a pending invitation.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-resendinvite">
     <td><code>resendInvite</code></td>
     <td><code>Invitation!</code></td>
     <td>Resend an invitation email (resets expiry to 7 days).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-requestpasswordreset">
     <td><code>requestPasswordReset</code></td>
     <td><code>Boolean!</code></td>
     <td>Request a password reset email (public, always returns true).<div class="field-args"><span class="arg"><code>email: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-resetpassword">
     <td><code>resetPassword</code></td>
     <td><code>Boolean!</code></td>
     <td>Reset password using a token from the reset email.<div class="field-args"><span class="arg"><code>token: String!</code></span><span class="arg"><code>newPassword: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-subscribetoalerts">
     <td><code>subscribeToAlerts</code></td>
     <td><code>AlertSubscription!</code></td>
     <td>Subscribe to alerts for a specific type and location.<div class="field-args"><span class="arg"><code>input: SubscribeToAlertsInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-subscribetoalertsbatch">
     <td><code>subscribeToAlertsBatch</code></td>
     <td><code>[AlertSubscription!]!</code></td>
     <td>Subscribe to alerts for multiple (location × alertType) combinations in a single call.
 Returns the list of created subscriptions. Duplicates are skipped silently.<div class="field-args"><span class="arg"><code>input: SubscribeToAlertsBatchInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatealertsubscription">
     <td><code>updateAlertSubscription</code></td>
     <td><code>AlertSubscription!</code></td>
     <td>Update an existing alert subscription (channel, frequency, active).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAlertSubscriptionInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-unsubscribefromalerts">
     <td><code>unsubscribeFromAlerts</code></td>
     <td><code>Boolean!</code></td>
     <td>Unsubscribe - deletes the subscription.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createcrisisfromevents">
     <td><code>createCrisisFromEvents</code></td>
     <td><code>Crisis!</code></td>
     <td>Create a new crisis from a list of event IDs. Links all provided events to the new crisis.<div class="field-args"><span class="arg"><code>input: CreateCrisisFromEventsInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-addeventtocrisis">
     <td><code>addEventToCrisis</code></td>
     <td><code>EventCrisis!</code></td>
     <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-removeeventfromcrisis">
     <td><code>removeEventFromCrisis</code></td>
     <td><code>Crisis</code></td>
     <td>Remove an event from a crisis. Recomputes populationAffected from the
@@ -1117,12 +936,12 @@ regenerated to reflect the new event set. If the event being removed is
 the LAST event, deletes the crisis entirely and returns null. Otherwise
 returns the updated crisis (title/summary still show pre-removal values
 until the async enrichment task completes).<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatecrisistitle">
     <td><code>updateCrisisTitle</code></td>
     <td><code>Crisis!</code></td>
     <td>Edit a crisis's title in place. Any authenticated user. Pass an empty
 string to clear the field.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>title: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatecrisisdescription">
     <td><code>updateCrisisDescription</code></td>
     <td><code>Crisis!</code></td>
     <td>Edit the human-facing description on a crisis. The crisis's summary
@@ -1130,36 +949,36 @@ column stores JSON of the form description+tldr — this mutation updates
 just the description key and preserves any existing tldr bullets (which
 the LLM enrichment task generates). Any authenticated user. Pass an
 empty string to clear the description without disturbing the tldr.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>description: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletecrisis">
     <td><code>deleteCrisis</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a crisis. Cascades the eventCrises join rows, user feedback,
 and user comments via the FK constraints. Any authenticated user.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-addcrisisattachments">
     <td><code>addCrisisAttachments</code></td>
     <td><code>Crisis!</code></td>
     <td>Append S3 keys to a crisis's attachments list. Idempotent — keys
 already present in the list are skipped silently. Returns the updated
 crisis with the new list.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-removecrisisattachment">
     <td><code>removeCrisisAttachment</code></td>
     <td><code>Crisis!</code></td>
     <td>Remove an S3 key from a crisis's attachments list. Does NOT delete
 the underlying S3 object (operators can clean those up separately).
 Returns the updated crisis.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-setcrisisneedsanalysis">
     <td><code>setCrisisNeedsAnalysis</code></td>
     <td><code>Crisis!</code></td>
     <td>Set the LLM-generated NRC SAF needs analysis inside the crisis's
 needs JSONB. Merges generalSummary and sector keys into the existing
 object so other keys on needs are preserved. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>generalSummary: [String!]!</code></span><span class="arg"><code>sector: JSON!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upserttranslations">
     <td><code>upsertTranslations</code></td>
     <td><code>UpsertTranslationsResult!</code></td>
     <td>Upsert one or more per-locale translation rows for an event,
 crisis, or location. The translated data blob mirrors the canonical
 entity's JSON shape per locale. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertTranslationsInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertknowledgebasechunks">
     <td><code>upsertKnowledgebaseChunks</code></td>
     <td><code>UpsertKnowledgebaseResult!</code></td>
     <td>Replace all knowledgebase rows for `reportId` with `chunks`.
@@ -1168,7 +987,7 @@ delete so a re-run can retry cleanly. Vector length is validated
 against the pgvector column dimension (1024) on the server;
 mismatched rows are rejected before the write hits Postgres.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertreportdatapoints">
     <td><code>upsertReportDatapoints</code></td>
     <td><code>UpsertReportDatapointsResult!</code></td>
     <td>Replace the `report_datapoints` row for `input.reportId`.
@@ -1176,7 +995,7 @@ Admin / pipeline only. The dagster-quickstart datapoints
 extraction asset is the primary caller; hand-invocation is
 supported for backfills and re-extraction. Idempotent — the row
 is uniquely keyed on `report_id`.<div class="field-args"><span class="arg"><code>input: UpsertReportDatapointsInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-upsertsituationanalysis">
     <td><code>upsertSituationAnalysis</code></td>
     <td><code>UpsertSituationAnalysisResult!</code></td>
     <td>Insert a fresh situation-analysis snapshot for
@@ -1186,7 +1005,7 @@ previous current row for the same bucket in the same
 transaction. History rows are preserved. Admin / pipeline only —
 the Dagster `weekly_situation_analyses` asset is the primary
 caller.<div class="field-args"><span class="arg"><code>input: UpsertSituationAnalysisInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-refreshaggregateddatapoints">
     <td><code>refreshAggregatedDatapoints</code></td>
     <td><code>RefreshAggregatedDatapointsResult!</code></td>
     <td>Pre-compute all four aggregation tiers (weekly × A2, monthly × A1,
@@ -1196,7 +1015,7 @@ bucket is inserted with `validFrom = now()`; the previous
 &quot;current&quot; row for the same bucket key has its `validTo` stamped
 in the same transaction. History rows are preserved. Admin /
 pipeline only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span><span class="arg"><code>schemaVersion: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-uploadknowledgebasedocument">
     <td><code>uploadKnowledgebaseDocument</code></td>
     <td><code>KnowledgebaseIngestJob!</code></td>
     <td>Upload a PDF into the manual-ingest S3 inbox and trigger the
@@ -1213,35 +1032,35 @@ Restricted to admin / analyst — the ingest costs LLM + embedding
 credits per document. When DAGSTER_URL is unset the mutation
 still stages the PDF in S3 but returns a UNKNOWN-status job with
 no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
     <td>Create a new webhook subscription. The response is the only place
 the plaintext secret is returned — persist it in your own records
 (e.g. downstream verifier config) at this moment. To retrieve later,
 use rotateWebhookSubscriptionSecret which generates a fresh one.<div class="field-args"><span class="arg"><code>input: CreateWebhookSubscriptionInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-updatewebhooksubscription">
     <td><code>updateWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
     <td>Update a subscription. Only provide fields you want to change.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateWebhookSubscriptionInput!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-deletewebhooksubscription">
     <td><code>deleteWebhookSubscription</code></td>
     <td><code>Boolean!</code></td>
     <td>Permanently delete a subscription and all its delivery history.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-rotatewebhooksubscriptionsecret">
     <td><code>rotateWebhookSubscriptionSecret</code></td>
     <td><code>WebhookSubscription!</code></td>
     <td>Generate a new secret and invalidate the old one. Response
 includes the new plaintext secret (same one-shot semantics as
 create).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-sendtestwebhookevent">
     <td><code>sendTestWebhookEvent</code></td>
     <td><code>WebhookDelivery!</code></td>
     <td>Send a synthetic test event to this subscription. Creates a
 WebhookDelivery row and attempts delivery immediately. Payload
 mimics GlitchTip's alert format so downstream verifiers see a
 realistic shape.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
-  </tr><tr>
+  </tr><tr id="mutation-retrywebhookdelivery">
     <td><code>retryWebhookDelivery</code></td>
     <td><code>WebhookDelivery!</code></td>
     <td>Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
@@ -4709,69 +4528,3 @@ Values match GlitchTip's 'alias' field (e.g. issue.new, issue.regression, issue.
 Capped at 50 in the resolver to keep the admin UI fast.</td>
   </tr></tbody></table>
       </div>
-    </main>
-
-    <!-- Right TOC -->
-    <aside class="toc">
-      <div class="toc-heading">On This Page</div>
-      <a href="#guide">Build Your First Integration</a>
-      <a href="#introduction">Introduction</a>
-      <a href="#features">What You Can Do</a>
-      <a href="#quick-start">Quick Start</a>
-      <a href="#authentication">Authentication</a>
-      <a href="#queries">Queries</a>
-      <a href="#mutations">Mutations</a>
-      <a href="#types">Types</a>
-    </aside>
-  </div>
-
-  <script>
-    // Copy to clipboard
-    function copyCode(btn) {
-      var code = btn.closest('pre').querySelector('code');
-      copyText(code.textContent, btn);
-    }
-    async function copyText(text, btn) {
-      try {
-        await navigator.clipboard.writeText(text);
-        var orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = orig; }, 2000);
-      } catch (e) {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        var orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = orig; }, 2000);
-      }
-    }
-
-    // Active sidebar link tracking
-    var sidebarLinks = document.querySelectorAll('.sidebar-link');
-    var headings = [];
-    sidebarLinks.forEach(function(link) {
-      var id = link.getAttribute('href');
-      if (id && id.startsWith('#')) {
-        var el = document.getElementById(id.slice(1));
-        if (el) headings.push({ el: el, link: link });
-      }
-    });
-
-    function updateActive() {
-      var scrollY = window.scrollY + 80;
-      var current = headings[0];
-      for (var i = 0; i < headings.length; i++) {
-        if (headings[i].el.offsetTop <= scrollY) current = headings[i];
-      }
-      sidebarLinks.forEach(function(l) { l.classList.remove('active'); });
-      if (current) current.link.classList.add('active');
-    }
-    window.addEventListener('scroll', updateActive, { passive: true });
-    updateActive();
-  </script>
-</body>
-</html>

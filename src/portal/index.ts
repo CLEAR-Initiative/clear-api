@@ -32,6 +32,7 @@ import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 import {
   renderPortal,
   renderLoginPage,
+  safePortalNext,
   renderAdminPending,
   renderAdminMetrics,
   renderAdminOrganisations,
@@ -66,13 +67,30 @@ async function currentUser(req: Request) {
   }
 }
 
-// ─── GET /portal — three-way render based on role ────────────────────────
+// ─── GET /portal/login — sign-in for auth-gated portal destinations ───────
+
+portalRouter.get("/login", async (req, res) => {
+  const user = await currentUser(req);
+  const next = safePortalNext(
+    typeof req.query.next === "string" ? req.query.next : undefined,
+  );
+  if (user) {
+    res.redirect(303, next);
+    return;
+  }
+  res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(renderLoginPage({ next }));
+});
+
+// ─── GET /portal — public tabs for anonymous; full portal when signed in ─
 
 portalRouter.get("/", async (req, res) => {
   const user = await currentUser(req);
+
   if (!user) {
-    res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(renderLoginPage());
+    // Getting Started + API Reference are public; other tabs redirect to /portal/login
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderPortal({ userEmail: null }));
     return;
   }
 

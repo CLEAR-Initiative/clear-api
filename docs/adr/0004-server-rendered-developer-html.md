@@ -1,0 +1,3 @@
+# Server-rendered developer HTML with a shared Portal Shell
+
+The Developer Portal and API Docs are HTML string templates served from the Bun/Express API, not a separate SPA. We keep that model and extract a shared **Portal Shell** module so portal and docs share one chrome (nav, mobile drawer, account footer). API Docs keeps a prebuilt body (`build:docs` + in-memory cache) wrapped per request with a session-aware shell. Chosen over a frontend rewrite because the polish work is duplicated/outdated chrome and mobile layout, not the delivery mechanism — a SPA would be a product rewrite without fixing the UX gaps faster.
