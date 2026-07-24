@@ -1,24 +1,23 @@
+import {
+  renderPortalShell,
+  renderPortalShellStyles,
+  renderPortalShellScript,
+  type PortalShellOptions,
+} from "./shell.js";
+
 export interface PortalOptions {
-  userEmail: string;
+  /** Null/undefined for anonymous Developers — public tabs only. */
+  userEmail?: string | null;
   /** Caller's global role. When `"admin"`, the nav exposes a link to
    *  `/portal/admin` so operators can hop straight to the approvals
    *  dashboard from the dev portal. Anything else hides the link. */
   userRole?: string | null;
 }
 
-const PORTAL_ICON_BASE = "/portal/icons";
+/** Portal tabs readable without a session. Auth-only tabs redirect to sign-in. */
+export const PORTAL_PUBLIC_TABS = ["getting-started", "reference"] as const;
 
 const PORTAL_SVGS = {
-  rocket:
-    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.284 10.525 3.439 9.68a.86.86 0 0 1-.21-.88c.082-.243.191-.56.323-.923H.658a.75.75 0 0 1-.57-1.33L1.528 4.465A2.1 2.1 0 0 1 3.22 3.5h2.25c.066-.11.132-.21.197-.309 2.24-3.303 5.575-3.412 7.566-3.046a.75.75 0 0 1 .623.623c.366 1.994.254 5.327-3.046 7.566-.096.066-.2.131-.31.197v2.25c0 .695-.366 1.34-.965 1.693l-2.42 1.435a.75.75 0 0 1-1.059-.32v-2.93a4.6 4.6 0 0 1-1.475.325.86.86 0 0 1-.87-.214ZM10.502 4.594a1.094 1.094 0 1 0 0-2.187 1.094 1.094 0 0 0 0 2.187Z"/></svg>',
-  key: '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9.188 9.625A4.812 4.812 0 1 0 4.602 6.28L.192 10.691a.656.656 0 0 0 0 .928.656.656 0 0 0 .465.193H2.844a.656.656 0 0 0 .656-.656V12.25h1.094a.656.656 0 0 0 .656-.656v-1.094h1.094c.175 0 .342-.068.465-.191l.91-.911a4.77 4.77 0 0 0 1.469.227Zm1.094-7a1.094 1.094 0 1 1-2.188 0 1.094 1.094 0 0 1 2.188 0Z"/></svg>',
-  shield:
-    '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 0c.126 0 .252.027.366.079l5.149 2.185c.602.254 1.05.847 1.047 1.564-.014 2.712-1.129 7.675-5.84 9.931a1.75 1.75 0 0 1-1.444 0C1.567 11.504.451 6.54.438 3.828.435 3.112.883 2.518 1.485 2.264L6.636.08A.75.75 0 0 1 7 0Zm0 1.827v10.336C10.773 10.336 11.788 6.292 11.813 3.866L7 1.827Z"/></svg>',
-  doc: '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2.625 0C1.176 0 0 1.176 0 2.625v8.75C0 12.824 1.176 14 2.625 14h8.75c.484 0 .875-.391.875-.875a.875.875 0 0 0-.875-.875V10.5c.484 0 .875-.391.875-.875V.875A.875.875 0 0 0 11.375 0H2.625Zm0 10.5h7v1.75H2.625a.875.875 0 0 1-.875-.875c0-.484.391-.875.875-.875ZM3.5 3.938c0-.24.197-.438.438-.438h5.25a.438.438 0 0 1 0 .875h-5.25a.438.438 0 0 1-.438-.437Zm0 1.312a.438.438 0 0 0 0 .875h5.25a.438.438 0 0 0 0-.875h-5.25Z"/></svg>',
-  chart:
-    '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.375 2.188C4.375 1.463 4.963.875 5.688.875h.875C7.287.875 7.875 1.463 7.875 2.188v9.625c0 .725-.588 1.312-1.313 1.312h-.875c-.725 0-1.312-.587-1.312-1.312V2.188ZM0 7.438C0 6.713.588 6.125 1.313 6.125h.875C2.912 6.125 3.5 6.713 3.5 7.438v4.375c0 .725-.588 1.312-1.313 1.312h-.875C.588 13.125 0 12.537 0 11.812V7.438Zm10.063 2.625h.875c.725 0 1.312.588 1.312 1.313v4.375c0 .725-.587 1.312-1.312 1.312h-.875c-.725 0-1.313-.587-1.313-1.312V3.938c0-.725.588-1.313 1.313-1.313Z"/></svg>',
-  signout:
-    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
   modalClose:
     '<svg width="15" height="20" viewBox="0 0 15 20" aria-hidden="true"><path fill="currentColor" d="M2.5 2.5 12.5 12.5M12.5 2.5 2.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   modalInfo:
@@ -31,641 +30,13 @@ const PORTAL_SVGS = {
     '<svg width="136" height="136" viewBox="0 0 136 136" aria-hidden="true"><path fill="#22c55e" d="M48 68 62 82 88 54" stroke="#22c55e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
 } as const;
 
-const PORTAL_ASSETS = {
-  logo: "logo.png",
-} as const;
-
-/**
- * Generate avatar HTML with initials on orange background (matching clear-mvp pattern).
- * Falls back to first two characters of email if no proper name available.
- */
-function generateAvatarHtml(email: string): string {
-  const initials = email
-    .split("@")[0]
-    .substring(0, 2)
-    .toUpperCase();
-  
-  return `<div class="user-avatar" style="background: #FF5C00; color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #333; flex-shrink: 0;">${initials}</div>`;
-}
-
-function formatAccountLabel(role?: string | null): string {
-  switch (role) {
-    case "admin":
-      return "Admin Account";
-    case "analyst":
-      return "Analyst Account";
-    case "viewer":
-      return "Viewer Account";
-    default:
-      return "Developer Account";
-  }
-}
-
-function portalNavButton(tab: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
-  return `<button type="button" class="nav-item" data-tab="${tab}" title="${escapeHtml(label)}" onclick="showTab('${tab}')">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></button>`;
-}
-
-function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
-  return `<a href="${href}" class="nav-item nav-item--link" title="${escapeHtml(label)}">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
-}
-
-/**
- * Complete shared styles for portal sidebar - used by both /portal and /portal/admin.
- * This ensures visual consistency across all pages.
- */
-function renderPortalStyles(): string {
-  return `  <style>
-    :root {
-      --color-bg: #0a0a0a;
-      --color-surface: #0d0d0d;
-      --color-surface-2: #111111;
-      --color-surface-3: #141414;
-      --color-border: #1f1f1f;
-      --color-border-2: #222222;
-      --color-accent: #ff5c00;
-      --color-accent-hover: #ff6a1a;
-      --color-accent-soft: rgba(255, 92, 0, 0.1);
-      --color-text: #ffffff;
-      --color-muted: #999999;
-      --color-label: #666666;
-      --color-section: #444444;
-      --on-accent: #ffffff;
-      --color-success: #22c55e;
-      --color-danger: #ef4444;
-      --color-warning: #f59e0b;
-      --color-code-bg: #0e0e10;
-      --radius: 12px;
-      --radius-sm: 6px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
-      --sidebar-width: 288px;
-      --sidebar-width-collapsed: 72px;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; -webkit-font-smoothing: antialiased; }
-    a { color: var(--color-accent); text-decoration: none; }
-    code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
-
-    /* Portal shell layout */
-    .portal-shell { display: flex; min-height: 100vh; }
-
-    /* Sidebar */
-    .sidebar {
-      width: var(--sidebar-width); flex-shrink: 0; background: var(--color-surface);
-      border-right: 1px solid var(--color-border); display: flex; flex-direction: column;
-      justify-content: space-between;
-      position: fixed;
-      top: 0;
-      left: 0;
-      height: 100vh;
-      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      overflow: hidden;
-      z-index: 100;
-    }
-    .portal-shell.sidebar-collapsed .sidebar { 
-      width: var(--sidebar-width-collapsed); 
-      justify-content: flex-start; 
-    }
-    
-    .sidebar-top { 
-      padding: 32px 32px 0; 
-      display: flex; 
-      flex-direction: column; 
-      gap: 48px;
-      overflow-y: auto;
-      overflow-x: hidden;
-      flex: 1;
-      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      /* Subtle scrollbar */
-      scrollbar-width: thin;
-      scrollbar-color: transparent transparent;
-    }
-    .sidebar-top:hover {
-      scrollbar-color: var(--color-border) transparent;
-    }
-    .sidebar-top::-webkit-scrollbar {
-      width: 6px;
-    }
-    .sidebar-top::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    .sidebar-top::-webkit-scrollbar-thumb {
-      background: transparent;
-      border-radius: 3px;
-    }
-    .sidebar-top:hover::-webkit-scrollbar-thumb {
-      background: var(--color-border);
-    }
-    .portal-shell.sidebar-collapsed .sidebar-top { 
-      padding: 20px 12px 0; 
-      gap: 24px; 
-    }
-    
-    .sidebar-brand {
-      display: flex; 
-      align-items: center; 
-      gap: 12px;
-      flex-shrink: 0;
-      transition: gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .portal-shell.sidebar-collapsed .sidebar-brand {
-      flex-direction: column; 
-      gap: 10px; 
-      align-items: center;
-    }
-    
-    .brand-logo-img { 
-      width: 36px; 
-      height: 36px; 
-      border-radius: 12px; 
-      flex-shrink: 0; 
-      display: block; 
-    }
-    
-    .brand-text { 
-      min-width: 0; 
-      overflow: hidden; 
-      white-space: nowrap; 
-      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      max-width: 200px; 
-    }
-    .portal-shell.sidebar-collapsed .brand-text { 
-      opacity: 0; 
-      max-width: 0; 
-      pointer-events: none; 
-    }
-    
-    .brand-title { 
-      font-weight: 700; 
-      font-size: 14px; 
-      letter-spacing: 1.4px; 
-      text-transform: uppercase; 
-      color: var(--color-text); 
-      line-height: 14px; 
-    }
-    .brand-sub { 
-      font-size: 10px; 
-      font-weight: 500; 
-      color: var(--color-label); 
-      margin-top: 4px; 
-      line-height: 15px; 
-    }
-    
-    .sidebar-toggle {
-      margin-left: auto; 
-      flex-shrink: 0;
-      width: 28px; 
-      height: 28px; 
-      display: flex; 
-      align-items: center; 
-      justify-content: center;
-      border: 1px solid var(--color-border); 
-      border-radius: 6px; 
-      background: transparent;
-      color: var(--color-muted); 
-      cursor: pointer; 
-      font-family: var(--font);
-      transition: color 0.15s ease, border-color 0.15s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .sidebar-toggle:hover { 
-      color: var(--color-text); 
-      border-color: var(--color-border-2); 
-    }
-    .portal-shell.sidebar-collapsed .sidebar-toggle { 
-      margin-left: 0; 
-      transform: rotate(180deg); 
-    }
-
-    .nav-section {
-      font-size: 10px; 
-      font-weight: 700; 
-      letter-spacing: 2px;
-      text-transform: uppercase; 
-      color: var(--color-section);
-      padding: 0 16px; 
-      margin-bottom: 6px;
-      white-space: nowrap; 
-      overflow: hidden;
-      transition: opacity 0.2s ease, max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      max-height: 24px;
-    }
-    .portal-shell.sidebar-collapsed .nav-section {
-      opacity: 0; 
-      max-height: 0; 
-      margin: 0; 
-      padding: 0; 
-      pointer-events: none;
-    }
-    
-    .nav-list { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 6px; 
-    }
-    
-    .nav-item {
-      display: flex; 
-      align-items: center; 
-      gap: 12px; 
-      width: 100%;
-      min-height: 40px; 
-      padding: 10px 16px; 
-      border: none; 
-      background: none;
-      color: var(--color-muted); 
-      font-size: 14px; 
-      font-weight: 500;
-      cursor: pointer; 
-      text-align: left; 
-      font-family: var(--font);
-      border-right: 2px solid transparent; 
-      border-radius: var(--radius-sm);
-      transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      text-decoration: none;
-    }
-    .portal-shell.sidebar-collapsed .nav-item {
-      justify-content: center; 
-      padding: 10px 8px; 
-      gap: 0;
-      border-right-color: transparent !important;
-    }
-    
-    .nav-label {
-      white-space: nowrap; 
-      overflow: hidden;
-      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      max-width: 180px;
-    }
-    .portal-shell.sidebar-collapsed .nav-label {
-      opacity: 0; 
-      max-width: 0; 
-      pointer-events: none;
-    }
-    
-    .nav-item:hover { 
-      color: var(--color-text); 
-      text-decoration: none; 
-    }
-    .nav-item.active {
-      color: var(--color-accent); 
-      border-right-color: var(--color-accent);
-      background: var(--color-accent-soft);
-    }
-    
-    .nav-icon-img { 
-      flex-shrink: 0; 
-      display: block; 
-      color: inherit; 
-      width: 18px;
-      height: 18px;
-    }
-    .nav-item:not(.active) .nav-icon-img { 
-      opacity: 0.6; 
-    }
-    .nav-item.active .nav-icon-img { 
-      opacity: 1; 
-      color: var(--color-accent); 
-    }
-
-    .sidebar-footer { 
-      padding: 24px; 
-      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      flex-shrink: 0; 
-    }
-    .portal-shell.sidebar-collapsed .sidebar-footer {
-      padding: 0 12px 16px; 
-      margin-top: auto;
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
-      gap: 10px;
-    }
-    
-    .user-card {
-      display: flex; 
-      align-items: center; 
-      gap: 12px;
-      background: var(--color-surface-3); 
-      border-radius: 8px; 
-      padding: 8px; 
-      margin-bottom: 16px;
-      transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .portal-shell.sidebar-collapsed .user-card {
-      justify-content: center; 
-      gap: 0; 
-      padding: 0; 
-      margin-bottom: 0; 
-      background: transparent;
-    }
-    
-    .user-avatar {
-      width: 32px; 
-      height: 32px; 
-      border-radius: 9999px; 
-      border: 1px solid #333;
-      object-fit: cover; 
-      flex-shrink: 0; 
-      display: block;
-    }
-    
-    .user-details { 
-      min-width: 0; 
-      overflow: hidden; 
-      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      max-width: 200px; 
-    }
-    .portal-shell.sidebar-collapsed .user-details { 
-      display: none; 
-    }
-    
-    .user-email { 
-      font-size: 12px; 
-      font-weight: 500; 
-      color: var(--color-text); 
-      line-height: 16px; 
-      word-break: break-all; 
-    }
-    .user-role { 
-      font-size: 10px; 
-      color: var(--color-label); 
-      line-height: 15px; 
-      margin-top: 0; 
-      text-decoration: none; 
-      display: block; 
-    }
-    
-    .signout-btn {
-      width: 100%; 
-      display: flex; 
-      align-items: center; 
-      justify-content: center; 
-      gap: 8px;
-      padding: 12px; 
-      border-radius: var(--radius); 
-      border: 1px solid var(--color-border);
-      background: transparent; 
-      color: var(--color-label); 
-      font-size: 12px; 
-      font-weight: 700;
-      cursor: pointer; 
-      font-family: var(--font);
-      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1), height 0.25s cubic-bezier(0.4, 0, 0.2, 1), gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .portal-shell.sidebar-collapsed .signout-btn {
-      width: 40px; 
-      height: 40px; 
-      padding: 0; 
-      margin: 0 auto; 
-      gap: 0;
-    }
-    .signout-btn:hover { 
-      color: var(--color-text); 
-      border-color: var(--color-border-2); 
-    }
-    .signout-btn svg { 
-      color: var(--color-label); 
-      flex-shrink: 0; 
-    }
-    .signout-label { 
-      white-space: nowrap; 
-      transition: opacity 0.2s ease, max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      max-width: 80px; 
-      overflow: hidden; 
-    }
-    .portal-shell.sidebar-collapsed .signout-label { 
-      opacity: 0; 
-      max-width: 0; 
-    }
-
-    /* Main content */
-    .main { 
-      flex: 1; 
-      min-width: 0; 
-      display: flex; 
-      flex-direction: column; 
-      background: var(--color-bg);
-      margin-left: var(--sidebar-width);
-      transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .portal-shell.sidebar-collapsed .main {
-      margin-left: var(--sidebar-width-collapsed);
-    }
-
-    /* Tables */
-    .table { 
-      width: 100%; 
-      border-collapse: collapse; 
-      background: var(--color-surface); 
-      border: 1px solid var(--color-border); 
-      border-radius: var(--radius); 
-      overflow: hidden; 
-    }
-    .table th { 
-      text-align: left; 
-      padding: 0.65rem 1rem; 
-      font-size: 0.7rem; 
-      text-transform: uppercase; 
-      letter-spacing: 0.05em; 
-      color: var(--color-muted); 
-      border-bottom: 1px solid var(--color-border); 
-      background: var(--color-bg); 
-    }
-    .table td { 
-      padding: 0.75rem 1rem; 
-      border-bottom: 1px solid var(--color-border); 
-      font-size: 0.875rem; 
-    }
-    .table tr:last-child td { 
-      border-bottom: none; 
-    }
-    .badge { 
-      display: inline-flex; 
-      align-items: center; 
-      padding: 0.2rem 0.6rem; 
-      border-radius: 999px; 
-      font-size: 0.7rem; 
-      font-weight: 600; 
-    }
-
-    /* Buttons */
-    .btn { 
-      border-radius: var(--radius); 
-      border: none; 
-      font-weight: 500; 
-      cursor: pointer; 
-      font-family: var(--font); 
-      padding: 0.5rem 1rem; 
-      font-size: 0.875rem; 
-      transition: all 0.15s ease; 
-    }
-    .btn-primary { 
-      background: var(--color-accent); 
-      color: var(--on-accent); 
-    }
-    .btn-primary:hover { 
-      background: var(--color-accent-hover); 
-    }
-    .btn-sm { 
-      padding: 0.35rem 0.8rem; 
-      font-size: 0.78rem; 
-    }
-
-    @media (max-width: 768px) {
-      .portal-shell { 
-        flex-direction: column; 
-      }
-      .portal-shell.sidebar-collapsed .sidebar { 
-        width: 100%; 
-      }
-      .sidebar { 
-        width: 100%; 
-        min-height: auto; 
-        border-right: none; 
-        border-bottom: 1px solid var(--color-border); 
-      }
-      .sidebar-top { 
-        padding: 20px 20px 0; 
-        gap: 24px; 
-      }
-      .sidebar-footer { 
-        display: none; 
-      }
-    }
-  </style>`;
-}
-
-/**
- * Shared JavaScript for sidebar functionality with state persistence.
- */
-function renderSidebarScript(): string {
-  return `<script>
-    // Load collapsed state from localStorage
-    (function() {
-      const collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
-      if (collapsed) {
-        document.getElementById('portal-shell').classList.add('sidebar-collapsed');
-      }
-    })();
-
-    function toggleSidebar() {
-      const shell = document.getElementById('portal-shell');
-      if (shell) {
-        shell.classList.toggle('sidebar-collapsed');
-        const isCollapsed = shell.classList.contains('sidebar-collapsed');
-        localStorage.setItem('sidebar-collapsed', isCollapsed);
-      }
-    }
-    
-    // Better Auth only accepts POST on /api/auth/sign-out. A GET via
-    // location.href returns 404. Fetch, then redirect to the login page.
-    async function signOut() {
-      if (!confirm('Are you sure you want to sign out?')) return;
-      try {
-        await fetch('/api/auth/sign-out', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-      } catch (e) {}
-      window.location.href = '/portal';
-    }
-  </script>`;
-}
-
-/**
- * Generate sidebar HTML for both portal and admin pages.
- * Sidebar looks identical on both pages, only the active state differs.
- * @param context - 'portal' for main portal, 'admin' for admin panel
- * @param userEmail - User's email address
- * @param userRole - User's role (optional, for display)
- */
-function generateSidebar(opts: {
-  context: "portal" | "admin";
-  userEmail: string;
-  userRole?: string | null;
-}): string {
-  const { context, userEmail, userRole } = opts;
-  const isAdmin = userRole === "admin";
-  const accountLabel = formatAccountLabel(userRole);
-  const adminAccountHtml = `<div class="user-role">${escapeHtml(accountLabel)}</div>`;
-  
-  const brandSubtitle = "Developer Portal";
-  
-  // Use actual links when in admin context, tab buttons when in portal context
-  const portalNav = context === "admin" ? `
-    <div class="nav-section">Menu</div>
-    ${portalNavLink("/portal#getting-started", "Getting Started", "rocket")}
-    ${portalNavLink("/portal#api-keys", "API Keys", "key")}
-    ${portalNavLink("/portal#authentication", "Authentication", "shield")}
-
-    <div class="nav-section" style="margin-top:18px">Resources</div>
-    ${portalNavLink("/portal#reference", "API Reference", "doc")}
-    ${portalNavLink("/docs", "API Docs", "doc")}
-    ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart")}
-  ` : `
-    <div class="nav-section">Menu</div>
-    ${portalNavButton("getting-started", "Getting Started", "rocket")}
-    ${portalNavButton("api-keys", "API Keys", "key")}
-    ${portalNavButton("authentication", "Authentication", "shield")}
-
-    <div class="nav-section" style="margin-top:18px">Resources</div>
-    ${portalNavButton("reference", "API Reference", "doc")}
-    ${portalNavLink("/docs", "API Docs", "doc")}
-    ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
-  `;
-  
-  // Admin navigation (only show if user is admin)
-  // Highlight "Admin Panel" when in admin context
-  const adminNav = isAdmin ? `
-    <div class="nav-section" style="margin-top:18px">Admin</div>
-    <a href="/portal/admin" class="nav-item nav-item--link${context === "admin" ? " active" : ""}" title="Admin Panel">
-      ${PORTAL_SVGS.shield}
-      <span class="nav-label">Admin Panel</span>
-    </a>
-  ` : "";
-  
-  return `
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <div class="sidebar-brand">
-          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
-          <div class="brand-text">
-            <div class="brand-title">Clear API</div>
-            <div class="brand-sub">${brandSubtitle}</div>
-          </div>
-          <button type="button" class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-          </button>
-        </div>
-
-        <nav class="nav-list" aria-label="Portal navigation">
-          ${portalNav}
-          ${adminNav}
-        </nav>
-      </div>
-
-      <div class="sidebar-footer">
-        <div class="user-card">
-          ${generateAvatarHtml(userEmail)}
-          <div class="user-details">
-            <div class="user-email">${escapeHtml(userEmail)}</div>
-            ${adminAccountHtml}
-          </div>
-        </div>
-        <button type="button" class="signout-btn" onclick="signOut()" title="Sign out">
-          ${PORTAL_SVGS.signout}
-          <span class="signout-label">Sign Out</span>
-        </button>
-      </div>
-    </aside>
-  `;
-}
-
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
-  const sidebar = generateSidebar({ context: "portal", userEmail, userRole });
+  const authed = Boolean(userEmail);
+  const shellOpts: PortalShellOptions = {
+    surface: "portal",
+    account: authed ? { email: userEmail!, role: userRole } : null,
+  };
+  const sidebar = renderPortalShell(shellOpts);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -677,9 +48,15 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  ${renderPortalStyles()}
+  ${renderPortalShellStyles()}
   <style>
     /* Portal-specific styles */
+    .main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
     .main-header {
       display: flex; align-items: center; justify-content: flex-end;
       padding: 20px 32px; border-bottom: 1px solid var(--color-border);
@@ -694,7 +71,15 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .system-status .dot {
       width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); flex-shrink: 0;
     }
-    .main-content { flex: 1; overflow-y: auto; padding: 32px; max-width: 1280px; width: 100%; }
+    .main-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px;
+      width: 100%;
+      max-width: none;
+      align-self: stretch;
+      box-sizing: border-box;
+    }
 
     /* Tab panels */
     .tab-panel { display: none; }
@@ -749,16 +134,20 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .keys-table tr:last-child td { border-bottom: none; }
     .keys-table .actions-col { text-align: right; }
 
-    /* Modal */
+    /* Modal — must sit above mobile hamburger (z-index 200) and outside overflow containers */
     .modal-overlay {
       position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
       display: flex; align-items: center; justify-content: center;
-      padding: 24px; z-index: 200;
+      padding: 24px; z-index: 300;
+      overscroll-behavior: contain;
     }
     .modal {
       width: 100%; max-width: 440px; background: var(--color-surface-3);
       border: 1px solid var(--color-border); border-radius: var(--radius);
       padding: 24px;
+      max-height: min(90vh, 720px);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .modal.modal--key-created {
       max-width: 520px; padding: 0; background: #111;
@@ -960,15 +349,15 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .btn-cta-primary:hover { background: var(--color-accent-hover); }
 
     @media (max-width: 768px) {
-      .portal-shell { flex-direction: column; }
-      .portal-shell.sidebar-collapsed .sidebar { width: 100%; }
-      .sidebar { width: 100%; min-height: auto; border-right: none; border-bottom: 1px solid var(--color-border); }
-      .sidebar-top { padding: 20px 20px 0; gap: 24px; }
-      .sidebar-footer { display: none; }
-      .main-content { padding: 20px; }
-      .main-header { padding: 16px 20px; }
+      /* Status lives in the mobile nav drawer only */
+      .main-header { display: none; }
+      .main-content { padding: 20px; max-width: 100%; }
       .page-header { margin-bottom: 24px; }
       .btn-create-key { width: 100%; }
+      .modal-overlay { padding: 16px; align-items: flex-end; }
+      .modal { max-height: min(85vh, 640px); border-radius: 16px 16px 12px 12px; }
+      .table { font-size: 0.8rem; }
+      .table th, .table td { padding: 0.5rem 0.75rem; }
     }
   </style>
 </head>
@@ -1053,81 +442,6 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
         </thead>
         <tbody id="key-table-body"></tbody>
       </table>
-    </div>
-  </div>
-
-  <div id="create-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCreateKeyModal()">
-    <div class="modal" id="create-key-modal-panel" role="dialog" aria-labelledby="create-key-title">
-      <div id="create-key-form-view">
-        <h3 id="create-key-title">Create New Key</h3>
-        <p>Give your key a descriptive name. You can optionally set an expiry date.</p>
-        <div class="form-group" style="margin-bottom:12px">
-          <label for="key-name">Name (required)</label>
-          <input type="text" id="key-name" placeholder="my-app-prod" style="width:100%">
-        </div>
-        <div class="form-group" style="margin-bottom:4px">
-          <label for="key-expires">Expires (optional)</label>
-          <input type="date" id="key-expires" style="width:100%">
-        </div>
-        <div id="create-error" class="error-text"></div>
-        <div class="modal-actions">
-          <button type="button" class="btn-ghost" onclick="closeCreateKeyModal()">Cancel</button>
-          <button type="button" class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
-        </div>
-      </div>
-      <div id="create-key-success-view" class="key-created-modal" style="display:none">
-        <div class="key-created-watermark">${PORTAL_SVGS.modalCheckWatermark}</div>
-        <div class="key-created-header">
-          <div>
-            <h3 id="create-key-success-title">Your API Key has been created</h3>
-            <p>Your API Key is a secure credential for accessing the API. Do not share it or expose it in browsers, or other client-side code.</p>
-          </div>
-          <button type="button" class="modal-close-btn" onclick="closeCreateKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
-        </div>
-        <div class="key-created-body">
-          <div class="key-created-warning">
-            ${PORTAL_SVGS.modalInfo}
-            <div>
-              <div>Important: your API Key will only be displayed once.</div>
-              <div>Please store it securely.</div>
-            </div>
-          </div>
-          <div class="key-created-field-wrap">
-            <label for="new-key-value">API Key</label>
-            <div class="key-created-field">
-              <code id="new-key-value"></code>
-              <button type="button" class="key-field-copy-btn" onclick="copyApiKey()" aria-label="Copy API key">${PORTAL_SVGS.modalCopy}</button>
-            </div>
-          </div>
-        </div>
-        <div class="key-created-footer">
-          <button type="button" class="btn-copy-key" id="copy-key-btn" onclick="copyApiKey()">
-            ${PORTAL_SVGS.modalCopy}
-            <span class="btn-copy-key-label">Copy Key</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="revoke-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRevokeKeyModal()">
-    <div class="modal modal--confirm" role="alertdialog" aria-labelledby="revoke-key-title" aria-describedby="revoke-key-desc">
-      <div class="confirm-modal-header">
-        <h3 id="revoke-key-title">Revoke API Key?</h3>
-        <button type="button" class="modal-close-btn" onclick="closeRevokeKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
-      </div>
-      <div class="confirm-modal-body">
-        <p id="revoke-key-desc">Are you sure you want to revoke <strong id="revoke-key-name"></strong>? This action cannot be undone.</p>
-        <div class="confirm-modal-warning">
-          ${PORTAL_SVGS.modalInfo}
-          <div>Revoked keys stop working immediately. Any integrations using this key will fail until you create a new one.</div>
-        </div>
-        <div id="revoke-error" class="error-text" style="margin-top:12px"></div>
-      </div>
-      <div class="confirm-modal-footer">
-        <button type="button" class="btn-ghost" onclick="closeRevokeKeyModal()">Cancel</button>
-        <button type="button" class="btn-danger-solid" id="revoke-confirm-btn" onclick="confirmRevokeKey()">Revoke Key</button>
-      </div>
     </div>
   </div>
 
@@ -1285,9 +599,92 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     </div><!-- /.main -->
   </div><!-- /.portal-shell -->
 
+  <div id="create-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCreateKeyModal()">
+    <div class="modal" id="create-key-modal-panel" role="dialog" aria-modal="true" aria-labelledby="create-key-title">
+      <div id="create-key-form-view">
+        <h3 id="create-key-title">Create New Key</h3>
+        <p>Give your key a descriptive name. You can optionally set an expiry date.</p>
+        <div class="form-group" style="margin-bottom:12px">
+          <label for="key-name">Name (required)</label>
+          <input type="text" id="key-name" placeholder="my-app-prod" style="width:100%" autocomplete="off">
+        </div>
+        <div class="form-group" style="margin-bottom:4px">
+          <label for="key-expires">Expires (optional)</label>
+          <input type="date" id="key-expires" style="width:100%">
+        </div>
+        <div id="create-error" class="error-text"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeCreateKeyModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="create-btn" onclick="createKey()">Create Key</button>
+        </div>
+      </div>
+      <div id="create-key-success-view" class="key-created-modal" style="display:none">
+        <div class="key-created-watermark">${PORTAL_SVGS.modalCheckWatermark}</div>
+        <div class="key-created-header">
+          <div>
+            <h3 id="create-key-success-title">Your API Key has been created</h3>
+            <p>Your API Key is a secure credential for accessing the API. Do not share it or expose it in browsers, or other client-side code.</p>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeCreateKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+        </div>
+        <div class="key-created-body">
+          <div class="key-created-warning">
+            ${PORTAL_SVGS.modalInfo}
+            <div>
+              <div>Important: your API Key will only be displayed once.</div>
+              <div>Please store it securely.</div>
+            </div>
+          </div>
+          <div class="key-created-field-wrap">
+            <label for="new-key-value">API Key</label>
+            <div class="key-created-field">
+              <code id="new-key-value"></code>
+              <button type="button" class="key-field-copy-btn" onclick="copyApiKey()" aria-label="Copy API key">${PORTAL_SVGS.modalCopy}</button>
+            </div>
+          </div>
+        </div>
+        <div class="key-created-footer">
+          <button type="button" class="btn-copy-key" id="copy-key-btn" onclick="copyApiKey()">
+            ${PORTAL_SVGS.modalCopy}
+            <span class="btn-copy-key-label">Copy Key</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="revoke-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRevokeKeyModal()">
+    <div class="modal modal--confirm" role="alertdialog" aria-modal="true" aria-labelledby="revoke-key-title" aria-describedby="revoke-key-desc">
+      <div class="confirm-modal-header">
+        <h3 id="revoke-key-title">Revoke API Key?</h3>
+        <button type="button" class="modal-close-btn" onclick="closeRevokeKeyModal()" aria-label="Close">${PORTAL_SVGS.modalClose}</button>
+      </div>
+      <div class="confirm-modal-body">
+        <p id="revoke-key-desc">Are you sure you want to revoke <strong id="revoke-key-name"></strong>? This action cannot be undone.</p>
+        <div class="confirm-modal-warning">
+          ${PORTAL_SVGS.modalInfo}
+          <div>Revoked keys stop working immediately. Any integrations using this key will fail until you create a new one.</div>
+        </div>
+        <div id="revoke-error" class="error-text" style="margin-top:12px"></div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn-ghost" onclick="closeRevokeKeyModal()">Cancel</button>
+        <button type="button" class="btn-danger-solid" id="revoke-confirm-btn" onclick="confirmRevokeKey()">Revoke Key</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // --- Tab routing ---
+    var PORTAL_AUTHED = ${authed ? "true" : "false"};
+    var PORTAL_PUBLIC_TABS = ${JSON.stringify(PORTAL_PUBLIC_TABS)};
+
     function showTab(name) {
+      if (!PORTAL_AUTHED && PORTAL_PUBLIC_TABS.indexOf(name) === -1) {
+        var next = '/portal#' + name;
+        window.location.href = '/portal/login?next=' + encodeURIComponent(next);
+        return;
+      }
       document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
       document.querySelectorAll('.nav-item[data-tab]').forEach(function(b) { b.classList.remove('active'); });
       var panel = document.getElementById('tab-' + name);
@@ -1299,8 +696,8 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       if (name === 'usage-analytics') loadUsageAnalytics();
     }
 
-    // Init from hash
-    var initialTab = location.hash.slice(1) || 'api-keys';
+    // Init from hash — anonymous defaults to Getting Started; signed-in to API Keys
+    var initialTab = location.hash.slice(1) || (PORTAL_AUTHED ? 'api-keys' : 'getting-started');
     if (document.getElementById('tab-' + initialTab)) {
       showTab(initialTab);
     }
@@ -1309,7 +706,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     function toggleSidebar() {
       var shell = document.getElementById('portal-shell');
       var collapsed = shell.classList.toggle('sidebar-collapsed');
-      localStorage.setItem('portal-sidebar-collapsed', collapsed ? '1' : '0');
+      localStorage.setItem('sidebar-collapsed', collapsed ? 'true' : 'false');
       var toggleBtn = document.getElementById('sidebar-toggle');
       if (toggleBtn) {
         var label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
@@ -1319,7 +716,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     }
 
     (function initSidebar() {
-      if (localStorage.getItem('portal-sidebar-collapsed') === '1') {
+      if (localStorage.getItem('sidebar-collapsed') === 'true') {
         var shell = document.getElementById('portal-shell');
         shell.classList.add('sidebar-collapsed');
         var toggleBtn = document.getElementById('sidebar-toggle');
@@ -1346,10 +743,24 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- API Key Management ---
     var keysLoaded = false;
 
+    function setModalOpen(isOpen) {
+      document.body.classList.toggle('modal-open', isOpen);
+      document.body.style.overflow = isOpen ? 'hidden' : '';
+    }
+
+    function isModalVisible(id) {
+      var el = document.getElementById(id);
+      return !!(el && el.style.display === 'flex');
+    }
+
     function openCreateKeyModal() {
       resetCreateKeyModal();
       document.getElementById('create-key-modal').style.display = 'flex';
-      document.getElementById('key-name').focus();
+      setModalOpen(true);
+      // Autofocus only on desktop — mobile keyboards push/clip the sheet
+      if (window.matchMedia('(min-width: 769px)').matches) {
+        document.getElementById('key-name').focus();
+      }
     }
 
     function resetCreateKeyModal() {
@@ -1375,6 +786,7 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
 
     function closeCreateKeyModal() {
       document.getElementById('create-key-modal').style.display = 'none';
+      setModalOpen(false);
       resetCreateKeyModal();
     }
 
@@ -1506,14 +918,29 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
       btn.disabled = false;
       btn.textContent = 'Revoke Key';
       document.getElementById('revoke-key-modal').style.display = 'flex';
+      setModalOpen(true);
     }
 
     function closeRevokeKeyModal() {
       document.getElementById('revoke-key-modal').style.display = 'none';
+      setModalOpen(false);
       pendingRevoke.id = null;
       pendingRevoke.name = null;
       document.getElementById('revoke-error').textContent = '';
     }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      if (isModalVisible('create-key-modal')) {
+        e.preventDefault();
+        closeCreateKeyModal();
+        return;
+      }
+      if (isModalVisible('revoke-key-modal')) {
+        e.preventDefault();
+        closeRevokeKeyModal();
+      }
+    });
 
     async function confirmRevokeKey() {
       if (!pendingRevoke.id) return;
@@ -1619,25 +1046,60 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     }
 
     // --- Escape helper (client-side) ---
-    // Sign-out lives in renderSidebarScript() (shared with admin).
     function escapeHtmlJs(str) {
       var div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
     }
   </script>
-  ${renderSidebarScript()}
+  ${renderPortalShellScript()}
 </body>
 </html>`;
 }
 
-export function renderLoginPage(): string {
+/**
+ * Post-login redirect target. Same-origin only, allowlisted to portal/docs
+ * paths, and rejects protocol-relative / backslash open-redirect tricks.
+ */
+export function safePortalNext(raw?: string | null): string {
+  if (
+    !raw ||
+    typeof raw !== "string" ||
+    !raw.startsWith("/") ||
+    raw.startsWith("//") ||
+    raw.includes("\\") ||
+    raw.includes("\0")
+  ) {
+    return "/portal";
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw, "https://example.invalid");
+  } catch {
+    return "/portal";
+  }
+  if (url.origin !== "https://example.invalid") return "/portal";
+
+  const { pathname, search, hash } = url;
+  const allowed =
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/") ||
+    pathname === "/docs" ||
+    pathname.startsWith("/docs/");
+  if (!allowed) return "/portal";
+
+  return `${pathname}${search}${hash}`;
+}
+
+export function renderLoginPage(opts?: { next?: string }): string {
+  const nextJson = JSON.stringify(safePortalNext(opts?.next));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Developer Portal &mdash; Sign In</title>
+  <title>Developer Portal &mdash; Create Account</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0a0a0b">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1663,21 +1125,8 @@ export function renderLoginPage(): string {
 </head>
 <body>
   <div class="card">
-    <!-- Sign In Form -->
-    <div id="signin-form">
-      <h1>Developer Portal</h1>
-      <p>Sign in to manage your API keys and view documentation.</p>
-      <label for="signin-email">Email</label>
-      <input type="email" id="signin-email" autocomplete="email" placeholder="you@example.com">
-      <label for="signin-password">Password</label>
-      <input type="password" id="signin-password" autocomplete="current-password" placeholder="Your password">
-      <button id="signin-btn" onclick="signIn()">Sign In</button>
-      <div class="error" id="signin-error"></div>
-      <div class="toggle">Don't have an account? <a href="#" onclick="showForm('register'); return false;">Create one</a></div>
-    </div>
-
-    <!-- Register Form -->
-    <div id="register-form" style="display:none">
+    <!-- Register first — first-time visitors need an account more often than a sign-in. -->
+    <div id="register-form">
       <h1>Create Account</h1>
       <p>Sign up to get started with the API.</p>
       <label for="register-name">Name</label>
@@ -1690,8 +1139,22 @@ export function renderLoginPage(): string {
       <div class="error" id="register-error"></div>
       <div class="toggle">Already have an account? <a href="#" onclick="showForm('signin'); return false;">Sign in</a></div>
     </div>
+
+    <div id="signin-form" style="display:none">
+      <h1>Developer Portal</h1>
+      <p>Sign in to manage your API keys and view documentation.</p>
+      <label for="signin-email">Email</label>
+      <input type="email" id="signin-email" autocomplete="email" placeholder="you@example.com">
+      <label for="signin-password">Password</label>
+      <input type="password" id="signin-password" autocomplete="current-password" placeholder="Your password">
+      <button id="signin-btn" onclick="signIn()">Sign In</button>
+      <div class="error" id="signin-error"></div>
+      <div class="toggle">Don't have an account? <a href="#" onclick="showForm('register'); return false;">Create one</a></div>
+    </div>
   </div>
   <script>
+    var LOGIN_NEXT = ${nextJson};
+
     function showForm(name) {
       document.getElementById('signin-form').style.display = name === 'signin' ? 'block' : 'none';
       document.getElementById('register-form').style.display = name === 'register' ? 'block' : 'none';
@@ -1718,7 +1181,7 @@ export function renderLoginPage(): string {
           body: JSON.stringify({ email: email, password: password }),
         });
         if (res.ok) {
-          window.location.href = '/portal';
+          window.location.href = LOGIN_NEXT;
         } else {
           var err = {};
           try { err = await res.json(); } catch(e) {}
@@ -1756,7 +1219,7 @@ export function renderLoginPage(): string {
           body: JSON.stringify({ name: name, email: email, password: password }),
         });
         if (res.ok) {
-          window.location.href = '/portal';
+          window.location.href = LOGIN_NEXT;
         } else {
           var err = {};
           try { err = await res.json(); } catch(e) {}
@@ -1860,7 +1323,12 @@ interface AdminShellOptions {
  */
 function renderAdminShell(opts: AdminShellOptions): string {
   const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title } = opts;
-  const sidebar = generateSidebar({ context: "admin", userEmail: currentUserEmail, userRole: "admin" });
+  const shellOpts: PortalShellOptions = {
+    surface: "admin",
+    account: { email: currentUserEmail, role: "admin" },
+    activeHref: "/portal/admin",
+  };
+  const sidebar = renderPortalShell(shellOpts);
 
   const flashHtml = !flash
     ? ""
@@ -1890,41 +1358,106 @@ function renderAdminShell(opts: AdminShellOptions): string {
   <title>Admin · ${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  ${renderPortalStyles()}
+  ${renderPortalShellStyles()}
   <style>
     /* Admin-specific tabs */
-    .admin-tabs { 
-      display: flex; 
-      gap: 0; 
-      padding: 0 2rem; 
-      border-bottom: 1px solid var(--color-border); 
-      background: var(--color-surface); 
+    .admin-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
     }
-    .admin-tab { 
-      padding: 0.85rem 1.2rem; 
-      color: var(--color-muted); 
-      text-decoration: none; 
-      font-size: 0.875rem; 
-      font-weight: 500; 
-      border-bottom: 2px solid transparent; 
-      display: inline-flex; 
-      align-items: center; 
-      transition: all 0.15s ease; 
+    .admin-tab {
+      padding: 0.85rem 1.2rem;
+      color: var(--color-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      display: inline-flex;
+      align-items: center;
+      transition: all 0.15s ease;
     }
-    .admin-tab:hover { 
-      color: var(--color-text); 
+    .admin-tab:hover {
+      color: var(--color-text);
     }
-    .admin-tab.active { 
-      color: var(--color-accent); 
-      border-bottom-color: var(--color-accent); 
+    .admin-tab.active {
+      color: var(--color-accent);
+      border-bottom-color: var(--color-accent);
     }
 
-    /* Admin content adjustments */
-    .wrap { 
-      max-width: 1280px; 
-      margin: 0 auto; 
-      padding: 2.5rem 2rem; 
-      flex: 1; 
+    /* Admin content — full width of the main column */
+    .main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .wrap {
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      padding: 2.5rem 2rem;
+      flex: 1;
+      box-sizing: border-box;
+    }
+    
+    /* Admin panel mobile optimizations */
+    @media (max-width: 768px) {
+      .admin-tabs {
+        padding: 0 1rem;
+        gap: 0.25rem;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .admin-tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .admin-tab {
+        padding: 0.65rem 0.9rem;
+        font-size: 0.8rem;
+        white-space: nowrap;
+      }
+      .wrap {
+        padding: 1.5rem 1rem !important;
+      }
+      .wrap form {
+        max-width: 100% !important;
+      }
+      .wrap .table {
+        font-size: 0.75rem;
+      }
+      .wrap .table th,
+      .wrap .table td {
+        padding: 0.45rem 0.5rem;
+      }
+      .wrap .btn {
+        padding: 0.4rem 0.7rem;
+        font-size: 0.8rem;
+      }
+      .inline-form {
+        display: block !important;
+        margin: 0.25rem 0 !important;
+      }
+      .wrap fieldset {
+        padding: 0.75rem !important;
+      }
+      .wrap label {
+        font-size: 0.85rem !important;
+      }
+      .wrap input,
+      .wrap textarea,
+      .wrap select {
+        font-size: 0.875rem !important;
+      }
+      .metric-grid {
+        grid-template-columns: 1fr !important;
+        gap: 1rem !important;
+      }
+      .org-detail-grid {
+        grid-template-columns: 1fr !important;
+      }
     }
     h1 { 
       font-size: 1.4rem; 
@@ -2102,7 +1635,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
         ${content}
       </main>
     </div>
-  ${renderSidebarScript()}
+  ${renderPortalShellScript()}
 </body>
 </html>`;
 }

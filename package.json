@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "bun run build:docs && tsc -p tsconfig.build.json",
-    "build:docs": "bun run scripts/build-docs.ts",
+    "build:docs": "bun scripts/build-docs.ts",
     "start": "node dist/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ci": "SKIP_DB_TESTS=1 vitest run",
+    "test:ci:coverage": "SKIP_DB_TESTS=1 vitest run --coverage",
     "prepare": "husky"
   },
   "prisma": {

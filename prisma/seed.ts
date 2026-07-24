@@ -331,12 +331,31 @@ async function seed() {
   await prisma.organisations.deleteMany();
   console.log("Cleared existing data (users, sessions, accounts, and API keys preserved).");
 
-  // ─── Users (find existing or create via Better Auth) ───────────────────────
+  // ─── Users (find existing or create via Better Auth's internal adapter) ─────
+  // Public self-signup is intentionally disabled (see src/lib/auth.ts:
+  // `disableSignUp: true`) so the platform stays invite/waitlist-gated. That
+  // makes `auth.api.signUpEmail()` return 403 for these fixed demo/dev accounts.
+  // So we mint them the same low-level way the approved-account path does: create
+  // the user + a hashed "credential" account directly through the internal
+  // adapter (mirrors better-auth's own sign-up route). This bypasses the public
+  // sign-up ENDPOINT only — it does NOT re-enable self-service registration.
+  const authCtx = await auth.$context;
   async function getOrCreateUser(name: string, email: string, password: string) {
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return existing;
-    const signup = await auth.api.signUpEmail({ body: { name, email, password } });
-    return signup.user;
+    const hash = await authCtx.password.hash(password);
+    const user = await authCtx.internalAdapter.createUser({
+      email,
+      name,
+      emailVerified: true,
+    });
+    await authCtx.internalAdapter.linkAccount({
+      userId: user.id,
+      providerId: "credential",
+      accountId: user.id,
+      password: hash,
+    });
+    return user;
   }
 
   const admin = await getOrCreateUser("Admin User", env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
@@ -347,10 +366,23 @@ async function seed() {
   });
 
   const analyst = await getOrCreateUser("Analyst User", "analyst@clear.dev", "password123");
-  await prisma.user.update({ where: { id: analyst.id }, data: { emailVerified: true } });
+  // Grant the global "analyst" role (not just org membership): alert-promotion
+  // and crisis-creation are gated by requireRole(["admin","analyst"]) on the
+  // GLOBAL role, and the demo analyst is meant to exercise those.
+  await prisma.user.update({
+    where: { id: analyst.id },
+    data: { emailVerified: true, role: "analyst" },
+  });
 
   const viewer = await getOrCreateUser("Viewer User", "viewer@clear.dev", "password123");
-  await prisma.user.update({ where: { id: viewer.id }, data: { emailVerified: true } });
+  // Set the "viewer" role explicitly. Creating users through the internal
+  // adapter applies the model's new-user default role ("pending", from the
+  // waitlist flow) rather than a read-only "viewer", so pin it to keep this a
+  // functional read-only demo account (matches the credentials log below).
+  await prisma.user.update({
+    where: { id: viewer.id },
+    data: { emailVerified: true, role: "viewer" },
+  });
 
   // ─── Organisation ────────────────────────────────────────────────────────
   // Global admin (admin@clear.dev) does NOT need org membership — global role is sufficient.
@@ -422,7 +454,15 @@ async function seed() {
     }),
   ]);
 
-  console.log("Created 4 data sources");
+  // Manual-entry source for signals filed through the UI. The Create Signal
+  // modal's Source dropdown lists only data sources whose name is a manual
+  // source (field_officer/partner/government), not the automated feeds above,
+  // so at least one must exist for a manual signal to be filed.
+  await prisma.dataSources.create({
+    data: { name: "field_officer", type: "manual", isActive: true },
+  });
+
+  console.log("Created 4 data sources + 1 manual source");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
@@ -538,6 +578,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["conflict"],
       rank: 0.91,
+      severity: 5, // critical (pipeline normally sets this; seeded for demo/E2E)
       originId: elFasher.id,
       locationId: northDarfur.id,
     },
@@ -553,6 +594,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["displacement"],
       rank: 0.85,
+      severity: 3, // medium
       originId: northDarfur.id,
       destinationId: nyala.id,
       locationId: southDarfur.id,
@@ -570,6 +612,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["natural_disaster", "flood"],
       rank: 0.87,
+      severity: 4, // high
       locationId: khartoum.id,
     },
   });
@@ -584,6 +627,7 @@ async function seed() {
       lastSignalCreatedAt: now,
       types: ["food_security"],
       rank: 0.82,
+      severity: 2, // low
       locationId: northDarfur.id,
       populationAffected: BigInt(120000),
     },

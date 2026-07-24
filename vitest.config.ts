@@ -32,6 +32,23 @@ export default defineConfig({
         "src/portal/**",
         "**/*.d.ts",
       ],
+      // Coverage floor — gates the DB-FREE subset (what CI runs with
+      // SKIP_DB_TESTS=1), so it must be calibrated to the DB-free number, not
+      // the higher DB-backed one. Baseline measured on origin/dev
+      // (2026-07-21, `SKIP_DB_TESTS=1 bun run test:coverage`):
+      //   statements 50.78 · branches 42.31 · functions 47.62 · lines 51.39
+      // Thresholds sit JUST below each baseline — verified that removing a
+      // single covered test file (tests/services/datapoint-aggregation.test.ts,
+      // → 49.85/41.30/46.92/50.69) trips every metric, so a real regression
+      // can't slip through, while the intact suite passes. Line execution is
+      // arch-independent, so the number reproduces on CI (ubuntu/amd64).
+      // Ratchet these UP as coverage grows; never down.
+      thresholds: {
+        statements: 50,
+        branches: 42,
+        functions: 47,
+        lines: 51,
+      },
     },
   },
 });

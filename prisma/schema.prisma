@@ -6,7 +6,7 @@ generator client {
 
 datasource db {
   provider   = "postgresql"
-  extensions = [vector]
+  extensions = [vector, pg_trgm]
 }
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
@@ -1446,5 +1446,48 @@ model situationAnalysis {
   @@index([validTo])
   @@index([schemaVersion])
   @@map("situation_analyses")
+}
+
+/// GeoNames gazetteer places, one row per geonameid, seeded per-country
+/// from the extracts in `src/geonames/` via `scripts/import-geonames.ts`.
+/// Runtime source of truth for the offline first tier of the hybrid
+/// geo-resolver (see `resolveGazetteerLocation`); the raw .txt dumps are
+/// gitignored.
+model geonames {
+  geonamesId   Int     @id @map("geonames_id")
+  name         String
+  asciiName    String? @map("ascii_name")
+  latitude     Float
+  longitude    Float
+  /// GeoNames feature class: A=admin area, P=populated place, H=hydro,
+  /// L=area, S=spot/POI, T=terrain, … Used to prefer real settlements.
+  featureClass String? @map("feature_class")
+  featureCode  String? @map("feature_code")
+  /// ISO-3166-1 alpha-2 (SD, VE, AF).
+  countryCode  String  @map("country_code")
+  admin1Code   String? @map("admin1_code")
+  population   BigInt  @default(0)
+
+  names        geonamesName[]
+
+  @@index([countryCode])
+  @@map("geonames")
+}
+
+/// One row per searchable name variant of a place — its name, asciiname,
+/// and every alternatename — normalised (unaccent + lower). Trigram-indexed
+/// so a fuzzy transliteration lookup hits any spelling a report might use.
+model geonamesName {
+  id          BigInt   @id @default(autoincrement())
+  geonamesId  Int      @map("geonames_id")
+  nameNorm    String   @map("name_norm")
+  countryCode String   @map("country_code")
+
+  place       geonames @relation(fields: [geonamesId], references: [geonamesId], onDelete: Cascade)
+
+  @@index([geonamesId])
+  @@index([countryCode])
+  @@index([nameNorm(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("geonames_name")
 }
 

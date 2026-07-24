@@ -217,6 +217,18 @@ export const FIELD_RULES: FieldRule[] = [
     withinGroupPolicy: "latest_wins",
   },
   {
+    // Population Affected — widest circle of crisis impact. Max, not
+    // latest: the largest evidenced affected figure across the window is the
+    // best estimate of total reach; a later, narrower report shouldn't shrink
+    // it. Within a report take the max figure, then latest across reports
+    // (clear-context-pipeline ADR-0001). Never sourced from `events`.
+    path: "needs_and_funding.overall_affected",
+    label: "overall_affected",
+    kind: "max",
+    timeBucket: "month",
+    withinGroupPolicy: "max_within_report_then_latest",
+  },
+  {
     path: "needs_and_funding.overall_funding_required_usd",
     label: "funding_required_usd",
     kind: "latest_state",
@@ -482,7 +494,25 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
 /** Winner picker inside an incident group. POC uses plain latest-wins;
  *  the doc's more elaborate `latest_wins_with_confidence_override`
  *  ships in Phase 3. */
-function pickWinner(mentions: Mention[]): Mention {
+function pickWinner(
+  mentions: Mention[],
+  policy: WithinGroupPolicy = "latest_wins",
+): Mention {
+  if (policy === "max_within_report_then_latest") {
+    // Collapse each report to the largest figure it states (a report may
+    // list several affected figures; the widest is the report's claim),
+    // then across competing reports in this incident group take the latest
+    // by publish date. Used by `max`-kind fields like overall_affected.
+    const maxByReport = new Map<string, Mention>();
+    for (const m of mentions) {
+      const cur = maxByReport.get(m.reportId);
+      if (cur === undefined || m.value > cur.value) maxByReport.set(m.reportId, m);
+    }
+    return Array.from(maxByReport.values()).reduce((best, m) =>
+      m.publishedAt > best.publishedAt ? m : best,
+    );
+  }
+  // latest_wins (default): freshest report in the group.
   return mentions.reduce((best, m) => (m.publishedAt > best.publishedAt ? m : best));
 }
 
@@ -583,7 +613,7 @@ function aggregateNumericField(
   // Within-group winner + collect winners
   const winners: Mention[] = [];
   for (const group of groups.values()) {
-    winners.push(pickWinner(group));
+    winners.push(pickWinner(group, rule.withinGroupPolicy));
   }
 
   // Cross-group combine per field-kind
