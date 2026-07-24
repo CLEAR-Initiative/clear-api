@@ -70,7 +70,11 @@ function formatAccountLabel(role?: string | null): string {
 }
 
 function portalNavButton(tab: string, label: string, icon: keyof typeof PORTAL_SVGS): string {
-  return `<button type="button" class="nav-item" data-tab="${tab}" title="${escapeHtml(label)}" onclick="showTab('${tab}')">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></button>`;
+  // JSON.stringify + HTML-escape so tab never breaks out of the attribute/JS string.
+  const onclick = `showTab(${JSON.stringify(tab)})`
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;");
+  return `<button type="button" class="nav-item" data-tab="${escapeHtml(tab)}" title="${escapeHtml(label)}" onclick="${onclick}">${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></button>`;
 }
 
 function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SVGS, isActive = false, openInNewTab = false): string {

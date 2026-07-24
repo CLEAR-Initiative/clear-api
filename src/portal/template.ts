@@ -1057,13 +1057,43 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
 </html>`;
 }
 
-function safeLoginNext(raw?: string): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/portal";
-  return raw;
+/**
+ * Post-login redirect target. Same-origin only, allowlisted to portal/docs
+ * paths, and rejects protocol-relative / backslash open-redirect tricks.
+ */
+export function safePortalNext(raw?: string | null): string {
+  if (
+    !raw ||
+    typeof raw !== "string" ||
+    !raw.startsWith("/") ||
+    raw.startsWith("//") ||
+    raw.includes("\\") ||
+    raw.includes("\0")
+  ) {
+    return "/portal";
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw, "https://example.invalid");
+  } catch {
+    return "/portal";
+  }
+  if (url.origin !== "https://example.invalid") return "/portal";
+
+  const { pathname, search, hash } = url;
+  const allowed =
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/") ||
+    pathname === "/docs" ||
+    pathname.startsWith("/docs/");
+  if (!allowed) return "/portal";
+
+  return `${pathname}${search}${hash}`;
 }
 
 export function renderLoginPage(opts?: { next?: string }): string {
-  const nextJson = JSON.stringify(safeLoginNext(opts?.next));
+  const nextJson = JSON.stringify(safePortalNext(opts?.next));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

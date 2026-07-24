@@ -3,7 +3,9 @@ import {
   PORTAL_PUBLIC_TABS,
   renderLoginPage,
   renderPortal,
+  safePortalNext,
 } from "../../src/portal/template.js";
+import { renderPortalShell } from "../../src/portal/shell.js";
 
 describe("Portal public vs auth-gated tabs", () => {
   it("exposes Getting Started and API Reference as public tabs", () => {
@@ -31,7 +33,9 @@ describe("Portal public vs auth-gated tabs", () => {
     expect(html).toContain("Sign Out");
   });
 
-  it("honours a same-origin next path after login", () => {
+  it("honours allowlisted portal/docs next paths after login", () => {
+    expect(safePortalNext("/portal#api-keys")).toBe("/portal#api-keys");
+    expect(safePortalNext("/docs#guide")).toBe("/docs#guide");
     const html = renderLoginPage({ next: "/portal#api-keys" });
     expect(html).toContain('var LOGIN_NEXT = "/portal#api-keys"');
   });
@@ -43,8 +47,22 @@ describe("Portal public vs auth-gated tabs", () => {
     expect(html).toContain("Create Account");
   });
 
-  it("rejects protocol-relative next paths", () => {
+  it("rejects open-redirect tricks for login next", () => {
+    expect(safePortalNext("//evil.example/phish")).toBe("/portal");
+    expect(safePortalNext("/\\evil.example")).toBe("/portal");
+    expect(safePortalNext("/graphql")).toBe("/portal");
+    expect(safePortalNext("https://evil.example")).toBe("/portal");
     const html = renderLoginPage({ next: "//evil.example/phish" });
     expect(html).toContain('var LOGIN_NEXT = "/portal"');
+  });
+
+  it("escapes tab names in portal nav onclick handlers", () => {
+    const html = renderPortalShell({
+      surface: "portal",
+      account: { email: "dev@example.com" },
+    });
+    // Hardcoded tabs should render as safe JS string literals in the attribute
+    expect(html).toContain('onclick="showTab(&quot;getting-started&quot;)"');
+    expect(html).not.toMatch(/onclick="showTab\('/);
   });
 });

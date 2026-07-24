@@ -32,6 +32,7 @@ import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 import {
   renderPortal,
   renderLoginPage,
+  safePortalNext,
   renderAdminPending,
   renderAdminMetrics,
   renderAdminOrganisations,
@@ -66,18 +67,13 @@ async function currentUser(req: Request) {
   }
 }
 
-function safeNextPath(raw: unknown): string | undefined {
-  if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//")) {
-    return undefined;
-  }
-  return raw;
-}
-
 // ─── GET /portal/login — sign-in for auth-gated portal destinations ───────
 
 portalRouter.get("/login", async (req, res) => {
   const user = await currentUser(req);
-  const next = safeNextPath(req.query.next) ?? "/portal";
+  const next = safePortalNext(
+    typeof req.query.next === "string" ? req.query.next : undefined,
+  );
   if (user) {
     res.redirect(303, next);
     return;
