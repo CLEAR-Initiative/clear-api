@@ -1,4 +1,16 @@
 import type { SchemaData, SchemaField, SchemaType } from "./schema-introspect.js";
+import {
+  renderPortalShell,
+  renderPortalShellStyles,
+  renderPortalShellScript,
+  type PortalShellOptions,
+} from "../portal/shell.js";
+import {
+  buildTocTree,
+  renderOnThisPage,
+  renderOnThisPageScript,
+  renderOnThisPageStyles,
+} from "./on-this-page.js";
 
 function escapeHtml(str: string): string {
   return str
@@ -24,8 +36,44 @@ function renderFieldRow(field: SchemaField): string {
   </tr>`;
 }
 
-function renderOperationSection(title: string, id: string, fields: SchemaField[]): string {
+function renderOperationSection(
+  title: string,
+  id: string,
+  fields: SchemaField[],
+  itemPrefix?: string,
+): string {
   if (!fields.length) return "";
+
+  // If itemPrefix is provided, render each field with its own anchor ID
+  if (itemPrefix) {
+    const rows = fields
+      .map((field) => {
+        const anchor = `${itemPrefix}-${field.name.toLowerCase()}`;
+        const args = field.args.length
+          ? `<div class="field-args">${field.args
+              .map(
+                (a) =>
+                  `<span class="arg"><code>${escapeHtml(a.name)}: ${escapeHtml(a.type)}</code>${a.description ? ` — ${escapeHtml(a.description)}` : ""}</span>`,
+              )
+              .join("")}</div>`
+          : "";
+        return `<tr id="${anchor}">
+    <td><code>${escapeHtml(field.name)}</code></td>
+    <td><code>${escapeHtml(field.type)}</code></td>
+    <td>${field.description ? escapeHtml(field.description) : "—"}${args}</td>
+  </tr>`;
+      })
+      .join("");
+
+    return `
+    <h2 id="${id}">${escapeHtml(title)}</h2>
+    <table class="ref-table">
+      <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  // Otherwise, render without individual anchors
   return `
     <h2 id="${id}">${escapeHtml(title)}</h2>
     <table class="ref-table">
@@ -59,205 +107,13 @@ function renderTypeSection(type: SchemaType): string {
   return content;
 }
 
-function renderSidebarTypeLinks(types: SchemaType[]): string {
-  return types
-    .map(
-      (t) =>
-        `<a href="#type-${t.name.toLowerCase()}" class="sidebar-link depth-2">${escapeHtml(t.name)}</a>`,
-    )
-    .join("");
-}
-
-export function renderDocsPage(schema: SchemaData): string {
-  const _typesByKind = {
-    scalar: schema.types.filter((t) => t.kind === "scalar"),
-    enum: schema.types.filter((t) => t.kind === "enum"),
-    input: schema.types.filter((t) => t.kind === "input"),
-    object: schema.types.filter((t) => t.kind === "object"),
-  };
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CLEAR API — Documentation</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#0a0a0b">
-  <style>
-    :root {
-      --color-bg: #0a0a0b;
-      --color-surface: #141417;
-      --color-border: #26262b;
-      --color-accent: #f2612a;
-      --color-accent-hover: #ff6a33;
-      --color-text: #f5f5f6;
-      --color-muted: #9a9ca3;
-      --color-label: #75777e;
-      --color-code-bg: #0e0e10;
-      --on-accent: #0a0a0b;
-      --radius: 10px;
-      --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Inter, Arial, sans-serif;
-      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
-      --sidebar-width: 240px;
-      --toc-width: 200px;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; }
-    a { color: var(--color-accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
-    /* Nav */
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 1rem 2rem; border-bottom: 1px solid var(--color-border); background: rgba(10,10,11,0.85); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 100; }
-    .nav-brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; color: var(--color-text); text-decoration: none; }
-    .nav-brand .c { color: var(--color-accent); }
-    .nav-brand .by { color: var(--color-label); font-weight: 500; font-size: 0.8rem; font-style: italic; margin-left: 0.4rem; }
-    .nav-links { display: flex; align-items: center; gap: 1.75rem; }
-    .nav-links a { font-size: 0.85rem; color: var(--color-muted); }
-    .nav-links a:hover { color: var(--color-text); text-decoration: none; }
-    .nav-cta { border: 1px solid var(--color-border); border-radius: 8px; padding: 0.45rem 0.9rem !important; color: var(--color-text) !important; }
-    .nav-cta:hover { border-color: var(--color-accent); color: var(--color-accent) !important; }
-
-    /* Layout */
-    .layout { display: flex; min-height: calc(100vh - 49px); }
-
-    /* Left sidebar */
-    .sidebar { width: var(--sidebar-width); flex-shrink: 0; border-right: 1px solid var(--color-border); background: var(--color-surface); padding: 1.5rem 0; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
-    .sidebar-section { padding: 0 1.25rem; margin-bottom: 1.5rem; }
-    .sidebar-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
-    .sidebar-link { display: block; font-size: 0.85rem; color: var(--color-muted); padding: 0.25rem 0; transition: color 0.1s; }
-    .sidebar-link:hover { color: var(--color-text); text-decoration: none; }
-    .sidebar-link.active { color: var(--color-accent); }
-    .sidebar-link.depth-2 { padding-left: 0.75rem; font-size: 0.8rem; }
-
-    /* Subtle, hover-reveal scrollbars (sidebar, TOC, page) */
-    .sidebar, .toc { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-    .sidebar:hover, .toc:hover { scrollbar-color: var(--color-border) transparent; }
-    .sidebar::-webkit-scrollbar, .toc::-webkit-scrollbar { width: 8px; }
-    .sidebar::-webkit-scrollbar-track, .toc::-webkit-scrollbar-track { background: transparent; }
-    .sidebar::-webkit-scrollbar-thumb, .toc::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-    .sidebar:hover::-webkit-scrollbar-thumb, .toc:hover::-webkit-scrollbar-thumb { background: var(--color-border); background-clip: content-box; }
-    .sidebar:hover::-webkit-scrollbar-thumb:hover, .toc:hover::-webkit-scrollbar-thumb:hover { background: #3a3a42; background-clip: content-box; }
-    body { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
-    body::-webkit-scrollbar { width: 10px; }
-    body::-webkit-scrollbar-track { background: transparent; }
-    body::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-    body::-webkit-scrollbar-thumb:hover { background: #3a3a42; background-clip: content-box; }
-
-    /* Main content */
-    .content { flex: 1; max-width: 780px; padding: 2.5rem 3rem; min-width: 0; }
-    .content h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    .content h2 { font-size: 1.3rem; margin: 2.5rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
-    .content h2:first-of-type { border-top: none; padding-top: 0; }
-    .content h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
-    .content p { color: var(--color-muted); margin-bottom: 0.75rem; }
-    .content ul { padding-left: 1.5rem; color: var(--color-muted); margin-bottom: 0.75rem; }
-    .content li { margin: 0.3rem 0; }
-    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
-
-    /* Right TOC */
-    .toc { width: var(--toc-width); flex-shrink: 0; padding: 1.5rem 1rem; position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; }
-    .toc-heading { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin-bottom: 0.5rem; }
-    .toc a { display: block; font-size: 0.78rem; color: var(--color-muted); padding: 0.2rem 0; }
-    .toc a:hover { color: var(--color-text); text-decoration: none; }
-    .toc a.active { color: var(--color-accent); }
-
-    /* Code */
-    pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
-    code { font-family: var(--font-mono); font-size: 0.85rem; color: #cdd1d6; }
-    p code, li code, td code { background: var(--color-code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
-    .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; background: var(--color-border); border: none; border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 0.75rem; font-family: var(--font); }
-    .copy-btn:hover { background: var(--color-accent); color: var(--on-accent); }
-
-    /* Reference tables */
-    .ref-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
-    .ref-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
-    .ref-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; vertical-align: top; }
-    .ref-table td:first-child { white-space: nowrap; }
-
-    /* Field args */
-    .field-args { margin-top: 0.35rem; }
-    .field-args .arg { display: block; font-size: 0.78rem; color: var(--color-muted); padding-left: 0.5rem; border-left: 2px solid var(--color-border); margin-top: 0.2rem; }
-
-    /* Type badge */
-    .type-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; background: var(--color-border); color: var(--color-muted); }
-
-    /* Feature table */
-    .feature-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-    .feature-table th { text-align: left; padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
-    .feature-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
-    .feature-table td:first-child a { font-weight: 500; }
-
-    /* Steps */
-    .steps { margin-top: 1rem; }
-    .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
-    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
-    .step-content h4 { margin: 0 0 0.25rem; color: var(--color-text); font-size: 0.95rem; }
-    .step-content p { margin: 0.25rem 0; }
-
-    /* Notice */
-    .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
-    .notice-info { background: #11151c; border: 1px solid #2b3340; color: #aeb6c2; }
-    .notice-warning { background: #451a03; border: 1px solid #f59e0b; color: #fde68a; }
-
-    /* Responsive */
-    @media (max-width: 1100px) {
-      .toc { display: none; }
-    }
-    @media (max-width: 800px) {
-      .sidebar { display: none; }
-      .content { padding: 1.5rem; }
-    }
-  </style>
-</head>
-<body>
-  <nav class="nav">
-    <a class="nav-brand" href="/"><span class="c">CLEAR</span> API<span class="by">by NRC</span></a>
-    <div class="nav-links">
-      <a href="/">Home</a>
-      <a href="/graphql">Sandbox</a>
-      <a href="/portal">Portal</a>
-      <a href="/portal" class="nav-cta">Get an API key</a>
-    </div>
-  </nav>
-
-  <div class="layout">
-    <!-- Left sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Start Here</div>
-        <a href="#guide" class="sidebar-link">Build Your First Integration</a>
-        <a href="#guide-model" class="sidebar-link depth-2">The mental model</a>
-        <a href="#guide-setup" class="sidebar-link depth-2">Get set up</a>
-        <a href="#guide-first-request" class="sidebar-link depth-2">Your first request</a>
-        <a href="#guide-real-query" class="sidebar-link depth-2">Pull real data</a>
-        <a href="#guide-by-location" class="sidebar-link depth-2">Slice by location</a>
-        <a href="#guide-next" class="sidebar-link depth-2">Where to go next</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Get Started</div>
-        <a href="#introduction" class="sidebar-link">Introduction</a>
-        <a href="#quick-start" class="sidebar-link">Quick Start</a>
-        <a href="#authentication" class="sidebar-link">Authentication</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">Features</div>
-        <a href="#features" class="sidebar-link">Overview</a>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">API Reference</div>
-        <a href="#queries" class="sidebar-link">Queries</a>
-        <a href="#mutations" class="sidebar-link">Mutations</a>
-        <a href="#types" class="sidebar-link">Types</a>
-        ${renderSidebarTypeLinks(schema.types)}
-      </div>
-    </aside>
-
-    <!-- Main content -->
-    <main class="content">
+/**
+ * Render docs body content only (no chrome, no sidebars)
+ * This HTML is prebuilt and cached, then wrapped per-request by composeDocsPage
+ */
+export function renderDocsBody(schema: SchemaData): string {
+  return `
       <div id="section-guide">
-        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; START HERE &rsaquo; <strong>Build Your First Integration</strong></p>
         <h1 id="guide">Build Your First Integration</h1>
         <p class="subtitle">From zero knowledge to live humanitarian data in about ten minutes &mdash; the mental model, your first authenticated request, and two real queries.</p>
 
@@ -355,8 +211,7 @@ export function renderDocsPage(schema: SchemaData): string {
         </ul>
       </div>
 
-      <div id="section-introduction">
-        <p style="font-size:0.8rem;color:var(--color-muted);margin-bottom:0.25rem;">Docs &rsaquo; GET STARTED &rsaquo; <strong>Introduction</strong></p>
+      <div id="section-introduction" class="docs-section-block">
         <h1 id="introduction">Introduction</h1>
         <p class="subtitle">Welcome to the CLEAR API - your gateway to humanitarian intelligence.</p>
 
@@ -448,28 +303,187 @@ const data = await fetch('/graphql', {
 
       <div id="section-reference">
         ${renderOperationSection("Queries", "queries", schema.queries)}
-        ${renderOperationSection("Mutations", "mutations", schema.mutations)}
+        ${renderOperationSection("Mutations", "mutations", schema.mutations, "mutation")}
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
         ${schema.types.map(renderTypeSection).join("")}
       </div>
-    </main>
+`;
+}
 
-    <!-- Right TOC -->
-    <aside class="toc">
-      <div class="toc-heading">On This Page</div>
-      <a href="#guide">Build Your First Integration</a>
-      <a href="#introduction">Introduction</a>
-      <a href="#features">What You Can Do</a>
-      <a href="#quick-start">Quick Start</a>
-      <a href="#authentication">Authentication</a>
-      <a href="#queries">Queries</a>
-      <a href="#mutations">Mutations</a>
-      <a href="#types">Types</a>
-    </aside>
+/**
+ * Compose full docs page: Portal Shell + body content + On This Page
+ * Account is optional (null for anonymous visitors)
+ */
+export interface ComposeDocsPageOptions {
+  bodyHtml: string;
+  account: { email: string; role?: string | null } | null;
+  types: SchemaType[];
+  mutations: SchemaField[];
+}
+
+export function composeDocsPage(opts: ComposeDocsPageOptions): string {
+  const { bodyHtml, account, types, mutations } = opts;
+  
+  const shellOpts: PortalShellOptions = {
+    surface: "docs",
+    account,
+    activeHref: "/docs",
+  };
+  const shell = renderPortalShell(shellOpts);
+  
+  // Build structured On This Page tree with expand/collapse
+  const tocTree = buildTocTree(types, mutations);
+  const tocHtml = renderOnThisPage(tocTree);
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLEAR API — Documentation</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0a0b">
+  ${renderPortalShellStyles()}
+  <style>
+    /* Docs-specific layout: Portal Shell | content | On This Page */
+    ${renderOnThisPageStyles()}
+    .docs-layout {
+      display: flex;
+      min-height: 100vh;
+    }
+    
+    .docs-main {
+      flex: 1;
+      display: flex;
+      gap: 2rem;
+      padding-right: 2rem;
+      min-width: 0;
+      justify-content: center;
+      max-width: 1400px;
+      margin-right: auto;
+    }
+    
+    /* Main content column - flex to fill available space */
+    .docs-content {
+      flex: 1;
+      max-width: 780px;
+      padding: 2.5rem 3rem;
+      min-width: 0;
+    }
+    .docs-content h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    .docs-content h2 { font-size: 1.3rem; margin: 2.5rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+    .docs-content h2:first-of-type { border-top: none; padding-top: 0; }
+    .docs-content h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+    .docs-content p { color: var(--color-muted); margin-bottom: 0.75rem; }
+    .docs-content ul { padding-left: 1.5rem; color: var(--color-muted); margin-bottom: 0.75rem; }
+    .docs-content li { margin: 0.3rem 0; }
+    .docs-section-block { margin-top: 4rem; }
+    .subtitle { font-size: 1rem; color: var(--color-muted); margin-bottom: 2rem; }
+    
+    /* Code */
+    pre { background: var(--color-code-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; position: relative; margin: 0.75rem 0; }
+    code { font-family: var(--font-mono); font-size: 0.85rem; color: #cdd1d6; }
+    p code, li code, td code { background: var(--color-code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
+    .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem; background: var(--color-border); border: none; border-radius: 4px; color: var(--color-muted); cursor: pointer; font-size: 0.75rem; font-family: var(--font); }
+    .copy-btn:hover { background: var(--color-accent); color: var(--on-accent); }
+    
+    /* Reference tables */
+    .ref-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    .ref-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
+    .ref-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; vertical-align: top; }
+    .ref-table td:first-child { white-space: nowrap; }
+    
+    /* Field args */
+    .field-args { margin-top: 0.35rem; }
+    .field-args .arg { display: block; font-size: 0.78rem; color: var(--color-muted); padding-left: 0.5rem; border-left: 2px solid var(--color-border); margin-top: 0.2rem; }
+    
+    /* Type badge */
+    .type-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; background: var(--color-border); color: var(--color-muted); }
+    
+    /* Feature table */
+    .feature-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .feature-table th { text-align: left; padding: 0.6rem 1rem; font-size: 0.8rem; color: var(--color-muted); border-bottom: 1px solid var(--color-border); }
+    .feature-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
+    .feature-table td:first-child a { font-weight: 500; }
+    
+    /* Steps */
+    .steps { margin-top: 1rem; }
+    .step { display: flex; gap: 1.25rem; margin: 1.75rem 0; }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--color-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.875rem; color: var(--on-accent); }
+    .step-content h4 { margin: 0 0 0.25rem; color: var(--color-text); font-size: 0.95rem; }
+    .step-content p { margin: 0.25rem 0; }
+    
+    /* Notice */
+    .notice { padding: 0.75rem 1rem; border-radius: var(--radius); margin: 1rem 0; font-size: 0.875rem; }
+    .notice-info { background: #11151c; border: 1px solid #2b3340; color: #aeb6c2; }
+    .notice-warning { background: #451a03; border: 1px solid #f59e0b; color: #fde68a; }
+    
+    /* TOC link styles */
+    .toc-heading {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--color-muted);
+      margin-bottom: 1rem;
+    }
+    .toc-link {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--color-muted);
+      padding: 0.35rem 0;
+      transition: color 0.15s;
+      text-decoration: none;
+    }
+    .toc-link:hover {
+      color: var(--color-text);
+    }
+    .toc-link.active {
+      color: var(--color-accent);
+      font-weight: 500;
+    }
+    /* Parent section stays highlighted while viewing its children */
+    .toc-section.expanded .toc-parent {
+      color: var(--color-accent);
+    }
+    /* Light orange for already-read items (above current) */
+    .toc-link.read {
+      color: rgba(255, 120, 43, 0.5);
+    }
+    .toc-link-type {
+      font-size: 0.75rem;
+      padding: 0.25rem 0 0.25rem 0.75rem;
+    }
+    
+    /* Mobile: adjust main layout */
+    @media (max-width: 1100px) {
+      .docs-main {
+        padding-right: 0;
+      }
+    }
+    @media (max-width: 768px) {
+      .docs-main {
+        padding-right: 0;
+      }
+      .docs-content {
+        padding: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="portal-shell docs-layout" id="portal-shell">
+    ${shell}
+    <div class="docs-main">
+      <main class="docs-content">
+        ${bodyHtml}
+      </main>
+      ${tocHtml}
+    </div>
   </div>
-
+  
   <script>
     // Copy to clipboard
     function copyCode(btn) {
@@ -494,30 +508,12 @@ const data = await fetch('/graphql', {
         setTimeout(function() { btn.textContent = orig; }, 2000);
       }
     }
-
-    // Active sidebar link tracking
-    var sidebarLinks = document.querySelectorAll('.sidebar-link');
-    var headings = [];
-    sidebarLinks.forEach(function(link) {
-      var id = link.getAttribute('href');
-      if (id && id.startsWith('#')) {
-        var el = document.getElementById(id.slice(1));
-        if (el) headings.push({ el: el, link: link });
-      }
-    });
-
-    function updateActive() {
-      var scrollY = window.scrollY + 80;
-      var current = headings[0];
-      for (var i = 0; i < headings.length; i++) {
-        if (headings[i].el.offsetTop <= scrollY) current = headings[i];
-      }
-      sidebarLinks.forEach(function(l) { l.classList.remove('active'); });
-      if (current) current.link.classList.add('active');
-    }
-    window.addEventListener('scroll', updateActive, { passive: true });
-    updateActive();
   </script>
+  <script>
+    ${renderOnThisPageScript()}
+  </script>
+  ${renderPortalShellScript()}
 </body>
 </html>`;
 }
+
