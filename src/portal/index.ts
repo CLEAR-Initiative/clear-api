@@ -66,13 +66,35 @@ async function currentUser(req: Request) {
   }
 }
 
-// ─── GET /portal — three-way render based on role ────────────────────────
+function safeNextPath(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//")) {
+    return undefined;
+  }
+  return raw;
+}
+
+// ─── GET /portal/login — sign-in for auth-gated portal destinations ───────
+
+portalRouter.get("/login", async (req, res) => {
+  const user = await currentUser(req);
+  const next = safeNextPath(req.query.next) ?? "/portal";
+  if (user) {
+    res.redirect(303, next);
+    return;
+  }
+  res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(renderLoginPage({ next }));
+});
+
+// ─── GET /portal — public tabs for anonymous; full portal when signed in ─
 
 portalRouter.get("/", async (req, res) => {
   const user = await currentUser(req);
+
   if (!user) {
-    res.status(401).setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(renderLoginPage());
+    // Getting Started + API Reference are public; other tabs redirect to /portal/login
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderPortal({ userEmail: null }));
     return;
   }
 
