@@ -23,6 +23,7 @@ import { createDocsRouter } from "./docs/index.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { webhooksRouter } from "./routes/webhooks.js";
+import { logieRouter } from "./routes/logie.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 
 const app = express();
@@ -72,6 +73,10 @@ app.use(
   express.json({ limit: "1mb" }),
   webhooksRouter,
 );
+
+// LogIE Blockages serve (map-ready slim GeoJSON from persisted metadata).
+// Read-only GET; auth is enforced inside the route (session or API key).
+app.use("/api/logie", logieRouter);
 
 // Health check
 app.get("/health", (_req, res) => {
