@@ -87,7 +87,8 @@ describe("FIELD_RULES registry", () => {
       "additive_count", "latest_state", "set_union", "max", "non_aggregatable",
     ]);
     const validPolicies = new Set([
-      "latest_wins", "max_within_report_then_latest", "set_union_all",
+      "latest_wins", "latest_wins_with_confidence_override",
+      "max_within_report_then_latest", "set_union_all",
     ]);
     for (const rule of FIELD_RULES) {
       expect(validKinds.has(rule.kind)).toBe(true);
@@ -112,8 +113,10 @@ describe("aggregateReports — empty input", () => {
 });
 
 describe("aggregateReports — additive count (killed_total)", () => {
-  it("sums two distinct-day incidents in the same week + location", () => {
-    // Different days → different incident keys → both counted.
+  it("dedupes two reports for the same week (period totals, not per-day events)", () => {
+    // Both figures are weekly period-totals for the same week + location, so
+    // they're competing observations of one measurement — deduped to the
+    // latest, not summed (clear-context-pipeline ADR-0002: no per-day breakdown).
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
@@ -127,8 +130,7 @@ describe("aggregateReports — additive count (killed_total)", () => {
     const field = result!.data.killed_total;
     expect(field).not.toBeNull();
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(8);
-    expect(field.contributing_report_ids.sort()).toEqual(["r1", "r2"]);
+    expect(field.value).toBe(5); // deduped to the latest, not summed to 8
   });
 
   it("dedupes same-day competing reports — latest publishedAt wins", () => {
@@ -147,6 +149,87 @@ describe("aggregateReports — additive count (killed_total)", () => {
     if (!field || !("value" in field)) throw new Error("expected numeric field");
     // Not 25 (naïve sum) — 15 (winner value).
     expect(field.value).toBe(15);
+  });
+});
+
+describe("aggregateReports — latest_wins_with_confidence_override (additive counts)", () => {
+  // Confidence override: same incident (same week bucket + location),
+  // a newer lower-tier report vs a slightly older verified one.
+  it("a verified row within 3 days overrides a newer lower-tier winner", () => {
+    const rows = [
+      row("r-verified", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-media", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(40); // verified overrides the fresher media row
+  });
+
+  it("does NOT override when the verified row is outside the 3-day window", () => {
+    const rows = [
+      row("r-verified", "2026-07-01T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-media", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(55); // 6 days apart → plain latest_wins → media
+  });
+
+  it("keeps the freshest row when it is itself verified", () => {
+    const rows = [
+      row("r-media", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-verified", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(40); // freshest is verified → wins outright
+  });
+});
+
+describe("aggregateReports — week bucket for summed figures", () => {
+  it("dedupes two same-week reports (weekly period totals, not per-day events)", () => {
+    // 2026-07-06 (Mon) and 2026-07-08 (Wed) are the same ISO week. The figures
+    // are weekly period-totals for the same week + location → one measurement,
+    // deduped to the latest, not summed (clear-context-pipeline ADR-0002).
+    const rows = [
+      row("r-mon", "2026-07-06T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(2, "reported") },
+      }, "2026-07-06T00:00:00Z"),
+      row("r-wed", "2026-07-08T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(3, "reported") },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(3); // deduped to the latest, not summed to 5
+  });
+
+  it("sums reports from different weeks", () => {
+    // 2026-07-01 (ISO week 27) and 2026-07-08 (week 28) → different periods →
+    // genuinely different figures → summed.
+    const rows = [
+      row("wk27", "2026-07-01T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(2, "reported") },
+      }, "2026-07-01T00:00:00Z"),
+      row("wk28", "2026-07-08T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(3, "reported") },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(5); // 2 + 3 across two distinct weeks
   });
 });
 
@@ -291,13 +374,15 @@ describe("aggregateReports — quality envelope", () => {
 
   it("mixes tiers correctly when reports have different confidences", () => {
     // One verified (weight 1.0) + one media (weight 0.3) → mean ≈ 0.65.
+    // Different weeks (07-01 = wk27, 07-08 = wk28) so both survive as distinct
+    // figures and both feed the confidence mix (same week would dedup to one).
     const rows = [
-      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
+      row("r1", "2026-07-01T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
-      }, "2026-07-02T00:00:00Z"),
-      row("r2", "2026-07-04T00:00:00Z", ["SD0201"], {
+      }, "2026-07-01T00:00:00Z"),
+      row("r2", "2026-07-08T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(5, "media") } },
-      }, "2026-07-04T00:00:00Z"),
+      }, "2026-07-08T00:00:00Z"),
     ];
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;

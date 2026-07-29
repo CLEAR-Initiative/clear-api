@@ -67,6 +67,7 @@ export type TimeBucket = "day" | "week" | "month" | "period";
 
 export type WithinGroupPolicy =
   | "latest_wins"
+  | "latest_wins_with_confidence_override"
   | "max_within_report_then_latest"
   | "set_union_all";
 
@@ -94,28 +95,40 @@ export interface FieldRule {
  * dashboard's headline tiles; adding new rules is O(1) — append here
  * and the aggregator picks them up next run.
  *
- * Field-kind assignments follow §6.2 of the doc:
- *   - counts of one-off events → additive_count with `day` bucket
- *   - counts of period-continuous events (displacement) → additive_count
- *     with `week` bucket (matches DTM cadence)
- *   - state snapshots (stocks, PIN) → latest_state with `month` bucket
- *   - free-form label sets (event_types) → set_union
+ * Time buckets. Our source reports are analytical and weekly, and a figure is
+ * already a total over a reporting PERIOD ("600 affected between X and Y"), not
+ * an event on a day (clear-context-pipeline ADR-0002). So SUMMED figures dedup at the
+ * reporting-WEEK granularity: two reports for the same week + location + event
+ * are the same measurement (dedup); different weeks sum. A `day` bucket would
+ * never group two weekly reports and would double-count same-week restatements;
+ * `month` would merge distinct weeks and undercount. Slow-moving STATE snapshots
+ * (stocks, PIN) use `month` with latest-wins; set-union labels use no bucket.
+ *
+ * KNOWN LIMITATION — period-range overlap: sitreps cover 2–6 week, overlapping
+ * windows, so no single calendar bucket is exact — two reports whose periods
+ * overlap but end in different weeks still sum. Correct dedup compares the
+ * period RANGES (reportingPeriodStart..End) for overlap, which needs a
+ * range-grouping pass rather than a bucket. `week` is the best bucket short of
+ * that; range-overlap dedup is tracked as a follow-up.
  */
 export const FIELD_RULES: FieldRule[] = [
   // ── Casualties ─────────────────────────────────────────────
+  // Weekly period totals ("N killed between X and Y") — dedup per reporting
+  // week, not per day: there is no per-day figure to bucket on
+  // (clear-context-pipeline ADR-0002).
   {
     path: "casualties.killed.total",
     label: "killed_total",
     kind: "additive_count",
-    timeBucket: "day",
-    withinGroupPolicy: "latest_wins",
+    timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "casualties.injured.total",
     label: "injured_total",
     kind: "additive_count",
-    timeBucket: "day",
-    withinGroupPolicy: "latest_wins",
+    timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Displacement ────────────────────────────────────────────
@@ -131,14 +144,14 @@ export const FIELD_RULES: FieldRule[] = [
     label: "new_displacements",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "displacement.returnees",
     label: "returnees",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "displacement.refugees",
@@ -149,19 +162,22 @@ export const FIELD_RULES: FieldRule[] = [
   },
 
   // ── Access & incidents ──────────────────────────────────────
+  // Weekly period totals ("N incidents this period") — dedup per reporting
+  // week. Reports don't carry per-incident/per-day breakdowns
+  // (clear-context-pipeline ADR-0002).
   {
     path: "access_and_incidents.security_incidents_count",
     label: "security_incidents_count",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "access_and_incidents.aid_workers_killed",
     label: "aid_workers_killed",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Needs & funding (per-sector PIN) ─────────────────────────
@@ -236,11 +252,14 @@ export const FIELD_RULES: FieldRule[] = [
     withinGroupPolicy: "latest_wins",
   },
   {
+    // Summed like the other counts → dedup per reporting week. (A `month`/
+    // period bucket would merge distinct weekly reports and undercount an
+    // additive total; see the header note on period-range overlap.)
     path: "needs_and_funding.overall_funding_received_usd",
     label: "funding_received_usd",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Set-union labels ────────────────────────────────────────
@@ -491,9 +510,14 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
 // Per-field aggregation
 // ────────────────────────────────────────────────────────────────────
 
-/** Winner picker inside an incident group. POC uses plain latest-wins;
- *  the doc's more elaborate `latest_wins_with_confidence_override`
- *  ships in Phase 3. */
+/** Window within which a `verified`-tier row overrides a newer, lower-tier
+ *  winner (the `latest_wins_with_confidence_override` policy). A UN/govt-
+ *  verified figure published within 3 days of the freshest row is treated as
+ *  the more authoritative observation of the same incident. */
+const VERIFIED_OVERRIDE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Winner picker inside an incident group. Dispatches on the field's
+ *  within-group policy. */
 function pickWinner(
   mentions: Mention[],
   policy: WithinGroupPolicy = "latest_wins",
@@ -512,8 +536,29 @@ function pickWinner(
       m.publishedAt > best.publishedAt ? m : best,
     );
   }
+
+  // latest_wins baseline: freshest report in the group.
+  const latest = mentions.reduce((best, m) => (m.publishedAt > best.publishedAt ? m : best));
+
+  if (policy === "latest_wins_with_confidence_override") {
+    // Additive counts: the freshest row wins UNLESS a `verified`-tier row
+    // was published within VERIFIED_OVERRIDE_WINDOW_MS of it — a slightly
+    // older UN/govt-verified figure beats a newer media/unverified one.
+    // If the freshest row is itself verified, nothing overrides it. Among
+    // eligible verified rows, the latest wins.
+    if (latest.confidence === "verified") return latest;
+    const windowStart = latest.publishedAt.getTime() - VERIFIED_OVERRIDE_WINDOW_MS;
+    const verifiedInWindow = mentions.filter(
+      (m) => m.confidence === "verified" && m.publishedAt.getTime() >= windowStart,
+    );
+    if (verifiedInWindow.length > 0) {
+      return verifiedInWindow.reduce((best, m) => (m.publishedAt > best.publishedAt ? m : best));
+    }
+    return latest;
+  }
+
   // latest_wins (default): freshest report in the group.
-  return mentions.reduce((best, m) => (m.publishedAt > best.publishedAt ? m : best));
+  return latest;
 }
 
 /** Build the confidence-mix distribution + weighted quality score. */
