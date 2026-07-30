@@ -10,10 +10,14 @@ import { requireAuth } from "../utils/auth-guard.js";
  *
  * bbox order matches ensureCountryLocation: [minLng, minLat, maxLng, maxLat].
  */
-const PIPELINE_COUNTRIES: ReadonlyArray<{ name: string; bbox: number[] }> = [
-  { name: "Sudan", bbox: [21.8, 8.5, 38.6, 22.0] },
-  { name: "Afghanistan", bbox: [60.5, 29.4, 74.9, 38.5] },
-  { name: "Venezuela", bbox: [-73.4, 0.6, -59.8, 12.3] },
+const PIPELINE_COUNTRIES: ReadonlyArray<{
+  name: string;
+  iso3: string;
+  bbox: number[];
+}> = [
+  { name: "Sudan", iso3: "SDN", bbox: [21.8, 8.5, 38.6, 22.0] },
+  { name: "Afghanistan", iso3: "AFG", bbox: [60.5, 29.4, 74.9, 38.5] },
+  { name: "Venezuela", iso3: "VEN", bbox: [-73.4, 0.6, -59.8, 12.3] },
 ];
 
 export const pipelineCountryResolvers = {
@@ -21,7 +25,11 @@ export const pipelineCountryResolvers = {
     pipelineCountries: (_parent: unknown, _args: unknown, context: Context) => {
       requireAuth(context);
       // Return copies so a resolver consumer can't mutate the shared config.
-      return PIPELINE_COUNTRIES.map((c) => ({ name: c.name, bbox: [...c.bbox] }));
+      return PIPELINE_COUNTRIES.map((c) => ({
+        name: c.name,
+        iso3: c.iso3,
+        bbox: [...c.bbox],
+      }));
     },
   },
 };

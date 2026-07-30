@@ -215,6 +215,65 @@ describe("Mutation.upsertLocationMetadataBatch — auth + short-circuits", () =>
   });
 });
 
+describe("Mutation.upsertLocationMetadataBatch — unchanged-skip guard", () => {
+  // Mock $transaction to run its callback with a fake `tx`, so we can exercise
+  // the in-transaction guard without a real DB. The first tx.findMany reads the
+  // currently-open rows; a second (only when something changed) reads the rows
+  // just inserted.
+  function buildBatchCtx(openRows: unknown[], inserted: unknown[]) {
+    const tx = {
+      locationMetadata: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce(openRows)
+          .mockResolvedValueOnce(inserted),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const $transaction = vi.fn(async (cb: (t: unknown) => unknown) => cb(tx));
+    const ctx = buildContext(ADMIN, {
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "L1" }]) },
+      $transaction,
+    });
+    return { ctx, tx };
+  }
+
+  it("skips the write when the blob equals the open row (key order ignored)", async () => {
+    const openRow = { id: "m1", locationId: "L1", type: "t", data: { a: 1, b: 2 }, validTo: null };
+    const { ctx, tx } = buildBatchCtx([openRow], []);
+    // Same data, different key order → treated as unchanged → no supersede.
+    const result = await upsertLocationMetadataBatch(
+      null, { inputs: [{ locationId: "L1", type: "t", data: { b: 2, a: 1 } }] }, ctx,
+    );
+    expect(tx.locationMetadata.updateMany).not.toHaveBeenCalled();
+    expect(tx.locationMetadata.createMany).not.toHaveBeenCalled();
+    expect(result).toEqual([openRow]);
+  });
+
+  it("closes + inserts when the blob differs", async () => {
+    const openRow = { id: "m1", locationId: "L1", type: "t", data: { a: 1 }, validTo: null };
+    const inserted = [{ id: "m2", locationId: "L1", type: "t", data: { a: 2 }, validTo: null }];
+    const { ctx, tx } = buildBatchCtx([openRow], inserted);
+    const result = await upsertLocationMetadataBatch(
+      null, { inputs: [{ locationId: "L1", type: "t", data: { a: 2 } }] }, ctx,
+    );
+    expect(tx.locationMetadata.updateMany).toHaveBeenCalledOnce();
+    expect(tx.locationMetadata.createMany).toHaveBeenCalledOnce();
+    expect(result).toEqual(inserted);
+  });
+
+  it("inserts when there is no open row yet (first ingest)", async () => {
+    const inserted = [{ id: "m2", locationId: "L1", type: "t", data: { a: 1 }, validTo: null }];
+    const { ctx, tx } = buildBatchCtx([], inserted);
+    const result = await upsertLocationMetadataBatch(
+      null, { inputs: [{ locationId: "L1", type: "t", data: { a: 1 } }] }, ctx,
+    );
+    expect(tx.locationMetadata.createMany).toHaveBeenCalledOnce();
+    expect(result).toEqual(inserted);
+  });
+});
+
 describe("Mutation.deleteLocationMetadata", () => {
   it("requires admin", async () => {
     const updateMany = vi.fn();

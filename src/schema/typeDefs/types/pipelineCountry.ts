@@ -6,6 +6,9 @@ export const pipelineCountryTypeDef = gql`
   ensureCountryLocation: [minLng, minLat, maxLng, maxLat]."""
   type PipelineCountry {
     name: String!
+    """ISO 3166-1 alpha-3 code (e.g. "SDN"). Used by pipeline ingests that scope
+    external APIs by country (HAPI location_code, IOM DTM Admin0Pcode)."""
+    iso3: String!
     bbox: [Float!]!
   }
 `;
