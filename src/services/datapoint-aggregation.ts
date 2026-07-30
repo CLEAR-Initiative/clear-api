@@ -14,27 +14,31 @@
  *   - `timeBucket`: dedup granularity (unused for set_union / non_aggregatable)
  *   - `withinGroupPolicy`: how to pick a winner within an incident group
  *
- * POC simplifications (see docs §6.4 for the full model):
- *   - No event-type in incident key — uses `(location, date_bucket)` only.
- *     Two different events in the same place + time collapse into one.
- *   - No "verified within 3 days" confidence override — plain latest-wins.
- *   - No same-report multi-mention collapse — assumes LLM emits each
- *     field once per report (the sub-schema shape enforces this in
- *     practice).
- *   These are Phase 3 refinements; the field-rule registry has the
- *   hooks to add them without changing the aggregator's structure.
+ * Implemented refinements (full model lives in the clear-context-pipeline
+ * datapoint design doc + its ADRs):
+ *   - Event-type IS part of the incident key — `(figure scope, time bucket,
+ *     event-type set)` — so distinct phenomena at one scope+time don't collapse.
+ *   - Verified-within-3-days confidence override on additive counts
+ *     (`latest_wins_with_confidence_override`).
+ *   - Provenance is complete: `contributing_report_ids` and `confidence_mix`
+ *     cover every report that fed a figure, winners and deduped losers alike;
+ *     `suppressed_count` counts the deduped-away figures so silent dedup is
+ *     observable.
+ *
+ * Known limitations (not yet tracked):
+ *   - The 3-day override window is a module const, not per-rule configurable.
+ *   - Period-range overlap: reports cover 2–6 week overlapping windows, so a
+ *     single-date week bucket isn't exact — correct dedup compares period
+ *     ranges. Funding's "reporting period" is approximated by the week bucket.
+ *   - No same-report multi-mention collapse — the sub-schema emits each field
+ *     once per report, so there's nothing to collapse.
  */
 
 // ────────────────────────────────────────────────────────────────────
 // Confidence tiers + weights — mirrors §6.1 of the design doc
 // ────────────────────────────────────────────────────────────────────
 
-export type ConfidenceTier =
-  | "verified"
-  | "reported"
-  | "estimated"
-  | "media"
-  | "unverified";
+export type ConfidenceTier = "verified" | "reported" | "estimated" | "media" | "unverified";
 
 const CONFIDENCE_WEIGHTS: Record<ConfidenceTier, number> = {
   verified: 1.0,
@@ -63,10 +67,11 @@ export type FieldKind =
   | "max"
   | "non_aggregatable";
 
-export type TimeBucket = "day" | "week" | "month" | "period";
+export type TimeBucket = "day" | "week" | "month";
 
 export type WithinGroupPolicy =
   | "latest_wins"
+  | "latest_wins_with_confidence_override"
   | "max_within_report_then_latest"
   | "set_union_all";
 
@@ -94,28 +99,40 @@ export interface FieldRule {
  * dashboard's headline tiles; adding new rules is O(1) — append here
  * and the aggregator picks them up next run.
  *
- * Field-kind assignments follow §6.2 of the doc:
- *   - counts of one-off events → additive_count with `day` bucket
- *   - counts of period-continuous events (displacement) → additive_count
- *     with `week` bucket (matches DTM cadence)
- *   - state snapshots (stocks, PIN) → latest_state with `month` bucket
- *   - free-form label sets (event_types) → set_union
+ * Time buckets. Our source reports are analytical and weekly, and a figure is
+ * already a total over a reporting PERIOD ("600 affected between X and Y"), not
+ * an event on a day (clear-context-pipeline ADR-0002). So SUMMED figures dedup at the
+ * reporting-WEEK granularity: two reports for the same week + location + event
+ * are the same measurement (dedup); different weeks sum. A `day` bucket would
+ * never group two weekly reports and would double-count same-week restatements;
+ * `month` would merge distinct weeks and undercount. Slow-moving STATE snapshots
+ * (stocks, PIN) use `month` with latest-wins; set-union labels use no bucket.
+ *
+ * KNOWN LIMITATION — period-range overlap: sitreps cover 2–6 week, overlapping
+ * windows, so no single calendar bucket is exact — two reports whose periods
+ * overlap but end in different weeks still sum. Correct dedup compares the
+ * period RANGES (reportingPeriodStart..End) for overlap, which needs a
+ * range-grouping pass rather than a bucket. `week` is the best bucket short of
+ * that; range-overlap dedup is tracked as a follow-up.
  */
 export const FIELD_RULES: FieldRule[] = [
   // ── Casualties ─────────────────────────────────────────────
+  // Weekly period totals ("N killed between X and Y") — dedup per reporting
+  // week, not per day: there is no per-day figure to bucket on
+  // (clear-context-pipeline ADR-0002).
   {
     path: "casualties.killed.total",
     label: "killed_total",
     kind: "additive_count",
-    timeBucket: "day",
-    withinGroupPolicy: "latest_wins",
+    timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "casualties.injured.total",
     label: "injured_total",
     kind: "additive_count",
-    timeBucket: "day",
-    withinGroupPolicy: "latest_wins",
+    timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Displacement ────────────────────────────────────────────
@@ -131,14 +148,14 @@ export const FIELD_RULES: FieldRule[] = [
     label: "new_displacements",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "displacement.returnees",
     label: "returnees",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "displacement.refugees",
@@ -149,19 +166,22 @@ export const FIELD_RULES: FieldRule[] = [
   },
 
   // ── Access & incidents ──────────────────────────────────────
+  // Weekly period totals ("N incidents this period") — dedup per reporting
+  // week. Reports don't carry per-incident/per-day breakdowns
+  // (clear-context-pipeline ADR-0002).
   {
     path: "access_and_incidents.security_incidents_count",
     label: "security_incidents_count",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
   {
     path: "access_and_incidents.aid_workers_killed",
     label: "aid_workers_killed",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Needs & funding (per-sector PIN) ─────────────────────────
@@ -236,11 +256,14 @@ export const FIELD_RULES: FieldRule[] = [
     withinGroupPolicy: "latest_wins",
   },
   {
+    // Summed like the other counts → dedup per reporting week. (A `month`/
+    // period bucket would merge distinct weekly reports and undercount an
+    // additive total; see the header note on period-range overlap.)
     path: "needs_and_funding.overall_funding_received_usd",
     label: "funding_received_usd",
     kind: "additive_count",
     timeBucket: "week",
-    withinGroupPolicy: "latest_wins",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
   },
 
   // ── Set-union labels ────────────────────────────────────────
@@ -283,6 +306,10 @@ export interface QualityEnvelope {
   newest_report_at: string;
   oldest_report_at: string;
   contributing_report_ids: string[];
+  /** Figures deduped away as within-group losers (0 when nothing collapsed).
+   *  Surfaces the otherwise-silent suppression the week bucket makes routine —
+   *  a spike here flags reports whose values didn't reach the aggregate. */
+  suppressed_count: number;
 }
 
 /** Set-union output for label-type fields (event_types, clusters). */
@@ -341,19 +368,13 @@ function bucketDate(dt: Date, bucket: TimeBucket): string {
       const weekNum =
         1 +
         Math.round(
-          ((target.getTime() - week1.getTime()) / 86_400_000 -
-            3 +
-            ((week1.getUTCDay() + 6) % 7)) /
+          ((target.getTime() - week1.getTime()) / 86_400_000 - 3 + ((week1.getUTCDay() + 6) % 7)) /
             7,
         );
       return `${target.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
     }
     case "month":
       return iso.slice(0, 7); // YYYY-MM
-    case "period":
-      // POC: fall back to month bucket for period. Real funding-period
-      // dedup requires appeal/plan cycle metadata we don't extract yet.
-      return iso.slice(0, 7);
   }
 }
 
@@ -405,16 +426,9 @@ interface Mention {
  * yields `[]` but fires `onMalformed` — a shape we don't understand
  * shifts published figures, so it must not degrade silently.
  */
-function canonicaliseEventTypes(
-  raw: unknown,
-  onMalformed?: (kind: string) => void,
-): string[] {
+function canonicaliseEventTypes(raw: unknown, onMalformed?: (kind: string) => void): string[] {
   if (raw == null) return [];
-  const list = Array.isArray(raw)
-    ? raw
-    : typeof raw === "string"
-      ? [raw]
-      : null;
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : null;
   if (list === null) {
     onMalformed?.(typeof raw);
     return [];
@@ -462,9 +476,7 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   // The figure's scope. No scope → unattributed → excluded from every
   // bucket (never rolled up).
   const scopeLocationId =
-    typeof nf.scope_location_id === "string" && nf.scope_location_id
-      ? nf.scope_location_id
-      : null;
+    typeof nf.scope_location_id === "string" && nf.scope_location_id ? nf.scope_location_id : null;
   if (!scopeLocationId) return [];
 
   // Incident date defaults to reportingPeriodEnd (the CONTENT date),
@@ -475,52 +487,102 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   // Report-level: every mention this report emits carries the same set.
   const eventKey = eventKeyFor(row);
 
-  return [{
-    reportId: row.reportId,
-    publishedAt: row.publishedAt,
-    incidentDate,
-    locationId: scopeLocationId,
-    value,
-    unit,
-    confidence,
-    eventKey,
-  }];
+  return [
+    {
+      reportId: row.reportId,
+      publishedAt: row.publishedAt,
+      incidentDate,
+      locationId: scopeLocationId,
+      value,
+      unit,
+      confidence,
+      eventKey,
+    },
+  ];
 }
 
 // ────────────────────────────────────────────────────────────────────
 // Per-field aggregation
 // ────────────────────────────────────────────────────────────────────
 
-/** Winner picker inside an incident group. POC uses plain latest-wins;
- *  the doc's more elaborate `latest_wins_with_confidence_override`
- *  ships in Phase 3. */
-function pickWinner(
-  mentions: Mention[],
-  policy: WithinGroupPolicy = "latest_wins",
-): Mention {
+/** Window within which a `verified`-tier row overrides a newer, lower-tier
+ *  winner (the `latest_wins_with_confidence_override` policy). A UN/govt-
+ *  verified figure published within 3 days of the freshest row is treated as
+ *  the more authoritative observation of the same incident. */
+const VERIFIED_OVERRIDE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Freshest mention by `publishedAt`, with a STABLE tie-break so an equal
+ *  timestamp doesn't make the winner depend on input ordering (which upstream
+ *  DB ordering can silently change). On a tie: higher confidence weight wins,
+ *  then the lexically-smaller `reportId`. Matches the design doc's "Highest
+ *  publishedAt. Confidence weight breaks ties." */
+function latestByPublishedAt(mentions: Mention[]): Mention {
+  return mentions.reduce((best, m) => {
+    const dt = m.publishedAt.getTime() - best.publishedAt.getTime();
+    if (dt > 0) return m;
+    if (dt < 0) return best;
+    const dw = CONFIDENCE_WEIGHTS[m.confidence] - CONFIDENCE_WEIGHTS[best.confidence];
+    if (dw > 0) return m;
+    if (dw < 0) return best;
+    return m.reportId < best.reportId ? m : best;
+  });
+}
+
+/** Winner picker inside an incident group. Dispatches on the field's
+ *  within-group policy. */
+function pickWinner(mentions: Mention[], policy: WithinGroupPolicy = "latest_wins"): Mention {
   if (policy === "max_within_report_then_latest") {
     // Collapse each report to the largest figure it states (a report may
     // list several affected figures; the widest is the report's claim),
-    // then across competing reports in this incident group take the latest
-    // by publish date. Used by `max`-kind fields like overall_affected.
+    // then across competing reports in this incident group take the latest.
     const maxByReport = new Map<string, Mention>();
     for (const m of mentions) {
       const cur = maxByReport.get(m.reportId);
       if (cur === undefined || m.value > cur.value) maxByReport.set(m.reportId, m);
     }
-    return Array.from(maxByReport.values()).reduce((best, m) =>
-      m.publishedAt > best.publishedAt ? m : best,
-    );
+    return latestByPublishedAt(Array.from(maxByReport.values()));
   }
-  // latest_wins (default): freshest report in the group.
-  return mentions.reduce((best, m) => (m.publishedAt > best.publishedAt ? m : best));
+
+  const latest = latestByPublishedAt(mentions);
+
+  if (policy === "latest_wins_with_confidence_override") {
+    // Additive counts: the freshest row wins UNLESS a `verified`-tier row was
+    // published within VERIFIED_OVERRIDE_WINDOW_MS of it — a slightly older
+    // UN/govt-verified figure beats a newer media/unverified one. If the
+    // freshest row is itself verified, nothing overrides it.
+    if (latest.confidence === "verified") return latest;
+    const windowStart = latest.publishedAt.getTime() - VERIFIED_OVERRIDE_WINDOW_MS;
+    const verifiedInWindow = mentions.filter(
+      (m) => m.confidence === "verified" && m.publishedAt.getTime() >= windowStart,
+    );
+    if (verifiedInWindow.length > 0) return latestByPublishedAt(verifiedInWindow);
+    return latest;
+  }
+
+  if (policy === "latest_wins" || policy === "set_union_all") return latest;
+
+  // Exhaustiveness: a newly-added WithinGroupPolicy must be handled explicitly
+  // rather than silently defaulting to latest_wins — for figures this moves, a
+  // wrong-but-plausible number is worse than a build failure.
+  const _exhaustive: never = policy;
+  void _exhaustive;
+  return latest;
 }
 
-/** Build the confidence-mix distribution + weighted quality score. */
-function computeQuality(mentions: Mention[]): {
+/** `qualityScore` is weighted over the WINNERS — the rows whose values actually
+ *  reached the figure. `confidenceMix` is the distribution over ALL considered
+ *  rows (winners + deduped losers), so a suppressed lower-tier figure still
+ *  shows for transparency. */
+function computeQuality(
+  winners: Mention[],
+  considered: Mention[],
+): {
   qualityScore: number;
   confidenceMix: Record<ConfidenceTier, number>;
 } {
+  const qualityScore =
+    winners.reduce((sum, m) => sum + CONFIDENCE_WEIGHTS[m.confidence], 0) /
+    Math.max(winners.length, 1);
   const counts: Record<ConfidenceTier, number> = {
     verified: 0,
     reported: 0,
@@ -528,14 +590,12 @@ function computeQuality(mentions: Mention[]): {
     media: 0,
     unverified: 0,
   };
-  for (const m of mentions) counts[m.confidence] += 1;
-  const total = mentions.length;
-  const mix = Object.fromEntries(
+  for (const m of considered) counts[m.confidence] += 1;
+  const total = considered.length;
+  const confidenceMix = Object.fromEntries(
     (Object.keys(counts) as ConfidenceTier[]).map((k) => [k, total === 0 ? 0 : counts[k] / total]),
   ) as Record<ConfidenceTier, number>;
-  const qualityScore = mentions.reduce((sum, m) => sum + CONFIDENCE_WEIGHTS[m.confidence], 0) /
-    Math.max(total, 1);
-  return { qualityScore, confidenceMix: mix };
+  return { qualityScore, confidenceMix };
 }
 
 /** Aggregate a numeric field across the report set into a
@@ -634,9 +694,16 @@ function aggregateNumericField(
       return null;
   }
 
-  const { qualityScore, confidenceMix } = computeQuality(winners);
-  const contributing = Array.from(new Set(winners.map((w) => w.reportId)));
-  const publishedAts = winners.map((w) => w.publishedAt.getTime());
+  // Provenance covers EVERY report that fed the figure — winners AND the
+  // deduped losers — per §6.4.5(A)/(B) and PRD #268 ("every report contributing
+  // to a figure appears in contributing_report_ids"). quality_score stays
+  // winner-weighted; confidence_mix, the freshness bounds, and
+  // contributing_report_ids span the full considered set so a suppressed figure
+  // still leaves a trace, and `newest_report_at` no longer regresses when the
+  // override picks a non-freshest winner.
+  const { qualityScore, confidenceMix } = computeQuality(winners, scoped);
+  const contributing = Array.from(new Set(scoped.map((m) => m.reportId)));
+  const publishedAts = scoped.map((m) => m.publishedAt.getTime());
   const unit = winners.find((w) => w.unit)?.unit ?? null;
   return {
     value,
@@ -646,16 +713,14 @@ function aggregateNumericField(
     newest_report_at: new Date(Math.max(...publishedAts)).toISOString(),
     oldest_report_at: new Date(Math.min(...publishedAts)).toISOString(),
     contributing_report_ids: contributing,
+    suppressed_count: scoped.length - winners.length,
   };
 }
 
 /** Aggregate a set-union label field (event_types, active_clusters).
  *  The path yields an array of strings; we union across all
  *  contributing reports. */
-function aggregateSetUnionField(
-  rows: ReportRow[],
-  rule: FieldRule,
-): SetUnionEnvelope | null {
+function aggregateSetUnionField(rows: ReportRow[], rule: FieldRule): SetUnionEnvelope | null {
   const union = new Set<string>();
   const contributing = new Set<string>();
   for (const r of rows) {
@@ -667,7 +732,8 @@ function aggregateSetUnionField(
     const values = rule.canonicaliseCase
       ? canonicaliseEventTypes(raw)
       : Array.isArray(raw)
-        ? raw.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+        ? raw
+            .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
             .map((v) => v.trim())
         : [];
     for (const v of values) union.add(v);
@@ -717,9 +783,8 @@ export function aggregateReports(
   for (const field of Object.values(data)) {
     if (field && "quality_score" in field) scores.push(field.quality_score);
   }
-  const dataQualityScore = scores.length > 0
-    ? scores.reduce((a, b) => a + b, 0) / scores.length
-    : 0;
+  const dataQualityScore =
+    scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
   return {
     data,
