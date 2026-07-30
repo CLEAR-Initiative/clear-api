@@ -131,6 +131,10 @@ describe("aggregateReports — additive count (killed_total)", () => {
     expect(field).not.toBeNull();
     if (!field || !("value" in field)) throw new Error("expected numeric field");
     expect(field.value).toBe(5); // deduped to the latest, not summed to 8
+    // Provenance is preserved even for the deduped-away row (§6.4.5 A):
+    // both reports are recorded, and the suppression is counted.
+    expect(field.contributing_report_ids.sort()).toEqual(["r1", "r2"]);
+    expect(field.suppressed_count).toBe(1);
   });
 
   it("dedupes same-day competing reports — latest publishedAt wins", () => {
@@ -354,6 +358,23 @@ describe("aggregateReports — scope filtering (#273)", () => {
   });
 });
 
+describe("aggregateReports — stable tie-break on equal publishedAt", () => {
+  it("breaks a publishedAt tie by confidence weight, not input order", () => {
+    // Same week + scope + publishedAt → one group, a tie for 'latest'. The
+    // higher-confidence row must win deterministically regardless of order.
+    const mk = (id: string, conf: string, v: number) =>
+      row(id, "2026-07-06T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(v, conf) } },
+      }, "2026-07-06T00:00:00Z");
+    const forward = aggregateReports([mk("a", "reported", 10), mk("b", "media", 20)], "SD0201");
+    const reverse = aggregateReports([mk("b", "media", 20), mk("a", "reported", 10)], "SD0201");
+    const fv = forward!.data.killed_total, rv = reverse!.data.killed_total;
+    if (!fv || !("value" in fv) || !rv || !("value" in rv)) throw new Error("expected numeric");
+    expect(fv.value).toBe(10);   // reported (0.8) beats media (0.3)
+    expect(rv.value).toBe(10);   // ...and it's order-independent
+  });
+});
+
 describe("aggregateReports — quality envelope", () => {
   it("weights the quality score by confidence tier", () => {
     // Two contributing reports, both `verified` → quality_score ≈ 1.0.
@@ -372,24 +393,30 @@ describe("aggregateReports — quality envelope", () => {
     expect(field.confidence_mix.verified).toBeCloseTo(1.0, 4);
   });
 
-  it("mixes tiers correctly when reports have different confidences", () => {
-    // One verified (weight 1.0) + one media (weight 0.3) → mean ≈ 0.65.
-    // Different weeks (07-01 = wk27, 07-08 = wk28) so both survive as distinct
-    // figures and both feed the confidence mix (same week would dedup to one).
+  it("same-week mixed tiers: verified overrides, media stays in the mix, freshness holds (§6.4.5 B)", () => {
+    // One group (same week + scope). A newer media 55 vs a verified 40 two days
+    // older → the confidence override picks the verified figure. The media row
+    // contributes NO value but is recorded in confidence_mix for transparency,
+    // quality_score reflects the winner, and newest_report_at is the newer
+    // media publish date (not the older winner's).
     const rows = [
-      row("r1", "2026-07-01T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(3, "verified") } },
+      row("r-verified", "2026-07-01T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
       }, "2026-07-01T00:00:00Z"),
-      row("r2", "2026-07-08T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(5, "media") } },
-      }, "2026-07-08T00:00:00Z"),
+      row("r-media", "2026-07-03T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-03T00:00:00Z"),
     ];
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("quality_score" in field)) throw new Error("expected numeric field");
-    expect(field.quality_score).toBeCloseTo(0.65, 2);
-    expect(field.confidence_mix.verified).toBeCloseTo(0.5, 4);
-    expect(field.confidence_mix.media).toBeCloseTo(0.5, 4);
+    expect(field.value).toBe(40);                              // verified wins the value
+    expect(field.quality_score).toBeCloseTo(1.0, 4);           // winner-weighted (verified)
+    expect(field.confidence_mix.verified).toBeCloseTo(0.5, 4); // media still shown...
+    expect(field.confidence_mix.media).toBeCloseTo(0.5, 4);    // ...for transparency
+    expect(field.contributing_report_ids.sort()).toEqual(["r-media", "r-verified"]);
+    expect(field.suppressed_count).toBe(1);
+    expect(field.newest_report_at).toBe("2026-07-03T00:00:00.000Z"); // newer row, not the winner
   });
 
   it("folds unknown confidence tiers to `unverified`", () => {
