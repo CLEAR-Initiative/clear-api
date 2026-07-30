@@ -26,6 +26,10 @@ export const queryTypeDef = gql`
     """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
     signalsByLocation(locationId: String!): [Signal!]!
 
+    """Open Signal Location challenges (for map dual-pin rendering). Team-scoped
+    like signals when teamId is given; status defaults to "consideration"."""
+    signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
+
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean): [Event!]!
 

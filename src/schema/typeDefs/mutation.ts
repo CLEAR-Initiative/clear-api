@@ -112,6 +112,11 @@ export const mutationTypeDef = gql`
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
+    """Create or replace the open (consideration) Location challenge for a Signal.
+    Auth: any approved logged-in team member who can view the Signal. Queue only —
+    does NOT accept/reject and does NOT mutate the Signal's geometry."""
+    submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!
