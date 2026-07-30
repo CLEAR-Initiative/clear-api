@@ -35,5 +35,7 @@ export const signalTypeDef = gql`
     feedbacks: [UserFeedback!]!
     """User comments on this signal."""
     comments: [UserComment!]!
+    """Open Location challenge for this signal, if any (null when none)."""
+    locationChallenge: SignalLocationChallenge
   }
 `;

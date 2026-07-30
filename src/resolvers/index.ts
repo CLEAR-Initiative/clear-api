@@ -4,6 +4,7 @@ import { authResolvers } from "./auth.resolver.js";
 import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
 import { signalResolvers } from "./signal.resolver.js";
+import { signalLocationChallengeResolvers } from "./signalLocationChallenge.resolver.js";
 import { eventResolvers } from "./event.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
 import { locationResolvers } from "./location.resolver.js";
@@ -37,6 +38,7 @@ export const resolvers: IResolvers[] = [
   userResolvers,
   alertResolvers,
   signalResolvers,
+  signalLocationChallengeResolvers,
   eventResolvers,
   dataSourceResolvers,
   locationResolvers,
