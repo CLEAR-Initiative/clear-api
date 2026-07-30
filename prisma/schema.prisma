@@ -572,9 +572,45 @@ model signals {
   userComments  userComments[]
   signalEvents  signalEvents[]
 
+  signalLocationChallenges signalLocationChallenges[]
+
   @@unique([sourceId, externalId])
   @@index([sourceId])
   @@index([publishedAt])
+}
+
+/// Analyst Location challenge on a Signal, with an optional Location correction
+/// (Location trust v1, clear-mvp #314). A queue only — status is always
+/// "consideration" in v1, there is no accept/reject flow, and it NEVER mutates
+/// the Signal's own geometry. `@@unique([signalId, status])` keeps one open row
+/// per Signal so a resubmit updates the existing challenge.
+model signalLocationChallenges {
+  id       String  @id @default(cuid())
+  signalId String  @map("signal_id")
+  signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// Auth user id of whoever filed the challenge.
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// v1: always "consideration".
+  status String @default("consideration")
+
+  /// Optional note explaining why the pin looks wrong.
+  note String?
+
+  /// Optional Location correction — all three null = bare challenge. When a
+  /// point is proposed, proposedLng + proposedLat are required together
+  /// (enforced in the resolver + a DB CHECK added by the migration).
+  proposedLng  Float?  @map("proposed_lng")
+  proposedLat  Float?  @map("proposed_lat")
+  proposedName String? @map("proposed_name")
+
+  @@unique([signalId, status])
+  @@index([signalId])
+  @@index([status, createdAt])
+  @@map("signal_location_challenges")
 }
 
 model events {

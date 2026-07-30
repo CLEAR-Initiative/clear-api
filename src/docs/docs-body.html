@@ -225,6 +225,11 @@ const data = await fetch('/graphql', {
     <td><code>[Signal!]!</code></td>
     <td>List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants).<div class="field-args"><span class="arg"><code>locationId: String!</code></span></div></td>
   </tr><tr>
+    <td><code>signalLocationChallenges</code></td>
+    <td><code>[SignalLocationChallenge!]!</code></td>
+    <td>Open Signal Location challenges (for map dual-pin rendering). Team-scoped
+like signals when teamId is given; status defaults to &quot;consideration&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
+  </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
     <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
@@ -668,6 +673,12 @@ creating an isolated event. Admin/pipeline only.<div class="field-args"><span cl
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-submitsignallocationchallenge">
+    <td><code>submitSignalLocationChallenge</code></td>
+    <td><code>SignalLocationChallenge!</code></td>
+    <td>Create or replace the open (consideration) Location challenge for a Signal.
+Auth: any approved logged-in team member who can view the Signal. Queue only —
+does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="field-args"><span class="arg"><code>input: SubmitSignalLocationChallengeInput!</code></span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -1946,6 +1957,27 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
   </tr><tr>
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-submitsignallocationchallengeinput"><code>SubmitSignalLocationChallengeInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedLng</code></td>
+    <td><code>Float</code></td>
+    <td>Omit both to file a bare challenge. Provide both (finite, in range) for a
+Location correction — one without the other is rejected.</td>
+  </tr><tr>
+    <td><code>proposedLat</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedName</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-subscribetoalertsbatchinput"><code>SubscribeToAlertsBatchInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
@@ -3934,6 +3966,57 @@ field; for Dataminr, parsed from raw text via regex.</td>
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
     <td>User comments on this signal.</td>
+  </tr><tr>
+    <td><code>locationChallenge</code></td>
+    <td><code>SignalLocationChallenge</code></td>
+    <td>Open Location challenge for this signal, if any (null when none).</td>
+  </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal, with an optional Location
+correction (Location trust v1). Queue only — status is always &quot;consideration&quot;,
+there is no accept/reject, and it never mutates the Signal's own geometry.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>v1 is always &quot;consideration&quot;.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>Optional note explaining why the pin looks wrong.</td>
+  </tr><tr>
+    <td><code>proposedLng</code></td>
+    <td><code>Float</code></td>
+    <td>Proposed corrected point. Both lng and lat are set together, or both null
+(a bare challenge with no correction).</td>
+  </tr><tr>
+    <td><code>proposedLat</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedName</code></td>
+    <td><code>String</code></td>
+    <td>Optional label for the proposed point.</td>
+  </tr><tr>
+    <td><code>createdBy</code></td>
+    <td><code>String!</code></td>
+    <td>Auth user id of whoever filed the challenge.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>hasProposedPoint</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when proposedLng/proposedLat are both set.</td>
   </tr></tbody></table><h3 id="type-signalspage"><code>SignalsPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>items</code></td>
     <td><code>[Signal!]!</code></td>
