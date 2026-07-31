@@ -739,7 +739,7 @@ Upsert keyed by (locationId, type).<div class="field-args"><span class="arg"><co
   </tr><tr id="mutation-upsertlocationmetadatabatch">
     <td><code>upsertLocationMetadataBatch</code></td>
     <td><code>[LocationMetadata!]!</code></td>
-    <td>Bulk-upsert multiple (locationId, type, data) rows in a single call (admin only).
+    <td>Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
 Returns the current row for each input. Rows whose locationId doesn't exist are
 skipped silently. Idempotent: an input whose blob is identical to the currently-open
 row is left untouched (no new history version), so re-running an ingest with unchanged

@@ -171,9 +171,18 @@ describe("Mutation.upsertLocationMetadata — auth + NOT_FOUND", () => {
 describe("Mutation.upsertLocationMetadataBatch — auth + short-circuits", () => {
   const input = { locationId: "L1", type: "displacement", data: { idps: 1 } };
 
-  it("requires admin (pipeline is NOT allowed here)", async () => {
-    const findMany = vi.fn();
+  it("allows the pipeline role (the ingests' consumer) past the gate", async () => {
+    // pipeline is accepted (matches the single-row upsert); it proceeds to the
+    // existence lookup rather than being rejected at the guard.
+    const findMany = vi.fn().mockResolvedValue([]); // no valid ids → returns []
     const ctx = buildContext(PIPELINE, { locations: { findMany } });
+    expect(await upsertLocationMetadataBatch(null, { inputs: [input] }, ctx)).toEqual([]);
+    expect(findMany).toHaveBeenCalledOnce();
+  });
+
+  it("throws FORBIDDEN for a viewer (only admin/pipeline allowed)", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { locations: { findMany } });
     await expect(
       upsertLocationMetadataBatch(null, { inputs: [input] }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
