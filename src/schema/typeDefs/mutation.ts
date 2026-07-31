@@ -174,7 +174,10 @@ export const mutationTypeDef = gql`
     upsertLocationMetadata(input: UpsertLocationMetadataInput!): LocationMetadata!
 
     """Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
-    Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently."""
+    Returns the current row for each input. Rows whose locationId doesn't exist are
+    skipped silently. Idempotent: an input whose blob is identical to the currently-open
+    row is left untouched (no new history version), so re-running an ingest with unchanged
+    data is a no-op."""
     upsertLocationMetadataBatch(inputs: [UpsertLocationMetadataInput!]!): [LocationMetadata!]!
 
     """Delete a location's metadata entry for a given type (admin only)."""

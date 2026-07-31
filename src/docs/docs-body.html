@@ -751,7 +751,10 @@ Upsert keyed by (locationId, type).<div class="field-args"><span class="arg"><co
     <td><code>upsertLocationMetadataBatch</code></td>
     <td><code>[LocationMetadata!]!</code></td>
     <td>Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
-Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently.<div class="field-args"><span class="arg"><code>inputs: [UpsertLocationMetadataInput!]!</code></span></div></td>
+Returns the current row for each input. Rows whose locationId doesn't exist are
+skipped silently. Idempotent: an input whose blob is identical to the currently-open
+row is left untouched (no new history version), so re-running an ingest with unchanged
+data is a no-op.<div class="field-args"><span class="arg"><code>inputs: [UpsertLocationMetadataInput!]!</code></span></div></td>
   </tr><tr id="mutation-deletelocationmetadata">
     <td><code>deleteLocationMetadata</code></td>
     <td><code>Boolean!</code></td>
@@ -3645,6 +3648,11 @@ ensureCountryLocation: [minLng, minLat, maxLng, maxLat].</p><table class="ref-ta
     <td><code>name</code></td>
     <td><code>String!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>iso3</code></td>
+    <td><code>String!</code></td>
+    <td>ISO 3166-1 alpha-3 code (e.g. &quot;SDN&quot;). Used by pipeline ingests that scope
+external APIs by country (HAPI location_code, IOM DTM Admin0Pcode).</td>
   </tr><tr>
     <td><code>bbox</code></td>
     <td><code>[Float!]!</code></td>
