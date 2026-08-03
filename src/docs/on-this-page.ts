@@ -117,7 +117,7 @@ export function renderOnThisPage(sections: TocSection[]): string {
 
   return `
     <aside class="docs-toc" id="docs-toc">
-      <button type="button" class="toc-collapse-btn" onclick="toggleTocCollapse()" aria-label="Toggle On This Page search" title="Search">
+      <button type="button" class="toc-collapse-btn" onclick="toggleTocCollapse()" aria-label="Toggle On This Page search" title="Search (⌘K / ⌘F)">
         ${PORTAL_SVGS.search}
       </button>
       <button type="button" class="toc-sheet-close" onclick="closeTocSheet()" aria-label="Close On This Page">
@@ -130,7 +130,8 @@ export function renderOnThisPage(sections: TocSection[]): string {
             type="text" 
             id="toc-search-input" 
             class="toc-search-input" 
-            placeholder="Search (⌘K)"
+            placeholder="Search (⌘K / ⌘F)"
+            title="Search (⌘K / ⌘F)"
             aria-label="Search documentation"
           />
         </div>
@@ -233,9 +234,10 @@ export function renderOnThisPageScript(): string {
       var searchInput = document.getElementById('toc-search-input');
       if (!searchInput) return;
       
-      // Cmd/Ctrl+K to focus search (and expand TOC if collapsed)
+      // Cmd/Ctrl+K or Cmd/Ctrl+F to focus search (and expand TOC if collapsed)
       document.addEventListener('keydown', function(e) {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        var key = e.key.toLowerCase();
+        if ((e.metaKey || e.ctrlKey) && (key === 'k' || key === 'f')) {
           e.preventDefault();
           var toc = document.querySelector('.docs-toc');
           // Expand TOC if collapsed

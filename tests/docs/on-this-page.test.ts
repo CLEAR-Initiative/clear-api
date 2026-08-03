@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildTocTree, renderOnThisPage } from "../../src/docs/on-this-page.js";
+import {
+  buildTocTree,
+  renderOnThisPage,
+  renderOnThisPageScript,
+} from "../../src/docs/on-this-page.js";
 
 const mockTypes = [
   { name: "Alert" },
@@ -130,10 +134,31 @@ describe("On This Page", () => {
       const html = renderOnThisPage(buildTocTree([], []));
 
       expect(html).toContain('class="toc-collapse-btn"');
-      expect(html).toContain('title="Search"');
+      expect(html).toContain('title="Search (⌘K / ⌘F)"');
       // Search glyph path from PORTAL_SVGS.search (not a chevron)
       expect(html).toContain("M8 2a6 6 0 104.472 10.025");
       expect(html).not.toContain('d="M15 18l-6-6 6-6"');
+    });
+
+    it("advertises both ⌘K and ⌘F on the search control", () => {
+      const html = renderOnThisPage(buildTocTree([], []));
+
+      expect(html).toContain('placeholder="Search (⌘K / ⌘F)"');
+      expect(html).toMatch(
+        /id="toc-search-input"[^>]*title="Search \(⌘K \/ ⌘F\)"/
+      );
+    });
+  });
+
+  describe("renderOnThisPageScript", () => {
+    it("binds Cmd/Ctrl+K and Cmd/Ctrl+F to focus TOC search", () => {
+      const script = renderOnThisPageScript();
+
+      expect(script).toContain("key === 'k'");
+      expect(script).toContain("key === 'f'");
+      expect(script).toContain("e.metaKey || e.ctrlKey");
+      expect(script).toContain("e.preventDefault()");
+      expect(script).toContain("searchInput.focus()");
     });
   });
 });
