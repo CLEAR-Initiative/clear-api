@@ -572,6 +572,25 @@ review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;appr
     <td><code>groundMessages</code></td>
     <td><code>[GroundMessage!]!</code></td>
     <td>Staged messages, oldest first. Filter by source and/or thread.<div class="field-args"><span class="arg"><code>groundSourceId: String</code></span><span class="arg"><code>threadId: String</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessagesForClassification</code></td>
+    <td><code>[GroundMessageForClassification!]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): a source's staged
+messages, oldest first, projected for the classification/threading
+worker — no private-tier sender identity. Returns ALL messages
+(classified and not) so one query powers both labelling and
+incident-thread assembly.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundThreadsForSource</code></td>
+    <td><code>[GroundThread]</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): threading context for the
+classification worker — a source's existing threads, oldest first,
+so late corrections/retractions can target an existing thread via
+GroundThreadUpsertInput.threadId. `states` filters on
+lifecycleState (&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; |
+&quot;retracted&quot;); omitted/empty returns all. The worker selects
+{id, title, lifecycleState, reviewState, messageIds} — no message
+content, no sender identity.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>states: [String!]</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1069,7 +1088,24 @@ no runId — useful for offline dev of the upload path.<div class="field-args"><
     <td><code>GroundSource!</code></td>
     <td>Create a ground source — the per-source policy record (consent
 scope, privacy default, reviewer roles, retention) that every ingest
-from a WhatsApp group or hotline is gated on.<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+from a WhatsApp group or hotline is gated on. Admin only; group
+kinds require a complete consent record (consentScope +
+consentRecordedAt + consentRecordedBy).<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-updategroundsource">
+    <td><code>updateGroundSource</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Update a source's policy record (admin only, partial). The merged
+row is re-validated — a group-kind source cannot be left without a
+complete consent record, so legacy rows must have consent supplied
+in the same update. transportId is immutable.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-setgroundsourceactive">
+    <td><code>setGroundSourceActive</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Activate or deactivate a source (admin only). Deactivation is the
+live-capture kill switch: the ingest consent gate rejects every
+payload for an inactive source. Deliberately exempt from
+consent-record validation so an incomplete legacy row can still be
+shut off immediately.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>isActive: Boolean!</code></span></div></td>
   </tr><tr id="mutation-reviewgroundthread">
     <td><code>reviewGroundThread</code></td>
     <td><code>GroundThread!</code></td>
@@ -1080,6 +1116,27 @@ admins always pass). Transitions follow the V1 state machine —
 notably approved_public is terminal. approve_public also promotes
 the thread into the standard signals graph via createSignal, with
 all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundmessageclassifications">
+    <td><code>upsertGroundMessageClassifications</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back
+classifications from the classify_ground_messages worker. Unknown
+messageIds are skipped with a warning. Returns the number of
+messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageClassificationInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundthreads">
+    <td><code>upsertGroundThreads</code></td>
+    <td><code>[String]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): replace placeholder
+threading with pipeline-built incident threads. Each input creates a
+thread (or, when `threadId` is set, APPENDS to that existing
+thread and updates its lifecycleState + title), re-points its
+messageIds at it, and deletes the placeholder threads that became
+empty. Messages whose current thread has already been human-reviewed
+(or promoted) are NEVER re-threaded, and a promoted `threadId`
+target is never mutated (a new thread is created instead) — the
+review gate outranks the pipeline. Returns one thread id per input,
+in order; null where an input had no movable messages (no thread
+created or updated).<div class="field-args"><span class="arg"><code>inputs: [GroundThreadUpsertInput!]!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1462,7 +1519,8 @@ Ignored for platform-level callers.</td>
   </tr><tr>
     <td><code>consentScope</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>REQUIRED (with consentRecordedAt + consentRecordedBy) for the
+group kinds; hotline consent is explicit by design.</td>
   </tr><tr>
     <td><code>consentRecordedAt</code></td>
     <td><code>String</code></td>
@@ -1849,6 +1907,49 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>sourceLng</code></td>
     <td><code>Float</code></td>
     <td>Source coordinate's longitude. See sourceLat.</td>
+  </tr></tbody></table><h3 id="type-groundmessageclassificationinput"><code>GroundMessageClassificationInput</code> <span class="type-badge">input</span></h3><p>One classification write-back from the pipeline worker.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;.</td>
+  </tr><tr>
+    <td><code>uncertaintyMarker</code></td>
+    <td><code>String</code></td>
+    <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
+ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One incident thread produced by the pipeline threading task. Its
+messageIds are re-pointed at the thread, replacing their V1
+one-per-message placeholder threads. With `threadId` set, the input
+APPENDS to that existing thread (cross-run threading: late
+corrections/retractions join the incident they belong to) instead of
+creating a new one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lifecycleState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; | &quot;retracted&quot;.</td>
+  </tr><tr>
+    <td><code>messageIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>Optional target thread for cross-run appends. When set, messageIds
+are appended to this thread and its lifecycleState + title are
+updated — provided the thread is not yet promoted (reviewState !=
+&quot;approved_public&quot; and no promotedSignalId) and belongs to
+groundSourceId. A promoted/terminal (or unknown/wrong-source) target
+is never mutated: a NEW thread is created instead, with a warning.</td>
   </tr></tbody></table><h3 id="type-inviteuserinput"><code>InviteUserInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -2228,6 +2329,41 @@ Location correction — one without the other is rejected.</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
+left unchanged; transportId is immutable (it is the identity that
+externalIds are minted against). The merged row is re-validated: group
+kinds must end up with a complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String</code></td>
+    <td>&quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
@@ -3350,6 +3486,39 @@ preserved from the source text.</td>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessageforclassification"><code>GroundMessageForClassification</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged message for the
+classification/threading worker (clear-pipeline's
+classify_ground_messages task). Deliberately excludes senderName —
+the pipeline never sees private-tier identity, only the pseudonymous
+senderRef.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>senderRef</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>hasMedia</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message carries stored media, export-referenced
+attachments, or export-omitted media.</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String</code></td>
+    <td>Current label, null while unclassified.</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>Current thread (placeholder or pipeline-built).</td>
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The
@@ -3454,6 +3623,12 @@ front of the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th
     <td><code>messages</code></td>
     <td><code>[GroundMessage!]!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>messageIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Ids of the thread's messages, oldest first. The pipeline worker
+selects this (via groundThreadsForSource) instead of `messages` —
+it carries no message content and no sender identity.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>

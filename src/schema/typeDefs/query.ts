@@ -374,5 +374,28 @@ export const queryTypeDef = gql`
       limit: Int = 200
       offset: Int = 0
     ): [GroundMessage!]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): a source's staged
+    messages, oldest first, projected for the classification/threading
+    worker — no private-tier sender identity. Returns ALL messages
+    (classified and not) so one query powers both labelling and
+    incident-thread assembly."""
+    groundMessagesForClassification(
+      groundSourceId: String!
+      limit: Int = 500
+    ): [GroundMessageForClassification!]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): threading context for the
+    classification worker — a source's existing threads, oldest first,
+    so late corrections/retractions can target an existing thread via
+    GroundThreadUpsertInput.threadId. \`states\` filters on
+    lifecycleState ("reported" | "updated" | "confirmed" | "corrected" |
+    "retracted"); omitted/empty returns all. The worker selects
+    {id, title, lifecycleState, reviewState, messageIds} — no message
+    content, no sender identity."""
+    groundThreadsForSource(
+      groundSourceId: String!
+      states: [String!]
+    ): [GroundThread]
   }
 `;

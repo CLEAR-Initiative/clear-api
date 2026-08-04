@@ -35,12 +35,30 @@ export const groundTypeDef = gql`
     kind: String!
     """WhatsApp group JID (or hotline number). Must be unique."""
     transportId: String!
+    """REQUIRED (with consentRecordedAt + consentRecordedBy) for the
+    group kinds; hotline consent is explicit by design."""
     consentScope: String
     consentRecordedAt: String
     consentRecordedBy: String
     """Defaults to "private"."""
     privacyDefault: String
     """Defaults to ["admin", "analyst"]."""
+    reviewerRoles: [String!]
+    retentionRule: String
+  }
+
+  """Partial update of a source's policy record. Null/omitted fields are
+  left unchanged; transportId is immutable (it is the identity that
+  externalIds are minted against). The merged row is re-validated: group
+  kinds must end up with a complete consent record."""
+  input UpdateGroundSourceInput {
+    name: String
+    """"staff_group" | "partner_group" | "hotline"."""
+    kind: String
+    consentScope: String
+    consentRecordedAt: String
+    consentRecordedBy: String
+    privacyDefault: String
     reviewerRoles: [String!]
     retentionRule: String
   }
@@ -66,6 +84,10 @@ export const groundTypeDef = gql`
     (approved_public only)."""
     promotedSignalId: String
     messages: [GroundMessage!]!
+    """Ids of the thread's messages, oldest first. The pipeline worker
+    selects this (via groundThreadsForSource) instead of \`messages\` —
+    it carries no message content and no sender identity."""
+    messageIds: [String!]!
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -113,5 +135,55 @@ export const groundTypeDef = gql`
     skipped: Int!
     mediaStored: Int!
     mediaUnmatched: [String!]!
+  }
+
+  """Pipeline-facing projection of a staged message for the
+  classification/threading worker (clear-pipeline's
+  classify_ground_messages task). Deliberately excludes senderName —
+  the pipeline never sees private-tier identity, only the pseudonymous
+  senderRef."""
+  type GroundMessageForClassification {
+    id: ID!
+    text: String!
+    sentAt: DateTime!
+    senderRef: String!
+    """True when the message carries stored media, export-referenced
+    attachments, or export-omitted media."""
+    hasMedia: Boolean!
+    """Current label, null while unclassified."""
+    classification: String
+    """Current thread (placeholder or pipeline-built)."""
+    threadId: String
+  }
+
+  """One classification write-back from the pipeline worker."""
+  input GroundMessageClassificationInput {
+    messageId: String!
+    """"field_report" | "news_digest" | "operational" | "chatter"."""
+    classification: String!
+    """Pipeline-detected uncertainty tag. Null/omitted leaves the
+    ingest-extracted marker untouched."""
+    uncertaintyMarker: String
+  }
+
+  """One incident thread produced by the pipeline threading task. Its
+  messageIds are re-pointed at the thread, replacing their V1
+  one-per-message placeholder threads. With \`threadId\` set, the input
+  APPENDS to that existing thread (cross-run threading: late
+  corrections/retractions join the incident they belong to) instead of
+  creating a new one."""
+  input GroundThreadUpsertInput {
+    groundSourceId: String!
+    title: String!
+    """"reported" | "updated" | "confirmed" | "corrected" | "retracted"."""
+    lifecycleState: String!
+    messageIds: [String!]!
+    """Optional target thread for cross-run appends. When set, messageIds
+    are appended to this thread and its lifecycleState + title are
+    updated — provided the thread is not yet promoted (reviewState !=
+    "approved_public" and no promotedSignalId) and belongs to
+    groundSourceId. A promoted/terminal (or unknown/wrong-source) target
+    is never mutated: a NEW thread is created instead, with a warning."""
+    threadId: String
   }
 `;

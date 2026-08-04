@@ -34,7 +34,10 @@ export interface GroundMessageCreate {
   externalId: string;
   sentAt: Date;
   senderRef: string;
-  senderName: string;
+  /** Nullable because live capture (ground-live-ingest.ts) shares this
+   * create shape and a sender may have no push name. Export parsing
+   * always supplies one. */
+  senderName: string | null;
   text: string;
   mediaKeys: string[];
   mediaRefs: string[];

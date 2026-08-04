@@ -451,11 +451,26 @@ export const mutationTypeDef = gql`
       publishedAt: DateTime!
     ): KnowledgebaseIngestJob!
 
-    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    # ─── Ground intel staging tier ─────────────────────────────────────
     """Create a ground source — the per-source policy record (consent
     scope, privacy default, reviewer roles, retention) that every ingest
-    from a WhatsApp group or hotline is gated on."""
+    from a WhatsApp group or hotline is gated on. Admin only; group
+    kinds require a complete consent record (consentScope +
+    consentRecordedAt + consentRecordedBy)."""
     createGroundSource(input: CreateGroundSourceInput!): GroundSource!
+
+    """Update a source's policy record (admin only, partial). The merged
+    row is re-validated — a group-kind source cannot be left without a
+    complete consent record, so legacy rows must have consent supplied
+    in the same update. transportId is immutable."""
+    updateGroundSource(id: String!, input: UpdateGroundSourceInput!): GroundSource!
+
+    """Activate or deactivate a source (admin only). Deactivation is the
+    live-capture kill switch: the ingest consent gate rejects every
+    payload for an inactive source. Deliberately exempt from
+    consent-record validation so an incomplete legacy row can still be
+    shut off immediately."""
+    setGroundSourceActive(id: String!, isActive: Boolean!): GroundSource!
 
     """Review a ground thread: decision is "approve_private",
     "approve_public", or "reject". Role-gated per source (the caller's
@@ -465,6 +480,27 @@ export const mutationTypeDef = gql`
     the thread into the standard signals graph via createSignal, with
     all sender identity scrubbed."""
     reviewGroundThread(id: String!, decision: String!, note: String): GroundThread!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back
+    classifications from the classify_ground_messages worker. Unknown
+    messageIds are skipped with a warning. Returns the number of
+    messages updated."""
+    upsertGroundMessageClassifications(
+      inputs: [GroundMessageClassificationInput!]!
+    ): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
+    threading with pipeline-built incident threads. Each input creates a
+    thread (or, when \`threadId\` is set, APPENDS to that existing
+    thread and updates its lifecycleState + title), re-points its
+    messageIds at it, and deletes the placeholder threads that became
+    empty. Messages whose current thread has already been human-reviewed
+    (or promoted) are NEVER re-threaded, and a promoted \`threadId\`
+    target is never mutated (a new thread is created instead) — the
+    review gate outranks the pipeline. Returns one thread id per input,
+    in order; null where an input had no movable messages (no thread
+    created or updated)."""
+    upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
