@@ -18,8 +18,10 @@ import {
   ensureWhatsAppDataSource,
 } from "../services/ground-promotion.js";
 import { signalResolvers } from "./signal.resolver.js";
-
-const GROUND_SOURCE_KINDS = new Set(["staff_group", "partner_group", "hotline"]);
+import {
+  GROUND_SOURCE_KINDS,
+  missingConsentFields,
+} from "../services/ground-sources.js";
 
 /** Callers of the pipeline-facing contract surface (the
  * classify_ground_messages worker authenticates as a pipeline-role
@@ -203,7 +205,10 @@ export const groundResolvers = {
       },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      // Policy-record CRUD is admin-only as of V2 (was admin/analyst in
+      // V1): consent records gate live capture, so writing them is a
+      // platform-admin responsibility. Analysts keep full read + review.
+      requireRole(context, ["admin"]);
       const { input } = args;
 
       if (!GROUND_SOURCE_KINDS.has(input.kind)) {
@@ -213,20 +218,145 @@ export const groundResolvers = {
         );
       }
 
+      const consent = {
+        consentScope: input.consentScope ?? null,
+        consentRecordedAt: input.consentRecordedAt
+          ? new Date(input.consentRecordedAt)
+          : null,
+        consentRecordedBy: input.consentRecordedBy ?? null,
+      };
+      const missing = missingConsentFields(input.kind, consent);
+      if (missing.length > 0) {
+        throw new GraphQLError(
+          `A ${input.kind} source requires a complete consent record — missing: ${missing.join(", ")}`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
       return context.prisma.groundSources.create({
         data: {
           name: input.name,
           kind: input.kind,
           transportId: input.transportId,
-          consentScope: input.consentScope ?? null,
-          consentRecordedAt: input.consentRecordedAt
-            ? new Date(input.consentRecordedAt)
-            : null,
-          consentRecordedBy: input.consentRecordedBy ?? null,
+          ...consent,
           privacyDefault: input.privacyDefault ?? "private",
           ...(input.reviewerRoles ? { reviewerRoles: input.reviewerRoles } : {}),
           retentionRule: input.retentionRule ?? null,
         },
+      });
+    },
+
+    /**
+     * Partial update of a ground source's policy record (admin only).
+     * transportId is immutable — it is the identity externalIds are
+     * minted against ("whatsapp:{jid}:{messageId}"); re-binding a source
+     * to another group would corrupt idempotency, so that case is a new
+     * source. The MERGED row is re-validated: a group-kind source cannot
+     * be edited into (or left in) a state without a complete consent
+     * record — a legacy row missing consent fields must have them
+     * supplied in the same update.
+     */
+    updateGroundSource: async (
+      _parent: unknown,
+      args: {
+        id: string;
+        input: {
+          name?: string | null;
+          kind?: string | null;
+          consentScope?: string | null;
+          consentRecordedAt?: string | null;
+          consentRecordedBy?: string | null;
+          privacyDefault?: string | null;
+          reviewerRoles?: string[] | null;
+          retentionRule?: string | null;
+        };
+      },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const { input } = args;
+
+      const existing = await context.prisma.groundSources.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Ground source not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      if (input.kind != null && !GROUND_SOURCE_KINDS.has(input.kind)) {
+        throw new GraphQLError(
+          `kind must be one of: ${[...GROUND_SOURCE_KINDS].join(", ")}`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
+      // Null/omitted input fields leave the stored value unchanged.
+      const merged = {
+        kind: input.kind ?? existing.kind,
+        consentScope: input.consentScope ?? existing.consentScope,
+        consentRecordedAt: input.consentRecordedAt
+          ? new Date(input.consentRecordedAt)
+          : existing.consentRecordedAt,
+        consentRecordedBy: input.consentRecordedBy ?? existing.consentRecordedBy,
+      };
+      const missing = missingConsentFields(merged.kind, merged);
+      if (missing.length > 0) {
+        throw new GraphQLError(
+          `A ${merged.kind} source requires a complete consent record — missing: ${missing.join(", ")}`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
+      return context.prisma.groundSources.update({
+        where: { id: existing.id },
+        data: {
+          ...(input.name != null ? { name: input.name } : {}),
+          kind: merged.kind,
+          consentScope: merged.consentScope,
+          consentRecordedAt: merged.consentRecordedAt,
+          consentRecordedBy: merged.consentRecordedBy,
+          ...(input.privacyDefault != null
+            ? { privacyDefault: input.privacyDefault }
+            : {}),
+          ...(input.reviewerRoles != null
+            ? { reviewerRoles: input.reviewerRoles }
+            : {}),
+          ...(input.retentionRule != null
+            ? { retentionRule: input.retentionRule }
+            : {}),
+        },
+      });
+    },
+
+    /**
+     * Activate/deactivate a ground source (admin only). Deactivation is
+     * the kill switch: the live-ingest consent gate rejects every payload
+     * for an inactive source, and export upload refuses it too. Kept as
+     * an explicit mutation (not an update field) so flipping capture off
+     * never has to pass consent-record validation — an incomplete legacy
+     * row must still be deactivatable immediately.
+     */
+    setGroundSourceActive: async (
+      _parent: unknown,
+      args: { id: string; isActive: boolean },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+
+      const existing = await context.prisma.groundSources.findUnique({
+        where: { id: args.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Ground source not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.groundSources.update({
+        where: { id: existing.id },
+        data: { isActive: args.isActive },
       });
     },
     reviewGroundThread: async (

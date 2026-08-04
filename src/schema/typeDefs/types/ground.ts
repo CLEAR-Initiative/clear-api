@@ -35,12 +35,30 @@ export const groundTypeDef = gql`
     kind: String!
     """WhatsApp group JID (or hotline number). Must be unique."""
     transportId: String!
+    """REQUIRED (with consentRecordedAt + consentRecordedBy) for the
+    group kinds; hotline consent is explicit by design."""
     consentScope: String
     consentRecordedAt: String
     consentRecordedBy: String
     """Defaults to "private"."""
     privacyDefault: String
     """Defaults to ["admin", "analyst"]."""
+    reviewerRoles: [String!]
+    retentionRule: String
+  }
+
+  """Partial update of a source's policy record. Null/omitted fields are
+  left unchanged; transportId is immutable (it is the identity that
+  externalIds are minted against). The merged row is re-validated: group
+  kinds must end up with a complete consent record."""
+  input UpdateGroundSourceInput {
+    name: String
+    """"staff_group" | "partner_group" | "hotline"."""
+    kind: String
+    consentScope: String
+    consentRecordedAt: String
+    consentRecordedBy: String
+    privacyDefault: String
     reviewerRoles: [String!]
     retentionRule: String
   }

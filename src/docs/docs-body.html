@@ -1077,7 +1077,24 @@ no runId — useful for offline dev of the upload path.<div class="field-args"><
     <td><code>GroundSource!</code></td>
     <td>Create a ground source — the per-source policy record (consent
 scope, privacy default, reviewer roles, retention) that every ingest
-from a WhatsApp group or hotline is gated on.<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+from a WhatsApp group or hotline is gated on. Admin only; group
+kinds require a complete consent record (consentScope +
+consentRecordedAt + consentRecordedBy).<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-updategroundsource">
+    <td><code>updateGroundSource</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Update a source's policy record (admin only, partial). The merged
+row is re-validated — a group-kind source cannot be left without a
+complete consent record, so legacy rows must have consent supplied
+in the same update. transportId is immutable.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-setgroundsourceactive">
+    <td><code>setGroundSourceActive</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Activate or deactivate a source (admin only). Deactivation is the
+live-capture kill switch: the ingest consent gate rejects every
+payload for an inactive source. Deliberately exempt from
+consent-record validation so an incomplete legacy row can still be
+shut off immediately.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>isActive: Boolean!</code></span></div></td>
   </tr><tr id="mutation-reviewgroundthread">
     <td><code>reviewGroundThread</code></td>
     <td><code>GroundThread!</code></td>
@@ -1488,7 +1505,8 @@ Ignored for platform-level callers.</td>
   </tr><tr>
     <td><code>consentScope</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>REQUIRED (with consentRecordedAt + consentRecordedBy) for the
+group kinds; hotline consent is explicit by design.</td>
   </tr><tr>
     <td><code>consentRecordedAt</code></td>
     <td><code>String</code></td>
@@ -2285,6 +2303,41 @@ Location correction — one without the other is rejected.</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
+left unchanged; transportId is immutable (it is the identity that
+externalIds are minted against). The merged row is re-validated: group
+kinds must end up with a complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String</code></td>
+    <td>&quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>

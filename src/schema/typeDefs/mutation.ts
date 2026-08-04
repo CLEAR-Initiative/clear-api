@@ -451,11 +451,26 @@ export const mutationTypeDef = gql`
       publishedAt: DateTime!
     ): KnowledgebaseIngestJob!
 
-    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    # ─── Ground intel staging tier ─────────────────────────────────────
     """Create a ground source — the per-source policy record (consent
     scope, privacy default, reviewer roles, retention) that every ingest
-    from a WhatsApp group or hotline is gated on."""
+    from a WhatsApp group or hotline is gated on. Admin only; group
+    kinds require a complete consent record (consentScope +
+    consentRecordedAt + consentRecordedBy)."""
     createGroundSource(input: CreateGroundSourceInput!): GroundSource!
+
+    """Update a source's policy record (admin only, partial). The merged
+    row is re-validated — a group-kind source cannot be left without a
+    complete consent record, so legacy rows must have consent supplied
+    in the same update. transportId is immutable."""
+    updateGroundSource(id: String!, input: UpdateGroundSourceInput!): GroundSource!
+
+    """Activate or deactivate a source (admin only). Deactivation is the
+    live-capture kill switch: the ingest consent gate rejects every
+    payload for an inactive source. Deliberately exempt from
+    consent-record validation so an incomplete legacy row can still be
+    shut off immediately."""
+    setGroundSourceActive(id: String!, isActive: Boolean!): GroundSource!
 
     """Review a ground thread: decision is "approve_private",
     "approve_public", or "reject". Role-gated per source (the caller's
