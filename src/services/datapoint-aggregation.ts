@@ -1440,6 +1440,80 @@ export function estimateStockFlowTotal(
   };
 }
 
+/** The stock/flow field pairs a current-total can be estimated for. The stock is
+ *  a `latest_state` field (authoritative, API-reconciled); the flow is the
+ *  `additive_count` that accrues on top of it. */
+export const STOCK_FLOW_PAIRS = [
+  { metric: "displacement", stockLabel: "idp_stock", flowLabel: "new_displacements" },
+  { metric: "returns", stockLabel: "returnee_stock", flowLabel: "new_returns" },
+] as const;
+
+export type StockFlowMetric = (typeof STOCK_FLOW_PAIRS)[number]["metric"];
+
+/** Estimate a metric's current total (ADR-0006 §4) from raw report rows + the
+ *  authoritative API mentions, at one location scope.
+ *
+ * The flow sum reuses `aggregateNumericField`, so the forward flows are deduped
+ * (echo + incident grouping) exactly as they are in a normal bucket — a raw sum
+ * would double-count multi-source reports. Rows are pre-filtered to those whose
+ * content date (`reportingPeriodEnd`, the flow mention's as-of) lands strictly
+ * after the anchor stock's T₀, so `aggregateNumericField` sees only forward
+ * flows. Scope matching is exact — the same country-scoped model the headline
+ * `idp_stock` already uses (no descendant roll-up; see #273). */
+export function estimateCurrentTotalFromRows(
+  rows: ReportRow[],
+  apiMentionsByLabel: Map<string, Mention[]>,
+  locationScope: string | null,
+  stockLabel: string,
+  flowLabel: string,
+  reliabilityBySource: Map<string, number | null>,
+  asOf: Date,
+): StockFlowEstimate | null {
+  if (!locationScope) return null;
+  const stockRule = FIELD_RULES.find((r) => r.label === stockLabel);
+  const flowRule = FIELD_RULES.find((r) => r.label === flowLabel);
+  if (!stockRule || !flowRule) return null;
+
+  const asOfMs = asOf.getTime();
+  const inScope = (m: Mention) =>
+    m.locationId === locationScope && m.incidentDate.getTime() <= asOfMs;
+
+  // Anchor = latest authoritative stock: freshest reference date; on a tie an API
+  // (authoritative) figure wins, then higher selection-quality.
+  const stockMentions = [
+    ...rows.flatMap((r) => extractNumericMentions(r, stockRule, reliabilityBySource)),
+    ...(apiMentionsByLabel.get(stockLabel) ?? []),
+  ].filter(inScope);
+  if (stockMentions.length === 0) return null;
+  const anchor = stockMentions.reduce((best, m) => {
+    const dt = m.incidentDate.getTime();
+    const bt = best.incidentDate.getTime();
+    if (dt !== bt) return dt > bt ? m : best;
+    if (m.isApi !== best.isApi) return m.isApi ? m : best;
+    return selectionQuality(m) > selectionQuality(best) ? m : best;
+  });
+  const t0 = anchor.incidentDate.getTime();
+
+  // Forward flows only: rows whose content date is strictly after T₀ (and ≤ asOf).
+  // The flow mention's as-of is the row's reportingPeriodEnd, so row-level
+  // filtering is exact for the flow field. Deduped additive sum via the aggregator.
+  const flowRows = rows.filter((r) => {
+    const d = (r.reportingPeriodEnd ?? r.publishedAt).getTime();
+    return d > t0 && d <= asOfMs;
+  });
+  const flowAgg = aggregateNumericField(flowRows, flowRule, locationScope, reliabilityBySource, []);
+  const flowsSince = flowAgg?.value ?? 0;
+
+  return {
+    total: anchor.value + flowsSince,
+    stock: anchor.value,
+    flowsSince,
+    t0: anchor.incidentDate.toISOString(),
+    // Reports contributing forward flows — a provenance count, not a group count.
+    flowCount: flowAgg?.contributing_report_ids.length ?? 0,
+  };
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Public entry point
 // ────────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ import { describe, it, expect } from "vitest";
 import {
   aggregateReports,
   buildApiMentions,
+  estimateCurrentTotalFromRows,
   estimateStockFlowTotal,
   finaliseReadTimeQuality,
   FIELD_RULES,
@@ -1332,5 +1333,52 @@ describe("estimateStockFlowTotal — current total (ADR-0006 §4)", () => {
     const est = estimateStockFlowTotal({ value: 80000, t0: d("2026-06-30T00:00:00Z") }, []);
     expect(est!.total).toBe(80000);
     expect(est!.flowsSince).toBe(0);
+  });
+});
+
+describe("estimateCurrentTotalFromRows — current total from rows (ADR-0006 §4)", () => {
+  const asOf = new Date("2026-08-01T00:00:00Z");
+  const rel = new Map<string, number | null>();
+
+  it("latest stock + only the flows dated after its T₀", () => {
+    const rows = [
+      row("s1", "2026-07-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z"),
+      row("f0", "2026-06-20T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(5000) } }, "2026-06-15T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+      row("f2", "2026-07-23T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(2000) } }, "2026-07-22T00:00:00Z"),
+    ];
+    const est = estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est).not.toBeNull();
+    expect(est!.stock).toBe(100000);
+    expect(est!.flowsSince).toBe(5000); // 3000 + 2000; the 5000 before T₀ is dropped
+    expect(est!.total).toBe(105000);
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("no stock in scope → null (nothing to anchor)", () => {
+    const rows = [row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("out-of-scope figures are ignored (exact scope match)", () => {
+    const rows = [row("s1", "2026-07-01T00:00:00Z", ["SD99"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("a fresher API stock anchors over an older report stock", () => {
+    const rows = [
+      row("s1", "2026-05-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(80000) } }, "2026-04-30T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+    ];
+    const api = buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+         data: { population_displaced: 120000, reporting_date: "2026-06-30T00:00:00Z" } }],
+      "SD01", new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]),
+    );
+    const est = estimateCurrentTotalFromRows(rows, api, "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est!.stock).toBe(120000); // API ref 2026-06-30 beats report ref 2026-04-30
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+    expect(est!.flowsSince).toBe(3000);
+    expect(est!.total).toBe(123000);
   });
 });

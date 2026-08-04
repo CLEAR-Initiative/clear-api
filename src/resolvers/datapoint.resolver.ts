@@ -22,9 +22,11 @@ import {
   aggregateReports,
   buildApiMentions,
   buildApiReliabilityByOrg,
+  estimateCurrentTotalFromRows,
   filterApiMentionsToWindow,
   finaliseReadTimeQuality,
   API_RECONCILING_TYPES,
+  STOCK_FLOW_PAIRS,
   type LocationMetadataRow,
   type ReportRow,
 } from "../services/datapoint-aggregation.js";
@@ -56,6 +58,13 @@ interface UpsertReportDatapointsInput {
 // this default moves in lockstep. ROLLOUT: flip only alongside (or after) that
 // re-extraction — version-less reads return null for v2 until v2 rows exist.
 const DEFAULT_SCHEMA_VERSION = "v2";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How far back the estimated-current-total scan reads report_datapoints
+ *  (ADR-0006 §4). Two years covers the current + prior reporting year — enough
+ *  to anchor on the latest stock and sum the flows since — without scanning the
+ *  entire back-catalogue on an all-time bucket read. */
+const CURRENT_TOTAL_LOOKBACK_DAYS = 730;
 
 /** Compute the four higher-tier windows a given `windowStart`
  *  belongs to. Used by the refresh mutation to enumerate all
@@ -408,6 +417,53 @@ export const datapointResolvers = {
         computedAt: new Date(),
         onDemand: true,
       };
+    },
+  },
+
+  AggregatedDatapoint: {
+    // Estimated current total (ADR-0006 §4): latest authoritative stock + flows
+    // reported after its reference date T₀. Resolved lazily — the report scan
+    // runs only when a client selects the field. Meaningful only at the
+    // country (A0-scoped) yearly/all tier; every other bucket returns null.
+    estimatedCurrentTotals: async (
+      parent: { locationId?: string | null; windowKind?: string; schemaVersion?: string },
+      _args: unknown,
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      if (!parent.locationId) return null;
+      if (parent.windowKind !== "yearly" && parent.windowKind !== "all") return null;
+
+      const schemaVersion = parent.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
+      const asOf = new Date();
+      // Bounded lookback: a "current" estimate only needs the latest stock and
+      // the flows after it — both recent — so cap the scan rather than reading
+      // the whole back-catalogue for an all-time bucket. A stock older than the
+      // window is stale for a current estimate anyway.
+      const since = new Date(asOf.getTime() - CURRENT_TOTAL_LOOKBACK_DAYS * DAY_MS);
+      const rows = await context.prisma.reportDatapoint.findMany({
+        where: { schemaVersion, reportingPeriodEnd: { gte: since, lte: asOf } },
+      });
+      // API stock (idp_stock / returnee_stock) is a current figure; asOf is now,
+      // so the full current set is in-window — no window filter needed here.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = await loadApiMentions(context.prisma, parent.locationId, apiOrgMap);
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
+      const reportRows = rows.map(toReportRow);
+
+      const totals: Record<string, unknown> = {};
+      for (const pair of STOCK_FLOW_PAIRS) {
+        totals[pair.metric] = estimateCurrentTotalFromRows(
+          reportRows,
+          apiMentions,
+          parent.locationId,
+          pair.stockLabel,
+          pair.flowLabel,
+          reliabilityBySource,
+          asOf,
+        );
+      }
+      return totals;
     },
   },
 

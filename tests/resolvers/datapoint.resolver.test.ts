@@ -796,3 +796,55 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     expect(createTx).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AggregatedDatapoint.estimatedCurrentTotals — lazy current-total field (ADR-0006 §4)
+// ---------------------------------------------------------------------------
+describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
+  const estimatedCurrentTotals = datapointResolvers.AggregatedDatapoint.estimatedCurrentTotals;
+  const fig = (value: number, scope: string) => ({
+    value, unit: "people", confidence: "reported",
+    source_quote: "…", chunk_index: 0, page_number: 1, scope_location_id: scope,
+  });
+  const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+
+  it("returns null for a non-country tier without scanning reports", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = { locationId: "SD01", windowKind: "weekly", schemaVersion: "v1" };
+    expect(await estimatedCurrentTotals(parent, {}, ctx)).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the bucket has no location", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = { locationId: null, windowKind: "yearly", schemaVersion: "v1" };
+    expect(await estimatedCurrentTotals(parent, {}, ctx)).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("computes the displacement total for a country yearly bucket", async () => {
+    const rows = [
+      { reportId: "s1", publishedAt: new Date(iso(40)), reportingPeriodStart: null,
+        reportingPeriodEnd: new Date(iso(35)), locationIds: ["SD0"], sourceId: null,
+        data: { displacement: { idp_stock: fig(100000, "SD0") } } },
+      { reportId: "f1", publishedAt: new Date(iso(10)), reportingPeriodStart: null,
+        reportingPeriodEnd: new Date(iso(8)), locationIds: ["SD0"], sourceId: null,
+        data: { displacement: { new_displacements: fig(3000, "SD0") } } },
+    ];
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = { locationId: "SD0", windowKind: "yearly", schemaVersion: "v1" };
+    const result = (await estimatedCurrentTotals(parent, {}, ctx)) as {
+      displacement: { stock: number; flowsSince: number; total: number } | null;
+      returns: unknown;
+    };
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(result.displacement).not.toBeNull();
+    expect(result.displacement!.stock).toBe(100000);
+    expect(result.displacement!.flowsSince).toBe(3000);
+    expect(result.displacement!.total).toBe(103000);
+    expect(result.returns).toBeNull(); // no returnee_stock in scope
+  });
+});
