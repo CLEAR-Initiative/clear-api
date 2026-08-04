@@ -43,13 +43,14 @@ interface UpsertReportDatapointsInput {
   sourceId?: string | null;
 }
 
-// Default schema version — matches the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py). A version-less
-// `aggregatedDatapoint` query reads buckets of this version, so it must
-// point at the version the current pipeline writes, or freshly-aggregated
-// buckets go unread. Pre-launch we keep a single "v1" and re-extract on
-// schema changes rather than bumping; keep this in sync if that changes.
-const DEFAULT_SCHEMA_VERSION = "v1";
+// Default schema version — MUST match the SCHEMA_VERSION constant in the
+// Python-side extraction module (datapoints_schemas.py), currently "v2". A
+// version-less `aggregatedDatapoint` query reads buckets of this version, so a
+// mismatch makes freshly-aggregated buckets go unread. The data-quality /
+// stock-flow change bumped the pipeline v1→v2 and re-extracts the whole corpus;
+// this default moves in lockstep. ROLLOUT: flip only alongside (or after) that
+// re-extraction — version-less reads return null for v2 until v2 rows exist.
+const DEFAULT_SCHEMA_VERSION = "v2";
 
 /** Compute the four higher-tier windows a given `windowStart`
  *  belongs to. Used by the refresh mutation to enumerate all
@@ -267,7 +268,15 @@ export const datapointResolvers = {
         return {
           ...cached,
           data: finalised.data,
-          dataQualityScore: finalised.dataQualityScore,
+          // Legacy/pre-v2 buckets carry no per-field credibility envelope, so
+          // `finaliseReadTimeQuality` finalises nothing and its score is a
+          // meaningless 0. Keep the persisted score in that case rather than
+          // overwriting a real value with 0 until a corpus refresh rewrites the
+          // row in the new (0–10) shape. (#110)
+          dataQualityScore:
+            finalised.finalisedFieldCount > 0
+              ? finalised.dataQualityScore
+              : cached.dataQualityScore,
           onDemand: false,
         };
       }
@@ -527,6 +536,18 @@ export const datapointResolvers = {
         const agg = aggregateReports(rows, key.locationId, reliabilityBySource);
         if (!agg) continue;
 
+        // Persist the finalised headline score (0–10, Recency folded in at
+        // `now`) so the stored `data_quality_score` column matches what both
+        // read paths serve. `aggregateReports` returns the pre-finalised
+        // per-field mean (0–1); persisting that would leave the column an order
+        // of magnitude off the API — and off any external reader of the column
+        // (e.g. the Django app on this database). (#110). The `data` blob stays
+        // pre-finalised on purpose; the read paths re-score Recency at read time.
+        const persistedScore = finaliseReadTimeQuality(
+          agg.data as Record<string, unknown>,
+          now,
+        ).dataQualityScore;
+
         await context.prisma.$transaction(async (tx) => {
           const superseded = await tx.aggregatedDatapoint.updateMany({
             where: {
@@ -551,7 +572,7 @@ export const datapointResolvers = {
               contributingReportIds: agg.contributingReportIds,
               newestSourceAt: agg.newestSourceAt,
               oldestSourceAt: agg.oldestSourceAt,
-              dataQualityScore: agg.dataQualityScore,
+              dataQualityScore: persistedScore,
               reportCount: agg.reportCount,
               validFrom: now,
               schemaVersion,

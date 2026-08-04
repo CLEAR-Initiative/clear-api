@@ -706,8 +706,18 @@ function extractNumericMentions(
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** "Meaningfully higher" data-quality margin `D` (clear-context-pipeline ADR-0005 §4). A figure must
- *  exceed the freshest by at least this on the 0–10 data-quality scale to
- *  override it; within `D` the figures are comparable and bias decides. */
+ *  exceed the freshest by at least this on the `selectionQuality` scale to
+ *  override it; within `D` the figures are comparable and bias decides.
+ *
+ *  Calibrated for GRADED sources. The verified→unverified directness spread is
+ *  `2.0 × (1.0 − 0.1) = 1.8` intrinsic points → `1.8 × reliability × 2.5/10` on
+ *  the selection scale: 1.35 at reliability 3 (clears D), 0.45 at reliability 1
+ *  (does not). Since the seed grades the humanitarian sources at 3 (see
+ *  scripts/seed-source-reliability.ts), a verified figure correctly overrides an
+ *  unverified one in steady state. Figures whose `source_id` is not yet
+ *  backfilled resolve to reliability 1 and fall back to freshness+bias until
+ *  re-extraction populates the source — intended, not a bug (a lower D would
+ *  over-fire the override on trivial gaps once sources are graded). */
 const DATA_QUALITY_MARGIN = 1.0;
 
 /** Selection-time data quality (recency-free): `(reliability × 2.5) ×
@@ -1080,7 +1090,7 @@ function recencyScore(newestReportAt: Date, asOf: Date, validityWindowDays?: num
 export function finaliseReadTimeQuality(
   data: Record<string, unknown>,
   asOf: Date,
-): { data: Record<string, unknown>; dataQualityScore: number } {
+): { data: Record<string, unknown>; dataQualityScore: number; finalisedFieldCount: number } {
   const windowByLabel = new Map(FIELD_RULES.map((r) => [r.label, r.validityWindowDays]));
   const out: Record<string, unknown> = {};
   const scores: number[] = [];
@@ -1107,5 +1117,13 @@ export function finaliseReadTimeQuality(
   }
   const dataQualityScore =
     scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-  return { data: out, dataQualityScore: Number(dataQualityScore.toFixed(4)) };
+  // `finalisedFieldCount` lets callers distinguish "every field scored 0" from
+  // "no field carried the credibility envelope to score" (a legacy/pre-v2 cache
+  // row). The cache-hit path uses it to avoid overwriting a stored score with a
+  // spurious 0 — see datapoint.resolver.ts.
+  return {
+    data: out,
+    dataQualityScore: Number(dataQualityScore.toFixed(4)),
+    finalisedFieldCount: scores.length,
+  };
 }

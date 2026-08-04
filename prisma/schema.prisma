@@ -1367,6 +1367,11 @@ model aggregatedDatapoint {
   /// the dashboard can filter and sort without opening the JSON blob.
   newestSourceAt   DateTime @map("newest_source_at")
   oldestSourceAt   DateTime @map("oldest_source_at")
+  /// Bucket headline data quality on a 0-10 scale (clear-context-pipeline
+  /// ADR-0005): mean of the fields' data_quality, Recency folded in at write.
+  /// Same 0-10 scale the GraphQL API serves. NOTE: this replaced the old
+  /// 0-1 quality_score meaning — any external reader (incl. the Django app on
+  /// this database) must treat it as 0-10.
   dataQualityScore Float    @map("data_quality_score")
   reportCount      Int      @map("report_count")
 

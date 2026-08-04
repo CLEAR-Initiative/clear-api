@@ -122,16 +122,29 @@ export const datapointTypeDef = gql`
     locationId: String
 
     """Flat map keyed by field label. Each value is either a
-    QualityEnvelope (for numeric fields — \`{ value, unit,
-    quality_score, confidence_mix, newest_report_at, oldest_report_at,
-    contributing_report_ids }\`), a SetUnionEnvelope (for label
-    fields — \`{ values, contributing_report_ids }\`), or \`null\`
-    when no report in scope reported that field."""
+    QualityEnvelope (for numeric fields), a SetUnionEnvelope (for label
+    fields — \`{ values, contributing_report_ids }\`), or \`null\` when
+    no report in scope reported that field.
+
+    A numeric QualityEnvelope carries \`{ value, unit, confidence_mix,
+    newest_report_at, oldest_report_at, contributing_report_ids }\` plus
+    the credibility fields (clear-context-pipeline ADR-0004/0005): the
+    cached time-invariant \`reliability\` (1–4) and \`intrinsic_credibility\`
+    (0–8.5), and — added on every read — \`recency\` (0–1.5),
+    \`information_credibility\` (0–10), and \`data_quality\` (**0–10**), the
+    per-field headline. The legacy \`quality_score\` (0–1, directness-only)
+    is retained for backwards compatibility."""
     data: JSON!
 
     contributingReportIds: [String!]!
     newestSourceAt: DateTime!
     oldestSourceAt: DateTime!
+    """Bucket headline data quality on a **0–10** scale (clear-context-pipeline
+    ADR-0005): the mean of the fields' read-time \`data_quality\`
+    (\`(reliability × 2.5 × information_credibility) / 10\`, Recency folded
+    in at read). The stored column carries the same 0–10 scale. NOTE: this
+    is a scale change from the pre-data-quality \`quality_score\` (0–1) —
+    thresholds tuned on the old scale must be re-tuned."""
     dataQualityScore: Float!
     reportCount: Int!
 

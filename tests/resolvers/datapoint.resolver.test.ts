@@ -158,11 +158,56 @@ describe("Query.aggregatedDatapoint", () => {
     expect(result).not.toBeNull();
     expect(result?.onDemand).toBe(false);
     expect(result?.id).toBe("agg1");
+    // Legacy-shape data (no per-field credibility envelope) — finalisation
+    // scores nothing, so the persisted score must be kept, NOT overwritten
+    // with a spurious 0. (#110)
+    expect(result?.dataQualityScore).toBe(0.8);
   });
 
-  it("defaults to schema v1 when the query omits schemaVersion", async () => {
+  it("finalises the score for a new-shape cached row (#110)", async () => {
+    // A v2 envelope carries reliability + intrinsic_credibility, so the
+    // read path re-scores data_quality live (0–10) rather than keeping the
+    // stored value.
+    const cachedRow = {
+      id: "agg2",
+      windowStart: args.windowStart,
+      windowEnd: args.windowEnd,
+      windowKind: "weekly",
+      locationId: "sd0201",
+      data: {
+        killed_total: {
+          value: 5,
+          quality_score: 0.8,
+          reliability: 3,
+          intrinsic_credibility: 8.1,
+          newest_report_at: args.windowEnd.toISOString(),
+        },
+      },
+      contributingReportIds: ["r1"],
+      newestSourceAt: new Date(),
+      oldestSourceAt: new Date(),
+      dataQualityScore: 0.123, // stale stored value — must be replaced
+      reportCount: 1,
+      validFrom: new Date(),
+      validTo: null,
+      schemaVersion: "v2",
+      computedAt: new Date(),
+    };
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst: vi.fn().mockResolvedValue(cachedRow) },
+      reportDatapoint: { findMany: vi.fn() },
+    });
+    const result = await aggregatedDatapoint(null, { ...args, asOf: args.windowEnd }, ctx);
+    // Finalised: reliability 3, intrinsic 8.1, recency full (asOf == newest) →
+    // info_cred 9.6, data_quality = (3 × 2.5 × 9.6)/10 = 7.2, on the 0–10 scale.
+    expect(result?.dataQualityScore).toBeCloseTo(7.2, 4);
+    expect(result?.dataQualityScore).not.toBe(0.123);
+  });
+
+  it("defaults to schema v2 when the query omits schemaVersion", async () => {
     // A version-less query must read the version the current pipeline
-    // writes (v1) — otherwise freshly-aggregated buckets go unread.
+    // writes (v2 after the data-quality/stock-flow bump) — otherwise
+    // freshly-aggregated buckets go unread. (#110)
     const findFirst = vi.fn().mockResolvedValue(null);
     const ctx = buildContext(VIEWER, {
       aggregatedDatapoint: { findFirst },
@@ -171,7 +216,7 @@ describe("Query.aggregatedDatapoint", () => {
     await aggregatedDatapoint(null, args, ctx);
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ schemaVersion: "v1" }),
+        where: expect.objectContaining({ schemaVersion: "v2" }),
       }),
     );
   });

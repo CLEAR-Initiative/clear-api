@@ -1073,3 +1073,42 @@ describe("aggregateReports — per-figure credibility override (clear-context-pi
     expect(f.intrinsic_credibility).toBeCloseTo(1.6, 3);
   });
 });
+
+describe("bias-aware selection — confidence override at graded reliability (#110)", () => {
+  it("at reliability 3, a verified figure overrides a lower unverified one (killed_total)", () => {
+    // The whole point of grading sources: at reliability 3 the verified→unverified
+    // selectionQuality spread is 1.35 > DATA_QUALITY_MARGIN (1.0), so the override
+    // fires and the verified figure wins — NOT the lower one the overreport bias
+    // would otherwise pick. (Guards the reviewer's concern that the override was
+    // unreachable — true only at reliability 1, where source_id is unbackfilled.)
+    const rel = new Map<string, number | null>([["src-graded", 3]]);
+    const rows = [
+      row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(50, "verified", "people", "SD01", "src-graded") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-unverified", "2026-07-09T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(30, "unverified", "people", "SD01", "src-graded") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(50);
+  });
+
+  it("at reliability 1 (ungraded), the override cannot fire and overreport bias picks the lower", () => {
+    // Same figures, ungraded source (reliability 1): spread 0.45 < 1.0, so both
+    // stay comparable and the overreport bias takes the lower value. This is the
+    // documented pre-re-extraction fallback, not a bug. (#110)
+    const rows = [
+      row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(50, "verified", "people", "SD01") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-unverified", "2026-07-09T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(30, "unverified", "people", "SD01") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", new Map())!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(30);
+  });
+});
