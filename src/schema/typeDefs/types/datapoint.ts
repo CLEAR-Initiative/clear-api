@@ -88,6 +88,10 @@ export const datapointTypeDef = gql`
     data: JSON!
     schemaVersion: String!
     extractedByModel: String!
+    """The report's publisher source (a \`data_sources\` id), resolved by the
+    pipeline via \`resolveDataSource\`. Null until source attribution backfills;
+    a figure's own cited source lives per-figure inside \`data\`. See ADR-0004."""
+    sourceId: String
   }
 
   """Result of \`upsertReportDatapoints\` — summary for logs."""

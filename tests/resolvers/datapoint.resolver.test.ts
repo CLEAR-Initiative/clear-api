@@ -31,7 +31,14 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
     // stub tests only touch a couple of delegates; casting directly
     // through `Context["prisma"]` trips the newer strict overlap
     // check. Same pattern crisis.resolver.test.ts and friends use.
-    prisma: prisma as unknown as Context["prisma"],
+    prisma: {
+      // Default stub for the aggregation paths' reliability lookup
+      // (loadReliabilityBySource → dataSources.findMany). Tests that don't care
+      // about source reliability get no grades → every figure resolves to
+      // reliability 1, matching pre-data-quality behaviour. Overridable below.
+      dataSources: { findMany: vi.fn().mockResolvedValue([]) },
+      ...prisma,
+    } as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,

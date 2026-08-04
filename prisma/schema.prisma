@@ -480,10 +480,23 @@ model dataSources {
   isActive  Boolean  @default(true) @map("is_active")
   baseUrl   String?  @map("url_base")
   infoUrl   String?  @map("url_info")
+
+  /// Alias set for source-name normalisation. `resolveDataSource` matches an
+  /// incoming name against `name` OR any `synonyms` entry (exact, then fuzzy)
+  /// before creating a new row, so one organisation isn't recorded under many
+  /// spellings ("IOM DTM" / "Displacement Tracking Matrix" / "DTM"). See ADR-0004.
+  synonyms String[] @default([])
+
+  /// NATO Admiralty-style source-reliability grade, 1 (least) – 4 (most).
+  /// NULL = ungraded (new/unresolved source); the data-quality formula treats
+  /// NULL as 1. Manually maintained by a domain expert. See ADR-0004 / ADR-0005.
+  reliability Int?
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  signals signals[]
+  signals          signals[]
+  reportDatapoints reportDatapoint[]
 
   @@index([type])
   @@index([isActive])
@@ -1237,6 +1250,14 @@ model reportDatapoint {
   reportTitle String @map("report_title")
   sourceUrl   String @map("source_url")
 
+  /// The report's PUBLISHER source (ReliefWeb `report.source`, primary else
+  /// first), resolved to a `data_sources` row via `resolveDataSource`. This is
+  /// the fallback source for any figure that doesn't cite its own origin — a
+  /// figure's cited source lives per-`NumericField` inside `data`. Nullable
+  /// until the source-attribution re-extraction backfills existing rows. ADR-0004.
+  sourceId String?      @map("source_id")
+  source   dataSources? @relation(fields: [sourceId], references: [id])
+
   /// When the source document was issued. Not the reporting period —
   /// see below.
   publishedAt DateTime @map("published_at")
@@ -1291,6 +1312,7 @@ model reportDatapoint {
   @@index([locationIds], type: Gin)
   @@index([eventTypes], type: Gin)
   @@index([schemaVersion])
+  @@index([sourceId])
   @@map("report_datapoints")
 }
 

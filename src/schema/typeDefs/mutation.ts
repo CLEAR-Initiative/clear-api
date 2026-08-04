@@ -144,6 +144,13 @@ export const mutationTypeDef = gql`
     """Delete a data source."""
     deleteDataSource(id: String!): Boolean!
 
+    """Idempotently resolve an organisation/source name to a data_sources id,
+    creating an ungraded row if none matches (admin/pipeline only). Matching order:
+    exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
+    default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
+    future lookups hit exactly. Returns the resolved data_sources id. See ADR-0004."""
+    resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
+
     # ─── Locations ─────────────────────────────────────────────────────────────
     """Create a new location."""
     createLocation(input: CreateLocationInput!): Location!
@@ -658,6 +665,10 @@ export const mutationTypeDef = gql`
     isActive: Boolean
     baseUrl: String
     infoUrl: String
+    """Alias set for source-name normalisation (see resolveDataSource)."""
+    synonyms: [String!]
+    """NATO Admiralty-style reliability grade 1–4; null = ungraded."""
+    reliability: Int
   }
 
   input UpdateDataSourceInput {
@@ -666,6 +677,10 @@ export const mutationTypeDef = gql`
     isActive: Boolean
     baseUrl: String
     infoUrl: String
+    """Alias set for source-name normalisation (see resolveDataSource)."""
+    synonyms: [String!]
+    """NATO Admiralty-style reliability grade 1–4; null = ungraded."""
+    reliability: Int
   }
 
   input CreateLocationInput {

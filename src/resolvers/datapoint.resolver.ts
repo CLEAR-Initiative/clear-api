@@ -20,6 +20,7 @@ import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import {
   aggregateReports,
+  finaliseReadTimeQuality,
   type ReportRow,
 } from "../services/datapoint-aggregation.js";
 
@@ -39,6 +40,7 @@ interface UpsertReportDatapointsInput {
   data: Prisma.InputJsonValue;
   schemaVersion: string;
   extractedByModel: string;
+  sourceId?: string | null;
 }
 
 // Default schema version — matches the SCHEMA_VERSION constant in the
@@ -179,7 +181,20 @@ function toReportRow(row: NonNullable<PrismaReportDatapoint>): ReportRow {
     reportingPeriodEnd: row.reportingPeriodEnd,
     locationIds: row.locationIds,
     data: row.data,
+    sourceId: row.sourceId,
   };
+}
+
+/** Load the source-reliability registry into a `Map<sourceId → reliability>`
+ *  for the aggregator. `data_sources` is a small table (dozens of rows), so
+ *  one full load per aggregation run is cheaper than per-figure lookups. */
+async function loadReliabilityBySource(
+  prisma: Context["prisma"],
+): Promise<Map<string, number | null>> {
+  const sources = await prisma.dataSources.findMany({
+    select: { id: true, reliability: true },
+  });
+  return new Map(sources.map((s) => [s.id, s.reliability]));
 }
 
 export const datapointResolvers = {
@@ -243,7 +258,18 @@ export const datapointResolvers = {
         orderBy: { validFrom: "desc" },
       });
       if (cached) {
-        return { ...cached, onDemand: false };
+        // Finalise data_quality with read-time Recency (ADR-0005 §2): the cache
+        // holds the time-invariant parts; freshness is scored live at `asOf`.
+        const finalised = finaliseReadTimeQuality(
+          (cached.data ?? {}) as Record<string, unknown>,
+          asOf,
+        );
+        return {
+          ...cached,
+          data: finalised.data,
+          dataQualityScore: finalised.dataQualityScore,
+          onDemand: false,
+        };
       }
 
       // ── On-demand fallback ────────────────────────────────────────
@@ -265,11 +291,19 @@ export const datapointResolvers = {
       });
       if (rows.length === 0) return null;
 
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
       const result = aggregateReports(
         rows.map(toReportRow),
         args.locationId ?? null,
+        reliabilityBySource,
       );
       if (!result) return null;
+
+      // Finalise data_quality with read-time Recency, same as the cache path.
+      const finalised = finaliseReadTimeQuality(
+        result.data as Record<string, unknown>,
+        asOf,
+      );
 
       return {
         // Synthesised row — not persisted. `id` uses a stable synthetic
@@ -280,11 +314,11 @@ export const datapointResolvers = {
         windowEnd: args.windowEnd,
         windowKind: args.windowKind,
         locationId: args.locationId ?? null,
-        data: result.data,
+        data: finalised.data,
         contributingReportIds: result.contributingReportIds,
         newestSourceAt: result.newestSourceAt,
         oldestSourceAt: result.oldestSourceAt,
-        dataQualityScore: result.dataQualityScore,
+        dataQualityScore: finalised.dataQualityScore,
         reportCount: result.reportCount,
         validFrom: new Date(),
         validTo: null,
@@ -339,6 +373,7 @@ export const datapointResolvers = {
         data: input.data,
         schemaVersion: input.schemaVersion,
         extractedByModel: input.extractedByModel,
+        sourceId: input.sourceId ?? null,
       } as const;
 
       await context.prisma.reportDatapoint.upsert({
@@ -389,6 +424,10 @@ export const datapointResolvers = {
           schemaVersion,
         };
       }
+
+      // Source-reliability registry, loaded once for every bucket this refresh
+      // recomputes (feeds each figure's data_quality via the aggregator).
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
 
       // ── 2. Collect every figure's scope, resolve its admin level ─
       // Buckets are keyed by FIGURE SCOPE now (#273), not by the places a
@@ -485,7 +524,7 @@ export const datapointResolvers = {
       const now = new Date();
 
       for (const { key, rows } of buckets.values()) {
-        const agg = aggregateReports(rows, key.locationId);
+        const agg = aggregateReports(rows, key.locationId, reliabilityBySource);
         if (!agg) continue;
 
         await context.prisma.$transaction(async (tx) => {

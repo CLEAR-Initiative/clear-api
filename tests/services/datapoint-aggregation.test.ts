@@ -22,14 +22,16 @@ import { describe, it, expect } from "vitest";
 
 import {
   aggregateReports,
+  finaliseReadTimeQuality,
   FIELD_RULES,
   type ReportRow,
 } from "../../src/services/datapoint-aggregation.js";
 
 /** Convenience — build a NumericField dict as the LLM emits it. Pass
  *  `scope` to pin this figure's Figure Scope explicitly; otherwise `row`
- *  stamps the report's primary location onto it. */
-function nf(value: number, confidence = "reported", unit = "people", scope?: string) {
+ *  stamps the report's primary location onto it. `sourceId` sets the figure's
+ *  cited source (for data-quality / reliability tests). */
+function nf(value: number, confidence = "reported", unit = "people", scope?: string, sourceId?: string) {
   return {
     value,
     unit,
@@ -38,6 +40,7 @@ function nf(value: number, confidence = "reported", unit = "people", scope?: str
     chunk_index: 0,
     page_number: 1,
     ...(scope !== undefined ? { scope_location_id: scope } : {}),
+    ...(sourceId !== undefined ? { source_id: sourceId } : {}),
   };
 }
 
@@ -69,6 +72,7 @@ function row(
   locationIds: string[],
   data: Record<string, unknown>,
   reportingPeriodEnd?: string,
+  sourceId?: string,
 ): ReportRow {
   stampScope(data, locationIds[0] ?? null);
   return {
@@ -78,6 +82,7 @@ function row(
     reportingPeriodEnd: reportingPeriodEnd ? new Date(reportingPeriodEnd) : new Date(publishedAt),
     locationIds,
     data,
+    sourceId: sourceId ?? null,
   };
 }
 
@@ -115,8 +120,10 @@ describe("aggregateReports — empty input", () => {
 describe("aggregateReports — additive count (killed_total)", () => {
   it("dedupes two reports for the same week (period totals, not per-day events)", () => {
     // Both figures are weekly period-totals for the same week + location, so
-    // they're competing observations of one measurement — deduped to the
-    // latest, not summed (clear-context-pipeline ADR-0002: no per-day breakdown).
+    // they're competing observations of one measurement — deduped to ONE, not
+    // summed (clear-context-pipeline ADR-0002: no per-day breakdown). Which one
+    // wins is now bias-aware: killed_total is `overreport`, so among
+    // comparable-quality figures the LOWER value is taken (ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
@@ -130,16 +137,18 @@ describe("aggregateReports — additive count (killed_total)", () => {
     const field = result!.data.killed_total;
     expect(field).not.toBeNull();
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(5); // deduped to the latest, not summed to 8
+    expect(field.value).toBe(3); // deduped (not summed to 8); overreport bias → lower
     // Provenance is preserved even for the deduped-away row (§6.4.5 A):
     // both reports are recorded, and the suppression is counted.
     expect(field.contributing_report_ids.sort()).toEqual(["r1", "r2"]);
     expect(field.suppressed_count).toBe(1);
   });
 
-  it("dedupes same-day competing reports — latest publishedAt wins", () => {
+  it("dedupes same-day competing reports — bias-selected winner, not summed", () => {
     // Same day, same location → same incident key. Both are competing
-    // observations of one event; the newer publication wins.
+    // observations of one event. With uniform reliability the confidence gap
+    // (reported vs verified) stays within the data-quality margin D, so they're
+    // comparable and the overreport bias takes the LOWER figure (ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(10, "reported") } },
@@ -151,8 +160,8 @@ describe("aggregateReports — additive count (killed_total)", () => {
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    // Not 25 (naïve sum) — 15 (winner value).
-    expect(field.value).toBe(15);
+    // Not 25 (naïve sum) — deduped; overreport bias → the lower value (10).
+    expect(field.value).toBe(10);
   });
 });
 
@@ -514,7 +523,7 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
     expect(b.value).toBe(5);
   });
 
-  it("two figures at the SAME scope + week dedupe (latest wins), not sum", () => {
+  it("two figures at the SAME scope + week dedupe (bias-selected), not sum", () => {
     const rows = [
       row("r1", "2026-07-08T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "reported") } },
@@ -525,7 +534,7 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
     ];
     const f = aggregateReports(rows, "SD0201")!.data.killed_total;
     if (!f || !("value" in f)) throw new Error("expected numeric field");
-    expect(f.value).toBe(5); // latest publishedAt wins, not 8
+    expect(f.value).toBe(3); // deduped (not 8); overreport bias → the lower value
   });
 });
 
@@ -543,8 +552,9 @@ describe("aggregateReports — time bucket granularity", () => {
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    // Latest wins → 5 (not 8).
-    expect(field.value).toBe(5);
+    // Same-day dedupe (not summed to 8). Both `reported` → comparable → the
+    // overreport bias takes the lower value (3).
+    expect(field.value).toBe(3);
   });
 
   it("uses month bucket for latest_state (idp_stock) — same-month dedupes", () => {
@@ -881,5 +891,148 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
     const ac = result.data.active_clusters;
     if (!ac || !("values" in ac)) throw new Error("expected set-union field");
     expect(ac.values).toEqual(["Protection", "WASH"]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// DQ P3 — data quality: reliability, bias-aware selection, quartile-drop
+// ────────────────────────────────────────────────────────────────────
+
+describe("aggregateReports — reliability-driven override (ADR-0005 §4)", () => {
+  it("a higher-reliability source overrides a fresher, weaker one within reach", () => {
+    // killed_total (overreport, window 7d/x2 → 3.5d reach). The strong source
+    // (reliability 3) has data_quality far above the weak one (Δ ≥ D=1.0), so it
+    // overrides despite being older AND despite carrying the HIGHER value —
+    // proving the reliability override beats the overreport bias's "lower wins".
+    const rows = [
+      row("r-weak", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(30, "reported", "people", undefined, "src-weak") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-strong", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(50, "reported", "people", undefined, "src-strong") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const map = new Map<string, number | null>([["src-weak", 1], ["src-strong", 3]]);
+    const f = aggregateReports(rows, "SD0201", map)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(50); // grade-3 source wins outright; bias never gets to pick
+  });
+
+  it("a higher-reliability source OUTSIDE the override reach does not override", () => {
+    // Same as above but the strong source is 6 days older than the freshest —
+    // beyond the 3.5d reach — so it's excluded and the freshest weak row stands.
+    const rows = [
+      row("r-weak", "2026-07-10T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(30, "reported", "people", undefined, "src-weak") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-strong", "2026-07-04T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(50, "reported", "people", undefined, "src-strong") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const map = new Map<string, number | null>([["src-weak", 1], ["src-strong", 3]]);
+    const f = aggregateReports(rows, "SD0201", map)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(30); // strong source too old to reach → freshest weak wins
+  });
+});
+
+describe("aggregateReports — directional bias tie-break (ADR-0005 §4)", () => {
+  it("an underreport field takes the HIGHER of two comparable figures", () => {
+    // security_incidents_count (additive, underreport). Uniform reliability →
+    // comparable quality → bias decides → the higher (incidents under-recorded).
+    const rows = [
+      row("r1", "2026-07-07T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(5, "reported") },
+      }, "2026-07-02T00:00:00Z"),
+      row("r2", "2026-07-05T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(8, "reported") },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8); // underreport → higher, even though r1 is fresher
+  });
+});
+
+describe("aggregateReports — max quartile-drop (overall_affected, ADR-0005 §4)", () => {
+  it("drops the lowest-quality winner before taking the max", () => {
+    // Four monthly buckets → four cross-group winners. The 9999 outlier comes
+    // from an `unverified` figure (lowest data quality); the bottom quartile
+    // (1 of 4) is dropped, so the max of the remaining {100,200,300} wins.
+    const rows = [
+      row("r1", "2026-01-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(100, "reported") },
+      }, "2026-01-15T00:00:00Z"),
+      row("r2", "2026-04-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(200, "reported") },
+      }, "2026-04-15T00:00:00Z"),
+      row("r3", "2026-07-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(300, "reported") },
+      }, "2026-07-15T00:00:00Z"),
+      row("r4", "2026-10-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(9999, "unverified") },
+      }, "2026-10-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.overall_affected;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(300); // low-quality 9999 outlier dropped; max of the rest
+  });
+});
+
+describe("finaliseReadTimeQuality — read-time recency + data_quality (ADR-0005 §2)", () => {
+  const envelope = (over: Record<string, unknown>) => ({
+    value: 1000,
+    unit: "people",
+    quality_score: 0.8,
+    reliability: 3,
+    intrinsic_credibility: 5.0,
+    confidence_mix: {},
+    newest_report_at: "2026-07-05T00:00:00Z",
+    oldest_report_at: "2026-07-05T00:00:00Z",
+    contributing_report_ids: ["r1"],
+    suppressed_count: 0,
+    ...over,
+  });
+
+  it("full recency inside the window → data_quality folds it in", () => {
+    // idp_stock window 30d; newest report 5 days before asOf → within window →
+    // recency 1.5. info_cred = 5.0 + 1.5 = 6.5; dq = (3 × 2.5 × 6.5) / 10 = 4.875.
+    const asOf = new Date("2026-07-10T00:00:00Z");
+    const { data, dataQualityScore } = finaliseReadTimeQuality(
+      { idp_stock: envelope({}) },
+      asOf,
+    );
+    const f = data.idp_stock as Record<string, number>;
+    expect(f.recency).toBe(1.5);
+    expect(f.information_credibility).toBe(6.5);
+    expect(f.data_quality).toBeCloseTo(4.875, 3);
+    expect(dataQualityScore).toBeCloseTo(4.875, 3);
+  });
+
+  it("half recency past the window, zero past 2×", () => {
+    const half = finaliseReadTimeQuality(
+      // 45 days old, window 30d → within 2× → recency 0.75.
+      { idp_stock: envelope({ newest_report_at: "2026-05-26T00:00:00Z" }) },
+      new Date("2026-07-10T00:00:00Z"),
+    ).data.idp_stock as Record<string, number>;
+    expect(half.recency).toBe(0.75);
+    expect(half.data_quality).toBeCloseTo((3 * 2.5 * (5.0 + 0.75)) / 10, 3);
+
+    const stale = finaliseReadTimeQuality(
+      // 70 days old, > 2×30 → recency 0.
+      { idp_stock: envelope({ newest_report_at: "2026-05-01T00:00:00Z" }) },
+      new Date("2026-07-10T00:00:00Z"),
+    ).data.idp_stock as Record<string, number>;
+    expect(stale.recency).toBe(0);
+    expect(stale.data_quality).toBeCloseTo((3 * 2.5 * 5.0) / 10, 3);
+  });
+
+  it("leaves set-union / null fields untouched", () => {
+    const { data } = finaliseReadTimeQuality(
+      { event_types: { values: ["flood"], contributing_report_ids: ["r1"] }, idp_stock: null },
+      new Date("2026-07-10T00:00:00Z"),
+    );
+    expect(data.event_types).toEqual({ values: ["flood"], contributing_report_ids: ["r1"] });
+    expect(data.idp_stock).toBeNull();
   });
 });
