@@ -37,6 +37,9 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
       // about source reliability get no grades → every figure resolves to
       // reliability 1, matching pre-data-quality behaviour. Overridable below.
       dataSources: { findMany: vi.fn().mockResolvedValue([]) },
+      // Default stub for the location_metadata reconciliation read (ADR-0006).
+      // No API contributors by default → aggregation is report-only, as before.
+      locationMetadata: { findMany: vi.fn().mockResolvedValue([]) },
       ...prisma,
     } as unknown as Context["prisma"],
     user: user as Context["user"],

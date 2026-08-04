@@ -20,7 +20,12 @@ import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import {
   aggregateReports,
+  buildApiMentions,
+  buildApiReliabilityByOrg,
+  filterApiMentionsToWindow,
   finaliseReadTimeQuality,
+  API_RECONCILING_TYPES,
+  type LocationMetadataRow,
   type ReportRow,
 } from "../services/datapoint-aggregation.js";
 
@@ -198,6 +203,64 @@ async function loadReliabilityBySource(
   return new Map(sources.map((s) => [s.id, s.reliability]));
 }
 
+/** Build the org→reliability map the API adapters need, from the `data_sources`
+ *  registry. Location-independent, so it's loaded once per aggregation run. */
+async function loadApiReliabilityByOrg(prisma: Context["prisma"]) {
+  const sources = await prisma.dataSources.findMany({
+    select: { id: true, name: true, synonyms: true, reliability: true },
+  });
+  return buildApiReliabilityByOrg(sources);
+}
+
+/** Current (`validTo IS NULL`) reconciling-type `location_metadata` for one
+ *  location → API mentions (ADR-0006). Empty for a null location. */
+async function loadApiMentions(
+  prisma: Context["prisma"],
+  locationId: string | null,
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+) {
+  if (!locationId) return buildApiMentions([], "", apiReliabilityByOrg);
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { type: true, data: true, validFrom: true },
+  });
+  const lmRows: LocationMetadataRow[] = rows.map((r) => ({
+    type: r.type,
+    data: r.data,
+    validFrom: r.validFrom,
+  }));
+  return buildApiMentions(lmRows, locationId, apiReliabilityByOrg);
+}
+
+/** Empty API-mention map, correctly typed (Mention is internal to the service). */
+const EMPTY_API_MENTIONS: ReturnType<typeof buildApiMentions> = new Map();
+
+/** Batch variant for the refresh path: current reconciling `location_metadata`
+ *  for many locations in one query → `Map<locationId, apiMentionsByLabel>`, built
+ *  once per location. Each bucket then window-filters its location's mentions. */
+async function loadApiMentionsByLocation(
+  prisma: Context["prisma"],
+  locationIds: string[],
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+): Promise<Map<string, ReturnType<typeof buildApiMentions>>> {
+  const map = new Map<string, ReturnType<typeof buildApiMentions>>();
+  if (locationIds.length === 0) return map;
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId: { in: locationIds }, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { locationId: true, type: true, data: true, validFrom: true },
+  });
+  const byLoc = new Map<string, LocationMetadataRow[]>();
+  for (const r of rows) {
+    const list = byLoc.get(r.locationId) ?? [];
+    list.push({ type: r.type, data: r.data, validFrom: r.validFrom });
+    byLoc.set(r.locationId, list);
+  }
+  for (const [loc, lmRows] of byLoc) {
+    map.set(loc, buildApiMentions(lmRows, loc, apiReliabilityByOrg));
+  }
+  return map;
+}
+
 export const datapointResolvers = {
   Query: {
     reportDatapoint: async (
@@ -298,13 +361,23 @@ export const datapointResolvers = {
           },
         },
       });
-      if (rows.length === 0) return null;
+      // Authoritative location_metadata for this scope, gated to the window
+      // (ADR-0006). Loaded even when there are no reports — the API figure can
+      // gap-fill the bucket on its own.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = filterApiMentionsToWindow(
+        await loadApiMentions(context.prisma, args.locationId ?? null, apiOrgMap),
+        args.windowStart,
+        args.windowEnd,
+      );
+      if (rows.length === 0 && apiMentions.size === 0) return null;
 
       const reliabilityBySource = await loadReliabilityBySource(context.prisma);
       const result = aggregateReports(
         rows.map(toReportRow),
         args.locationId ?? null,
         reliabilityBySource,
+        apiMentions,
       );
       if (!result) return null;
 
@@ -458,6 +531,17 @@ export const datapointResolvers = {
         [...allScopeIds],
       );
 
+      // API contributors (ADR-0006): current location_metadata for every scope
+      // location, built once and window-filtered per bucket below. (Buckets are
+      // report-scoped, so a location with API data but no report figures is
+      // reconciled on the on-demand read path, not pre-computed here.)
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentionsByLocation = await loadApiMentionsByLocation(
+        context.prisma,
+        [...allScopeIds],
+        apiOrgMap,
+      );
+
       // ── 3. Group reports into the four bucket tiers ──────────────
       // Bucket key strings dedupe transparently so a report tagged
       // with three A2s contributes to three weekly-A2 buckets but
@@ -533,7 +617,12 @@ export const datapointResolvers = {
       const now = new Date();
 
       for (const { key, rows } of buckets.values()) {
-        const agg = aggregateReports(rows, key.locationId, reliabilityBySource);
+        const apiMentions = filterApiMentionsToWindow(
+          (key.locationId && apiMentionsByLocation.get(key.locationId)) || EMPTY_API_MENTIONS,
+          key.windowStart,
+          key.windowEnd,
+        );
+        const agg = aggregateReports(rows, key.locationId, reliabilityBySource, apiMentions);
         if (!agg) continue;
 
         // Persist the finalised headline score (0–10, Recency folded in at
