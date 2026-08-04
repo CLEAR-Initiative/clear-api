@@ -30,6 +30,7 @@ import { gazetteerResolvers } from "./gazetteer.resolver.js";
 import { datapointResolvers } from "./datapoint.resolver.js";
 import { situationAnalysisResolvers } from "./situationAnalysis.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
+import { groundResolvers } from "./ground.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -63,4 +64,5 @@ export const resolvers: IResolvers[] = [
   datapointResolvers,
   situationAnalysisResolvers,
   webhookResolvers,
+  groundResolvers,
 ];

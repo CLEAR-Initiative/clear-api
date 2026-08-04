@@ -349,5 +349,30 @@ export const queryTypeDef = gql`
     webhookSubscription(id: String!): WebhookSubscription
     """Recent delivery attempts for a subscription, newest first."""
     webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
+
+    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    """All ground sources (per-source policy records), newest first."""
+    groundSources: [GroundSource!]!
+
+    """Review queue: ground threads, newest first. Filter by source and/or
+    review state ("unverified" | "approved_private" | "approved_public" |
+    "rejected")."""
+    groundThreads(
+      groundSourceId: String
+      reviewState: String
+      limit: Int = 100
+      offset: Int = 0
+    ): [GroundThread!]!
+
+    """One ground thread with its messages, or null if not found."""
+    groundThread(id: String!): GroundThread
+
+    """Staged messages, oldest first. Filter by source and/or thread."""
+    groundMessages(
+      groundSourceId: String
+      threadId: String
+      limit: Int = 200
+      offset: Int = 0
+    ): [GroundMessage!]!
   }
 `;

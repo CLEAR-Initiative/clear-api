@@ -1527,3 +1527,167 @@ model geonamesName {
   @@map("geonames_name")
 }
 
+// ─── Ground intel staging tier ───────────────────────────────────────────────
+//
+// Staging tier in FRONT of the signals → events → alerts graph for
+// WhatsApp-sourced field intelligence (WhatsApp Signal Pipeline PRD).
+// Unvetted group content never auto-ingests into `signals`: it lands here,
+// a role-gated reviewer works the queue, and only an approved_public thread
+// is promoted through the standard createSignal path. This is deliberately
+// NOT a parallel incident system — events/alerts stay the only incident
+// graph; `ground*` is quarantine plus review state.
+
+/// Per-source policy record — one row per WhatsApp group / hotline number.
+/// Carries the consent scope, privacy default, reviewer roles, and retention
+/// rules for everything ingested from that source. No ingest (upload today,
+/// live capture in V2) is accepted without a groundSources row whose consent
+/// covers message content.
+model groundSources {
+  id   String @id @default(cuid())
+  name String
+
+  /// Source kind: "staff_group" | "partner_group" | "hotline".
+  kind String
+
+  /// Transport binding — WhatsApp group JID (e.g. "1203...@g.us") for
+  /// groups, phone number for the future hotline. Used in the
+  /// "whatsapp:{groupJid}:{messageId}" externalId scheme, so it must be
+  /// stable and unique.
+  transportId String @unique @map("transport_id")
+
+  /// Free-text description of what the source's members consented to
+  /// (e.g. "links and resources only", "full message content").
+  consentScope      String?   @map("consent_scope")
+  /// When and by whom the consent was recorded (a person's name/role, not
+  /// a user id — consenters are usually group members, not platform users).
+  consentRecordedAt DateTime? @map("consent_recorded_at")
+  consentRecordedBy String?   @map("consent_recorded_by")
+
+  /// Review default for derived threads: "private" (org-internal) unless a
+  /// human deliberately promotes. Kept as data (not code) so a future
+  /// hotline source can carry different defaults without a code path.
+  privacyDefault String @default("private") @map("privacy_default")
+
+  /// Global user roles allowed to review (approve/reject/promote) threads
+  /// from this source. Platform admins always pass.
+  reviewerRoles String[] @default(["admin", "analyst"]) @map("reviewer_roles")
+
+  /// Free-text retention rule (e.g. "delete raw exports after 90 days").
+  /// Enforcement is operational for V1; the field keeps the policy with
+  /// the source instead of in a wiki.
+  retentionRule String? @map("retention_rule")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  threads  groundThreads[]
+  messages groundMessages[]
+
+  @@index([kind])
+  @@map("ground_sources")
+}
+
+/// An incident thread under review. V1 creates one placeholder thread per
+/// message at ingest — the clear-pipeline threading task (separate ticket)
+/// replaces placeholders with real incident clustering. Lifecycle state
+/// models the observed correction chain (reported → updated → confirmed /
+/// corrected / retracted); review state is the human gate in front of the
+/// signals graph.
+model groundThreads {
+  id             String        @id @default(cuid())
+  groundSourceId String        @map("ground_source_id")
+  source         groundSources @relation(fields: [groundSourceId], references: [id], onDelete: Cascade)
+
+  title String?
+
+  /// "reported" | "updated" | "confirmed" | "corrected" | "retracted".
+  lifecycleState String @default("reported") @map("lifecycle_state")
+
+  /// "unverified" | "approved_private" | "approved_public" | "rejected".
+  /// Every thread starts unverified; approved_public triggers promotion.
+  reviewState String  @default("unverified") @map("review_state")
+  /// Auth user id of the reviewer who last transitioned reviewState.
+  reviewedBy  String? @map("reviewed_by")
+  reviewedAt  DateTime? @map("reviewed_at")
+  /// Optional reviewer note (why rejected / what was corrected).
+  reviewNote  String? @map("review_note")
+
+  /// Set when an approved_public thread has been promoted through
+  /// createSignal — the id of the created `signals` row. One-shot: a
+  /// promoted thread is never promoted again.
+  promotedSignalId String? @map("promoted_signal_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  messages groundMessages[]
+
+  @@index([groundSourceId, reviewState])
+  @@index([reviewState, createdAt])
+  @@map("ground_threads")
+}
+
+/// Canonical parsed message — the staging tier's unit of ingestion.
+/// Text is phone-number-redacted AT PERSISTENCE (never stored raw);
+/// senderName is private-tier only and is scrubbed from anything promoted.
+model groundMessages {
+  id             String        @id @default(cuid())
+  groundSourceId String        @map("ground_source_id")
+  source         groundSources @relation(fields: [groundSourceId], references: [id], onDelete: Cascade)
+
+  /// Stable identifier for idempotent ingestion, scheme
+  /// "whatsapp:{groupJid}:{messageId}" (same convention createSignal
+  /// documents for "dataminr:{alertId}"). Chat exports carry no upstream
+  /// message id, so {messageId} is a deterministic content hash — see
+  /// services/whatsapp-export.ts. Re-uploading the same export re-derives
+  /// the same ids and creates zero duplicates.
+  externalId String @map("external_id")
+
+  sentAt DateTime @map("sent_at")
+
+  /// Pseudonymous, deterministic per (source, sender) — safe to render in
+  /// review UIs ("s_ab12cd34"). Still identity-shaped, so promotion scrubs
+  /// senderRef along with senderName.
+  senderRef  String  @map("sender_ref")
+  /// Raw sender display name from the export. Private tier only.
+  senderName String? @map("sender_name")
+
+  /// Message text with phone numbers regex-redacted at persistence.
+  /// Empty string for caption-less media messages.
+  text String
+
+  /// S3 keys of stored attachments (content-hashed under
+  /// "ground/{groundSourceId}/…"). Presigned URLs are generated at read /
+  /// promotion time, never stored.
+  mediaKeys String[] @map("media_keys")
+  /// Attachment filenames referenced by the export ("<attached: …>") —
+  /// kept for matching/debugging; count of media the export omitted
+  /// ("image omitted") is preserved so caption-less omitted media still
+  /// reads as a media message.
+  mediaRefs         String[] @map("media_refs")
+  omittedMediaCount Int      @default(0) @map("omitted_media_count")
+
+  /// "field_report" | "news_digest" | "operational" | "chatter".
+  /// Null until the clear-pipeline classification task (separate ticket)
+  /// labels the message.
+  classification String?
+
+  /// Contributor's own uncertainty tag ("unconfirmed", "rumour"), preserved
+  /// verbatim from the text so it survives ingestion and promotion.
+  uncertainty String?
+
+  /// True when the export carried the "<This message was edited>" marker.
+  isEdited Boolean @default(false) @map("is_edited")
+
+  threadId String?        @map("thread_id")
+  thread   groundThreads? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([groundSourceId, externalId])
+  @@index([groundSourceId, sentAt])
+  @@index([threadId])
+  @@map("ground_messages")
+}
+
