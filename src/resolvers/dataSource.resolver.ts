@@ -21,9 +21,11 @@ interface UpdateDataSourceInput {
 export const dataSourceResolvers = {
   Query: {
     // Registry metadata, not content: gated with bare requireAuth (like
-    // pipelineCountries) rather than requireContentReader, because the
-    // pipeline's API key carries the `pipeline` role, which
-    // requireContentReader would reject.
+    // pipelineCountries) rather than requireContentReader, so every
+    // authenticated principal — session users of any role and M2M API
+    // keys regardless of the owning service account's role — keeps
+    // access. requireContentReader would silently break any service key
+    // whose account is ever moved to the `pipeline` role.
     dataSources: (_parent: unknown, _args: unknown, context: Context) => {
       requireAuth(context);
       return context.prisma.dataSources.findMany();
