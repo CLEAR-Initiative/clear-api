@@ -3,7 +3,7 @@
  * data_sources registry, as type "organisation" rows for report attribution.
  *
  * Implements the clear-context-pipeline ADR-0004 §5 reliability seed. Grades are PROPOSED defaults
- * pending domain sign-off (docs/data-quality-scoring-design.md §5.2); once
+ * pending domain sign-off (clear-context-pipeline/docs/data-quality-scoring-design.md §5.2); once
  * seeded, a grader edits in-app via updateDataSource (re-running this realigns
  * to the seed values, so seed once then grade).
  *

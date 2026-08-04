@@ -66,9 +66,12 @@ function normaliseConfidence(raw: string | undefined | null): ConfidenceTier {
 // read for the full 0–10 information_credibility).
 const CREDIBILITY_RATING: Record<string, number> = { met: 1, partial: 0.5, unmet: 0 };
 
-/** A missing / off-taxonomy rating falls back to `partial` (0.5) — the neutral
- *  fallback clear-context-pipeline ADR-0004 specifies when a document gives no signal for a criterion
- *  (e.g. a v1 row with no `information_credibility` block). */
+/** A missing / off-taxonomy rating scores `partial` (0.5) — the neutral
+ *  "not assessed" fallback specified in clear-context-pipeline ADR-0004 §4.
+ *  Deliberately neutral, not conservative like reliability's `null → 1`: an
+ *  unrated criterion is no signal, not an untrusted source. Rarely exercised —
+ *  a v2 row carries all six document-level criteria; this covers malformed /
+ *  pre-v2 rows only. Domain-tunable (see the ADR). */
 function ratingValue(v: unknown): number {
   return typeof v === "string" && v in CREDIBILITY_RATING ? CREDIBILITY_RATING[v]! : 0.5;
 }
