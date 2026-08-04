@@ -148,7 +148,7 @@ export const mutationTypeDef = gql`
     creating an ungraded row if none matches (admin/pipeline only). Matching order:
     exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
     default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-    future lookups hit exactly. Returns the resolved data_sources id. See ADR-0004."""
+    future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004."""
     resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
 
     # ─── Locations ─────────────────────────────────────────────────────────────

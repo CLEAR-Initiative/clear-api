@@ -258,7 +258,7 @@ export const datapointResolvers = {
         orderBy: { validFrom: "desc" },
       });
       if (cached) {
-        // Finalise data_quality with read-time Recency (ADR-0005 §2): the cache
+        // Finalise data_quality with read-time Recency (clear-context-pipeline ADR-0005 §2): the cache
         // holds the time-invariant parts; freshness is scored live at `asOf`.
         const finalised = finaliseReadTimeQuality(
           (cached.data ?? {}) as Record<string, unknown>,

@@ -1036,3 +1036,40 @@ describe("finaliseReadTimeQuality — read-time recency + data_quality (ADR-0005
     expect(data.idp_stock).toBeNull();
   });
 });
+
+describe("aggregateReports — per-figure credibility override (ADR-0004 §4)", () => {
+  const docUnmet = {
+    attribution_quality: "unmet", internal_consistency: "unmet",
+    plausibility_in_context: "unmet", geographic_temporal_specificity: "unmet",
+    methodology_transparency: "unmet", representativeness: "unmet",
+  };
+  const allMet = {
+    attribution_quality: "met", internal_consistency: "met",
+    plausibility_in_context: "met", geographic_temporal_specificity: "met",
+    methodology_transparency: "met", representativeness: "met",
+  };
+
+  it("uses the figure's own credibility over the document-level fallback", () => {
+    const killed = { ...nf(10, "reported"), credibility: allMet };
+    const rows = [row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
+      casualties: { killed: { total: killed } },
+      narrative_and_confidence: { information_credibility: docUnmet },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // reported directness (2.0×0.8=1.6) + six met (6.5) = 8.1 — the figure's own
+    // ratings win over the document's all-unmet (which would give 1.6).
+    expect(f.intrinsic_credibility).toBeCloseTo(8.1, 3);
+  });
+
+  it("inherits document-level credibility where the figure gives no override", () => {
+    const rows = [row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
+      casualties: { killed: { total: nf(10, "reported") } },
+      narrative_and_confidence: { information_credibility: docUnmet },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // no per-figure override → all six inherit the document's unmet → 1.6 + 0.
+    expect(f.intrinsic_credibility).toBeCloseTo(1.6, 3);
+  });
+});

@@ -56,45 +56,64 @@ function normaliseConfidence(raw: string | undefined | null): ConfidenceTier {
   return "unverified";
 }
 
-// ── Information credibility (ADR-0004 §4) ────────────────────────────
+// ── Information credibility (clear-context-pipeline ADR-0004 §4) ────────────────────────────
 // The document-level criteria are rated met/partial/unmet by the extractor and
 // stored on `narrative_and_confidence.information_credibility`. Directness is
 // the per-figure `confidence` tier (its CONFIDENCE_WEIGHTS value, not a rating).
 // Recency is NOT scored here — it depends on `now` and is folded in at read
-// time by the resolver (ADR-0005 §2), so what we compute + cache is the
+// time by the resolver (clear-context-pipeline ADR-0005 §2), so what we compute + cache is the
 // TIME-INVARIANT part: 7 criteria summing to at most 8.5 (recency adds ≤1.5 at
 // read for the full 0–10 information_credibility).
 const CREDIBILITY_RATING: Record<string, number> = { met: 1, partial: 0.5, unmet: 0 };
 
 /** A missing / off-taxonomy rating falls back to `partial` (0.5) — the neutral
- *  fallback ADR-0004 specifies when a document gives no signal for a criterion
+ *  fallback clear-context-pipeline ADR-0004 specifies when a document gives no signal for a criterion
  *  (e.g. a v1 row with no `information_credibility` block). */
 function ratingValue(v: unknown): number {
   return typeof v === "string" && v in CREDIBILITY_RATING ? CREDIBILITY_RATING[v]! : 0.5;
 }
 
+/** Resolve one criterion per clear-context-pipeline ADR-0004 §4's per-datapoint-with-document-fallback
+ *  rule: the figure's own override wins where present; otherwise the report's
+ *  document-level rating; otherwise `partial` (neutral). */
+function resolvedRating(figureVal: unknown, docVal: unknown): number {
+  if (typeof figureVal === "string" && figureVal in CREDIBILITY_RATING) {
+    return CREDIBILITY_RATING[figureVal]!;
+  }
+  return ratingValue(docVal);
+}
+
 /** Time-invariant information credibility for one figure, 0–8.5: Directness
- *  (per-figure `confidence`) plus the six intrinsic document-level criteria,
- *  each weighted per ADR-0004 §4. Recency (weight 1.5) is added at read time. */
-function intrinsicCredibilityOf(confidence: ConfidenceTier, docCredibility: unknown): number {
+ *  (per-figure `confidence`) plus the six intrinsic criteria, each resolved
+ *  per-figure-then-document (clear-context-pipeline ADR-0004 §4) and weighted. Recency (weight 1.5) is
+ *  added at read time. */
+function intrinsicCredibilityOf(
+  confidence: ConfidenceTier,
+  docCredibility: unknown,
+  figureCredibility: unknown,
+): number {
   const dc =
     docCredibility && typeof docCredibility === "object"
       ? (docCredibility as Record<string, unknown>)
       : {};
+  const fc =
+    figureCredibility && typeof figureCredibility === "object"
+      ? (figureCredibility as Record<string, unknown>)
+      : {};
   return (
-    2.0 * CONFIDENCE_WEIGHTS[confidence] + // Directness
-    1.5 * ratingValue(dc.attribution_quality) +
-    1.5 * ratingValue(dc.internal_consistency) +
-    1.5 * ratingValue(dc.plausibility_in_context) +
-    1.0 * ratingValue(dc.geographic_temporal_specificity) +
-    0.5 * ratingValue(dc.methodology_transparency) +
-    0.5 * ratingValue(dc.representativeness)
+    2.0 * CONFIDENCE_WEIGHTS[confidence] + // Directness (per-figure)
+    1.5 * resolvedRating(fc.attribution_quality, dc.attribution_quality) +
+    1.5 * resolvedRating(fc.internal_consistency, dc.internal_consistency) +
+    1.5 * resolvedRating(fc.plausibility_in_context, dc.plausibility_in_context) +
+    1.0 * resolvedRating(fc.geographic_temporal_specificity, dc.geographic_temporal_specificity) +
+    0.5 * resolvedRating(fc.methodology_transparency, dc.methodology_transparency) +
+    0.5 * resolvedRating(fc.representativeness, dc.representativeness)
   );
 }
 
 /** Source-reliability grade (1–4) for a figure's source id, resolving through
  *  the registry map. An ungraded (null) or unknown source → 1, matching the
- *  ADR-0005 formula's `null → 1` rule. */
+ *  clear-context-pipeline ADR-0005 formula's `null → 1` rule. */
 function reliabilityOf(sourceId: string | null, reliabilityBySource: Map<string, number | null>): number {
   if (!sourceId) return 1;
   const r = reliabilityBySource.get(sourceId);
@@ -114,7 +133,7 @@ export type FieldKind =
 
 export type TimeBucket = "day" | "week" | "month";
 
-/** Direction in which low-quality figures skew a field (ADR-0005 §3). Drives
+/** Direction in which low-quality figures skew a field (clear-context-pipeline ADR-0005 §3). Drives
  *  the comparable-quality tie-break in bias-aware selection. */
 export type QualityBias = "overreport" | "underreport" | "neutral";
 
@@ -141,15 +160,15 @@ export interface FieldRule {
    * is preserved.
    */
   canonicaliseCase?: boolean;
-  /** Direction low-quality figures skew (ADR-0005 §3). On comparable quality the
+  /** Direction low-quality figures skew (clear-context-pipeline ADR-0005 §3). On comparable quality the
    *  tie-break takes the LOWER value for `overreport`, HIGHER for `underreport`,
    *  freshest for `neutral`. Omitted on label (set_union) fields. */
   qualityBias?: QualityBias;
-  /** Freshness validity window in days (ADR-0005 § table): how long a figure
+  /** Freshness validity window in days (clear-context-pipeline ADR-0005 § table): how long a figure
    *  stays "recent" for read-time Recency, and the base for the override reach.
    *  Omitted on label fields. */
   validityWindowDays?: number;
-  /** Override divisor `x` (ADR-0005 §4): a higher-quality figure may override a
+  /** Override divisor `x` (clear-context-pipeline ADR-0005 §4): a higher-quality figure may override a
    *  fresher, weaker one only within `validityWindowDays / x` of the freshest. */
   overrideDivisor?: number;
 }
@@ -226,7 +245,7 @@ export const FIELD_RULES: FieldRule[] = [
     overrideDivisor: 3,
   },
   // Returns are split into a STOCK (cumulative returned to date, latest-wins)
-  // and a FLOW (new returns this period, summed) — ADR-0006 §4. The old single
+  // and a FLOW (new returns this period, summed) — clear-context-pipeline ADR-0005 §4a. The old single
   // `returnees` additive field conflated the two and double-counted a running
   // total. The estimated current-total roll-up (stock + forward flows) is a
   // read-time concern handled by the resolver, not baked here.
@@ -441,7 +460,7 @@ export interface ReportRow {
 export interface QualityEnvelope {
   value: number;
   unit: string | null;
-  /** Confidence-only (Directness) view, retained per ADR-0005 — mean of the
+  /** Confidence-only (Directness) view, retained per clear-context-pipeline ADR-0005 — mean of the
    *  winners' CONFIDENCE_WEIGHTS. The headline is now `data_quality`, which the
    *  resolver finalises at read time from `reliability` + `intrinsic_credibility`
    *  + a live Recency score. */
@@ -631,6 +650,7 @@ function extractNumericMentions(
     confidence?: string;
     scope_location_id?: unknown;
     source_id?: unknown;
+    credibility?: unknown;
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
@@ -650,14 +670,15 @@ function extractNumericMentions(
   const eventKey = eventKeyFor(row);
 
   // Source reliability: the figure's own cited source (`source_id`), else the
-  // report's publisher; ungraded/unknown → 1 (ADR-0004/0005).
+  // report's publisher; ungraded/unknown → 1 (clear-context-pipeline ADR-0004/0005).
   const figureSourceId =
     typeof nf.source_id === "string" && nf.source_id ? nf.source_id : null;
   const reliability = reliabilityOf(figureSourceId ?? row.sourceId, reliabilityBySource);
-  // Time-invariant credibility: directness (this figure's confidence) + the
-  // report's document-level criteria (shared by every figure in the report).
+  // Time-invariant credibility: directness (this figure's confidence) + the six
+  // criteria resolved per-figure-then-document — the figure's own `credibility`
+  // overrides where present, else the report's document-level assessment.
   const docCredibility = dig(row.data, "narrative_and_confidence.information_credibility");
-  const intrinsicCredibility = intrinsicCredibilityOf(confidence, docCredibility);
+  const intrinsicCredibility = intrinsicCredibilityOf(confidence, docCredibility, nf.credibility);
 
   return [
     {
@@ -681,7 +702,7 @@ function extractNumericMentions(
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** "Meaningfully higher" data-quality margin `D` (ADR-0005 §4). A figure must
+/** "Meaningfully higher" data-quality margin `D` (clear-context-pipeline ADR-0005 §4). A figure must
  *  exceed the freshest by at least this on the 0–10 data-quality scale to
  *  override it; within `D` the figures are comparable and bias decides. */
 const DATA_QUALITY_MARGIN = 1.0;
@@ -689,13 +710,13 @@ const DATA_QUALITY_MARGIN = 1.0;
 /** Selection-time data quality (recency-free): `(reliability × 2.5) ×
  *  intrinsic_credibility / 10`. Recency is deliberately excluded here — within
  *  one bucket it barely varies, and freshness is handled separately by the
- *  override-reach gate; recency only shapes the read-time headline (ADR-0005). */
+ *  override-reach gate; recency only shapes the read-time headline (clear-context-pipeline ADR-0005). */
 function selectionQuality(m: Mention): number {
   return (m.reliability * 2.5 * m.intrinsicCredibility) / 10;
 }
 
 /** Pick among comparable-quality candidates by the field's directional bias
- *  (ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
+ *  (clear-context-pipeline ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
  *  `underreport` → the HIGHER, `neutral` → the freshest. Value ties fall back to
  *  freshest, keeping the result stable and independent of input order. */
 function biasWinner(candidates: Mention[], bias: QualityBias): Mention {
@@ -749,7 +770,7 @@ function pickWinner(mentions: Mention[], rule?: FieldRule): Mention {
   const latest = latestByPublishedAt(mentions);
 
   if (policy === "latest_wins_with_confidence_override") {
-    // Bias-aware override (ADR-0005 §4, generalises the old 3-day verified
+    // Bias-aware override (clear-context-pipeline ADR-0005 §4, generalises the old 3-day verified
     // override): the freshest row wins UNLESS another row within the override
     // reach has meaningfully higher data quality. Among the top quality tier
     // (everything within D of the best), the directional bias breaks the tie.
@@ -899,7 +920,7 @@ function aggregateNumericField(
       break;
     case "max": {
       // Drop the bottom quartile of winners by data quality before taking the
-      // max, so a single low-quality outlier can't set the ceiling (ADR-0005
+      // max, so a single low-quality outlier can't set the ceiling (clear-context-pipeline ADR-0005
       // §4). Under 4 winners nothing is dropped; `kept` is always non-empty.
       const ranked = [...winners].sort((a, b) => selectionQuality(a) - selectionQuality(b));
       const kept = ranked.slice(Math.floor(ranked.length / 4));
@@ -1024,7 +1045,7 @@ export function aggregateReports(
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Read-time quality finalisation (ADR-0005 §2)
+// Read-time quality finalisation (clear-context-pipeline ADR-0005 §2)
 // ────────────────────────────────────────────────────────────────────
 
 /** Weight of the Recency criterion in the 0–10 information_credibility score
@@ -1046,7 +1067,7 @@ function recencyScore(newestReportAt: Date, asOf: Date, validityWindowDays?: num
 }
 
 /** Finalise the headline `data_quality` for every numeric field on an
- *  aggregated `data` blob, folding in read-time Recency (ADR-0005 §2). The
+ *  aggregated `data` blob, folding in read-time Recency (clear-context-pipeline ADR-0005 §2). The
  *  cache stores only the time-invariant parts (`reliability`,
  *  `intrinsic_credibility`, `newest_report_at`); this runs on every read so the
  *  score reflects freshness at `asOf` and never decays in place. Returns a new

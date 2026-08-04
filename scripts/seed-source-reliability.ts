@@ -2,7 +2,7 @@
  * Seed (or reseed) source-reliability grades, synonyms, and info URLs on the
  * data_sources registry, as type "organisation" rows for report attribution.
  *
- * Implements the ADR-0004 §5 reliability seed. Grades are PROPOSED defaults
+ * Implements the clear-context-pipeline ADR-0004 §5 reliability seed. Grades are PROPOSED defaults
  * pending domain sign-off (docs/data-quality-scoring-design.md §5.2); once
  * seeded, a grader edits in-app via updateDataSource (re-running this realigns
  * to the seed values, so seed once then grade).
@@ -36,7 +36,7 @@ interface SeedEntry {
   infoUrl?: string;
 }
 
-// ADR-0004 §5. Grade 4 is reserved (Lancet/Nature-tier) — none in-corpus yet.
+// clear-context-pipeline ADR-0004 §5. Grade 4 is reserved (Lancet/Nature-tier) — none in-corpus yet.
 const ENTRIES: SeedEntry[] = [
   // ── Grade 3 — usually reliable (UN agencies, major INGOs, curated datasets) ──
   { name: "OCHA", reliability: 3, infoUrl: "https://www.unocha.org", synonyms: ["UN OCHA", "Office for the Coordination of Humanitarian Affairs"] },

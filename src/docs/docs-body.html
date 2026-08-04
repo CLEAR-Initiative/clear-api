@@ -718,7 +718,7 @@ not stored on the event.<div class="field-args"><span class="arg"><code>eventId:
 creating an ungraded row if none matches (admin/pipeline only). Matching order:
 exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (&gt;= minSimilarity,
 default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-future lookups hit exactly. Returns the resolved data_sources id. See ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
+future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
   </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>
@@ -2383,7 +2383,7 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td><code>String</code></td>
     <td>The report's publisher source (a `data_sources` id), resolved by the
 pipeline via `resolveDataSource`. Null until source attribution backfills;
-a figure's own cited source lives per-figure inside `data`. See ADR-0004.</td>
+a figure's own cited source lives per-figure inside `data`. See clear-context-pipeline ADR-0004.</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisinput"><code>UpsertSituationAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>countryLocationId</code></td>
     <td><code>String!</code></td>
@@ -2915,7 +2915,7 @@ same source (e.g. &quot;IOM DTM&quot; / &quot;Displacement Tracking Matrix&quot;
     <td><code>reliability</code></td>
     <td><code>Int</code></td>
     <td>NATO Admiralty-style source-reliability grade, 1 (least) – 4 (most).
-Null = ungraded; the data-quality formula treats null as 1. See ADR-0004.</td>
+Null = ungraded; the data-quality formula treats null as 1. See clear-context-pipeline ADR-0004.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
