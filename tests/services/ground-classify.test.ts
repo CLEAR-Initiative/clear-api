@@ -33,7 +33,9 @@ describe("enqueueGroundClassification", () => {
       GROUND_CLASSIFY_TASK,
       { ground_source_id: "gs_1" },
     );
-    expect(GROUND_CLASSIFY_TASK).toBe("src.tasks.ground.classify_ground_messages");
+    // CONTRACT PIN: the pipeline registers @app.task(name="classify_ground_messages")
+    // — the bare name, NOT a module path. Do not change one side without the other.
+    expect(GROUND_CLASSIFY_TASK).toBe("classify_ground_messages");
   });
 
   it("swallows broker failures with a warning (fire-and-forget)", async () => {

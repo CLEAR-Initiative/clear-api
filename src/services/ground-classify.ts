@@ -18,9 +18,12 @@
 
 import { sendCeleryTask } from "./celery.js";
 
-/** Celery task path, matching the repo's existing task-name convention
- * ("src.tasks.process.process_manual_signal", "src.tasks.crisis.…"). */
-export const GROUND_CLASSIFY_TASK = "src.tasks.ground.classify_ground_messages";
+/** Celery task name. CONTRACT: the pipeline registers the task with the
+ * BARE name — `@app.task(name="classify_ground_messages")` — not a
+ * module path, so the enqueue must use exactly this string (unlike the
+ * older module-path-named tasks such as
+ * "src.tasks.process.process_manual_signal"). */
+export const GROUND_CLASSIFY_TASK = "classify_ground_messages";
 
 export function enqueueGroundClassification(groundSourceId: string): void {
   void sendCeleryTask(GROUND_CLASSIFY_TASK, { ground_source_id: groundSourceId }).catch(
