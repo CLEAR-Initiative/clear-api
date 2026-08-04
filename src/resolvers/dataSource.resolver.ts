@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface CreateDataSourceInput {
   name: string;
@@ -20,11 +20,17 @@ interface UpdateDataSourceInput {
 
 export const dataSourceResolvers = {
   Query: {
-    dataSources: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.dataSources.findMany();
+    // Registry metadata, not content: gated with bare requireAuth (like
+    // pipelineCountries) rather than requireContentReader, because the
+    // pipeline's API key carries the `pipeline` role, which
+    // requireContentReader would reject.
+    dataSources: (_parent: unknown, _args: unknown, context: Context) => {
+      requireAuth(context);
+      return context.prisma.dataSources.findMany();
     },
-    dataSource: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.dataSources.findUnique({ where: { id: args.id } });
+    dataSource: (_parent: unknown, args: { id: string }, context: Context) => {
+      requireAuth(context);
+      return context.prisma.dataSources.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
