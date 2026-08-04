@@ -155,18 +155,39 @@ describe("GET /portal/reset-password", () => {
     expect(findValidResetTokenMock).not.toHaveBeenCalled();
   });
 
-  it("escapes the token into the page rather than interpolating it raw", async () => {
+  // Regression: the token used to be interpolated into a <script> block via
+  // JSON.stringify, which does not escape "/". A token containing a closing
+  // script tag terminated the block early and the remainder was parsed as
+  // attacker-controlled HTML — reflected XSS on the origin that holds the
+  // portal session cookie, reachable without a valid token.
+  it.each([
+    ['closing script tag', '</script><img src=x onerror=alert(1)>'],
+    ['attribute breakout', '"><script>alert(1)</script>'],
+    ['quote and semicolon', '";alert(1);//'],
+  ])("does not let a %s in the token escape into executable markup", async (_label, payload) => {
     findValidResetTokenMock.mockResolvedValue({ id: "v1", email: "a@b.dev" });
-    const nasty = '";alert(1);//';
 
     const html = await (
-      await fetch(
-        `${base}/portal/reset-password?token=${encodeURIComponent(nasty)}`,
-      )
+      await fetch(`${base}/portal/reset-password?token=${encodeURIComponent(payload)}`)
     ).text();
 
-    expect(html).not.toContain('var TOKEN = "";alert(1);//"');
-    expect(html).toContain(JSON.stringify(nasty));
+    // The page has exactly one script element; a breakout would add more.
+    expect(html.split("<script>").length - 1).toBe(1);
+    expect(html.split("</script>").length - 1).toBe(1);
+    // And the raw payload never appears unescaped anywhere in the document.
+    expect(html).not.toContain(payload);
+  });
+
+  it("keeps the token out of script context even on the expired-link page", async () => {
+    findValidResetTokenMock.mockResolvedValue(null);
+    const payload = "</script><img src=x onerror=alert(1)>";
+
+    const html = await (
+      await fetch(`${base}/portal/reset-password?token=${encodeURIComponent(payload)}`)
+    ).text();
+
+    expect(html.split("</script>").length - 1).toBe(1);
+    expect(html).not.toContain(payload);
   });
 });
 

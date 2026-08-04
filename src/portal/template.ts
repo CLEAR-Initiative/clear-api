@@ -1340,6 +1340,7 @@ export function renderResetPasswordPage({
   const body = tokenValid
     ? `      <h1>${heading}</h1>
       <p>${blurb}</p>
+      <input type="hidden" id="reset-token" value="${escapeHtml(token)}">
       <label for="password">New password</label>
       <input type="password" id="password" autocomplete="new-password" placeholder="Min. 8 characters">
       <label for="confirm">Confirm password</label>
@@ -1388,7 +1389,14 @@ export function renderResetPasswordPage({
 ${body}
   </div>
   <script>
-    var TOKEN = ${JSON.stringify(token)};
+    // Read the token out of the DOM rather than interpolating it into this
+    // script. It arrives from the query string, and JSON.stringify does not
+    // escape "/" — a token containing "</scr'+'ipt>" would close this block
+    // early and turn the rest of the page into attacker-controlled HTML.
+    // The hidden input is attribute-escaped, and absent on the expired-link
+    // page, hence the null guard.
+    var tokenField = document.getElementById('reset-token');
+    var TOKEN = tokenField ? tokenField.value : '';
 
     async function submitReset() {
       var password = document.getElementById('password').value;
