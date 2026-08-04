@@ -23,6 +23,7 @@ import { createDocsRouter } from "./docs/index.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { groundUploadRouter } from "./routes/ground-upload.js";
+import { groundIngestRouter } from "./routes/ground-ingest.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { logieRouter } from "./routes/logie.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
@@ -68,6 +69,10 @@ app.use("/api/upload", uploadRouter);
 // WhatsApp chat-export ingest into the ground staging tier
 // (multipart/form-data; admin/analyst only)
 app.use("/api/ground/upload", groundUploadRouter);
+
+// Live gateway ingest into the ground staging tier (JSON; machine auth,
+// consent-gated per group JID — see routes/ground-ingest.ts)
+app.use("/api/ground/ingest", groundIngestRouter);
 
 // External webhook receiver (GlitchTip → clear-api). Scoped
 // express.json() because the global GraphQL mount does its own — we
