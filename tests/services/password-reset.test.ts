@@ -80,6 +80,21 @@ describe("issueResetToken", () => {
     expect(create.mock.calls[0][0].data.value).toBe(token);
   });
 
+  // Regression: `verification.createdAt` is nullable with no DB default, so
+  // omitting it left every row NULL and the throttle check — which guards on
+  // `recent?.createdAt` — could never fire. That made the unauthenticated
+  // forgot-password endpoint an email-bombing vector.
+  it("stamps createdAt so the throttle has something to compare against", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "v1" });
+    const prisma = asPrisma({ verification: { deleteMany: vi.fn(), create } });
+
+    await issueResetToken(prisma, "a@b.dev");
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.createdAt).toBeInstanceOf(Date);
+    expect(data.updatedAt).toBeInstanceOf(Date);
+  });
+
   it("honours a custom TTL (the 7-day welcome link)", async () => {
     const create = vi.fn().mockResolvedValue({ id: "v1" });
     const prisma = asPrisma({
@@ -164,6 +179,44 @@ describe("sendPasswordResetEmail", () => {
     expect(sendMock.mock.calls[0][0].textBody).toContain("/portal/reset-password?token=");
   });
 
+  it("normalises the address so casing and padding resolve to one account", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ id: "u1", name: "A" });
+    const create = vi.fn().mockResolvedValue({ id: "v1" });
+    const prisma = asPrisma({
+      user: { findUnique },
+      verification: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create,
+      },
+    });
+
+    await sendPasswordResetEmail(prisma, "  A@B.Dev  ");
+
+    expect(findUnique).toHaveBeenCalledWith({ where: { email: "a@b.dev" } });
+    // Same identifier as the lowercase spelling — otherwise the throttle
+    // could be sidestepped by varying case.
+    expect(create.mock.calls[0][0].data.identifier).toBe("password-reset:a@b.dev");
+  });
+
+  it("orders the throttle lookup with nulls last so legacy rows can't win", async () => {
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const prisma = asPrisma({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", name: "A" }) },
+      verification: {
+        findFirst,
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({ id: "v1" }),
+      },
+    });
+
+    await sendPasswordResetEmail(prisma, "a@b.dev");
+
+    expect(findFirst.mock.calls[0][0].orderBy).toEqual({
+      createdAt: { sort: "desc", nulls: "last" },
+    });
+  });
+
   it("swallows a mail-provider failure so the caller can't tell", async () => {
     sendMock.mockRejectedValue(new Error("smtp down"));
     const prisma = asPrisma({
@@ -219,7 +272,7 @@ describe("resetPasswordWithToken", () => {
         findFirst: vi
           .fn()
           .mockResolvedValue({ id: "v1", identifier: "password-reset:a@b.dev" }),
-        delete: vi.fn().mockResolvedValue({ id: "v1" }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", name: "A" }) },
       account: {
@@ -267,9 +320,56 @@ describe("resetPasswordWithToken", () => {
       data: { password: "hashed:longenough" },
     });
     expect(prisma.account.create).not.toHaveBeenCalled();
-    expect(prisma.verification.delete).toHaveBeenCalledWith({ where: { id: "v1" } });
+    expect(prisma.verification.deleteMany).toHaveBeenCalledWith({ where: { id: "v1" } });
     // A reset is the remedy for a compromise — stale sessions must die.
     expect(prisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
+  });
+
+  // Two submits racing the same link: the atomic claim must let exactly one
+  // through rather than both writing a password and the loser 500ing on a
+  // delete of an already-deleted row.
+  it("rejects the loser of a concurrent claim without touching the password", async () => {
+    const prisma = buildPrisma({
+      verification: {
+        findFirst: vi
+          .fn()
+          .mockResolvedValue({ id: "v1", identifier: "password-reset:a@b.dev" }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    });
+
+    await expect(
+      resetPasswordWithToken(asPrisma(prisma), "tok", "longenough"),
+    ).resolves.toEqual({ ok: false, reason: "INVALID_TOKEN" });
+
+    expect(prisma.account.updateMany).not.toHaveBeenCalled();
+    expect(prisma.session.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("claims the token before writing the password, not after", async () => {
+    const order: string[] = [];
+    const prisma = buildPrisma({
+      verification: {
+        findFirst: vi
+          .fn()
+          .mockResolvedValue({ id: "v1", identifier: "password-reset:a@b.dev" }),
+        deleteMany: vi.fn(async () => {
+          order.push("claim");
+          return { count: 1 };
+        }),
+      },
+      account: {
+        updateMany: vi.fn(async () => {
+          order.push("write");
+          return { count: 1 };
+        }),
+        create: vi.fn(),
+      },
+    });
+
+    await resetPasswordWithToken(asPrisma(prisma), "tok", "longenough");
+
+    expect(order).toEqual(["claim", "write"]);
   });
 
   it("creates the credential account when the user has none yet (dev-user setup link)", async () => {

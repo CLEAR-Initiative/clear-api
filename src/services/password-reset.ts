@@ -35,6 +35,15 @@ export const RESET_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 export const MIN_PASSWORD_LENGTH = 8;
 
 /**
+ * Canonical form for address lookups. `user.email` is a case-sensitive
+ * unique column, so every surface must agree on this or the same person
+ * resolves differently depending on how they typed their address.
+ */
+export function normaliseEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/**
  * Build the user-facing reset URL.
  *
  * Points at the Developer Portal page served by this same API process
@@ -68,8 +77,20 @@ export async function issueResetToken(
   await prisma.verification.deleteMany({ where: { identifier } });
 
   const token = randomBytes(32).toString("hex");
+  const now = new Date();
   await prisma.verification.create({
-    data: { identifier, value: token, expiresAt: new Date(Date.now() + ttlMs) },
+    data: {
+      identifier,
+      value: token,
+      expiresAt: new Date(now.getTime() + ttlMs),
+      // `verification.createdAt` is nullable with NO database default (see
+      // the init migration). Omitting it leaves NULL, which makes the
+      // throttle check below silently never fire — and since
+      // `POST /portal/forgot-password` is unauthenticated, that turns the
+      // endpoint into an email-bombing vector. Set it explicitly.
+      createdAt: now,
+      updatedAt: now,
+    },
   });
   return token;
 }
@@ -85,15 +106,25 @@ export async function issueResetToken(
  */
 export async function sendPasswordResetEmail(
   prisma: PrismaClient,
-  email: string,
+  rawEmail: string,
 ): Promise<void> {
+  // Normalise here rather than at each call site. The `user.email` lookup is
+  // case-sensitive, and the portal route and the GraphQL mutation used to
+  // disagree about trimming/casing — which both hid accounts from one
+  // surface and split the throttle across casings of the same address.
+  const email = normaliseEmail(rawEmail);
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) return;
 
   const identifier = `${PASSWORD_RESET_IDENTIFIER_PREFIX}${email}`;
   const recent = await prisma.verification.findFirst({
     where: { identifier },
-    orderBy: { createdAt: "desc" },
+    // `nulls: "last"` matters: Postgres sorts NULLs FIRST on DESC, and rows
+    // written before `createdAt` was set explicitly have one. Without this
+    // a single legacy row would win the ordering forever and disable the
+    // throttle for that address.
+    orderBy: { createdAt: { sort: "desc", nulls: "last" } },
   });
   if (
     recent?.createdAt &&
@@ -180,6 +211,16 @@ export async function resetPasswordWithToken(
   const valid = await findValidResetToken(prisma, token);
   if (!valid) return { ok: false, reason: "INVALID_TOKEN" };
 
+  // Claim the token BEFORE writing the password. `deleteMany` on the id is
+  // a single atomic statement, so of two concurrent submits holding the
+  // same link exactly one sees count === 1 and proceeds; the loser is told
+  // the link is spent instead of racing a second password write and then
+  // blowing up on a P2025 from an already-deleted row.
+  const claimed = await prisma.verification.deleteMany({
+    where: { id: valid.id },
+  });
+  if (claimed.count === 0) return { ok: false, reason: "INVALID_TOKEN" };
+
   const user = await prisma.user.findUnique({ where: { email: valid.email } });
   if (!user) return { ok: false, reason: "USER_NOT_FOUND" };
 
@@ -207,8 +248,6 @@ export async function resetPasswordWithToken(
       },
     });
   }
-
-  await prisma.verification.delete({ where: { id: valid.id } });
 
   // Best-effort: a stale session outliving the reset is a security
   // problem, but not one worth failing an otherwise-successful reset
