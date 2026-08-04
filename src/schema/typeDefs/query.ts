@@ -374,5 +374,15 @@ export const queryTypeDef = gql`
       limit: Int = 200
       offset: Int = 0
     ): [GroundMessage!]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): a source's staged
+    messages, oldest first, projected for the classification/threading
+    worker — no private-tier sender identity. Returns ALL messages
+    (classified and not) so one query powers both labelling and
+    incident-thread assembly."""
+    groundMessagesForClassification(
+      groundSourceId: String!
+      limit: Int = 500
+    ): [GroundMessageForClassification!]!
   }
 `;

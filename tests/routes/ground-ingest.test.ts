@@ -35,6 +35,14 @@ vi.mock("../../src/utils/request-auth.js", () => ({
 
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: prismaStub }));
 
+const { enqueueGroundClassificationMock } = vi.hoisted(() => ({
+  enqueueGroundClassificationMock: vi.fn(),
+}));
+
+vi.mock("../../src/services/ground-classify.js", () => ({
+  enqueueGroundClassification: enqueueGroundClassificationMock,
+}));
+
 import express from "express";
 import { groundIngestRouter } from "../../src/routes/ground-ingest.js";
 
@@ -78,6 +86,7 @@ describe("POST /api/ground/ingest", () => {
 
   beforeEach(() => {
     resolveRequestAuthMock.mockReset();
+    enqueueGroundClassificationMock.mockClear();
     prismaStub.groundThreads.create.mockClear();
     prismaStub.__sources.length = 0;
     prismaStub.__sources.push({
@@ -117,6 +126,8 @@ describe("POST /api/ground/ingest", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ created: 1, skipped: 0 });
     expect(prismaStub.groundThreads.create).toHaveBeenCalledTimes(1);
+    // A batch that created rows enqueues classification for its source.
+    expect(enqueueGroundClassificationMock).toHaveBeenCalledExactlyOnceWith("gs_consented");
   });
 
   it("accepts a batch envelope { messages: [...] }", async () => {
@@ -162,6 +173,8 @@ describe("POST /api/ground/ingest", () => {
       expect.stringContaining("consent gate rejected"),
       expect.stringContaining("999000999@g.us"),
     );
+    // Nothing ingested → nothing to classify.
+    expect(enqueueGroundClassificationMock).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 });

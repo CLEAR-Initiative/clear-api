@@ -114,4 +114,44 @@ export const groundTypeDef = gql`
     mediaStored: Int!
     mediaUnmatched: [String!]!
   }
+
+  """Pipeline-facing projection of a staged message for the
+  classification/threading worker (clear-pipeline's
+  classify_ground_messages task). Deliberately excludes senderName —
+  the pipeline never sees private-tier identity, only the pseudonymous
+  senderRef."""
+  type GroundMessageForClassification {
+    id: ID!
+    text: String!
+    sentAt: DateTime!
+    senderRef: String!
+    """True when the message carries stored media, export-referenced
+    attachments, or export-omitted media."""
+    hasMedia: Boolean!
+    """Current label, null while unclassified."""
+    classification: String
+    """Current thread (placeholder or pipeline-built)."""
+    threadId: String
+  }
+
+  """One classification write-back from the pipeline worker."""
+  input GroundMessageClassificationInput {
+    messageId: String!
+    """"field_report" | "news_digest" | "operational" | "chatter"."""
+    classification: String!
+    """Pipeline-detected uncertainty tag. Null/omitted leaves the
+    ingest-extracted marker untouched."""
+    uncertaintyMarker: String
+  }
+
+  """One incident thread produced by the pipeline threading task. Its
+  messageIds are re-pointed at the new thread, replacing their V1
+  one-per-message placeholder threads."""
+  input GroundThreadUpsertInput {
+    groundSourceId: String!
+    title: String!
+    """"reported" | "updated" | "confirmed" | "corrected" | "retracted"."""
+    lifecycleState: String!
+    messageIds: [String!]!
+  }
 `;

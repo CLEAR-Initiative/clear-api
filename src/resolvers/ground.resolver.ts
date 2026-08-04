@@ -21,6 +21,26 @@ import { signalResolvers } from "./signal.resolver.js";
 
 const GROUND_SOURCE_KINDS = new Set(["staff_group", "partner_group", "hotline"]);
 
+/** Callers of the pipeline-facing contract surface (the
+ * classify_ground_messages worker authenticates as a pipeline-role
+ * API-key user; platform admins pass for manual poking). */
+const PIPELINE_ROLES = ["admin", "pipeline"];
+
+const GROUND_CLASSIFICATIONS = new Set([
+  "field_report",
+  "news_digest",
+  "operational",
+  "chatter",
+]);
+
+const GROUND_LIFECYCLE_STATES = new Set([
+  "reported",
+  "updated",
+  "confirmed",
+  "corrected",
+  "retracted",
+]);
+
 /**
  * Promote an approved-public thread into the signals graph. Reuses the
  * existing createSignal resolver so promoted signals get the exact same
@@ -132,6 +152,37 @@ export const groundResolvers = {
         skip: args.offset ?? 0,
       });
     },
+
+    /**
+     * PIPELINE CONTRACT: the classification/threading worker's read
+     * surface. Projects staged messages WITHOUT private-tier identity
+     * (no senderName — only the pseudonymous senderRef). Returns all
+     * messages for the source, oldest first, so the worker can both
+     * label unclassified rows and assemble incident threads with full
+     * context.
+     */
+    groundMessagesForClassification: async (
+      _parent: unknown,
+      args: { groundSourceId: string; limit?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const rows = await context.prisma.groundMessages.findMany({
+        where: { groundSourceId: args.groundSourceId },
+        orderBy: { sentAt: "asc" },
+        take: Math.min(args.limit ?? 500, 2000),
+      });
+      return rows.map((m) => ({
+        id: m.id,
+        text: m.text,
+        sentAt: m.sentAt,
+        senderRef: m.senderRef,
+        hasMedia:
+          m.mediaKeys.length > 0 || m.mediaRefs.length > 0 || m.omittedMediaCount > 0,
+        classification: m.classification,
+        threadId: m.threadId,
+      }));
+    },
   },
 
   Mutation: {
@@ -232,6 +283,182 @@ export const groundResolvers = {
           ...(promotedSignalId ? { promotedSignalId } : {}),
         },
       });
+    },
+
+    /**
+     * PIPELINE CONTRACT: classification write-back from the
+     * classify_ground_messages worker. Unknown messageIds are skipped
+     * with a warning (a message can be deleted between read and write —
+     * the batch must not fail for it). A null/omitted uncertaintyMarker
+     * leaves the ingest-extracted marker untouched; a non-null one
+     * overwrites it. Returns the number of rows updated.
+     */
+    upsertGroundMessageClassifications: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{
+          messageId: string;
+          classification: string;
+          uncertaintyMarker?: string | null;
+        }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      for (const input of inputs) {
+        if (!GROUND_CLASSIFICATIONS.has(input.classification)) {
+          throw new GraphQLError(
+            `classification must be one of: ${[...GROUND_CLASSIFICATIONS].join(", ")}`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+      }
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundMessageClassifications] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      await context.prisma.$transaction(
+        valid.map((input) =>
+          context.prisma.groundMessages.update({
+            where: { id: input.messageId },
+            data: {
+              classification: input.classification,
+              ...(input.uncertaintyMarker != null
+                ? { uncertainty: input.uncertaintyMarker }
+                : {}),
+            },
+          }),
+        ),
+      );
+      return valid.length;
+    },
+
+    /**
+     * PIPELINE CONTRACT: replace placeholder threading with the
+     * worker's incident clustering. Per input: create a thread, point
+     * the given messages at it, delete placeholder threads that became
+     * empty. The human review gate outranks the pipeline: a message
+     * whose current thread is no longer "unverified" (or has been
+     * promoted) is never re-threaded, and only unverified, unpromoted,
+     * now-empty threads are deleted. Returns one thread id per input in
+     * order — null where an input had no movable messages.
+     */
+    upsertGroundThreads: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{
+          groundSourceId: string;
+          title: string;
+          lifecycleState: string;
+          messageIds: string[];
+        }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return [];
+
+      for (const input of inputs) {
+        if (!GROUND_LIFECYCLE_STATES.has(input.lifecycleState)) {
+          throw new GraphQLError(
+            `lifecycleState must be one of: ${[...GROUND_LIFECYCLE_STATES].join(", ")}`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+        if (input.messageIds.length === 0) {
+          throw new GraphQLError("messageIds must not be empty", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      return context.prisma.$transaction(
+        async (tx) => {
+          const threadIds: Array<string | null> = [];
+
+          for (const input of inputs) {
+            // Scoped to the input's source: ids from another source (or
+            // unknown ids) simply don't match and are left alone.
+            const messages = await tx.groundMessages.findMany({
+              where: {
+                id: { in: input.messageIds },
+                groundSourceId: input.groundSourceId,
+              },
+              select: {
+                id: true,
+                thread: {
+                  select: { id: true, reviewState: true, promotedSignalId: true },
+                },
+              },
+            });
+
+            const movable = messages.filter(
+              (m) =>
+                !m.thread ||
+                (m.thread.reviewState === "unverified" && !m.thread.promotedSignalId),
+            );
+            if (movable.length < input.messageIds.length) {
+              console.warn(
+                `[upsertGroundThreads] "${input.title}": ${input.messageIds.length - movable.length} of ${input.messageIds.length} message(s) not re-threaded (unknown, wrong source, or already reviewed)`,
+              );
+            }
+            if (movable.length === 0) {
+              threadIds.push(null);
+              continue;
+            }
+
+            const thread = await tx.groundThreads.create({
+              data: {
+                groundSourceId: input.groundSourceId,
+                title: input.title,
+                lifecycleState: input.lifecycleState,
+              },
+            });
+            await tx.groundMessages.updateMany({
+              where: { id: { in: movable.map((m) => m.id) } },
+              data: { threadId: thread.id },
+            });
+
+            const vacatedThreadIds = [
+              ...new Set(
+                movable
+                  .map((m) => m.thread?.id)
+                  .filter((id): id is string => Boolean(id)),
+              ),
+            ];
+            if (vacatedThreadIds.length > 0) {
+              await tx.groundThreads.deleteMany({
+                where: {
+                  id: { in: vacatedThreadIds },
+                  reviewState: "unverified",
+                  promotedSignalId: null,
+                  messages: { none: {} },
+                },
+              });
+            }
+
+            threadIds.push(thread.id);
+          }
+
+          return threadIds;
+        },
+        { timeout: 60_000, maxWait: 10_000 },
+      );
     },
   },
 

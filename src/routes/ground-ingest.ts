@@ -29,6 +29,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { resolveRequestAuth } from "../utils/request-auth.js";
 import { ingestLiveMessages } from "../services/ground-live-ingest.js";
+import { enqueueGroundClassification } from "../services/ground-classify.js";
 
 const router = Router();
 
@@ -98,6 +99,14 @@ router.post("/", async (req, res) => {
         rejections: result.rejections,
       });
       return;
+    }
+
+    // Classification work exists for every source that gained rows.
+    // Fire-and-forget — a broker hiccup must not fail a persisted ingest.
+    for (const source of result.sources) {
+      if (source.created > 0) {
+        enqueueGroundClassification(source.groundSourceId);
+      }
     }
 
     res.json({ created: result.created, skipped: result.skipped });

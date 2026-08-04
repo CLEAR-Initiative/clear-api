@@ -465,6 +465,24 @@ export const mutationTypeDef = gql`
     the thread into the standard signals graph via createSignal, with
     all sender identity scrubbed."""
     reviewGroundThread(id: String!, decision: String!, note: String): GroundThread!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back
+    classifications from the classify_ground_messages worker. Unknown
+    messageIds are skipped with a warning. Returns the number of
+    messages updated."""
+    upsertGroundMessageClassifications(
+      inputs: [GroundMessageClassificationInput!]!
+    ): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
+    threading with pipeline-built incident threads. Each input creates a
+    thread, re-points its messageIds at it, and deletes the placeholder
+    threads that became empty. Messages whose current thread has already
+    been human-reviewed (or promoted) are NEVER re-threaded — the review
+    gate outranks the pipeline. Returns one thread id per input, in
+    order; null where an input had no movable messages (no thread
+    created)."""
+    upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
