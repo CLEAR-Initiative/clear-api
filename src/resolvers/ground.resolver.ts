@@ -185,6 +185,33 @@ export const groundResolvers = {
         threadId: m.threadId,
       }));
     },
+
+    /**
+     * PIPELINE CONTRACT: threading context for the worker — a source's
+     * existing threads, oldest first, so late corrections/retractions
+     * can target an existing thread via GroundThreadUpsertInput.threadId
+     * instead of spawning a duplicate incident. `states` filters on
+     * lifecycleState; omitted/empty returns all. The worker selects only
+     * {id, title, lifecycleState, reviewState, messageIds}; sender
+     * identity is additionally scrubbed from the messages relation for
+     * pipeline-role callers (see GroundThread.messages below).
+     */
+    groundThreadsForSource: async (
+      _parent: unknown,
+      args: { groundSourceId: string; states?: string[] | null },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      return context.prisma.groundThreads.findMany({
+        where: {
+          groundSourceId: args.groundSourceId,
+          ...(args.states && args.states.length > 0
+            ? { lifecycleState: { in: args.states } }
+            : {}),
+        },
+        orderBy: { createdAt: "asc" },
+      });
+    },
   },
 
   Mutation: {
@@ -479,13 +506,18 @@ export const groundResolvers = {
 
     /**
      * PIPELINE CONTRACT: replace placeholder threading with the
-     * worker's incident clustering. Per input: create a thread, point
-     * the given messages at it, delete placeholder threads that became
-     * empty. The human review gate outranks the pipeline: a message
-     * whose current thread is no longer "unverified" (or has been
-     * promoted) is never re-threaded, and only unverified, unpromoted,
-     * now-empty threads are deleted. Returns one thread id per input in
-     * order — null where an input had no movable messages.
+     * worker's incident clustering. Per input: create a thread — or,
+     * when `threadId` is set, APPEND to that existing thread (cross-run
+     * threading for late corrections/retractions) and update its
+     * lifecycleState + title — point the given messages at it, delete
+     * placeholder threads that became empty. The human review gate
+     * outranks the pipeline: a message whose current thread is no longer
+     * "unverified" (or has been promoted) is never re-threaded, a
+     * promoted/terminal `threadId` target is never mutated (a NEW
+     * thread is created instead, with a warning — promoted history is
+     * immutable), and only unverified, unpromoted, now-empty threads
+     * are deleted. Returns one thread id per input in order — null
+     * where an input had no movable messages.
      */
     upsertGroundThreads: async (
       _parent: unknown,
@@ -495,6 +527,7 @@ export const groundResolvers = {
           title: string;
           lifecycleState: string;
           messageIds: string[];
+          threadId?: string | null;
         }>;
       },
       context: Context,
@@ -552,23 +585,70 @@ export const groundResolvers = {
               continue;
             }
 
-            const thread = await tx.groundThreads.create({
-              data: {
-                groundSourceId: input.groundSourceId,
-                title: input.title,
-                lifecycleState: input.lifecycleState,
-              },
-            });
+            // Cross-run append: resolve the requested target thread, but
+            // NEVER mutate promoted history — a promoted/terminal target
+            // (or an unknown / wrong-source id) falls back to creating a
+            // new thread.
+            let appendTarget: { id: string } | null = null;
+            if (input.threadId) {
+              const target = await tx.groundThreads.findUnique({
+                where: { id: input.threadId },
+                select: {
+                  id: true,
+                  groundSourceId: true,
+                  reviewState: true,
+                  promotedSignalId: true,
+                },
+              });
+              if (
+                target &&
+                target.groundSourceId === input.groundSourceId &&
+                target.reviewState !== "approved_public" &&
+                !target.promotedSignalId
+              ) {
+                appendTarget = { id: target.id };
+              } else {
+                console.warn(
+                  `[upsertGroundThreads] "${input.title}": target thread ${input.threadId} is ${
+                    target
+                      ? target.groundSourceId !== input.groundSourceId
+                        ? "from another source"
+                        : "promoted/terminal"
+                      : "unknown"
+                  } — creating a new thread instead`,
+                );
+              }
+            }
+
+            const thread = appendTarget
+              ? await tx.groundThreads.update({
+                  where: { id: appendTarget.id },
+                  data: {
+                    title: input.title,
+                    lifecycleState: input.lifecycleState,
+                  },
+                  select: { id: true },
+                })
+              : await tx.groundThreads.create({
+                  data: {
+                    groundSourceId: input.groundSourceId,
+                    title: input.title,
+                    lifecycleState: input.lifecycleState,
+                  },
+                });
             await tx.groundMessages.updateMany({
               where: { id: { in: movable.map((m) => m.id) } },
               data: { threadId: thread.id },
             });
 
+            // The append target can appear as a "vacated" thread when an
+            // input re-sends messages already in it — never a deletion
+            // candidate.
             const vacatedThreadIds = [
               ...new Set(
                 movable
                   .map((m) => m.thread?.id)
-                  .filter((id): id is string => Boolean(id)),
+                  .filter((id): id is string => Boolean(id) && id !== thread.id),
               ),
             ];
             if (vacatedThreadIds.length > 0) {
@@ -613,10 +693,28 @@ export const groundResolvers = {
       });
     },
     messages: async (parent: { id: string }, _args: unknown, context: Context) => {
-      return context.prisma.groundMessages.findMany({
+      const rows = await context.prisma.groundMessages.findMany({
         where: { threadId: parent.id },
         orderBy: { sentAt: "asc" },
       });
+      // PIPELINE CONTRACT: the pipeline never sees private-tier identity —
+      // not even by traversing a thread's messages relation (reachable via
+      // groundThreadsForSource). Scrub the raw sender name for
+      // pipeline-role callers; the pseudonymous senderRef remains.
+      if (context.user?.role === "pipeline") {
+        return rows.map((row) => ({ ...row, senderName: null }));
+      }
+      return rows;
+    },
+    /** Ids of the thread's messages, oldest first — the pipeline-facing
+     * projection of the messages relation (no content, no identity). */
+    messageIds: async (parent: { id: string }, _args: unknown, context: Context) => {
+      const rows = await context.prisma.groundMessages.findMany({
+        where: { threadId: parent.id },
+        orderBy: { sentAt: "asc" },
+        select: { id: true },
+      });
+      return rows.map((row) => row.id);
     },
   },
 };

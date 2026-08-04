@@ -39,7 +39,8 @@ const PIPELINE: User = { id: "machine", role: "pipeline" };
 const ADMIN: User = { id: "admin1", role: "admin" };
 const ANALYST: User = { id: "a1", role: "analyst" };
 
-const { groundMessagesForClassification } = groundResolvers.Query;
+const { groundMessagesForClassification, groundThreadsForSource } =
+  groundResolvers.Query;
 const { upsertGroundMessageClassifications, upsertGroundThreads } =
   groundResolvers.Mutation;
 
@@ -61,6 +62,10 @@ describe("pipeline-contract auth gate", () => {
           { inputs: [{ messageId: "m1", classification: "chatter" }] },
           ctx,
         ),
+    },
+    {
+      name: "groundThreadsForSource",
+      run: (ctx) => groundThreadsForSource(null, { groundSourceId: "gs_1" }, ctx),
     },
     {
       name: "upsertGroundThreads",
@@ -181,6 +186,114 @@ describe("groundMessagesForClassification", () => {
 });
 
 // ---------------------------------------------------------------------------
+// groundThreadsForSource
+// ---------------------------------------------------------------------------
+
+describe("groundThreadsForSource", () => {
+  function prismaWithThreads(rows: unknown[]) {
+    const findMany = vi.fn(async () => rows);
+    return { prisma: { groundThreads: { findMany } }, findMany };
+  }
+
+  it("returns a source's threads oldest-first, filtered by lifecycle states", async () => {
+    const thread = {
+      id: "t1",
+      title: "Synthetic incident",
+      lifecycleState: "reported",
+      reviewState: "unverified",
+    };
+    const { prisma, findMany } = prismaWithThreads([thread]);
+
+    const result = await groundThreadsForSource(
+      null,
+      { groundSourceId: "gs_1", states: ["reported", "updated"] },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(result).toEqual([thread]);
+    expect(findMany).toHaveBeenCalledExactlyOnceWith({
+      where: {
+        groundSourceId: "gs_1",
+        lifecycleState: { in: ["reported", "updated"] },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+
+  it.each([
+    ["omitted", undefined],
+    ["null", null],
+    ["empty", [] as string[]],
+  ] as const)("applies no lifecycle filter when states is %s", async (_name, states) => {
+    const { prisma, findMany } = prismaWithThreads([]);
+    await groundThreadsForSource(
+      null,
+      { groundSourceId: "gs_1", states },
+      buildContext(ADMIN, prisma),
+    );
+    expect(findMany).toHaveBeenCalledExactlyOnceWith({
+      where: { groundSourceId: "gs_1" },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GroundThread field resolvers — the pipeline-facing projection
+// ---------------------------------------------------------------------------
+
+describe("GroundThread relation resolvers", () => {
+  const messageRows = [
+    { id: "m1", senderName: "PRIVATE NAME", senderRef: "s_1" },
+    { id: "m2", senderName: null, senderRef: "s_2" },
+  ];
+
+  function prismaWithMessages() {
+    const findMany = vi.fn(async () => messageRows);
+    return { prisma: { groundMessages: { findMany } }, findMany };
+  }
+
+  it("messageIds returns the thread's message ids oldest-first, without content", async () => {
+    const findMany = vi.fn(async () => [{ id: "m1" }, { id: "m2" }]);
+    const result = await groundResolvers.GroundThread.messageIds(
+      { id: "t1" },
+      null,
+      buildContext(PIPELINE, { groundMessages: { findMany } }),
+    );
+    expect(result).toEqual(["m1", "m2"]);
+    expect(findMany).toHaveBeenCalledExactlyOnceWith({
+      where: { threadId: "t1" },
+      orderBy: { sentAt: "asc" },
+      select: { id: true },
+    });
+  });
+
+  it("messages scrubs senderName for a pipeline-role caller", async () => {
+    const { prisma } = prismaWithMessages();
+    const result = await groundResolvers.GroundThread.messages(
+      { id: "t1" },
+      null,
+      buildContext(PIPELINE, prisma),
+    );
+    expect(JSON.stringify(result)).not.toContain("PRIVATE NAME");
+    expect(result).toEqual([
+      { id: "m1", senderName: null, senderRef: "s_1" },
+      { id: "m2", senderName: null, senderRef: "s_2" },
+    ]);
+  });
+
+  it("messages keeps senderName for an admin (private-tier reviewer)", async () => {
+    const { prisma } = prismaWithMessages();
+    const result = await groundResolvers.GroundThread.messages(
+      { id: "t1" },
+      null,
+      buildContext(ADMIN, prisma),
+    );
+    expect(result).toEqual(messageRows);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // upsertGroundMessageClassifications
 // ---------------------------------------------------------------------------
 
@@ -276,10 +389,20 @@ describe("upsertGroundThreads", () => {
     thread: { id: string; reviewState: string; promotedSignalId: string | null } | null;
   }
 
+  interface ThreadRow {
+    groundSourceId: string;
+    reviewState: string;
+    promotedSignalId: string | null;
+  }
+
   /** Transactional stub: tx === the stub itself (callback form). */
-  function threadingPrisma(messagesBySource: Record<string, MsgRow[]>) {
+  function threadingPrisma(
+    messagesBySource: Record<string, MsgRow[]>,
+    threadsById: Record<string, ThreadRow> = {},
+  ) {
     let nextThread = 1;
     const created: Array<Record<string, unknown>> = [];
+    const threadUpdates: Array<Record<string, unknown>> = [];
     const updateManyCalls: Array<Record<string, unknown>> = [];
     const deleteManyCalls: Array<Record<string, unknown>> = [];
 
@@ -303,6 +426,14 @@ describe("upsertGroundThreads", () => {
           created.push(args.data);
           return { id: `new_t${nextThread++}` };
         }),
+        findUnique: vi.fn(async (args: { where: { id: string } }) => {
+          const row = threadsById[args.where.id];
+          return row ? { id: args.where.id, ...row } : null;
+        }),
+        update: vi.fn(async (args: { where: { id: string } } & Record<string, unknown>) => {
+          threadUpdates.push(args);
+          return { id: args.where.id };
+        }),
         deleteMany: vi.fn(async (args: Record<string, unknown>) => {
           deleteManyCalls.push(args);
           return { count: 0 };
@@ -316,7 +447,7 @@ describe("upsertGroundThreads", () => {
         async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
       ),
     };
-    return { prisma, created, updateManyCalls, deleteManyCalls };
+    return { prisma, created, threadUpdates, updateManyCalls, deleteManyCalls };
   }
 
   const placeholder = (id: string, threadId: string): MsgRow => ({
@@ -475,6 +606,144 @@ describe("upsertGroundThreads", () => {
     expect(created).toHaveLength(0);
     warnSpy.mockRestore();
   });
+
+  it("appends to an existing unpromoted thread when threadId is set", async () => {
+    const { prisma, created, threadUpdates, updateManyCalls, deleteManyCalls } =
+      threadingPrisma(
+        {
+          gs_1: [
+            // A message the target thread already owns (re-sent by the
+            // worker's clustering) — must not mark the target vacated…
+            {
+              id: "m1",
+              thread: {
+                id: "t_target",
+                reviewState: "unverified",
+                promotedSignalId: null,
+              },
+            },
+            // …plus a late correction sitting in its own placeholder thread.
+            placeholder("m3", "old_t3"),
+          ],
+        },
+        {
+          t_target: {
+            groundSourceId: "gs_1",
+            reviewState: "unverified",
+            promotedSignalId: null,
+          },
+        },
+      );
+
+    const ids = await upsertGroundThreads(
+      null,
+      {
+        inputs: [
+          {
+            groundSourceId: "gs_1",
+            title: "Synthetic incident (corrected)",
+            lifecycleState: "corrected",
+            messageIds: ["m1", "m3"],
+            threadId: "t_target",
+          },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(ids).toEqual(["t_target"]);
+    // Appended, not created.
+    expect(created).toHaveLength(0);
+    expect(threadUpdates).toEqual([
+      {
+        where: { id: "t_target" },
+        data: { title: "Synthetic incident (corrected)", lifecycleState: "corrected" },
+        select: { id: true },
+      },
+    ]);
+    expect(updateManyCalls).toEqual([
+      { where: { id: { in: ["m1", "m3"] } }, data: { threadId: "t_target" } },
+    ]);
+    // Only the vacated placeholder is a deletion candidate — never the
+    // append target itself.
+    expect(deleteManyCalls).toEqual([
+      {
+        where: {
+          id: { in: ["old_t3"] },
+          reviewState: "unverified",
+          promotedSignalId: null,
+          messages: { none: {} },
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "promoted (approved_public)",
+      {
+        t_target: {
+          groundSourceId: "gs_1",
+          reviewState: "approved_public",
+          promotedSignalId: null,
+        },
+      },
+    ],
+    [
+      "promoted (promotedSignalId set)",
+      {
+        t_target: {
+          groundSourceId: "gs_1",
+          reviewState: "approved_private",
+          promotedSignalId: "sig_1",
+        },
+      },
+    ],
+    [
+      "from another source",
+      {
+        t_target: {
+          groundSourceId: "gs_OTHER",
+          reviewState: "unverified",
+          promotedSignalId: null,
+        },
+      },
+    ],
+    ["unknown", {}],
+  ] as const)(
+    "never mutates a %s threadId target — creates a new thread and warns",
+    async (_name, threadsById) => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { prisma, created, threadUpdates } = threadingPrisma(
+        { gs_1: [placeholder("m1", "old_t1")] },
+        threadsById,
+      );
+
+      const ids = await upsertGroundThreads(
+        null,
+        {
+          inputs: [
+            {
+              groundSourceId: "gs_1",
+              title: "t",
+              lifecycleState: "retracted",
+              messageIds: ["m1"],
+              threadId: "t_target",
+            },
+          ],
+        },
+        buildContext(PIPELINE, prisma),
+      );
+
+      expect(ids).toEqual(["new_t1"]);
+      expect(created).toHaveLength(1);
+      expect(threadUpdates).toHaveLength(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("creating a new thread instead"),
+      );
+      warnSpy.mockRestore();
+    },
+  );
 
   it("handles multiple inputs in order", async () => {
     const { prisma } = threadingPrisma({

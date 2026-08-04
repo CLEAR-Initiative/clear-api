@@ -491,12 +491,15 @@ export const mutationTypeDef = gql`
 
     """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
     threading with pipeline-built incident threads. Each input creates a
-    thread, re-points its messageIds at it, and deletes the placeholder
-    threads that became empty. Messages whose current thread has already
-    been human-reviewed (or promoted) are NEVER re-threaded — the review
-    gate outranks the pipeline. Returns one thread id per input, in
-    order; null where an input had no movable messages (no thread
-    created)."""
+    thread (or, when \`threadId\` is set, APPENDS to that existing
+    thread and updates its lifecycleState + title), re-points its
+    messageIds at it, and deletes the placeholder threads that became
+    empty. Messages whose current thread has already been human-reviewed
+    (or promoted) are NEVER re-threaded, and a promoted \`threadId\`
+    target is never mutated (a new thread is created instead) — the
+    review gate outranks the pipeline. Returns one thread id per input,
+    in order; null where an input had no movable messages (no thread
+    created or updated)."""
     upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
   }
 

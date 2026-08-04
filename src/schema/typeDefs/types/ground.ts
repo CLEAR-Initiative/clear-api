@@ -84,6 +84,10 @@ export const groundTypeDef = gql`
     (approved_public only)."""
     promotedSignalId: String
     messages: [GroundMessage!]!
+    """Ids of the thread's messages, oldest first. The pipeline worker
+    selects this (via groundThreadsForSource) instead of \`messages\` —
+    it carries no message content and no sender identity."""
+    messageIds: [String!]!
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -163,13 +167,23 @@ export const groundTypeDef = gql`
   }
 
   """One incident thread produced by the pipeline threading task. Its
-  messageIds are re-pointed at the new thread, replacing their V1
-  one-per-message placeholder threads."""
+  messageIds are re-pointed at the thread, replacing their V1
+  one-per-message placeholder threads. With \`threadId\` set, the input
+  APPENDS to that existing thread (cross-run threading: late
+  corrections/retractions join the incident they belong to) instead of
+  creating a new one."""
   input GroundThreadUpsertInput {
     groundSourceId: String!
     title: String!
     """"reported" | "updated" | "confirmed" | "corrected" | "retracted"."""
     lifecycleState: String!
     messageIds: [String!]!
+    """Optional target thread for cross-run appends. When set, messageIds
+    are appended to this thread and its lifecycleState + title are
+    updated — provided the thread is not yet promoted (reviewState !=
+    "approved_public" and no promotedSignalId) and belongs to
+    groundSourceId. A promoted/terminal (or unknown/wrong-source) target
+    is never mutated: a NEW thread is created instead, with a warning."""
+    threadId: String
   }
 `;
