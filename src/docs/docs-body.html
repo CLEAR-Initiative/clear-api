@@ -240,11 +240,11 @@ like signals when teamId is given; status defaults to &quot;consideration&quot;.
   </tr><tr>
     <td><code>publicEvent</code></td>
     <td><code>PublicEvent</code></td>
-    <td>Resolve a public share-link to its cached event snapshot. No auth —
+    <td>Resolve a public share-link to its cached event snapshot. No auth -
 the (eventId, token) pair from the URL is the gate, and the snapshot
 only contains the safe fields enumerated on `PublicEvent`. Returns
 null when the Redis cache has no entry for that pair (link expired,
-revoked, or evicted under memory pressure — caller treats all three
+revoked, or evicted under memory pressure - caller treats all three
 the same).<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>token: String!</code></span></div></td>
   </tr><tr>
     <td><code>existingPublicEventLink</code></td>
@@ -252,7 +252,7 @@ the same).<div class="field-args"><span class="arg"><code>eventId: String!</code
     <td>Look up the most recently-minted public share link for an event,
 if one still exists in the cache. The Share modal calls this on
 open so it can reuse an existing link rather than minting a fresh
-token every time. Returns null when no live link exists — the
+token every time. Returns null when no live link exists - the
 caller then mints one via `createPublicEventLink`. Requires
 `requireContentReader` (admin / analyst / viewer); pending users
 are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
@@ -322,7 +322,7 @@ By default only current values. Pass current: false for the full history.<div cl
   </tr><tr>
     <td><code>locationMetadataHistory</code></td>
     <td><code>[LocationMetadata!]!</code></td>
-    <td>History of a (location, type) pair — newest first. Includes the current
+    <td>History of a (location, type) pair - newest first. Includes the current
 row plus every superseded one.<div class="field-args"><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>type: String!</code></span></div></td>
   </tr><tr>
     <td><code>myApiKeys</code></td>
@@ -351,7 +351,7 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
   </tr><tr>
     <td><code>invitationByToken</code></td>
     <td><code>InvitationInfo</code></td>
-    <td>Look up an invitation by token (public — used on accept-invite page).<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
+    <td>Look up an invitation by token (public - used on accept-invite page).<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
   </tr><tr>
     <td><code>myAlertSubscriptions</code></td>
     <td><code>[AlertSubscription!]!</code></td>
@@ -386,7 +386,7 @@ options). Honours teamId as a location-scope filter.<div class="field-args"><spa
   </tr><tr>
     <td><code>entityStats</code></td>
     <td><code>EntityStats!</code></td>
-    <td>Cross-entity stats query — returns a total plus optional buckets grouped
+    <td>Cross-entity stats query - returns a total plus optional buckets grouped
 by type / severity / day / week / month. Filter shape mirrors the page
 queries so a &quot;current view&quot; can compute its own counts.<div class="field-args"><span class="arg"><code>input: EntityStatsInput!</code></span></div></td>
   </tr><tr>
@@ -413,13 +413,13 @@ compute as-of that date.<div class="field-args"><span class="arg"><code>asOf: Da
   </tr><tr>
     <td><code>dauSeries</code></td>
     <td><code>[DauPoint!]!</code></td>
-    <td>Daily Active Users time series — one point per UTC date in the
+    <td>Daily Active Users time series - one point per UTC date in the
 window. Admin only. Days with zero logins are omitted; the dashboard
 can backfill them client-side when plotting.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
   </tr><tr>
     <td><code>mauSeries</code></td>
     <td><code>[MauPoint!]!</code></td>
-    <td>Monthly Active Users time series — one point per UTC calendar
+    <td>Monthly Active Users time series - one point per UTC calendar
 month in the window. Admin only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
   </tr><tr>
     <td><code>pipelineCountries</code></td>
@@ -449,7 +449,7 @@ for the given locale. Admin/pipeline only. Lets the backfill
 driver enqueue only entities the worker would actually translate,
 instead of relying on per-task staleness diffs to no-op thousands
 of already-current rounds. Stale rows (row exists but hashes are
-out of date) are NOT returned here — they're rare and handled by
+out of date) are NOT returned here - they're rare and handled by
 the per-entity enrichment hooks.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr>
     <td><code>resolveKnowledgebaseLocation</code></td>
@@ -457,7 +457,7 @@ the per-entity enrichment hooks.<div class="field-args"><span class="arg"><code>
     <td>Resolve a knowledge-base location reference to a `locations.id`.
 Pcode wins over name; `adminLevel` narrows the name match so a
 village that shares its state's name doesn't collide. Returns null
-when neither the pcode nor the name matches — the ingest keeps the
+when neither the pcode nor the name matches - the ingest keeps the
 raw pcode on the row so a future backfill can re-resolve. A name given
 without `adminLevel` that matches more than one admin level is
 ambiguous and also returns null (rather than guessing the deepest
@@ -466,13 +466,13 @@ Admin / pipeline only.<div class="field-args"><span class="arg"><code>pcode: Str
   </tr><tr>
     <td><code>resolveGazetteerLocation</code></td>
     <td><code>GazetteerHit</code></td>
-    <td>Resolve a place name against the offline GeoNames gazetteer — the
+    <td>Resolve a place name against the offline GeoNames gazetteer - the
 first tier of the hybrid geo-resolver. Tries an exact normalised-name
 match, then a `pg_trgm` fuzzy match, preferring populated places / admin
 areas (feature class P/A) and the more-populous tie-break. `countryCode`
 (ISO-3166-1 alpha-2, e.g. &quot;SD&quot;) scopes the search; omit to search every
 loaded country. `minSimilarity` (default 0.4) floors the fuzzy match.
-Returns null on no match — the geoparser then falls back to LocationIQ
+Returns null on no match - the geoparser then falls back to LocationIQ
 for landmarks/POIs the gazetteer lacks. Admin / pipeline only.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>countryCode: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
   </tr><tr>
     <td><code>searchKnowledgebase</code></td>
@@ -481,7 +481,7 @@ for landmarks/POIs the gazetteer lacks. Admin / pipeline only.<div class="field-
 with Reciprocal Rank Fusion (k=60) and returned in descending
 score order. Both retrievers run in parallel over the same filter
 set; each contributes up to 50 candidates before fusion. The
-embedding provider is the one configured in the environment —
+embedding provider is the one configured in the environment -
 keep the write and read sides on the same provider or turn on
 `filters.currentEmbeddingModelOnly` to guarantee vector-space
 consistency. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span></div></td>
@@ -503,21 +503,32 @@ authenticated content reader.<div class="field-args"><span class="arg"><code>rep
   </tr><tr>
     <td><code>situationAnalysis</code></td>
     <td><code>SituationAnalysis</code></td>
-    <td>Current situation-analysis snapshot for a (country, year).
-`year` derives `windowStart = Jan 1` / `windowEnd = Dec 31`
-server-side. Falls back to `year(now())` when `year` is null.
-Returns null when no snapshot exists — the dashboard should
-render an empty state and wait for the next weekly generation.
-Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>year: Int</code></span><span class="arg"><code>asOf: DateTime</code> — Historical read — return the version that was current at
+    <td>Current situation-analysis snapshot for one bucket of a country.
+Buckets are keyed `(countryLocationId, windowKind, windowStart)`.
+By default reads the yearly bucket, where `year` derives
+`windowStart = Jan 1` server-side and falls back to `year(now())`
+when null - the dashboard's usual call. Pass `windowKind` +
+`windowStart` instead to read a finer bucket (e.g. monthly, to diff
+one month against the previous). Returns null when no snapshot
+exists - the dashboard should render an empty state and wait for the
+next weekly generation. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>year: Int</code></span><span class="arg"><code>windowKind: String</code> — Bucket granularity, part of the bucket key. Defaults to
+`yearly`. The pipeline owns this taxonomy (currently `yearly`
+and `monthly`), so it is not validated against a fixed list here -
+an unknown value simply matches no row and returns null.</span><span class="arg"><code>windowStart: DateTime</code> — Exact bucket start, matched for equality. Required when
+`windowKind` is anything other than `yearly`, because a year
+alone cannot identify a finer bucket. Must be the same instant the
+writer used (midnight UTC on the first day of the window), so pass
+the value the pipeline computed rather than reconstructing it.
+`windowEnd` is never matched on.</span><span class="arg"><code>asOf: DateTime</code> — Historical read - return the version that was current at
 this timestamp (defaults to now).</span><span class="arg"><code>schemaVersion: String</code> — Pin the read to a payload schema version. Defaults to the most
 recently written version for the bucket. Versions coexist rather
-than supersede — an older payload shape stays readable, so pass
+than supersede - an older payload shape stays readable, so pass
 this to keep a client on a shape it understands. Read
 `schemaVersion` off the returned row to see what you got.</span></div></td>
   </tr><tr>
     <td><code>situationAnalysesForCountry</code></td>
     <td><code>[SituationAnalysis!]!</code></td>
-    <td>Trend / history view — one row per year for a country, current
+    <td>Trend / history view - one row per year for a country, current
 versions only, newest year first. Never mixes schema versions: a
 bump changes what the numbers mean, so one series is always one
 version. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>schemaVersion: String</code> — Pin the trend to a payload schema version. Defaults to the
@@ -530,7 +541,7 @@ chart a historical payload shape.</span></div></td>
 exists for the given schema version. Used by the Dagster
 aggregation asset to distinguish first-run backfill (wide
 lookback window) from routine weekly refreshes (narrow window).
-Any authenticated content reader — this is a cheap existence
+Any authenticated content reader - this is a cheap existence
 check with no sensitive data on it.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span></div></td>
   </tr><tr>
     <td><code>aggregatedDatapoint</code></td>
@@ -540,7 +551,7 @@ scope. Cache-first: returns the pre-computed snapshot when one
 is current (`validTo IS NULL` or covers the `asOf` timestamp);
 otherwise assembles the bucket on-demand from `report_datapoints`
 and returns it with `onDemand = true`. Returns null when no
-contributing reports exist in scope.<div class="field-args"><span class="arg"><code>locationId: String</code> — Null = country-wide roll-up (yearly / all-time tiers).</span><span class="arg"><code>windowStart: DateTime!</code></span><span class="arg"><code>windowEnd: DateTime!</code></span><span class="arg"><code>windowKind: String!</code></span><span class="arg"><code>schemaVersion: String</code> — Defaults to the currently-configured pipeline schema version.</span><span class="arg"><code>asOf: DateTime</code> — Historical snapshot lookup — return the version that was current
+contributing reports exist in scope.<div class="field-args"><span class="arg"><code>locationId: String</code> — Null = country-wide roll-up (yearly / all-time tiers).</span><span class="arg"><code>windowStart: DateTime!</code></span><span class="arg"><code>windowEnd: DateTime!</code></span><span class="arg"><code>windowKind: String!</code></span><span class="arg"><code>schemaVersion: String</code> — Defaults to the currently-configured pipeline schema version.</span><span class="arg"><code>asOf: DateTime</code> — Historical snapshot lookup - return the version that was current
 at this timestamp. Defaults to `now`.</span></div></td>
   </tr><tr>
     <td><code>webhookSubscriptions</code></td>
