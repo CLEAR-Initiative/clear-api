@@ -56,6 +56,73 @@ function normaliseConfidence(raw: string | undefined | null): ConfidenceTier {
   return "unverified";
 }
 
+// ── Information credibility (clear-context-pipeline ADR-0004 §4) ────────────────────────────
+// The document-level criteria are rated met/partial/unmet by the extractor and
+// stored on `narrative_and_confidence.information_credibility`. Directness is
+// the per-figure `confidence` tier (its CONFIDENCE_WEIGHTS value, not a rating).
+// Recency is NOT scored here — it depends on `now` and is folded in at read
+// time by the resolver (clear-context-pipeline ADR-0005 §2), so what we compute + cache is the
+// TIME-INVARIANT part: 7 criteria summing to at most 8.5 (recency adds ≤1.5 at
+// read for the full 0–10 information_credibility).
+const CREDIBILITY_RATING: Record<string, number> = { met: 1, partial: 0.5, unmet: 0 };
+
+/** A missing / off-taxonomy rating scores `partial` (0.5) — the neutral
+ *  "not assessed" fallback specified in clear-context-pipeline ADR-0004 §4.
+ *  Deliberately neutral, not conservative like reliability's `null → 1`: an
+ *  unrated criterion is no signal, not an untrusted source. Rarely exercised —
+ *  a v2 row carries all six document-level criteria; this covers malformed /
+ *  pre-v2 rows only. Domain-tunable (see the ADR). */
+function ratingValue(v: unknown): number {
+  return typeof v === "string" && v in CREDIBILITY_RATING ? CREDIBILITY_RATING[v]! : 0.5;
+}
+
+/** Resolve one criterion per clear-context-pipeline ADR-0004 §4's per-datapoint-with-document-fallback
+ *  rule: the figure's own override wins where present; otherwise the report's
+ *  document-level rating; otherwise `partial` (neutral). */
+function resolvedRating(figureVal: unknown, docVal: unknown): number {
+  if (typeof figureVal === "string" && figureVal in CREDIBILITY_RATING) {
+    return CREDIBILITY_RATING[figureVal]!;
+  }
+  return ratingValue(docVal);
+}
+
+/** Time-invariant information credibility for one figure, 0–8.5: Directness
+ *  (per-figure `confidence`) plus the six intrinsic criteria, each resolved
+ *  per-figure-then-document (clear-context-pipeline ADR-0004 §4) and weighted. Recency (weight 1.5) is
+ *  added at read time. */
+function intrinsicCredibilityOf(
+  confidence: ConfidenceTier,
+  docCredibility: unknown,
+  figureCredibility: unknown,
+): number {
+  const dc =
+    docCredibility && typeof docCredibility === "object"
+      ? (docCredibility as Record<string, unknown>)
+      : {};
+  const fc =
+    figureCredibility && typeof figureCredibility === "object"
+      ? (figureCredibility as Record<string, unknown>)
+      : {};
+  return (
+    2.0 * CONFIDENCE_WEIGHTS[confidence] + // Directness (per-figure)
+    1.5 * resolvedRating(fc.attribution_quality, dc.attribution_quality) +
+    1.5 * resolvedRating(fc.internal_consistency, dc.internal_consistency) +
+    1.5 * resolvedRating(fc.plausibility_in_context, dc.plausibility_in_context) +
+    1.0 * resolvedRating(fc.geographic_temporal_specificity, dc.geographic_temporal_specificity) +
+    0.5 * resolvedRating(fc.methodology_transparency, dc.methodology_transparency) +
+    0.5 * resolvedRating(fc.representativeness, dc.representativeness)
+  );
+}
+
+/** Source-reliability grade (1–4) for a figure's source id, resolving through
+ *  the registry map. An ungraded (null) or unknown source → 1, matching the
+ *  clear-context-pipeline ADR-0005 formula's `null → 1` rule. */
+function reliabilityOf(sourceId: string | null, reliabilityBySource: Map<string, number | null>): number {
+  if (!sourceId) return 1;
+  const r = reliabilityBySource.get(sourceId);
+  return r == null ? 1 : r;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Field-rule types
 // ────────────────────────────────────────────────────────────────────
@@ -68,6 +135,10 @@ export type FieldKind =
   | "non_aggregatable";
 
 export type TimeBucket = "day" | "week" | "month";
+
+/** Direction in which low-quality figures skew a field (clear-context-pipeline ADR-0005 §3). Drives
+ *  the comparable-quality tie-break in bias-aware selection. */
+export type QualityBias = "overreport" | "underreport" | "neutral";
 
 export type WithinGroupPolicy =
   | "latest_wins"
@@ -92,6 +163,17 @@ export interface FieldRule {
    * is preserved.
    */
   canonicaliseCase?: boolean;
+  /** Direction low-quality figures skew (clear-context-pipeline ADR-0005 §3). On comparable quality the
+   *  tie-break takes the LOWER value for `overreport`, HIGHER for `underreport`,
+   *  freshest for `neutral`. Omitted on label (set_union) fields. */
+  qualityBias?: QualityBias;
+  /** Freshness validity window in days (clear-context-pipeline ADR-0005 § table): how long a figure
+   *  stays "recent" for read-time Recency, and the base for the override reach.
+   *  Omitted on label fields. */
+  validityWindowDays?: number;
+  /** Override divisor `x` (clear-context-pipeline ADR-0005 §4): a higher-quality figure may override a
+   *  fresher, weaker one only within `validityWindowDays / x` of the freshest. */
+  overrideDivisor?: number;
 }
 
 /**
@@ -120,12 +202,17 @@ export const FIELD_RULES: FieldRule[] = [
   // Weekly period totals ("N killed between X and Y") — dedup per reporting
   // week, not per day: there is no per-day figure to bucket on
   // (clear-context-pipeline ADR-0002).
+  // Low-quality tolls skew HIGH (media inflation) → overreport; 7-day conflict
+  // window, override reach /2.
   {
     path: "casualties.killed.total",
     label: "killed_total",
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "overreport",
+    validityWindowDays: 7,
+    overrideDivisor: 2,
   },
   {
     path: "casualties.injured.total",
@@ -133,15 +220,22 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "overreport",
+    validityWindowDays: 7,
+    overrideDivisor: 2,
   },
 
-  // ── Displacement ────────────────────────────────────────────
+  // ── Displacement ──────────────────────────────────────────── movement is
+  // under-captured → underreport; 30-day window, override reach /3.
   {
     path: "displacement.idp_stock",
     label: "idp_stock",
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
   {
     path: "displacement.new_displacements",
@@ -149,13 +243,34 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "underreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
+  },
+  // Returns are split into a STOCK (cumulative returned to date, latest-wins)
+  // and a FLOW (new returns this period, summed) — clear-context-pipeline ADR-0005 §4a. The old single
+  // `returnees` additive field conflated the two and double-counted a running
+  // total. The estimated current-total roll-up (stock + forward flows) is a
+  // read-time concern handled by the resolver, not baked here.
+  {
+    path: "displacement.returnee_stock",
+    label: "returnee_stock",
+    kind: "latest_state",
+    timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
   {
-    path: "displacement.returnees",
-    label: "returnees",
+    path: "displacement.new_returns",
+    label: "new_returns",
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "underreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
   {
     path: "displacement.refugees",
@@ -163,18 +278,26 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
 
   // ── Access & incidents ──────────────────────────────────────
   // Weekly period totals ("N incidents this period") — dedup per reporting
   // week. Reports don't carry per-incident/per-day breakdowns
   // (clear-context-pipeline ADR-0002).
+  // Incidents are UNDER-recorded → underreport, 7-day conflict window. Aid-worker
+  // tolls skew high like casualties → overreport.
   {
     path: "access_and_incidents.security_incidents_count",
     label: "security_incidents_count",
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "underreport",
+    validityWindowDays: 7,
+    overrideDivisor: 2,
   },
   {
     path: "access_and_incidents.aid_workers_killed",
@@ -182,15 +305,23 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "overreport",
+    validityWindowDays: 7,
+    overrideDivisor: 2,
   },
 
-  // ── Needs & funding (per-sector PIN) ─────────────────────────
+  // ── Needs & funding (per-sector PIN) ───────────────────────── access-limited
+  // undercount → underreport; 90-day needs-assessment window (food security
+  // follows IPC's ~120-day cycle, override reach /2).
   {
     path: "needs_and_funding.shelter.people_in_need",
     label: "pin_shelter",
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
   {
     path: "needs_and_funding.wash.people_in_need",
@@ -198,6 +329,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
   {
     path: "needs_and_funding.protection.people_in_need",
@@ -205,6 +339,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
   {
     path: "needs_and_funding.health.people_in_need",
@@ -212,6 +349,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
   {
     path: "needs_and_funding.food_security.people_in_need",
@@ -219,6 +359,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 120,
+    overrideDivisor: 2,
   },
   {
     path: "needs_and_funding.education.people_in_need",
@@ -226,6 +369,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
 
   // ── Overall funding totals ───────────────────────────────────
@@ -235,18 +381,26 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
   },
   {
     // Population Affected — widest circle of crisis impact. Max, not
     // latest: the largest evidenced affected figure across the window is the
     // best estimate of total reach; a later, narrower report shouldn't shrink
     // it. Within a report take the max figure, then latest across reports
-    // (clear-context-pipeline ADR-0001). Never sourced from `events`.
+    // (clear-context-pipeline ADR-0001). Never sourced from `events`. Widest-
+    // reach claims skew high → overreport; the bottom quartile by data quality
+    // is dropped before the max so one weak outlier can't set the ceiling.
     path: "needs_and_funding.overall_affected",
     label: "overall_affected",
     kind: "max",
     timeBucket: "month",
     withinGroupPolicy: "max_within_report_then_latest",
+    qualityBias: "overreport",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
   {
     path: "needs_and_funding.overall_funding_required_usd",
@@ -254,6 +408,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "latest_state",
     timeBucket: "month",
     withinGroupPolicy: "latest_wins",
+    qualityBias: "neutral",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
   {
     // Summed like the other counts → dedup per reporting week. (A `month`/
@@ -264,6 +421,9 @@ export const FIELD_RULES: FieldRule[] = [
     kind: "additive_count",
     timeBucket: "week",
     withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "neutral",
+    validityWindowDays: 30,
+    overrideDivisor: 3,
   },
 
   // ── Set-union labels ────────────────────────────────────────
@@ -294,13 +454,26 @@ export interface ReportRow {
   reportingPeriodEnd: Date | null;
   locationIds: string[];
   data: unknown;
+  /** The report's publisher source (`report_datapoints.sourceId`) — the
+   *  reliability fallback for any figure that cites no distinct source. */
+  sourceId: string | null;
 }
 
 /** What one aggregated numeric field looks like on the output. */
 export interface QualityEnvelope {
   value: number;
   unit: string | null;
+  /** Confidence-only (Directness) view, retained per clear-context-pipeline ADR-0005 — mean of the
+   *  winners' CONFIDENCE_WEIGHTS. The headline is now `data_quality`, which the
+   *  resolver finalises at read time from `reliability` + `intrinsic_credibility`
+   *  + a live Recency score. */
   quality_score: number;
+  /** Mean source-reliability grade (1–4) over the winning figures. */
+  reliability: number;
+  /** Mean time-invariant information credibility (0–8.5) over the winners.
+   *  The resolver adds read-time Recency (≤1.5) → 0–10 information_credibility,
+   *  then `data_quality = ((reliability × 2.5) × information_credibility) / 10`. */
+  intrinsic_credibility: number;
   /** Distribution of confidence tiers as proportions summing to 1. */
   confidence_mix: Record<ConfidenceTier, number>;
   newest_report_at: string;
@@ -391,6 +564,12 @@ interface Mention {
   value: number;
   unit: string | null;
   confidence: ConfidenceTier;
+  /** Source-reliability grade (1–4) of this figure's source (its cited
+   *  `source_id`, else the report's publisher), null-graded → 1. */
+  reliability: number;
+  /** Time-invariant information credibility (0–8.5): directness + the six
+   *  document-level criteria. Recency is added at read time. */
+  intrinsicCredibility: number;
   // Canonicalised, sorted event-type set for the report this mention
   // came from, joined into one string. Part of the incident key: two
   // reports at the same location and time bucket but describing
@@ -461,7 +640,11 @@ function eventKeyFor(row: ReportRow): string {
  *  (matching §6.4.1's rule for unresolved locations). This replaces the
  *  old fan-out across every location the report mentioned, which
  *  double-counted at country scope and needed the report-keying stopgap. */
-function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
+function extractNumericMentions(
+  row: ReportRow,
+  rule: FieldRule,
+  reliabilityBySource: Map<string, number | null>,
+): Mention[] {
   const raw = dig(row.data, rule.path);
   if (!raw || typeof raw !== "object") return [];
   const nf = raw as {
@@ -469,6 +652,8 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
     unit?: string;
     confidence?: string;
     scope_location_id?: unknown;
+    source_id?: unknown;
+    credibility?: unknown;
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
@@ -487,6 +672,17 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
   // Report-level: every mention this report emits carries the same set.
   const eventKey = eventKeyFor(row);
 
+  // Source reliability: the figure's own cited source (`source_id`), else the
+  // report's publisher; ungraded/unknown → 1 (clear-context-pipeline ADR-0004/0005).
+  const figureSourceId =
+    typeof nf.source_id === "string" && nf.source_id ? nf.source_id : null;
+  const reliability = reliabilityOf(figureSourceId ?? row.sourceId, reliabilityBySource);
+  // Time-invariant credibility: directness (this figure's confidence) + the six
+  // criteria resolved per-figure-then-document — the figure's own `credibility`
+  // overrides where present, else the report's document-level assessment.
+  const docCredibility = dig(row.data, "narrative_and_confidence.information_credibility");
+  const intrinsicCredibility = intrinsicCredibilityOf(confidence, docCredibility, nf.credibility);
+
   return [
     {
       reportId: row.reportId,
@@ -496,6 +692,8 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
       value,
       unit,
       confidence,
+      reliability,
+      intrinsicCredibility,
       eventKey,
     },
   ];
@@ -505,11 +703,46 @@ function extractNumericMentions(row: ReportRow, rule: FieldRule): Mention[] {
 // Per-field aggregation
 // ────────────────────────────────────────────────────────────────────
 
-/** Window within which a `verified`-tier row overrides a newer, lower-tier
- *  winner (the `latest_wins_with_confidence_override` policy). A UN/govt-
- *  verified figure published within 3 days of the freshest row is treated as
- *  the more authoritative observation of the same incident. */
-const VERIFIED_OVERRIDE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** "Meaningfully higher" data-quality margin `D` (clear-context-pipeline ADR-0005 §4). A figure must
+ *  exceed the freshest by at least this on the `selectionQuality` scale to
+ *  override it; within `D` the figures are comparable and bias decides.
+ *
+ *  Calibrated for GRADED sources. The verified→unverified directness spread is
+ *  `2.0 × (1.0 − 0.1) = 1.8` intrinsic points → `1.8 × reliability × 2.5/10` on
+ *  the selection scale: 1.35 at reliability 3 (clears D), 0.45 at reliability 1
+ *  (does not). Since the seed grades the humanitarian sources at 3 (see
+ *  scripts/seed-source-reliability.ts), a verified figure correctly overrides an
+ *  unverified one in steady state. Figures whose `source_id` is not yet
+ *  backfilled resolve to reliability 1 and fall back to freshness+bias until
+ *  re-extraction populates the source — intended, not a bug (a lower D would
+ *  over-fire the override on trivial gaps once sources are graded). */
+const DATA_QUALITY_MARGIN = 1.0;
+
+/** Selection-time data quality (recency-free): `(reliability × 2.5) ×
+ *  intrinsic_credibility / 10`. Recency is deliberately excluded here — within
+ *  one bucket it barely varies, and freshness is handled separately by the
+ *  override-reach gate; recency only shapes the read-time headline (clear-context-pipeline ADR-0005). */
+function selectionQuality(m: Mention): number {
+  return (m.reliability * 2.5 * m.intrinsicCredibility) / 10;
+}
+
+/** Pick among comparable-quality candidates by the field's directional bias
+ *  (clear-context-pipeline ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
+ *  `underreport` → the HIGHER, `neutral` → the freshest. Value ties fall back to
+ *  freshest, keeping the result stable and independent of input order. */
+function biasWinner(candidates: Mention[], bias: QualityBias): Mention {
+  if (bias === "overreport" || bias === "underreport") {
+    const prefersHigher = bias === "underreport";
+    return candidates.reduce((best, m) => {
+      if (m.value === best.value) return latestByPublishedAt([best, m]);
+      const takeM = prefersHigher ? m.value > best.value : m.value < best.value;
+      return takeM ? m : best;
+    });
+  }
+  return latestByPublishedAt(candidates);
+}
 
 /** Freshest mention by `publishedAt`, with a STABLE tie-break so an equal
  *  timestamp doesn't make the winner depend on input ordering (which upstream
@@ -529,8 +762,12 @@ function latestByPublishedAt(mentions: Mention[]): Mention {
 }
 
 /** Winner picker inside an incident group. Dispatches on the field's
- *  within-group policy. */
-function pickWinner(mentions: Mention[], policy: WithinGroupPolicy = "latest_wins"): Mention {
+ *  within-group policy; the `rule` also carries the bias + override reach the
+ *  bias-aware policy needs. Called with no rule (plain latest-wins) for the
+ *  cross-group `latest_state` combine. */
+function pickWinner(mentions: Mention[], rule?: FieldRule): Mention {
+  const policy = rule?.withinGroupPolicy ?? "latest_wins";
+
   if (policy === "max_within_report_then_latest") {
     // Collapse each report to the largest figure it states (a report may
     // list several affected figures; the widest is the report's claim),
@@ -546,17 +783,22 @@ function pickWinner(mentions: Mention[], policy: WithinGroupPolicy = "latest_win
   const latest = latestByPublishedAt(mentions);
 
   if (policy === "latest_wins_with_confidence_override") {
-    // Additive counts: the freshest row wins UNLESS a `verified`-tier row was
-    // published within VERIFIED_OVERRIDE_WINDOW_MS of it — a slightly older
-    // UN/govt-verified figure beats a newer media/unverified one. If the
-    // freshest row is itself verified, nothing overrides it.
-    if (latest.confidence === "verified") return latest;
-    const windowStart = latest.publishedAt.getTime() - VERIFIED_OVERRIDE_WINDOW_MS;
-    const verifiedInWindow = mentions.filter(
-      (m) => m.confidence === "verified" && m.publishedAt.getTime() >= windowStart,
+    // Bias-aware override (clear-context-pipeline ADR-0005 §4, generalises the old 3-day verified
+    // override): the freshest row wins UNLESS another row within the override
+    // reach has meaningfully higher data quality. Among the top quality tier
+    // (everything within D of the best), the directional bias breaks the tie.
+    const gateMs =
+      rule?.validityWindowDays != null
+        ? (rule.validityWindowDays / (rule.overrideDivisor ?? 1)) * DAY_MS
+        : Infinity;
+    // Only figures recent enough to be relevant may contest the freshest — the
+    // freshest itself always qualifies (gap 0).
+    const recent = mentions.filter(
+      (m) => latest.publishedAt.getTime() - m.publishedAt.getTime() <= gateMs,
     );
-    if (verifiedInWindow.length > 0) return latestByPublishedAt(verifiedInWindow);
-    return latest;
+    const maxQ = Math.max(...recent.map(selectionQuality));
+    const topTier = recent.filter((m) => selectionQuality(m) >= maxQ - DATA_QUALITY_MARGIN);
+    return biasWinner(topTier, rule?.qualityBias ?? "neutral");
   }
 
   if (policy === "latest_wins" || policy === "set_union_all") return latest;
@@ -607,8 +849,11 @@ function aggregateNumericField(
   rows: ReportRow[],
   rule: FieldRule,
   locationScope: string | null,
+  reliabilityBySource: Map<string, number | null>,
 ): QualityEnvelope | null {
-  const mentions: Mention[] = rows.flatMap((r) => extractNumericMentions(r, rule));
+  const mentions: Mention[] = rows.flatMap((r) =>
+    extractNumericMentions(r, rule, reliabilityBySource),
+  );
 
   // Keep only the figures scoped to this bucket's location. Every mention
   // now carries its Figure Scope as `locationId`, so this is an exact
@@ -673,7 +918,7 @@ function aggregateNumericField(
   // Within-group winner + collect winners
   const winners: Mention[] = [];
   for (const group of groups.values()) {
-    winners.push(pickWinner(group, rule.withinGroupPolicy));
+    winners.push(pickWinner(group, rule));
   }
 
   // Cross-group combine per field-kind
@@ -686,9 +931,15 @@ function aggregateNumericField(
       // Across incident groups, pick the freshest snapshot.
       value = pickWinner(winners).value;
       break;
-    case "max":
-      value = Math.max(...winners.map((w) => w.value));
+    case "max": {
+      // Drop the bottom quartile of winners by data quality before taking the
+      // max, so a single low-quality outlier can't set the ceiling (clear-context-pipeline ADR-0005
+      // §4). Under 4 winners nothing is dropped; `kept` is always non-empty.
+      const ranked = [...winners].sort((a, b) => selectionQuality(a) - selectionQuality(b));
+      const kept = ranked.slice(Math.floor(ranked.length / 4));
+      value = Math.max(...kept.map((w) => w.value));
       break;
+    }
     default:
       // Non-numeric kinds shouldn't hit this function.
       return null;
@@ -705,10 +956,19 @@ function aggregateNumericField(
   const contributing = Array.from(new Set(scoped.map((m) => m.reportId)));
   const publishedAts = scoped.map((m) => m.publishedAt.getTime());
   const unit = winners.find((w) => w.unit)?.unit ?? null;
+  // Representative reliability + intrinsic credibility for the aggregate: mean
+  // over the winners (the figures whose values reached the number), mirroring
+  // how quality_score is winner-weighted. The resolver folds in read-time
+  // Recency and forms the headline data_quality from these two.
+  const meanReliability = winners.reduce((s, w) => s + w.reliability, 0) / winners.length;
+  const meanIntrinsicCred =
+    winners.reduce((s, w) => s + w.intrinsicCredibility, 0) / winners.length;
   return {
     value,
     unit,
     quality_score: Number(qualityScore.toFixed(4)),
+    reliability: Number(meanReliability.toFixed(4)),
+    intrinsic_credibility: Number(meanIntrinsicCred.toFixed(4)),
     confidence_mix: confidenceMix,
     newest_report_at: new Date(Math.max(...publishedAts)).toISOString(),
     oldest_report_at: new Date(Math.min(...publishedAts)).toISOString(),
@@ -760,6 +1020,7 @@ function aggregateSetUnionField(rows: ReportRow[], rule: FieldRule): SetUnionEnv
 export function aggregateReports(
   rows: ReportRow[],
   locationScope: string | null,
+  reliabilityBySource: Map<string, number | null> = new Map(),
 ): AggregationResult | null {
   if (rows.length === 0) return null;
 
@@ -768,7 +1029,7 @@ export function aggregateReports(
     if (rule.kind === "set_union") {
       data[rule.label] = aggregateSetUnionField(rows, rule);
     } else if (rule.kind !== "non_aggregatable") {
-      data[rule.label] = aggregateNumericField(rows, rule, locationScope);
+      data[rule.label] = aggregateNumericField(rows, rule, locationScope, reliabilityBySource);
     }
   }
 
@@ -793,5 +1054,76 @@ export function aggregateReports(
     oldestSourceAt,
     dataQualityScore: Number(dataQualityScore.toFixed(4)),
     reportCount: rows.length,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Read-time quality finalisation (clear-context-pipeline ADR-0005 §2)
+// ────────────────────────────────────────────────────────────────────
+
+/** Weight of the Recency criterion in the 0–10 information_credibility score
+ *  (the seventh criterion; the other 6 + directness are the cached 0–8.5
+ *  `intrinsic_credibility`). */
+const RECENCY_WEIGHT = 1.5;
+
+/** Read-time Recency score (0–1.5): full weight when the newest contributing
+ *  report is within the field's validity window, half within 2×, else 0. A
+ *  field with no window (labels) scores neutral (half). Rewards freshly
+ *  *published* figures without penalising old *content* (content is bucketed by
+ *  period), and — computed live — never silently decays in the cache. */
+function recencyScore(newestReportAt: Date, asOf: Date, validityWindowDays?: number): number {
+  if (!validityWindowDays) return RECENCY_WEIGHT * 0.5;
+  const ageDays = (asOf.getTime() - newestReportAt.getTime()) / DAY_MS;
+  if (ageDays <= validityWindowDays) return RECENCY_WEIGHT;
+  if (ageDays <= 2 * validityWindowDays) return RECENCY_WEIGHT * 0.5;
+  return 0;
+}
+
+/** Finalise the headline `data_quality` for every numeric field on an
+ *  aggregated `data` blob, folding in read-time Recency (clear-context-pipeline ADR-0005 §2). The
+ *  cache stores only the time-invariant parts (`reliability`,
+ *  `intrinsic_credibility`, `newest_report_at`); this runs on every read so the
+ *  score reflects freshness at `asOf` and never decays in place. Returns a new
+ *  blob with `recency` / `information_credibility` / `data_quality` added per
+ *  field, plus the bucket-level mean `data_quality`. Non-numeric fields
+ *  (set-union, null) pass through untouched. */
+export function finaliseReadTimeQuality(
+  data: Record<string, unknown>,
+  asOf: Date,
+): { data: Record<string, unknown>; dataQualityScore: number; finalisedFieldCount: number } {
+  const windowByLabel = new Map(FIELD_RULES.map((r) => [r.label, r.validityWindowDays]));
+  const out: Record<string, unknown> = {};
+  const scores: number[] = [];
+  for (const [label, field] of Object.entries(data)) {
+    if (!field || typeof field !== "object" || !("intrinsic_credibility" in field)) {
+      out[label] = field; // set-union / null — nothing to finalise
+      continue;
+    }
+    const f = field as Record<string, unknown>;
+    const reliability = typeof f.reliability === "number" ? f.reliability : 1;
+    const intrinsic = typeof f.intrinsic_credibility === "number" ? f.intrinsic_credibility : 0;
+    const newestAt =
+      typeof f.newest_report_at === "string" ? new Date(f.newest_report_at) : asOf;
+    const recency = recencyScore(newestAt, asOf, windowByLabel.get(label));
+    const informationCredibility = intrinsic + recency; // 0–10
+    const dataQuality = (reliability * 2.5 * informationCredibility) / 10; // 0–10
+    out[label] = {
+      ...f,
+      recency: Number(recency.toFixed(4)),
+      information_credibility: Number(informationCredibility.toFixed(4)),
+      data_quality: Number(dataQuality.toFixed(4)),
+    };
+    scores.push(dataQuality);
+  }
+  const dataQualityScore =
+    scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+  // `finalisedFieldCount` lets callers distinguish "every field scored 0" from
+  // "no field carried the credibility envelope to score" (a legacy/pre-v2 cache
+  // row). The cache-hit path uses it to avoid overwriting a stored score with a
+  // spurious 0 — see datapoint.resolver.ts.
+  return {
+    data: out,
+    dataQualityScore: Number(dataQualityScore.toFixed(4)),
+    finalisedFieldCount: scores.length,
   };
 }
