@@ -12,6 +12,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
+import { canReviewSource, reviewTransition } from "../services/ground-review.js";
 
 const GROUND_SOURCE_KINDS = new Set(["staff_group", "partner_group", "hotline"]);
 
@@ -113,6 +114,49 @@ export const groundResolvers = {
           privacyDefault: input.privacyDefault ?? "private",
           ...(input.reviewerRoles ? { reviewerRoles: input.reviewerRoles } : {}),
           retentionRule: input.retentionRule ?? null,
+        },
+      });
+    },
+    reviewGroundThread: async (
+      _parent: unknown,
+      args: { id: string; decision: string; note?: string | null },
+      context: Context,
+    ) => {
+      // Coarse gate first (viewers/pending never reach the queue), then
+      // the per-source reviewerRoles policy record decides.
+      const user = requireRole(context, ["admin", "analyst"]);
+
+      const thread = await context.prisma.groundThreads.findUnique({
+        where: { id: args.id },
+        include: { source: true },
+      });
+      if (!thread) {
+        throw new GraphQLError("Ground thread not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      if (!canReviewSource(user, thread.source.reviewerRoles)) {
+        throw new GraphQLError(
+          `Reviewing this source requires one of: ${thread.source.reviewerRoles.join(", ")}`,
+          { extensions: { code: "FORBIDDEN" } },
+        );
+      }
+
+      const transition = reviewTransition(thread.reviewState, args.decision);
+      if (!transition.ok) {
+        throw new GraphQLError(transition.reason, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      return context.prisma.groundThreads.update({
+        where: { id: thread.id },
+        data: {
+          reviewState: transition.next,
+          reviewedBy: user.id,
+          reviewedAt: new Date(),
+          reviewNote: args.note ?? null,
         },
       });
     },

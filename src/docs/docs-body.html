@@ -1070,6 +1070,16 @@ no runId — useful for offline dev of the upload path.<div class="field-args"><
     <td>Create a ground source — the per-source policy record (consent
 scope, privacy default, reviewer roles, retention) that every ingest
 from a WhatsApp group or hotline is gated on.<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-reviewgroundthread">
+    <td><code>reviewGroundThread</code></td>
+    <td><code>GroundThread!</code></td>
+    <td>Review a ground thread: decision is &quot;approve_private&quot;,
+&quot;approve_public&quot;, or &quot;reject&quot;. Role-gated per source (the caller's
+global role must appear in the source's reviewerRoles; platform
+admins always pass). Transitions follow the V1 state machine —
+notably approved_public is terminal. approve_public also promotes
+the thread into the standard signals graph via createSignal, with
+all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
