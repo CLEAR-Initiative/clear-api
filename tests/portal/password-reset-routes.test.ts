@@ -246,9 +246,16 @@ describe("POST /portal/reset-password", () => {
 
 describe("login page", () => {
   it("offers a forgot-password entry point", async () => {
-    const html = await (await fetch(`${base}/portal`)).text();
+    const html = await (await fetch(`${base}/portal/login`)).text();
 
     expect(html).toContain("Forgot your password?");
     expect(html).toContain("/portal/forgot-password");
+  });
+
+  it("keeps the forgot panel hidden until it's asked for", async () => {
+    const html = await (await fetch(`${base}/portal/login`)).text();
+
+    // Register is the default panel; sign-in and forgot start collapsed.
+    expect(html).toContain('<div id="forgot-form" style="display:none">');
   });
 });
