@@ -450,6 +450,12 @@ export const mutationTypeDef = gql`
       sourceUrl: String
       publishedAt: DateTime!
     ): KnowledgebaseIngestJob!
+
+    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    """Create a ground source — the per-source policy record (consent
+    scope, privacy default, reviewer roles, retention) that every ingest
+    from a WhatsApp group or hotline is gated on."""
+    createGroundSource(input: CreateGroundSourceInput!): GroundSource!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────

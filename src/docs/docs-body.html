@@ -554,6 +554,24 @@ at this timestamp. Defaults to `now`.</span></div></td>
     <td><code>webhookDeliveries</code></td>
     <td><code>[WebhookDelivery!]!</code></td>
     <td>Recent delivery attempts for a subscription, newest first.<div class="field-args"><span class="arg"><code>subscriptionId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundSources</code></td>
+    <td><code>[GroundSource!]!</code></td>
+    <td>All ground sources (per-source policy records), newest first.</td>
+  </tr><tr>
+    <td><code>groundThreads</code></td>
+    <td><code>[GroundThread!]!</code></td>
+    <td>Review queue: ground threads, newest first. Filter by source and/or
+review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;approved_public&quot; |
+&quot;rejected&quot;).<div class="field-args"><span class="arg"><code>groundSourceId: String</code></span><span class="arg"><code>reviewState: String</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundThread</code></td>
+    <td><code>GroundThread</code></td>
+    <td>One ground thread with its messages, or null if not found.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessages</code></td>
+    <td><code>[GroundMessage!]!</code></td>
+    <td>Staged messages, oldest first. Filter by source and/or thread.<div class="field-args"><span class="arg"><code>groundSourceId: String</code></span><span class="arg"><code>threadId: String</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1046,6 +1064,12 @@ Restricted to admin / analyst — the ingest costs LLM + embedding
 credits per document. When DAGSTER_URL is unset the mutation
 still stages the PDF in S3 but returns a UNKNOWN-status job with
 no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
+  </tr><tr id="mutation-creategroundsource">
+    <td><code>createGroundSource</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Create a ground source — the per-source policy record (consent
+scope, privacy default, reviewer roles, retention) that every ingest
+from a WhatsApp group or hotline is gated on.<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1413,6 +1437,42 @@ a team-level team_admin or field_coordinator on that team instead of a
 platform admin/analyst. Purely an authorisation hint — the event itself
 has no team column; team affiliation is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr></tbody></table><h3 id="type-creategroundsourceinput"><code>CreateGroundSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>transportId</code></td>
+    <td><code>String!</code></td>
+    <td>WhatsApp group JID (or hotline number). Must be unique.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String</code></td>
+    <td>Defaults to &quot;private&quot;.</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]</code></td>
+    <td>Defaults to [&quot;admin&quot;, &quot;analyst&quot;].</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createlocationinput"><code>CreateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
     <td><code>Int</code></td>
@@ -3193,6 +3253,200 @@ pg_trgm similarity of the best fuzzy match.</td>
     <td><code>exact</code></td>
     <td><code>Boolean!</code></td>
     <td>True when matched exactly on the normalised name, false when fuzzy.</td>
+  </tr></tbody></table><h3 id="type-groundingestresult"><code>GroundIngestResult</code> <span class="type-badge">object</span></h3><p>Result of a chat-export ingest (also returned by the REST upload
+route as JSON).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>created</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>mediaStored</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>mediaUnmatched</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessage"><code>GroundMessage</code> <span class="type-badge">object</span></h3><p>A canonical staged message parsed from a WhatsApp source. Text is
+phone-number-redacted at persistence. senderName is private-tier data and
+is scrubbed from anything promoted to the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>externalId</code></td>
+    <td><code>String!</code></td>
+    <td>Idempotency id, scheme &quot;whatsapp:{groupJid}:{messageId}&quot;.</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>senderRef</code></td>
+    <td><code>String!</code></td>
+    <td>Pseudonymous per-(source, sender) reference, e.g. &quot;s_ab12cd34ef56&quot;.</td>
+  </tr><tr>
+    <td><code>senderName</code></td>
+    <td><code>String</code></td>
+    <td>Raw sender display name. Private tier only — never promoted.</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>Message text (redacted). Empty for caption-less media messages.</td>
+  </tr><tr>
+    <td><code>mediaKeys</code></td>
+    <td><code>[String!]!</code></td>
+    <td>S3 keys of stored attachments.</td>
+  </tr><tr>
+    <td><code>mediaRefs</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Attachment filenames referenced by the export.</td>
+  </tr><tr>
+    <td><code>omittedMediaCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Media the export omitted (&quot;image omitted&quot;) — the message still
+counts as a media message.</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String</code></td>
+    <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;; null
+until the pipeline classification task labels the message.</td>
+  </tr><tr>
+    <td><code>uncertainty</code></td>
+    <td><code>String</code></td>
+    <td>Contributor's own uncertainty tag (&quot;unconfirmed&quot;, &quot;rumour&quot;),
+preserved from the source text.</td>
+  </tr><tr>
+    <td><code>isEdited</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
+future hotline). Carries the consent scope, privacy default, reviewer
+roles, and retention rule for everything ingested from the source. The
+whole ground staging tier is private: admin/analyst only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>Source kind: &quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>transportId</code></td>
+    <td><code>String!</code></td>
+    <td>Transport binding — WhatsApp group JID, or hotline number.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>What the source's members consented to (free text, e.g. &quot;links and
+resources only&quot;). Ingest policy is judged against this record.</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>Who recorded/gave the consent (person name/role, not a user id).</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String!</code></td>
+    <td>Review default for derived threads. V1: always &quot;private&quot;.</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Global roles allowed to review threads from this source.</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
+    <td>Free-text retention rule; enforcement is operational in V1.</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundthread"><code>GroundThread</code> <span class="type-badge">object</span></h3><p>An incident thread in the review queue. V1 threads are one-per-message
+placeholders until the pipeline threading task clusters them. Lifecycle
+state models the correction chain; review state is the human gate in
+front of the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lifecycleState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; | &quot;retracted&quot;.</td>
+  </tr><tr>
+    <td><code>reviewState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;unverified&quot; | &quot;approved_private&quot; | &quot;approved_public&quot; | &quot;rejected&quot;.</td>
+  </tr><tr>
+    <td><code>reviewedBy</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of the reviewer who last transitioned reviewState.</td>
+  </tr><tr>
+    <td><code>reviewedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reviewNote</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>promotedSignalId</code></td>
+    <td><code>String</code></td>
+    <td>Id of the `signals` row created when this thread was promoted
+(approved_public only).</td>
+  </tr><tr>
+    <td><code>messages</code></td>
+    <td><code>[GroundMessage!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
