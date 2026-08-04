@@ -37,11 +37,11 @@ export const queryTypeDef = gql`
     event(id: String!): Event
 
     """
-    Resolve a public share-link to its cached event snapshot. No auth —
+    Resolve a public share-link to its cached event snapshot. No auth -
     the (eventId, token) pair from the URL is the gate, and the snapshot
     only contains the safe fields enumerated on \`PublicEvent\`. Returns
     null when the Redis cache has no entry for that pair (link expired,
-    revoked, or evicted under memory pressure — caller treats all three
+    revoked, or evicted under memory pressure - caller treats all three
     the same).
     """
     publicEvent(eventId: String!, token: String!): PublicEvent
@@ -50,7 +50,7 @@ export const queryTypeDef = gql`
     Look up the most recently-minted public share link for an event,
     if one still exists in the cache. The Share modal calls this on
     open so it can reuse an existing link rather than minting a fresh
-    token every time. Returns null when no live link exists — the
+    token every time. Returns null when no live link exists - the
     caller then mints one via \`createPublicEventLink\`. Requires
     \`requireContentReader\` (admin / analyst / viewer); pending users
     are blocked.
@@ -105,7 +105,7 @@ export const queryTypeDef = gql`
     By default only current values. Pass current: false for the full history."""
     allLocationMetadata(type: String!, current: Boolean): [LocationMetadata!]!
 
-    """History of a (location, type) pair — newest first. Includes the current
+    """History of a (location, type) pair - newest first. Includes the current
     row plus every superseded one."""
     locationMetadataHistory(locationId: String!, type: String!): [LocationMetadata!]!
 
@@ -129,7 +129,7 @@ export const queryTypeDef = gql`
     """List pending invitations for an organisation. Requires org admin."""
     pendingInvites(organisationId: String!): [Invitation!]!
 
-    """Look up an invitation by token (public — used on accept-invite page)."""
+    """Look up an invitation by token (public - used on accept-invite page)."""
     invitationByToken(token: String!): InvitationInfo
 
     # ─── Alert Subscriptions ────────────────────────────────────────────────
@@ -160,7 +160,7 @@ export const queryTypeDef = gql`
     signalsPage(input: SignalsPageInput): SignalsPage!
 
     # ─── Stats ─────────────────────────────────────────────────────────────────
-    """Cross-entity stats query — returns a total plus optional buckets grouped
+    """Cross-entity stats query - returns a total plus optional buckets grouped
     by type / severity / day / week / month. Filter shape mirrors the page
     queries so a "current view" can compute its own counts."""
     entityStats(input: EntityStatsInput!): EntityStats!
@@ -188,12 +188,12 @@ export const queryTypeDef = gql`
     compute as-of that date."""
     userEngagement(asOf: DateTime): UserEngagementMetrics!
 
-    """Daily Active Users time series — one point per UTC date in the
+    """Daily Active Users time series - one point per UTC date in the
     window. Admin only. Days with zero logins are omitted; the dashboard
     can backfill them client-side when plotting."""
     dauSeries(from: DateTime!, to: DateTime!): [DauPoint!]!
 
-    """Monthly Active Users time series — one point per UTC calendar
+    """Monthly Active Users time series - one point per UTC calendar
     month in the window. Admin only."""
     mauSeries(from: DateTime!, to: DateTime!): [MauPoint!]!
     # ─── Pipeline config ───────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ export const queryTypeDef = gql`
     driver enqueue only entities the worker would actually translate,
     instead of relying on per-task staleness diffs to no-op thousands
     of already-current rounds. Stale rows (row exists but hashes are
-    out of date) are NOT returned here — they're rare and handled by
+    out of date) are NOT returned here - they're rare and handled by
     the per-entity enrichment hooks."""
     entitiesMissingTranslation(entityType: String!, locale: String!): [ID!]!
 
@@ -227,7 +227,7 @@ export const queryTypeDef = gql`
     """Resolve a knowledge-base location reference to a \`locations.id\`.
     Pcode wins over name; \`adminLevel\` narrows the name match so a
     village that shares its state's name doesn't collide. Returns null
-    when neither the pcode nor the name matches — the ingest keeps the
+    when neither the pcode nor the name matches - the ingest keeps the
     raw pcode on the row so a future backfill can re-resolve. A name given
     without \`adminLevel\` that matches more than one admin level is
     ambiguous and also returns null (rather than guessing the deepest
@@ -239,13 +239,13 @@ export const queryTypeDef = gql`
       adminLevel: Int
     ): String
 
-    """Resolve a place name against the offline GeoNames gazetteer — the
+    """Resolve a place name against the offline GeoNames gazetteer - the
     first tier of the hybrid geo-resolver. Tries an exact normalised-name
     match, then a \`pg_trgm\` fuzzy match, preferring populated places / admin
     areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
     loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
-    Returns null on no match — the geoparser then falls back to LocationIQ
+    Returns null on no match - the geoparser then falls back to LocationIQ
     for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
     resolveGazetteerLocation(
       name: String!
@@ -257,7 +257,7 @@ export const queryTypeDef = gql`
     with Reciprocal Rank Fusion (k=60) and returned in descending
     score order. Both retrievers run in parallel over the same filter
     set; each contributes up to 50 candidates before fusion. The
-    embedding provider is the one configured in the environment —
+    embedding provider is the one configured in the environment -
     keep the write and read sides on the same provider or turn on
     \`filters.currentEmbeddingModelOnly\` to guarantee vector-space
     consistency. Requires any authenticated content reader."""
@@ -274,7 +274,7 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     knowledgebaseIngestJob(runId: String!): KnowledgebaseIngestJob
 
-    # ─── Structured datapoints — Layer 2 read path ─────────────────────
+    # ─── Structured datapoints - Layer 2 read path ─────────────────────
     """One report's extracted structured datapoints. Returns null when
     no extraction has been persisted yet (report ingested via vector
     RAG but the datapoint pipeline hasn't caught up). Requires any
@@ -282,27 +282,42 @@ export const queryTypeDef = gql`
     reportDatapoint(reportId: String!): ReportDatapoint
 
     # ─── Situation analysis ──────────────────────────────────────────
-    """Current situation-analysis snapshot for a (country, year).
-    \`year\` derives \`windowStart = Jan 1\` / \`windowEnd = Dec 31\`
-    server-side. Falls back to \`year(now())\` when \`year\` is null.
-    Returns null when no snapshot exists — the dashboard should
-    render an empty state and wait for the next weekly generation.
-    Requires any authenticated content reader."""
+    """Current situation-analysis snapshot for one bucket of a country.
+    Buckets are keyed \`(countryLocationId, windowKind, windowStart)\`.
+    By default reads the yearly bucket, where \`year\` derives
+    \`windowStart = Jan 1\` server-side and falls back to \`year(now())\`
+    when null - the dashboard's usual call. Pass \`windowKind\` +
+    \`windowStart\` instead to read a finer bucket (e.g. monthly, to diff
+    one month against the previous). Returns null when no snapshot
+    exists - the dashboard should render an empty state and wait for the
+    next weekly generation. Requires any authenticated content reader."""
     situationAnalysis(
       countryLocationId: String!
       year: Int
-      """Historical read — return the version that was current at
+      """Bucket granularity, part of the bucket key. Defaults to
+      \`yearly\`. The pipeline owns this taxonomy (currently \`yearly\`
+      and \`monthly\`), so it is not validated against a fixed list here -
+      an unknown value simply matches no row and returns null."""
+      windowKind: String
+      """Exact bucket start, matched for equality. Required when
+      \`windowKind\` is anything other than \`yearly\`, because a year
+      alone cannot identify a finer bucket. Must be the same instant the
+      writer used (midnight UTC on the first day of the window), so pass
+      the value the pipeline computed rather than reconstructing it.
+      \`windowEnd\` is never matched on."""
+      windowStart: DateTime
+      """Historical read - return the version that was current at
       this timestamp (defaults to now)."""
       asOf: DateTime
       """Pin the read to a payload schema version. Defaults to the most
       recently written version for the bucket. Versions coexist rather
-      than supersede — an older payload shape stays readable, so pass
+      than supersede - an older payload shape stays readable, so pass
       this to keep a client on a shape it understands. Read
       \`schemaVersion\` off the returned row to see what you got."""
       schemaVersion: String
     ): SituationAnalysis
 
-    """Trend / history view — one row per year for a country, current
+    """Trend / history view - one row per year for a country, current
     versions only, newest year first. Never mixes schema versions: a
     bump changes what the numbers mean, so one series is always one
     version. Requires any authenticated content reader."""
@@ -319,7 +334,7 @@ export const queryTypeDef = gql`
     exists for the given schema version. Used by the Dagster
     aggregation asset to distinguish first-run backfill (wide
     lookback window) from routine weekly refreshes (narrow window).
-    Any authenticated content reader — this is a cheap existence
+    Any authenticated content reader - this is a cheap existence
     check with no sensitive data on it."""
     hasAggregatedDatapoints(schemaVersion: String!): Boolean!
 
@@ -337,7 +352,7 @@ export const queryTypeDef = gql`
       windowKind: String!
       """Defaults to the currently-configured pipeline schema version."""
       schemaVersion: String
-      """Historical snapshot lookup — return the version that was current
+      """Historical snapshot lookup - return the version that was current
       at this timestamp. Defaults to \`now\`."""
       asOf: DateTime
     ): AggregatedDatapoint
