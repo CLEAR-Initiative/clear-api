@@ -13,8 +13,69 @@ import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
 import { canReviewSource, reviewTransition } from "../services/ground-review.js";
+import {
+  buildPromotedSignalInput,
+  ensureWhatsAppDataSource,
+} from "../services/ground-promotion.js";
+import { signalResolvers } from "./signal.resolver.js";
 
 const GROUND_SOURCE_KINDS = new Set(["staff_group", "partner_group", "hotline"]);
+
+/**
+ * Promote an approved-public thread into the signals graph. Reuses the
+ * existing createSignal resolver so promoted signals get the exact same
+ * treatment as pipeline ones (dedupe on (sourceId, externalId), location
+ * resolution, P2002 fallback). Returns the signal id.
+ *
+ * Identity scrubbing happens structurally: buildPromotedSignalInput's
+ * message type has no sender fields at all (see ground-promotion.ts).
+ */
+async function promoteThread(context: Context, threadId: string): Promise<string> {
+  const thread = await context.prisma.groundThreads.findUnique({
+    where: { id: threadId },
+    include: { messages: { orderBy: { sentAt: "asc" } } },
+  });
+  if (!thread) {
+    throw new GraphQLError("Ground thread not found", {
+      extensions: { code: "NOT_FOUND" },
+    });
+  }
+  if (thread.messages.length === 0) {
+    throw new GraphQLError("Cannot promote a thread with no messages", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+
+  const dataSource = await ensureWhatsAppDataSource(context.prisma);
+
+  // Presigned URLs for all attachments across the thread, generated at
+  // promotion time (media URLs are what CreateSignalInput carries).
+  const mediaKeys = thread.messages.flatMap((m) => m.mediaKeys);
+  const mediaUrls = mediaKeys.length > 0 ? await getPresignedUrls(mediaKeys) : [];
+
+  const input = buildPromotedSignalInput({
+    dataSourceId: dataSource.id,
+    thread: {
+      id: thread.id,
+      title: thread.title,
+      lifecycleState: thread.lifecycleState,
+    },
+    messages: thread.messages.map((m) => ({
+      externalId: m.externalId,
+      sentAt: m.sentAt,
+      text: m.text,
+      mediaKeys: m.mediaKeys,
+      omittedMediaCount: m.omittedMediaCount,
+      classification: m.classification,
+      uncertainty: m.uncertainty,
+      isEdited: m.isEdited,
+    })),
+    mediaUrls,
+  });
+
+  const signal = await signalResolvers.Mutation.createSignal(null, { input }, context);
+  return signal.id;
+}
 
 export const groundResolvers = {
   Query: {
@@ -150,6 +211,17 @@ export const groundResolvers = {
         });
       }
 
+      // approve_public promotes BEFORE the state flips: if promotion
+      // fails, the thread stays reviewable and the decision can be
+      // retried. createSignal's (sourceId, externalId) dedupe makes the
+      // retry idempotent. The guard on promotedSignalId is belt and
+      // braces — the state machine already makes approved_public
+      // terminal, so a thread cannot be promoted twice.
+      let promotedSignalId: string | null = null;
+      if (transition.next === "approved_public" && !thread.promotedSignalId) {
+        promotedSignalId = await promoteThread(context, thread.id);
+      }
+
       return context.prisma.groundThreads.update({
         where: { id: thread.id },
         data: {
@@ -157,6 +229,7 @@ export const groundResolvers = {
           reviewedBy: user.id,
           reviewedAt: new Date(),
           reviewNote: args.note ?? null,
+          ...(promotedSignalId ? { promotedSignalId } : {}),
         },
       });
     },
