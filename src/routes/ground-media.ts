@@ -17,8 +17,15 @@
  *
  * Bytes are stored to S3 under the content-hash scheme
  * `ground/{sourceId}/{sha256}.{ext}` (same as export upload), so
- * identical bytes never duplicate objects. Response returns the key as
- * JSON; the gateway includes it as a mediaKey in its ingest payload.
+ * identical bytes never duplicate objects — a re-upload of the same
+ * bytes skips the PUT and reports `deduplicated: true`.
+ *
+ * Response (200): { key, groundSourceId, deduplicated, attached }.
+ *   `attached` is true when sourceMessageExternalId matched an
+ *   already-ingested groundMessage (the key is then idempotently on its
+ *   mediaKeys); false when the message isn't ingested yet — the gateway
+ *   then includes the key in its ingest payload's mediaKeys instead.
+ *   Either arrival order converges (see services/ground-media.ts).
  *
  * Auth: machine callers only — pipeline-role API key, the same mechanism
  * as /api/ground/ingest. Platform admins also pass, for manual testing.
@@ -36,7 +43,7 @@ import multer from "multer";
 import { prisma } from "../lib/prisma.js";
 import { resolveRequestAuth } from "../utils/request-auth.js";
 import { storeGroundMedia } from "../services/ground-media.js";
-import { uploadBufferToS3 } from "../services/s3.js";
+import { uploadBufferToS3, s3ObjectExists } from "../services/s3.js";
 
 const router = Router();
 
@@ -84,6 +91,11 @@ router.post("/", uploadSingle, async (req, res) => {
       });
       return;
     }
+    const sourceMessageExternalId =
+      typeof body.sourceMessageExternalId === "string" && body.sourceMessageExternalId !== ""
+        ? body.sourceMessageExternalId
+        : null;
+
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: "A media file is required (field \"file\")" });
@@ -94,12 +106,14 @@ router.post("/", uploadSingle, async (req, res) => {
       db: prisma,
       groundSourceId: groundSourceId || null,
       groupJid: groupJid || null,
+      sourceMessageExternalId,
       file: {
         originalname: file.originalname,
         buffer: file.buffer,
         mimetype: file.mimetype,
       },
       storeObject: uploadBufferToS3,
+      objectExists: s3ObjectExists,
     });
 
     if (!result.ok) {
@@ -116,7 +130,12 @@ router.post("/", uploadSingle, async (req, res) => {
       return;
     }
 
-    res.json({ key: result.key, groundSourceId: result.groundSourceId });
+    res.json({
+      key: result.key,
+      groundSourceId: result.groundSourceId,
+      deduplicated: result.deduplicated,
+      attached: result.attached,
+    });
   } catch (err) {
     console.error("[ground-media] Failed:", err);
     res.status(500).json({ error: "Media upload failed" });

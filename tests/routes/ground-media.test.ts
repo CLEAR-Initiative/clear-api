@@ -13,29 +13,52 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 
-const { resolveRequestAuthMock, prismaStub, uploadBufferToS3Mock } = vi.hoisted(() => {
-  const sources: Array<Record<string, unknown>> = [];
-  const prismaStub = {
-    __sources: sources,
-    groundSources: {
-      findFirst: async ({
-        where,
-      }: {
-        where: { id?: string; transportId?: string };
-      }) =>
-        sources.find(
-          (s) =>
-            (where.id !== undefined && s.id === where.id) ||
-            (where.transportId !== undefined && s.transportId === where.transportId),
-        ) ?? null,
-    },
-  };
-  return {
-    resolveRequestAuthMock: vi.fn(),
-    prismaStub,
-    uploadBufferToS3Mock: vi.fn(async (_buffer: Buffer, key: string) => key),
-  };
-});
+const { resolveRequestAuthMock, prismaStub, uploadBufferToS3Mock, s3ObjectExistsMock } =
+  vi.hoisted(() => {
+    const sources: Array<Record<string, unknown>> = [];
+    const messages: Array<{ id: string; groundSourceId: string; externalId: string; mediaKeys: string[] }> = [];
+    const prismaStub = {
+      __sources: sources,
+      __messages: messages,
+      groundSources: {
+        findFirst: async ({
+          where,
+        }: {
+          where: { id?: string; transportId?: string };
+        }) =>
+          sources.find(
+            (s) =>
+              (where.id !== undefined && s.id === where.id) ||
+              (where.transportId !== undefined && s.transportId === where.transportId),
+          ) ?? null,
+      },
+      groundMessages: {
+        findFirst: async ({
+          where,
+        }: {
+          where: { groundSourceId: string; externalId: string };
+        }) => {
+          const row = messages.find(
+            (m) => m.groundSourceId === where.groundSourceId && m.externalId === where.externalId,
+          );
+          return row ? { id: row.id, mediaKeys: [...row.mediaKeys] } : null;
+        },
+        update: vi.fn(
+          async ({ where, data }: { where: { id: string }; data: { mediaKeys: string[] } }) => {
+            const row = messages.find((m) => m.id === where.id);
+            if (row) row.mediaKeys = data.mediaKeys;
+            return row;
+          },
+        ),
+      },
+    };
+    return {
+      resolveRequestAuthMock: vi.fn(),
+      prismaStub,
+      uploadBufferToS3Mock: vi.fn(async (_buffer: Buffer, key: string) => key),
+      s3ObjectExistsMock: vi.fn(async () => false),
+    };
+  });
 
 vi.mock("../../src/utils/request-auth.js", () => ({
   resolveRequestAuth: resolveRequestAuthMock,
@@ -45,6 +68,7 @@ vi.mock("../../src/lib/prisma.js", () => ({ prisma: prismaStub }));
 
 vi.mock("../../src/services/s3.js", () => ({
   uploadBufferToS3: uploadBufferToS3Mock,
+  s3ObjectExists: s3ObjectExistsMock,
 }));
 
 import express from "express";
@@ -102,6 +126,10 @@ describe("POST /api/ground/media", () => {
   beforeEach(() => {
     resolveRequestAuthMock.mockReset();
     uploadBufferToS3Mock.mockClear();
+    s3ObjectExistsMock.mockClear();
+    s3ObjectExistsMock.mockResolvedValue(false);
+    prismaStub.groundMessages.update.mockClear();
+    prismaStub.__messages.length = 0;
     prismaStub.__sources.length = 0;
     prismaStub.__sources.push({
       id: CONSENTED_SOURCE_ID,
@@ -200,6 +228,8 @@ describe("POST /api/ground/media", () => {
     expect(await res.json()).toEqual({
       key: EXPECTED_KEY,
       groundSourceId: CONSENTED_SOURCE_ID,
+      deduplicated: false,
+      attached: false,
     });
     expect(uploadBufferToS3Mock).toHaveBeenCalledTimes(1);
     const [buffer, key, mimetype] = uploadBufferToS3Mock.mock.calls[0]!;
@@ -218,5 +248,99 @@ describe("POST /api/ground/media", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { key: string };
     expect(body.key).toBe(EXPECTED_KEY);
+  });
+
+  it("re-upload of identical bytes returns the same key, skips the PUT, reports deduplicated", async () => {
+    asPipeline();
+    s3ObjectExistsMock.mockResolvedValue(true); // same content-hash key already in S3
+    const res = await post(mediaForm({ groupJid: CONSENTED_JID }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { key: string; deduplicated: boolean };
+    expect(body.key).toBe(EXPECTED_KEY);
+    expect(body.deduplicated).toBe(true);
+    // No duplicate S3 object is ever written for the same bytes.
+    expect(uploadBufferToS3Mock).not.toHaveBeenCalled();
+  });
+
+  it("message-then-media: appends the key to an already-ingested message's mediaKeys", async () => {
+    asPipeline();
+    const externalId = `whatsapp:${CONSENTED_JID}:MSG001`;
+    prismaStub.__messages.push({
+      id: "gm_1",
+      groundSourceId: CONSENTED_SOURCE_ID,
+      externalId,
+      mediaKeys: [],
+    });
+
+    const res = await post(
+      mediaForm({ groupJid: CONSENTED_JID, sourceMessageExternalId: externalId }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attached: boolean };
+    expect(body.attached).toBe(true);
+    expect(prismaStub.__messages[0]!.mediaKeys).toEqual([EXPECTED_KEY]);
+  });
+
+  it("media-then-message: unknown externalId still stores and returns the key, attached false", async () => {
+    asPipeline();
+    const res = await post(
+      mediaForm({
+        groupJid: CONSENTED_JID,
+        sourceMessageExternalId: `whatsapp:${CONSENTED_JID}:NOT_YET_INGESTED`,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { key: string; attached: boolean };
+    expect(body.key).toBe(EXPECTED_KEY); // gateway carries it into the ingest payload
+    expect(body.attached).toBe(false);
+    expect(uploadBufferToS3Mock).toHaveBeenCalledTimes(1);
+    expect(prismaStub.groundMessages.update).not.toHaveBeenCalled();
+  });
+
+  it("idempotent re-attach: a key already on the message is not appended twice", async () => {
+    asPipeline();
+    const externalId = `whatsapp:${CONSENTED_JID}:MSG001`;
+    prismaStub.__messages.push({
+      id: "gm_1",
+      groundSourceId: CONSENTED_SOURCE_ID,
+      externalId,
+      mediaKeys: [EXPECTED_KEY],
+    });
+    s3ObjectExistsMock.mockResolvedValue(true);
+
+    const res = await post(
+      mediaForm({ groupJid: CONSENTED_JID, sourceMessageExternalId: externalId }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attached: boolean; deduplicated: boolean };
+    expect(body.attached).toBe(true);
+    expect(body.deduplicated).toBe(true);
+    expect(prismaStub.groundMessages.update).not.toHaveBeenCalled();
+    expect(prismaStub.__messages[0]!.mediaKeys).toEqual([EXPECTED_KEY]);
+  });
+
+  it("attach scoping: an externalId under a DIFFERENT source is not attached", async () => {
+    asPipeline();
+    prismaStub.__messages.push({
+      id: "gm_other",
+      groundSourceId: "gs_other_source",
+      externalId: `whatsapp:${CONSENTED_JID}:MSG001`,
+      mediaKeys: [],
+    });
+
+    const res = await post(
+      mediaForm({
+        groupJid: CONSENTED_JID,
+        sourceMessageExternalId: `whatsapp:${CONSENTED_JID}:MSG001`,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attached: boolean };
+    expect(body.attached).toBe(false);
+    expect(prismaStub.__messages[0]!.mediaKeys).toEqual([]);
   });
 });
