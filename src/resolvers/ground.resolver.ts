@@ -11,6 +11,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
+import { getPresignedUrls } from "../services/s3.js";
 
 const GROUND_SOURCE_KINDS = new Set(["staff_group", "partner_group", "hotline"]);
 
@@ -114,6 +115,16 @@ export const groundResolvers = {
           retentionRule: input.retentionRule ?? null,
         },
       });
+    },
+  },
+
+  GroundMessage: {
+    /** Presigned GET URLs for the stored attachments, generated at read
+     * time (same pattern as signal media). Empty when the message has no
+     * stored media. */
+    mediaUrls: async (parent: { mediaKeys: string[] }) => {
+      if (parent.mediaKeys.length === 0) return [];
+      return getPresignedUrls(parent.mediaKeys);
     },
   },
 

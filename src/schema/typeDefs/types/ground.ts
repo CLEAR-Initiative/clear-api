@@ -87,6 +87,9 @@ export const groundTypeDef = gql`
     text: String!
     """S3 keys of stored attachments."""
     mediaKeys: [String!]!
+    """Presigned GET URLs for mediaKeys (1 h expiry), generated at read
+    time — URLs are never stored."""
+    mediaUrls: [String!]!
     """Attachment filenames referenced by the export."""
     mediaRefs: [String!]!
     """Media the export omitted ("image omitted") — the message still

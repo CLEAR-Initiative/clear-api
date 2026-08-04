@@ -63,6 +63,27 @@ export async function uploadFileToS3(
 }
 
 /**
+ * Upload a buffer to S3 under an explicit key. Used by the ground-intel
+ * export ingest, whose keys are content-hashed for idempotency (same
+ * bytes → same key → re-upload overwrites one object, never duplicates).
+ */
+export async function uploadBufferToS3(
+  buffer: Buffer,
+  key: string,
+  mimetype: string,
+): Promise<string> {
+  await getClient().send(
+    new PutObjectCommand({
+      Bucket: env.S3_BUCKET,
+      Key: key,
+      Body: buffer,
+      ContentType: mimetype,
+    }),
+  );
+  return key;
+}
+
+/**
  * Generate a presigned GET URL for an S3 key.
  * URLs expire after 1 hour.
  */

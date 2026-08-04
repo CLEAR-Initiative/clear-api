@@ -3305,6 +3305,11 @@ is scrubbed from anything promoted to the signals graph.</p><table class="ref-ta
     <td><code>[String!]!</code></td>
     <td>S3 keys of stored attachments.</td>
   </tr><tr>
+    <td><code>mediaUrls</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Presigned GET URLs for mediaKeys (1 h expiry), generated at read
+time — URLs are never stored.</td>
+  </tr><tr>
     <td><code>mediaRefs</code></td>
     <td><code>[String!]!</code></td>
     <td>Attachment filenames referenced by the export.</td>

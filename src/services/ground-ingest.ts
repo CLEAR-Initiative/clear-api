@@ -20,6 +20,7 @@
  * ingest logic with an in-memory stub (no test DB needed).
  */
 
+import { createHash } from "node:crypto";
 import {
   extractUncertaintyMarker,
   parseWhatsAppExport,
@@ -71,6 +72,24 @@ export interface UploadedMediaFile {
 /** Stores one attachment and returns its S3 key. Injected so tests (and
  * the route) control the S3 dependency. */
 export type MediaStorer = (file: UploadedMediaFile, groundSourceId: string) => Promise<string>;
+
+/**
+ * Content-hash S3 key for a ground media attachment:
+ *   ground/{groundSourceId}/{sha256}{.ext}
+ * Deterministic in the bytes (same convention as sources/{sha256}.pdf in
+ * routes/upload.ts), so re-uploading the same export's media overwrites
+ * the same objects — no S3 duplicates on re-upload.
+ */
+export function groundMediaKey(
+  groundSourceId: string,
+  originalname: string,
+  buffer: Buffer,
+): string {
+  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  const dotIndex = originalname.lastIndexOf(".");
+  const ext = dotIndex > 0 ? originalname.slice(dotIndex + 1).toLowerCase() : "";
+  return `ground/${groundSourceId}/${sha256}${ext ? `.${ext}` : ""}`;
+}
 
 export interface IngestResult {
   /** groundMessages rows created by this call. */
