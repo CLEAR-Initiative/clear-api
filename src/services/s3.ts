@@ -5,7 +5,12 @@
  * Generates presigned GET URLs at runtime when serving media.
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "node:crypto";
 import { env } from "../utils/env.js";
@@ -81,6 +86,31 @@ export async function uploadBufferToS3(
     }),
   );
   return key;
+}
+
+/**
+ * Does an object already exist under this key? Used by content-hash key
+ * schemes (same bytes → same key) to skip redundant PUTs and report
+ * dedupe status to callers.
+ */
+export async function s3ObjectExists(key: string): Promise<boolean> {
+  try {
+    await getClient().send(
+      new HeadObjectCommand({ Bucket: env.S3_BUCKET, Key: key }),
+    );
+    return true;
+  } catch (err: unknown) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      (("name" in err && (err as { name?: string }).name === "NotFound") ||
+        ("$metadata" in err &&
+          (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404))
+    ) {
+      return false;
+    }
+    throw err;
+  }
 }
 
 /**

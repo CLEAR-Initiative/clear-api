@@ -24,6 +24,7 @@ import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { groundUploadRouter } from "./routes/ground-upload.js";
 import { groundIngestRouter } from "./routes/ground-ingest.js";
+import { groundMediaRouter } from "./routes/ground-media.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { logieRouter } from "./routes/logie.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
@@ -73,6 +74,11 @@ app.use("/api/ground/upload", groundUploadRouter);
 // Live gateway ingest into the ground staging tier (JSON; machine auth,
 // consent-gated per group JID — see routes/ground-ingest.ts)
 app.use("/api/ground/ingest", groundIngestRouter);
+
+// Live gateway media byte upload into the ground staging tier
+// (multipart/form-data; machine auth, consent-gated — see
+// routes/ground-media.ts)
+app.use("/api/ground/media", groundMediaRouter);
 
 // External webhook receiver (GlitchTip → clear-api). Scoped
 // express.json() because the global GraphQL mount does its own — we
