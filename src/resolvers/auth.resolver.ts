@@ -4,6 +4,11 @@ import type { Context } from "../context.js";
 import { requireAuth } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
+import {
+  MIN_PASSWORD_LENGTH,
+  resetPasswordWithToken,
+  sendPasswordResetEmail,
+} from "../services/password-reset.js";
 
 const THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between verification requests
 
@@ -126,53 +131,11 @@ export const authResolvers = {
       args: { email: string },
       context: Context,
     ) => {
-      // Always return true to prevent email enumeration
-      const user = await context.prisma.user.findUnique({
-        where: { email: args.email },
-      });
-
-      if (!user) return true;
-
-      // Throttle check
-      const identifier = `password-reset:${args.email}`;
-      const recent = await context.prisma.verification.findFirst({
-        where: { identifier },
-        orderBy: { createdAt: "desc" },
-      });
-
-      if (recent?.createdAt && Date.now() - recent.createdAt.getTime() < THROTTLE_MS) {
-        // Silently succeed — don't reveal throttle to client
-        return true;
-      }
-
-      // Clean up old tokens
-      await context.prisma.verification.deleteMany({ where: { identifier } });
-
-      // Create reset token (1 hour expiry)
-      const token = randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-
-      await context.prisma.verification.create({
-        data: { identifier, value: token, expiresAt },
-      });
-
-      // Send password reset email
-      const resetUrl = `${env.FRONTEND_URL}/auth/reset-password?token=${token}`;
-      const emailContent = templates.passwordReset(user.name, resetUrl);
-
-      try {
-        const provider = await getEmailProvider();
-        await provider.send({
-          to: args.email,
-          subject: emailContent.subject,
-          textBody: emailContent.textBody,
-          htmlBody: emailContent.htmlBody,
-        });
-      } catch (error) {
-        console.error("[AUTH] Failed to send password reset email:", error instanceof Error ? error.message : error);
-        // Don't throw — silently fail to prevent info leakage
-      }
-
+      // Always resolves true regardless of whether the address exists,
+      // is throttled, or the mail send failed — see
+      // `sendPasswordResetEmail`. Never branch on the return value here
+      // or the enumeration guarantee is lost.
+      await sendPasswordResetEmail(context.prisma, args.email);
       return true;
     },
 
@@ -181,50 +144,28 @@ export const authResolvers = {
       args: { token: string; newPassword: string },
       context: Context,
     ) => {
-      if (args.newPassword.length < 8) {
-        throw new GraphQLError("Password must be at least 8 characters", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
+      const result = await resetPasswordWithToken(
+        context.prisma,
+        args.token,
+        args.newPassword,
+      );
+      if (result.ok) return true;
+
+      switch (result.reason) {
+        case "WEAK_PASSWORD":
+          throw new GraphQLError(
+            `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        case "INVALID_TOKEN":
+          throw new GraphQLError("Invalid or expired reset token", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        case "USER_NOT_FOUND":
+          throw new GraphQLError("User not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
       }
-
-      const verification = await context.prisma.verification.findFirst({
-        where: {
-          value: args.token,
-          identifier: { startsWith: "password-reset:" },
-          expiresAt: { gt: new Date() },
-        },
-      });
-
-      if (!verification) {
-        throw new GraphQLError("Invalid or expired reset token", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
-      }
-
-      const email = verification.identifier.replace("password-reset:", "");
-      const user = await context.prisma.user.findUnique({ where: { email } });
-
-      if (!user) {
-        throw new GraphQLError("User not found", {
-          extensions: { code: "NOT_FOUND" },
-        });
-      }
-
-      // Hash new password using Better Auth's built-in hasher
-      const { hashPassword } = await import("better-auth/crypto");
-      const hashedPassword = await hashPassword(args.newPassword);
-
-      await context.prisma.account.updateMany({
-        where: { userId: user.id, providerId: "credential" },
-        data: { password: hashedPassword },
-      });
-
-      // Clean up verification token
-      await context.prisma.verification.delete({
-        where: { id: verification.id },
-      });
-
-      return true;
     },
   },
 };
