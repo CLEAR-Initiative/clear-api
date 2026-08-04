@@ -183,6 +183,19 @@ describe("groundMessagesForClassification", () => {
       expect.objectContaining({ take: 2000 }),
     );
   });
+
+  it.each([[0], [-5]])(
+    "clamps a zero/negative limit (%i) to 1 — never reaches Prisma take raw",
+    async (limit) => {
+      const { prisma, findMany } = prismaWithRows([]);
+      await groundMessagesForClassification(
+        null,
+        { groundSourceId: "gs_1", limit },
+        buildContext(ADMIN, prisma),
+      );
+      expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 1 }));
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

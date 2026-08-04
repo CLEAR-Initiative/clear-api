@@ -44,6 +44,21 @@ const GROUND_LIFECYCLE_STATES = new Set([
 ]);
 
 /**
+ * Parse a date-string input into a Date, rejecting unparseable values
+ * with BAD_USER_INPUT instead of letting an Invalid Date reach Prisma
+ * (which would surface as an opaque internal error).
+ */
+function parseDateInput(value: string, field: string): Date {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new GraphQLError(`${field} must be a parseable date string`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return parsed;
+}
+
+/**
  * Promote an approved-public thread into the signals graph. Reuses the
  * existing createSignal resolver so promoted signals get the exact same
  * treatment as pipeline ones (dedupe on (sourceId, externalId), location
@@ -172,7 +187,9 @@ export const groundResolvers = {
       const rows = await context.prisma.groundMessages.findMany({
         where: { groundSourceId: args.groundSourceId },
         orderBy: { sentAt: "asc" },
-        take: Math.min(args.limit ?? 500, 2000),
+        // Clamp to [1, 2000]: zero/negative limits must never reach
+        // Prisma's `take` (negative take reverses the query).
+        take: Math.min(Math.max(args.limit ?? 500, 1), 2000),
       });
       return rows.map((m) => ({
         id: m.id,
@@ -248,7 +265,7 @@ export const groundResolvers = {
       const consent = {
         consentScope: input.consentScope ?? null,
         consentRecordedAt: input.consentRecordedAt
-          ? new Date(input.consentRecordedAt)
+          ? parseDateInput(input.consentRecordedAt, "consentRecordedAt")
           : null,
         consentRecordedBy: input.consentRecordedBy ?? null,
       };
@@ -324,7 +341,7 @@ export const groundResolvers = {
         kind: input.kind ?? existing.kind,
         consentScope: input.consentScope ?? existing.consentScope,
         consentRecordedAt: input.consentRecordedAt
-          ? new Date(input.consentRecordedAt)
+          ? parseDateInput(input.consentRecordedAt, "consentRecordedAt")
           : existing.consentRecordedAt,
         consentRecordedBy: input.consentRecordedBy ?? existing.consentRecordedBy,
       };

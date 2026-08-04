@@ -181,6 +181,21 @@ describe("createGroundSource", () => {
     },
   );
 
+  it("rejects an unparseable consentRecordedAt with BAD_USER_INPUT, not a Prisma error", async () => {
+    const { prisma, create } = sourcesPrisma();
+    await expect(
+      createGroundSource(
+        null,
+        { input: { ...VALID_GROUP_INPUT, consentRecordedAt: "not-a-date" } },
+        buildContext(ADMIN, prisma),
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("consentRecordedAt"),
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("creates a group source with a complete consent record", async () => {
     const { prisma, create } = sourcesPrisma();
     const result = await createGroundSource(
@@ -274,6 +289,21 @@ describe("updateGroundSource", () => {
         consentRecordedBy: "New Facilitator",
       },
     });
+  });
+
+  it("rejects an unparseable consentRecordedAt with BAD_USER_INPUT, not a Prisma error", async () => {
+    const { prisma, update } = sourcesPrisma(EXISTING);
+    await expect(
+      updateGroundSource(
+        null,
+        { id: "gs_1", input: { consentRecordedAt: "2026-13-99 not a date" } },
+        buildContext(ADMIN, prisma),
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("consentRecordedAt"),
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("re-validates the merged row: a legacy group row without consent cannot be renamed without supplying it", async () => {
