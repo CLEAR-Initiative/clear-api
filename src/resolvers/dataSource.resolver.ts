@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface CreateDataSourceInput {
   name: string;
@@ -20,11 +20,19 @@ interface UpdateDataSourceInput {
 
 export const dataSourceResolvers = {
   Query: {
-    dataSources: (_parent: unknown, _args: unknown, { prisma }: Context) => {
-      return prisma.dataSources.findMany();
+    // Registry metadata, not content: gated with bare requireAuth (like
+    // pipelineCountries) rather than requireContentReader, so every
+    // authenticated principal — session users of any role and M2M API
+    // keys regardless of the owning service account's role — keeps
+    // access. requireContentReader would silently break any service key
+    // whose account is ever moved to the `pipeline` role.
+    dataSources: (_parent: unknown, _args: unknown, context: Context) => {
+      requireAuth(context);
+      return context.prisma.dataSources.findMany();
     },
-    dataSource: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
-      return prisma.dataSources.findUnique({ where: { id: args.id } });
+    dataSource: (_parent: unknown, args: { id: string }, context: Context) => {
+      requireAuth(context);
+      return context.prisma.dataSources.findUnique({ where: { id: args.id } });
     },
   },
   Mutation: {
