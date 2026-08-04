@@ -373,9 +373,25 @@ export function composeDocsPage(opts: ComposeDocsPageOptions): string {
       min-width: 0;
     }
     .docs-content h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    .docs-content h2 { font-size: 1.3rem; margin: 2.5rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
-    .docs-content h2:first-of-type { border-top: none; padding-top: 0; }
-    .docs-content h3 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+    /*
+     * Equal inset: padding-top (== --docs-heading-inset) and margin-bottom.
+     * TOC scroll uses block:start on this box so padding fills the top of the
+     * viewport — previous section content stays scrolled out of view.
+     */
+    .docs-content h2 {
+      font-size: 1.3rem;
+      margin: 0 0 var(--docs-heading-inset, 2rem);
+      padding-top: var(--docs-heading-inset, 2rem);
+      border-top: 1px solid var(--color-border);
+      scroll-margin-top: 0;
+    }
+    .docs-content h2:first-of-type { border-top: none; }
+    .docs-content h3 {
+      font-size: 1.05rem;
+      margin: 0 0 var(--docs-heading-inset, 2rem);
+      padding-top: var(--docs-heading-inset, 2rem);
+      scroll-margin-top: 0;
+    }
     .docs-content p { color: var(--color-muted); margin-bottom: 0.75rem; }
     .docs-content ul { padding-left: 1.5rem; color: var(--color-muted); margin-bottom: 0.75rem; }
     .docs-content li { margin: 0.3rem 0; }

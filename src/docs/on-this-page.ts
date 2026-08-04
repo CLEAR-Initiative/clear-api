@@ -175,6 +175,32 @@ export function renderOnThisPageScript(): string {
       }, ms || 1200);
     }
 
+    /** Match CSS --docs-heading-inset (padding-top on headings), in px. */
+    function docsHeadingScrollMarginPx() {
+      var raw = getComputedStyle(document.documentElement)
+        .getPropertyValue('--docs-heading-inset')
+        .trim();
+      var n = parseFloat(raw);
+      if (!Number.isFinite(n) || n <= 0) return 32;
+      if (raw.indexOf('rem') !== -1) return n * 16;
+      return n;
+    }
+
+    /**
+     * Pin heading box to the top of the viewport. Heading padding-top provides
+     * the equal top inset so prior-section text is not visible above the title.
+     * Mobile (sheet mode) uses instant scroll — smooth travel on long docs pages
+     * takes ~1s and reads as misaligned mid-flight.
+     */
+    function scrollDocsHeadingIntoView(target) {
+      if (!target) return;
+      var behavior = isTocSheetMode() ? 'auto' : 'smooth';
+      // Defer one frame so sheet close / overflow unlock don't cancel the jump.
+      requestAnimationFrame(function() {
+        target.scrollIntoView({ behavior: behavior, block: 'start' });
+      });
+    }
+
     // Toggle TOC collapse/expand (desktop). Expanding focuses search.
     function toggleTocCollapse() {
       var toc = document.querySelector('.docs-toc');
@@ -342,12 +368,7 @@ export function renderOnThisPageScript(): string {
           closeTocSheet();
         }
 
-        var targetPosition = target.getBoundingClientRect().top + window.scrollY;
-        var offset = 100;
-        window.scrollTo({
-          top: targetPosition - offset,
-          behavior: 'smooth'
-        });
+        scrollDocsHeadingIntoView(target);
         history.pushState(null, '', href);
       }
       
@@ -524,7 +545,7 @@ export function renderOnThisPageScript(): string {
         if (tocIsNavigating) return;
         
         var scrollY = window.scrollY;
-        var offset = 150; // Offset from top of viewport
+        var offset = docsHeadingScrollMarginPx() + 8;
         
         var current = headings[0];
         var currentIndex = 0;
@@ -658,14 +679,7 @@ export function renderOnThisPageScript(): string {
           var id = href.slice(1);
           var target = document.getElementById(id);
           if (target) {
-            var targetPosition = target.getBoundingClientRect().top + window.scrollY;
-            var offset = 100;
-            
-            window.scrollTo({
-              top: targetPosition - offset,
-              behavior: 'smooth'
-            });
-            
+            scrollDocsHeadingIntoView(target);
             history.pushState(null, '', '#' + id);
           }
         });
@@ -696,6 +710,25 @@ export function renderOnThisPageScript(): string {
  */
 export function renderOnThisPageStyles(): string {
   return `
+    :root {
+      --docs-heading-inset: 2rem;
+    }
+    @media (max-width: 768px) {
+      :root {
+        --docs-heading-inset: 1.5rem;
+      }
+    }
+
+    /*
+     * TOC jumps use padding-top (not scroll-margin) so the top inset is the
+     * heading's own background — previous section content stays above the
+     * viewport. scroll-margin stays 0 so block:start pins the box to the top.
+     */
+    .docs-content h2[id],
+    .docs-content h3[id] {
+      scroll-margin-top: 0;
+    }
+
     /* On This Page as floating card (desktop) */
     .docs-toc {
       position: sticky;

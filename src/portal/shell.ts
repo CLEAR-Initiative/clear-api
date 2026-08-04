@@ -104,14 +104,16 @@ export function renderPortalShellStyles(): string {
       --color-surface-3: #141414;
       --color-border: #1f1f1f;
       --color-border-2: #222222;
-      --color-accent: #ff5c00;
-      --color-accent-hover: #ff6a1a;
-      --color-accent-soft: rgba(255, 92, 0, 0.1);
+      /* Darker burnt orange — legible on white labels; border is a deeper hue */
+      --color-accent: #c2410c;
+      --color-accent-hover: #d14a12;
+      --color-accent-border: #7c2d12;
+      --color-accent-soft: rgba(194, 65, 12, 0.12);
       --color-text: #ffffff;
       --color-muted: #999999;
       --color-label: #666666;
       --color-section: #444444;
-      --on-accent: #ffffff;
+      --on-accent: #fff7ed;
       --color-success: #22c55e;
       --color-danger: #ef4444;
       --color-warning: #f59e0b;

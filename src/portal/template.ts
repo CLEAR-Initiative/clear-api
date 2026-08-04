@@ -304,9 +304,16 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
 
     /* Buttons */
-    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-size: 0.875rem; transition: all 0.15s; font-family: var(--font); }
-    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
-    .btn-primary:hover { background: var(--color-accent-hover); }
+    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid transparent; font-weight: 600; cursor: pointer; font-size: 0.875rem; transition: background 0.15s, border-color 0.15s, color 0.15s; font-family: var(--font); }
+    .btn-primary {
+      background: var(--color-accent);
+      color: var(--on-accent);
+      border-color: var(--color-accent-border, #7c2d12);
+    }
+    .btn-primary:hover {
+      background: var(--color-accent-hover);
+      border-color: var(--color-accent);
+    }
     .btn-danger { background: transparent; border: 1px solid var(--color-danger); color: var(--color-danger); }
     .btn-danger:hover { background: var(--color-danger); color: #fff; }
     .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
