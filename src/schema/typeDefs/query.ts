@@ -394,7 +394,7 @@ export const queryTypeDef = gql`
     messages, oldest first, projected for the classification/threading
     worker — no private-tier sender identity. Returns ALL messages
     (classified and not) so one query powers both labelling and
-    incident-thread assembly."""
+    thread assembly (clustering staged Signals into threads)."""
     groundMessagesForClassification(
       groundSourceId: String!
       limit: Int = 500

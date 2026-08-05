@@ -497,7 +497,8 @@ export const mutationTypeDef = gql`
     ): Int!
 
     """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
-    threading with pipeline-built incident threads. Each input creates a
+    threading with pipeline-built threads (clusters of staged
+    Signals). Each input creates a
     thread (or, when \`threadId\` is set, APPENDS to that existing
     thread and updates its lifecycleState + title), re-points its
     messageIds at it, and deletes the placeholder threads that became

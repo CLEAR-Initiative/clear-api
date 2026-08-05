@@ -63,10 +63,11 @@ export const groundTypeDef = gql`
     retentionRule: String
   }
 
-  """An incident thread in the review queue. V1 threads are one-per-message
-  placeholders until the pipeline threading task clusters them. Lifecycle
-  state models the correction chain; review state is the human gate in
-  front of the signals graph."""
+  """A thread — a cluster of staged Signals — in the review queue. V1
+  threads are one-per-message placeholders until the pipeline threading
+  task clusters them. Lifecycle state models the correction chain; review
+  state is the human gate in front of the signals graph. An approved
+  thread is promoted and becomes a Signal."""
   type GroundThread {
     id: ID!
     groundSourceId: String!
@@ -92,7 +93,8 @@ export const groundTypeDef = gql`
     updatedAt: DateTime!
   }
 
-  """A canonical staged message parsed from a WhatsApp source. Text is
+  """A staged Signal: a canonical message parsed from a WhatsApp source,
+  held in the ground staging tier until its thread is reviewed. Text is
   phone-number-redacted at persistence. senderName is private-tier data and
   is scrubbed from anything promoted to the signals graph."""
   type GroundMessage {
@@ -137,7 +139,7 @@ export const groundTypeDef = gql`
     mediaUnmatched: [String!]!
   }
 
-  """Pipeline-facing projection of a staged message for the
+  """Pipeline-facing projection of a staged Signal for the
   classification/threading worker (clear-pipeline's
   classify_ground_messages task). Deliberately excludes senderName —
   the pipeline never sees private-tier identity, only the pseudonymous
@@ -166,11 +168,11 @@ export const groundTypeDef = gql`
     uncertaintyMarker: String
   }
 
-  """One incident thread produced by the pipeline threading task. Its
-  messageIds are re-pointed at the thread, replacing their V1
-  one-per-message placeholder threads. With \`threadId\` set, the input
-  APPENDS to that existing thread (cross-run threading: late
-  corrections/retractions join the incident they belong to) instead of
+  """One thread (a cluster of staged Signals) produced by the pipeline
+  threading task. Its messageIds are re-pointed at the thread, replacing
+  their V1 one-per-message placeholder threads. With \`threadId\` set,
+  the input APPENDS to that existing thread (cross-run threading: late
+  corrections/retractions join the thread they belong to) instead of
   creating a new one."""
   input GroundThreadUpsertInput {
     groundSourceId: String!
