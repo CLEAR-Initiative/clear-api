@@ -871,14 +871,22 @@ function isFresherMention(a: Mention, b: Mention): boolean {
   return a.reportId < b.reportId;
 }
 
-/** Echo dedup (ADR-0006 §5). Within a (location, time bucket), figures sharing a
- *  non-null `sourceId` — an authoritative API contributor and any report figures
- *  that cite that same source — are ONE observation; keep only the latest. This
- *  runs before the incident grouping so an echo can't sum alongside the API
- *  figure on additive fields. Uncited figures (null source) pass through. */
+/** Echo dedup (ADR-0006 §5). The echo §5 targets is a report figure that cites
+ *  the SAME source as an authoritative API contributor — the same observation
+ *  reaching us twice (once via the API, once quoted in a report). Collapse each
+ *  such group to its latest so the echo can't sum alongside the API figure on
+ *  additive fields.
+ *
+ *  Crucially, a group of same-source REPORT figures with NO API member is left
+ *  intact: one publisher's weekly sitrep routinely reports different phenomena
+ *  in the same bucket (e.g. `killed` from a flood AND from a conflict), which the
+ *  incident grouping must SUM per `eventKey`, not collapse. Keying the collapse
+ *  on `(location, bucket, sourceId)` alone silently undercounts every additive
+ *  field, so it is scoped to groups that actually contain an API figure to echo.
+ *  Uncited figures (null source) pass through untouched. */
 function collapseSourceEchoes(mentions: Mention[], bucket: TimeBucket): Mention[] {
-  const SEP = " ";
-  const bySource = new Map<string, Mention>();
+  const SEP = "\u0000";
+  const groups = new Map<string, Mention[]>();
   const passthrough: Mention[] = [];
   for (const m of mentions) {
     if (!m.sourceId) {
@@ -886,10 +894,22 @@ function collapseSourceEchoes(mentions: Mention[], bucket: TimeBucket): Mention[
       continue;
     }
     const key = `${m.locationId}${SEP}${bucketDate(m.incidentDate, bucket)}${SEP}${m.sourceId}`;
-    const cur = bySource.get(key);
-    if (cur === undefined || isFresherMention(m, cur)) bySource.set(key, m);
+    const g = groups.get(key);
+    if (g) g.push(m);
+    else groups.set(key, [m]);
   }
-  return [...passthrough, ...bySource.values()];
+  const out = [...passthrough];
+  for (const g of groups.values()) {
+    if (g.length > 1 && g.some((m) => m.isApi)) {
+      // Report echo(es) of an API figure — one observation, keep the latest.
+      out.push(g.reduce((best, m) => (isFresherMention(m, best) ? m : best)));
+    } else {
+      // No API figure to echo — distinct report figures (possibly different
+      // event types); the incident grouping dedups them per eventKey.
+      out.push(...g);
+    }
+  }
+  return out;
 }
 
 /** Aggregate a numeric field across the report set into a
@@ -1026,6 +1046,13 @@ function aggregateNumericField(
           pctDiff: Number((((value - api.value) / denom) * 100).toFixed(1)),
         };
         value = api.value; // authoritative figure wins the large disagreement
+        // The API figure now supplies the value, so it must also supply the
+        // grades: reset the winner set to it so reliability / intrinsic /
+        // confidence_mix / unit describe the authoritative figure rather than
+        // the report that just lost — otherwise the guard's success case scores
+        // the aggregate ~1.2/10 on the loser's credibility. (§7)
+        winners.length = 0;
+        winners.push(api);
       }
     }
   }
@@ -1161,13 +1188,33 @@ function isHapiTotalRow(r: Record<string, unknown>): boolean {
   return allish(r.gender) && allish(r.age_range) && r.min_age == null && r.max_age == null;
 }
 
-/** OCHA HPC sector code → our per-sector PIN label; "intersectoral" → overall. */
+/** HAPI refugees/returnees series carry one total-by-gender/age row PER
+ *  `population_group` (refugees: REF refugees / ASY asylum-seekers / OIP others
+ *  of concern), with NO population-group total. Summing across them inflates
+ *  `refugees` into a persons-of-concern count (and double-adds returnee types),
+ *  which — being `latest_state` — then beats fresh report figures and trips a
+ *  false §7 divergence. Restrict to the single group each label means.
+ *  ASSUMPTION: the exact enum values below are best-effort and must be VALIDATED
+ *  against live blobs; an unmatched value yields 0 (safe — reports drive it). */
+const HAPI_REFUGEE_POP_GROUP = "REF"; // refugees, not all persons of concern
+const HAPI_RETURNEE_POP_GROUP = "REF"; // returned refugees (pairs with refugees)
+
+function isHapiPopGroup(r: Record<string, unknown>, group: string): boolean {
+  return String(r.population_group ?? "").toUpperCase() === group;
+}
+
+/** OCHA HPC sector code → our per-sector PIN label; "intersectoral" → overall.
+ *  `FSC` (food security) is deliberately ABSENT: IPC/CH is the authoritative food
+ *  security classification, so `pin_food_security` is owned solely by the
+ *  `hapi_food_security` (IPC phase 3+) adapter. Mapping FSC here too made two
+ *  authoritative sources emit the same label, silently arbitrated by whichever
+ *  HAPI job ran last (valid_from) — and an API-vs-API disagreement produced no
+ *  §7 signal. One source per label removes that ambiguity (#115). */
 const HAPI_SECTOR_TO_PIN: Record<string, string> = {
   SHL: "pin_shelter",
   WSH: "pin_wash",
   PRO: "pin_protection",
   HEA: "pin_health",
-  FSC: "pin_food_security",
   EDU: "pin_education",
   INTERSECTORAL: "overall_pin",
   INT: "overall_pin",
@@ -1177,12 +1224,20 @@ const HAPI_SECTOR_TO_PIN: Record<string, string> = {
  *  types appear here; context overlays (3W, prices, seasonal, …) are absent, so
  *  they never feed a numeric aggregate.
  *
- *  HAPI SCHEMA ASSUMPTIONS — the needs / food-security adapters read HAPI v2
- *  disaggregation enums (`population_status="INN"` for in-need; IPC `ipc_phase`
- *  "3+"; sector codes above). These are best-effort per the HAPI v2 convention
- *  and should be VALIDATED against live blobs before launch. The failure mode is
- *  safe: an unrecognised enum yields no figure (no reconciliation) rather than a
- *  wrong total, so reports still drive the field. */
+ *  HAPI SCHEMA ASSUMPTIONS — several adapters read HAPI v2 disaggregation enums
+ *  that must be VALIDATED against live blobs before launch:
+ *    - needs: `population_status="INN"` (in-need); PIN summed per `sector_code`.
+ *    - food security: IPC `ipc_phase` "3+".
+ *    - refugees/returnees: `population_group` (see HAPI_REFUGEE/RETURNEE_POP_GROUP)
+ *      — summing across groups over-counts, so a single group is selected.
+ *  With the population-group filter in place, the failure mode is safe on all of
+ *  them: an unrecognised enum yields no figure (no reconciliation) rather than a
+ *  wrong total, so reports still drive the field.
+ *
+ *  STILL PARTIALLY UNGUARDED: `hapi_humanitarian_needs` sums the `sector_code`
+ *  total rows but does not filter the `category` / `disabled_marker` dimensions,
+ *  so a subset row could add on top of its own total — validate the needs blob
+ *  shape (a category total row) before relying on per-sector PIN. */
 const API_ADAPTERS: Record<string, ApiAdapter> = {
   // IOM DTM → IDP stock. The headline `population_displaced` is the latest
   // round's total IDPs present; `reporting_date` is its T₀.
@@ -1202,6 +1257,7 @@ const API_ADAPTERS: Record<string, ApiAdapter> = {
     extract: (d) => {
       const total = hapiRecords(d)
         .filter(isHapiTotalRow)
+        .filter((r) => isHapiPopGroup(r, HAPI_REFUGEE_POP_GROUP))
         .reduce((s, r) => s + (num(r.population) ?? 0), 0);
       return total > 0
         ? [{ label: "refugees", value: total, unit: "people", referenceDate: hapiRefDate(d) }]
@@ -1215,6 +1271,7 @@ const API_ADAPTERS: Record<string, ApiAdapter> = {
     extract: (d) => {
       const total = hapiRecords(d)
         .filter(isHapiTotalRow)
+        .filter((r) => isHapiPopGroup(r, HAPI_RETURNEE_POP_GROUP))
         .reduce((s, r) => s + (num(r.population) ?? 0), 0);
       return total > 0
         ? [{ label: "returnee_stock", value: total, unit: "people", referenceDate: hapiRefDate(d) }]

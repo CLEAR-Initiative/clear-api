@@ -1085,15 +1085,15 @@ describe("bias-aware selection — confidence override at graded reliability (#1
     // fires and the verified figure wins — NOT the lower one the overreport bias
     // would otherwise pick. (Guards the reviewer's concern that the override was
     // unreachable — true only at reliability 1, where source_id is unbackfilled.)
-    // Two DISTINCT graded sources — same reliability (3) but not echoes of each
-    // other, so ADR-0006 §5 source-echo dedup leaves both to compete.
-    const rel = new Map<string, number | null>([["src-a", 3], ["src-b", 3]]);
+    // Same source on both: §5 echo-dedup no longer collapses same-source REPORT
+    // figures (only report echoes of an API figure), so both still compete.
+    const rel = new Map<string, number | null>([["src-graded", 3]]);
     const rows = [
       row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
-        casualties: { killed: { total: nf(50, "verified", "people", "SD01", "src-a") } },
+        casualties: { killed: { total: nf(50, "verified", "people", "SD01", "src-graded") } },
       }, "2026-07-08T00:00:00Z"),
       row("r-unverified", "2026-07-09T00:00:00Z", ["SD01"], {
-        casualties: { killed: { total: nf(30, "unverified", "people", "SD01", "src-b") } },
+        casualties: { killed: { total: nf(30, "unverified", "people", "SD01", "src-graded") } },
       }, "2026-07-09T00:00:00Z"),
     ];
     const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
@@ -1116,6 +1116,29 @@ describe("bias-aware selection — confidence override at graded reliability (#1
     const f = aggregateReports(rows, "SD01", new Map())!.data.killed_total;
     if (!f || !("value" in f)) throw new Error("expected a numeric field");
     expect(f.value).toBe(30);
+  });
+});
+
+describe("echo dedup — same publisher across event types (#115)", () => {
+  it("two figures from one publisher on different event types SUM, not collapse", () => {
+    // Regression for the §5 over-collapse: keying echo-dedup on (loc, bucket,
+    // sourceId) alone merged a publisher's flood-killed and conflict-killed into
+    // one before the additive sum. With the collapse scoped to API-echo groups,
+    // these distinct event-type figures reach the incident grouping and sum.
+    const rel = new Map<string, number | null>([["ocha", 3]]);
+    const rows = [
+      row("r-flood", "2026-07-08T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(20, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-conflict", "2026-07-09T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(30, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(50);
   });
 });
 
@@ -1203,18 +1226,20 @@ describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
   const val = (m: Map<string, unknown[]>, label: string) =>
     (m.get(label)?.[0] as { value: number } | undefined)?.value;
 
-  it("refugees: sums the total-disaggregation population across asylum series", () => {
+  it("refugees: sums only the REF population_group totals, not persons of concern", () => {
     const m = buildApiMentions([lmv("hapi_refugees", { records: [
-      { gender: "all", age_range: "all", population: 312450, asylum_location_code: "TCD" },
-      { gender: "all", age_range: "all", population: 100000, asylum_location_code: "EGY" },
-      { gender: "female", age_range: "all", population: 999, asylum_location_code: "TCD" }, // breakdown — ignored
+      { gender: "all", age_range: "all", population_group: "REF", population: 312450, asylum_location_code: "TCD" },
+      { gender: "all", age_range: "all", population_group: "REF", population: 100000, asylum_location_code: "EGY" },
+      { gender: "all", age_range: "all", population_group: "ASY", population: 50000, asylum_location_code: "TCD" }, // asylum-seekers — excluded (#115)
+      { gender: "female", age_range: "all", population_group: "REF", population: 999, asylum_location_code: "TCD" }, // breakdown — ignored
     ] })], "SDN", orgs);
     expect(val(m, "refugees")).toBe(412450);
   });
 
-  it("returnees → returnee_stock", () => {
+  it("returnees → returnee_stock (REF group only)", () => {
     const m = buildApiMentions([lmv("hapi_returnees", { records: [
-      { gender: "all", age_range: "all", population: 250000 },
+      { gender: "all", age_range: "all", population_group: "REF", population: 250000 },
+      { gender: "all", age_range: "all", population_group: "IDP", population: 90000 }, // returned IDPs — excluded (#115)
     ] })], "SDN", orgs);
     expect(val(m, "returnee_stock")).toBe(250000);
   });
@@ -1285,6 +1310,10 @@ describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
     expect(f.divergence!.reportValue).toBe(30000);
     expect(f.divergence!.apiValue).toBe(52000);
     expect(f.divergence!.pctDiff).toBeCloseTo(-42.3, 1);
+    // #115: the API value must carry the API's grades, not the losing report's
+    // (reliability 1 / intrinsic 1.6) — else the aggregate scores ~1.2/10.
+    expect(f.reliability).toBe(3);
+    expect(f.intrinsic_credibility).toBeCloseTo(8.1, 1);
   });
 
   it("within 25% → no guard; the fresher report still wins, no signal", () => {

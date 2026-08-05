@@ -188,7 +188,21 @@ type PrismaReportDatapoint = Awaited<
   ReturnType<Context["prisma"]["reportDatapoint"]["findFirst"]>
 >;
 
-function toReportRow(row: NonNullable<PrismaReportDatapoint>): ReportRow {
+// The aggregator only reads these seven columns, so `toReportRow` accepts any
+// row carrying them — a full row OR a `select`-narrowed one (the current-total
+// path selects exactly these). Keeps the aggregator decoupled from Prisma.
+type ReportRowFields = Pick<
+  NonNullable<PrismaReportDatapoint>,
+  | "reportId"
+  | "publishedAt"
+  | "reportingPeriodStart"
+  | "reportingPeriodEnd"
+  | "locationIds"
+  | "data"
+  | "sourceId"
+>;
+
+function toReportRow(row: ReportRowFields): ReportRow {
   return {
     reportId: row.reportId,
     publishedAt: row.publishedAt,
@@ -426,23 +440,47 @@ export const datapointResolvers = {
     // runs only when a client selects the field. Meaningful only at the
     // country (A0-scoped) yearly/all tier; every other bucket returns null.
     estimatedCurrentTotals: async (
-      parent: { locationId?: string | null; windowKind?: string; schemaVersion?: string },
+      parent: {
+        locationId?: string | null;
+        windowKind?: string;
+        windowEnd?: Date | string | null;
+        schemaVersion?: string;
+      },
       _args: unknown,
       context: Context,
     ) => {
       requireContentReader(context);
       if (!parent.locationId) return null;
-      if (parent.windowKind !== "yearly" && parent.windowKind !== "all") return null;
+
+      const asOf = new Date();
+      // "Current" means as-of-now, so only attach the estimate to a bucket whose
+      // window still includes now — a historical bucket (a past year, month or
+      // week) must not carry a now-figure labelled as the period's number. The
+      // `all` tier (far-future windowEnd) always qualifies. This is gated on the
+      // window, NOT the window kind: the situation analysis consumes yearly AND
+      // monthly buckets (and weekly is a valid current scope too).
+      const windowEnd = parent.windowEnd ? new Date(parent.windowEnd) : null;
+      if (windowEnd && windowEnd.getTime() < asOf.getTime()) return null;
 
       const schemaVersion = parent.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
-      const asOf = new Date();
       // Bounded lookback: a "current" estimate only needs the latest stock and
       // the flows after it — both recent — so cap the scan rather than reading
-      // the whole back-catalogue for an all-time bucket. A stock older than the
-      // window is stale for a current estimate anyway.
+      // the whole back-catalogue. NOT free: like the on-demand path this fetches
+      // by window only, since a figure's scope needn't be in the report's named
+      // `locationIds` (#273), so a `locationIds` pre-filter would drop valid
+      // figures. `select` keeps the payload to the columns the aggregator reads.
       const since = new Date(asOf.getTime() - CURRENT_TOTAL_LOOKBACK_DAYS * DAY_MS);
       const rows = await context.prisma.reportDatapoint.findMany({
         where: { schemaVersion, reportingPeriodEnd: { gte: since, lte: asOf } },
+        select: {
+          reportId: true,
+          publishedAt: true,
+          reportingPeriodStart: true,
+          reportingPeriodEnd: true,
+          locationIds: true,
+          sourceId: true,
+          data: true,
+        },
       });
       // API stock (idp_stock / returnee_stock) is a current figure; asOf is now,
       // so the full current set is in-window — no window filter needed here.

@@ -149,10 +149,12 @@ export const datapointTypeDef = gql`
     reportCount: Int!
 
     """Estimated current totals — latest authoritative stock + the flows
-    reported after it (ADR-0006 §4). Computed only for country-level
-    \`yearly\`/\`all\` buckets; \`null\` on every other bucket. Resolved
-    lazily: the scan over \`report_datapoints\` runs only when this field is
-    selected, so it costs nothing on the common bucket read."""
+    reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
+    bucket's period: it is returned only for a bucket whose window still
+    includes now (the current year/month/week and the \`all\` tier) and is
+    \`null\` on any historical bucket, so a past-period row never carries a
+    present-day number. Resolved lazily — the bounded \`report_datapoints\` scan
+    runs only when this field is selected — but it is a real scan, not free."""
     estimatedCurrentTotals: CurrentTotals
 
     """Bitemporal validity — this snapshot's lifetime as a "current"

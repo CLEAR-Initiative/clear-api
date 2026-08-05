@@ -808,10 +808,15 @@ describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
   });
   const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
 
-  it("returns null for a non-country tier without scanning reports", async () => {
+  it("returns null for a historical bucket without scanning reports", async () => {
+    // A past-period bucket must not carry a now-figure (#115). The gate is the
+    // window, not the kind — a historical yearly/monthly/weekly all return null.
     const findMany = vi.fn();
     const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
-    const parent = { locationId: "SD01", windowKind: "weekly", schemaVersion: "v1" };
+    const parent = {
+      locationId: "SD0", windowKind: "yearly",
+      windowEnd: new Date(iso(400)), schemaVersion: "v1",
+    };
     expect(await estimatedCurrentTotals(parent, {}, ctx)).toBeNull();
     expect(findMany).not.toHaveBeenCalled();
   });
@@ -824,18 +829,22 @@ describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
-  it("computes the displacement total for a country yearly bucket", async () => {
-    const rows = [
-      { reportId: "s1", publishedAt: new Date(iso(40)), reportingPeriodStart: null,
-        reportingPeriodEnd: new Date(iso(35)), locationIds: ["SD0"], sourceId: null,
-        data: { displacement: { idp_stock: fig(100000, "SD0") } } },
-      { reportId: "f1", publishedAt: new Date(iso(10)), reportingPeriodStart: null,
-        reportingPeriodEnd: new Date(iso(8)), locationIds: ["SD0"], sourceId: null,
-        data: { displacement: { new_displacements: fig(3000, "SD0") } } },
-    ];
-    const findMany = vi.fn().mockResolvedValue(rows);
+  const dispRows = () => [
+    { reportId: "s1", publishedAt: new Date(iso(40)), reportingPeriodStart: null,
+      reportingPeriodEnd: new Date(iso(35)), locationIds: ["SD0"], sourceId: null,
+      data: { displacement: { idp_stock: fig(100000, "SD0") } } },
+    { reportId: "f1", publishedAt: new Date(iso(10)), reportingPeriodStart: null,
+      reportingPeriodEnd: new Date(iso(8)), locationIds: ["SD0"], sourceId: null,
+      data: { displacement: { new_displacements: fig(3000, "SD0") } } },
+  ];
+
+  it("computes the displacement total for a current yearly bucket", async () => {
+    const findMany = vi.fn().mockResolvedValue(dispRows());
     const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
-    const parent = { locationId: "SD0", windowKind: "yearly", schemaVersion: "v1" };
+    const parent = {
+      locationId: "SD0", windowKind: "yearly",
+      windowEnd: new Date(iso(-30)), schemaVersion: "v1",
+    };
     const result = (await estimatedCurrentTotals(parent, {}, ctx)) as {
       displacement: { stock: number; flowsSince: number; total: number } | null;
       returns: unknown;
@@ -846,5 +855,19 @@ describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
     expect(result.displacement!.flowsSince).toBe(3000);
     expect(result.displacement!.total).toBe(103000);
     expect(result.returns).toBeNull(); // no returnee_stock in scope
+  });
+
+  it("also computes for a current MONTHLY bucket (not gated by kind, #115)", async () => {
+    const findMany = vi.fn().mockResolvedValue(dispRows());
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = {
+      locationId: "SD0", windowKind: "monthly",
+      windowEnd: new Date(iso(-3)), schemaVersion: "v1",
+    };
+    const result = (await estimatedCurrentTotals(parent, {}, ctx)) as {
+      displacement: { total: number } | null;
+    };
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(result.displacement!.total).toBe(103000);
   });
 });
