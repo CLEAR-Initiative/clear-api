@@ -20,7 +20,14 @@ import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import {
   aggregateReports,
+  buildApiMentions,
+  buildApiReliabilityByOrg,
+  estimateCurrentTotalFromRows,
+  filterApiMentionsToWindow,
   finaliseReadTimeQuality,
+  API_RECONCILING_TYPES,
+  STOCK_FLOW_PAIRS,
+  type LocationMetadataRow,
   type ReportRow,
 } from "../services/datapoint-aggregation.js";
 
@@ -51,6 +58,13 @@ interface UpsertReportDatapointsInput {
 // this default moves in lockstep. ROLLOUT: flip only alongside (or after) that
 // re-extraction — version-less reads return null for v2 until v2 rows exist.
 const DEFAULT_SCHEMA_VERSION = "v2";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How far back the estimated-current-total scan reads report_datapoints
+ *  (ADR-0006 §4). Two years covers the current + prior reporting year — enough
+ *  to anchor on the latest stock and sum the flows since — without scanning the
+ *  entire back-catalogue on an all-time bucket read. */
+const CURRENT_TOTAL_LOOKBACK_DAYS = 730;
 
 /** Compute the four higher-tier windows a given `windowStart`
  *  belongs to. Used by the refresh mutation to enumerate all
@@ -174,7 +188,21 @@ type PrismaReportDatapoint = Awaited<
   ReturnType<Context["prisma"]["reportDatapoint"]["findFirst"]>
 >;
 
-function toReportRow(row: NonNullable<PrismaReportDatapoint>): ReportRow {
+// The aggregator only reads these seven columns, so `toReportRow` accepts any
+// row carrying them — a full row OR a `select`-narrowed one (the current-total
+// path selects exactly these). Keeps the aggregator decoupled from Prisma.
+type ReportRowFields = Pick<
+  NonNullable<PrismaReportDatapoint>,
+  | "reportId"
+  | "publishedAt"
+  | "reportingPeriodStart"
+  | "reportingPeriodEnd"
+  | "locationIds"
+  | "data"
+  | "sourceId"
+>;
+
+function toReportRow(row: ReportRowFields): ReportRow {
   return {
     reportId: row.reportId,
     publishedAt: row.publishedAt,
@@ -196,6 +224,64 @@ async function loadReliabilityBySource(
     select: { id: true, reliability: true },
   });
   return new Map(sources.map((s) => [s.id, s.reliability]));
+}
+
+/** Build the org→reliability map the API adapters need, from the `data_sources`
+ *  registry. Location-independent, so it's loaded once per aggregation run. */
+async function loadApiReliabilityByOrg(prisma: Context["prisma"]) {
+  const sources = await prisma.dataSources.findMany({
+    select: { id: true, name: true, synonyms: true, reliability: true },
+  });
+  return buildApiReliabilityByOrg(sources);
+}
+
+/** Current (`validTo IS NULL`) reconciling-type `location_metadata` for one
+ *  location → API mentions (ADR-0006). Empty for a null location. */
+async function loadApiMentions(
+  prisma: Context["prisma"],
+  locationId: string | null,
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+) {
+  if (!locationId) return buildApiMentions([], "", apiReliabilityByOrg);
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { type: true, data: true, validFrom: true },
+  });
+  const lmRows: LocationMetadataRow[] = rows.map((r) => ({
+    type: r.type,
+    data: r.data,
+    validFrom: r.validFrom,
+  }));
+  return buildApiMentions(lmRows, locationId, apiReliabilityByOrg);
+}
+
+/** Empty API-mention map, correctly typed (Mention is internal to the service). */
+const EMPTY_API_MENTIONS: ReturnType<typeof buildApiMentions> = new Map();
+
+/** Batch variant for the refresh path: current reconciling `location_metadata`
+ *  for many locations in one query → `Map<locationId, apiMentionsByLabel>`, built
+ *  once per location. Each bucket then window-filters its location's mentions. */
+async function loadApiMentionsByLocation(
+  prisma: Context["prisma"],
+  locationIds: string[],
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+): Promise<Map<string, ReturnType<typeof buildApiMentions>>> {
+  const map = new Map<string, ReturnType<typeof buildApiMentions>>();
+  if (locationIds.length === 0) return map;
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId: { in: locationIds }, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { locationId: true, type: true, data: true, validFrom: true },
+  });
+  const byLoc = new Map<string, LocationMetadataRow[]>();
+  for (const r of rows) {
+    const list = byLoc.get(r.locationId) ?? [];
+    list.push({ type: r.type, data: r.data, validFrom: r.validFrom });
+    byLoc.set(r.locationId, list);
+  }
+  for (const [loc, lmRows] of byLoc) {
+    map.set(loc, buildApiMentions(lmRows, loc, apiReliabilityByOrg));
+  }
+  return map;
 }
 
 export const datapointResolvers = {
@@ -298,13 +384,23 @@ export const datapointResolvers = {
           },
         },
       });
-      if (rows.length === 0) return null;
+      // Authoritative location_metadata for this scope, gated to the window
+      // (ADR-0006). Loaded even when there are no reports — the API figure can
+      // gap-fill the bucket on its own.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = filterApiMentionsToWindow(
+        await loadApiMentions(context.prisma, args.locationId ?? null, apiOrgMap),
+        args.windowStart,
+        args.windowEnd,
+      );
+      if (rows.length === 0 && apiMentions.size === 0) return null;
 
       const reliabilityBySource = await loadReliabilityBySource(context.prisma);
       const result = aggregateReports(
         rows.map(toReportRow),
         args.locationId ?? null,
         reliabilityBySource,
+        apiMentions,
       );
       if (!result) return null;
 
@@ -335,6 +431,77 @@ export const datapointResolvers = {
         computedAt: new Date(),
         onDemand: true,
       };
+    },
+  },
+
+  AggregatedDatapoint: {
+    // Estimated current total (ADR-0006 §4): latest authoritative stock + flows
+    // reported after its reference date T₀. Resolved lazily — the report scan
+    // runs only when a client selects the field. Meaningful only at the
+    // country (A0-scoped) yearly/all tier; every other bucket returns null.
+    estimatedCurrentTotals: async (
+      parent: {
+        locationId?: string | null;
+        windowKind?: string;
+        windowEnd?: Date | string | null;
+        schemaVersion?: string;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      if (!parent.locationId) return null;
+
+      const asOf = new Date();
+      // "Current" means as-of-now, so only attach the estimate to a bucket whose
+      // window still includes now — a historical bucket (a past year, month or
+      // week) must not carry a now-figure labelled as the period's number. The
+      // `all` tier (far-future windowEnd) always qualifies. This is gated on the
+      // window, NOT the window kind: the situation analysis consumes yearly AND
+      // monthly buckets (and weekly is a valid current scope too).
+      const windowEnd = parent.windowEnd ? new Date(parent.windowEnd) : null;
+      if (windowEnd && windowEnd.getTime() < asOf.getTime()) return null;
+
+      const schemaVersion = parent.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
+      // Bounded lookback: a "current" estimate only needs the latest stock and
+      // the flows after it — both recent — so cap the scan rather than reading
+      // the whole back-catalogue. NOT free: like the on-demand path this fetches
+      // by window only, since a figure's scope needn't be in the report's named
+      // `locationIds` (#273), so a `locationIds` pre-filter would drop valid
+      // figures. `select` keeps the payload to the columns the aggregator reads.
+      const since = new Date(asOf.getTime() - CURRENT_TOTAL_LOOKBACK_DAYS * DAY_MS);
+      const rows = await context.prisma.reportDatapoint.findMany({
+        where: { schemaVersion, reportingPeriodEnd: { gte: since, lte: asOf } },
+        select: {
+          reportId: true,
+          publishedAt: true,
+          reportingPeriodStart: true,
+          reportingPeriodEnd: true,
+          locationIds: true,
+          sourceId: true,
+          data: true,
+        },
+      });
+      // API stock (idp_stock / returnee_stock) is a current figure; asOf is now,
+      // so the full current set is in-window — no window filter needed here.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = await loadApiMentions(context.prisma, parent.locationId, apiOrgMap);
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
+      const reportRows = rows.map(toReportRow);
+
+      const totals: Record<string, unknown> = {};
+      for (const pair of STOCK_FLOW_PAIRS) {
+        totals[pair.metric] = estimateCurrentTotalFromRows(
+          reportRows,
+          apiMentions,
+          parent.locationId,
+          pair.stockLabel,
+          pair.flowLabel,
+          reliabilityBySource,
+          asOf,
+        );
+      }
+      return totals;
     },
   },
 
@@ -458,6 +625,17 @@ export const datapointResolvers = {
         [...allScopeIds],
       );
 
+      // API contributors (ADR-0006): current location_metadata for every scope
+      // location, built once and window-filtered per bucket below. (Buckets are
+      // report-scoped, so a location with API data but no report figures is
+      // reconciled on the on-demand read path, not pre-computed here.)
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentionsByLocation = await loadApiMentionsByLocation(
+        context.prisma,
+        [...allScopeIds],
+        apiOrgMap,
+      );
+
       // ── 3. Group reports into the four bucket tiers ──────────────
       // Bucket key strings dedupe transparently so a report tagged
       // with three A2s contributes to three weekly-A2 buckets but
@@ -533,7 +711,12 @@ export const datapointResolvers = {
       const now = new Date();
 
       for (const { key, rows } of buckets.values()) {
-        const agg = aggregateReports(rows, key.locationId, reliabilityBySource);
+        const apiMentions = filterApiMentionsToWindow(
+          (key.locationId && apiMentionsByLocation.get(key.locationId)) || EMPTY_API_MENTIONS,
+          key.windowStart,
+          key.windowEnd,
+        );
+        const agg = aggregateReports(rows, key.locationId, reliabilityBySource, apiMentions);
         if (!agg) continue;
 
         // Persist the finalised headline score (0–10, Recency folded in at

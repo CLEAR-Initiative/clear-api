@@ -22,8 +22,12 @@ import { describe, it, expect } from "vitest";
 
 import {
   aggregateReports,
+  buildApiMentions,
+  estimateCurrentTotalFromRows,
+  estimateStockFlowTotal,
   finaliseReadTimeQuality,
   FIELD_RULES,
+  type LocationMetadataRow,
   type ReportRow,
 } from "../../src/services/datapoint-aggregation.js";
 
@@ -1081,6 +1085,8 @@ describe("bias-aware selection — confidence override at graded reliability (#1
     // fires and the verified figure wins — NOT the lower one the overreport bias
     // would otherwise pick. (Guards the reviewer's concern that the override was
     // unreachable — true only at reliability 1, where source_id is unbackfilled.)
+    // Same source on both: §5 echo-dedup no longer collapses same-source REPORT
+    // figures (only report echoes of an API figure), so both still compete.
     const rel = new Map<string, number | null>([["src-graded", 3]]);
     const rows = [
       row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
@@ -1110,5 +1116,300 @@ describe("bias-aware selection — confidence override at graded reliability (#1
     const f = aggregateReports(rows, "SD01", new Map())!.data.killed_total;
     if (!f || !("value" in f)) throw new Error("expected a numeric field");
     expect(f.value).toBe(30);
+  });
+});
+
+describe("echo dedup — same publisher across event types (#115)", () => {
+  it("two figures from one publisher on different event types SUM, not collapse", () => {
+    // Regression for the §5 over-collapse: keying echo-dedup on (loc, bucket,
+    // sourceId) alone merged a publisher's flood-killed and conflict-killed into
+    // one before the additive sum. With the collapse scoped to API-echo groups,
+    // these distinct event-type figures reach the incident grouping and sum.
+    const rel = new Map<string, number | null>([["ocha", 3]]);
+    const rows = [
+      row("r-flood", "2026-07-08T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(20, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-conflict", "2026-07-09T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(30, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(50);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// LM P4a — location_metadata reconciliation (ADR-0006)
+// ────────────────────────────────────────────────────────────────────
+
+describe("buildApiMentions — DTM → idp_stock adapter (ADR-0006 §3/§8/§9)", () => {
+  const orgMap = new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]);
+
+  it("adapts a DTM blob into an idp_stock mention with the deterministic profile", () => {
+    const rows: LocationMetadataRow[] = [{
+      type: "iom_dtm_displacement",
+      validFrom: new Date("2026-07-05T00:00:00Z"),
+      data: { population_displaced: 52000, reporting_date: "2026-07-01T00:00:00Z" },
+    }];
+    const byLabel = buildApiMentions(rows, "SD01", orgMap);
+    const idp = byLabel.get("idp_stock")!;
+    expect(idp).toHaveLength(1);
+    const m = idp[0]! as unknown as {
+      value: number; reliability: number; confidence: string; locationId: string;
+      intrinsicCredibility: number; publishedAt: Date; incidentDate: Date; reportId: string;
+    };
+    expect(m.value).toBe(52000);
+    expect(m.reliability).toBe(3); // from the org map
+    expect(m.confidence).toBe("reported"); // deterministic directness (§8)
+    expect(m.locationId).toBe("SD01");
+    // deterministic credibility: reported 2.0×0.8=1.6 + six met 6.5 = 8.1
+    expect(m.intrinsicCredibility).toBeCloseTo(8.1, 3);
+    expect(m.publishedAt.toISOString()).toBe("2026-07-05T00:00:00.000Z"); // recency = valid_from (§9)
+    expect(m.incidentDate.toISOString()).toBe("2026-07-01T00:00:00.000Z"); // T₀ = reporting_date
+    expect(m.reportId).toContain("api:src-dtm"); // synthetic provenance/dedup id
+  });
+
+  it("ignores context-overlay types and unknown reliabilities → 1", () => {
+    const rows: LocationMetadataRow[] = [
+      { type: "ocha_3w", validFrom: new Date("2026-07-05T00:00:00Z"), data: {} }, // overlay, no adapter
+      { type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+        data: { population_displaced: 10, reporting_date: "2026-07-01T00:00:00Z" } },
+    ];
+    const byLabel = buildApiMentions(rows, "SD01", new Map()); // no org → reliability 1
+    expect(byLabel.has("ocha_3w")).toBe(false);
+    expect((byLabel.get("idp_stock")![0]! as unknown as { reliability: number }).reliability).toBe(1);
+  });
+});
+
+describe("aggregateReports — reconciliation (ADR-0006 §2)", () => {
+  const orgMap = new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]);
+  const dtm = (value: number, validFrom: string, refDate: string) =>
+    buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date(validFrom),
+         data: { population_displaced: value, reporting_date: refDate } }],
+      "SD01", orgMap,
+    );
+
+  it("gap-fills a bucket with no reports from the authoritative API figure", () => {
+    const result = aggregateReports([], "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-07-01T00:00:00Z"));
+    expect(result).not.toBeNull();
+    const f = result!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000);
+    expect(result!.reportCount).toBe(0); // no reports — API-sourced
+  });
+
+  it("freshens a stale report — the daily API figure (newer valid_from) wins idp_stock", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(48000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    // Same month bucket; API valid_from (07-05) is fresher than the report (07-02).
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000); // idp_stock is latest-wins → freshest (API) wins
+    expect(f.contributing_report_ids.some((id) => id.startsWith("api:"))).toBe(true);
+  });
+});
+
+describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
+  const orgs = new Map([
+    ["unhcr", { id: "src-unhcr", reliability: 3 }],
+    ["ocha", { id: "src-ocha", reliability: 3 }],
+    ["ipc", { id: "src-ipc", reliability: 3 }],
+  ]);
+  const lmv = (type: string, data: Record<string, unknown>): LocationMetadataRow =>
+    ({ type, data, validFrom: new Date("2026-07-08T00:00:00Z") });
+  const val = (m: Map<string, unknown[]>, label: string) =>
+    (m.get(label)?.[0] as { value: number } | undefined)?.value;
+
+  it("refugees: sums only the REF population_group totals, not persons of concern", () => {
+    const m = buildApiMentions([lmv("hapi_refugees", { records: [
+      { gender: "all", age_range: "all", population_group: "REF", population: 312450, asylum_location_code: "TCD" },
+      { gender: "all", age_range: "all", population_group: "REF", population: 100000, asylum_location_code: "EGY" },
+      { gender: "all", age_range: "all", population_group: "ASY", population: 50000, asylum_location_code: "TCD" }, // asylum-seekers — excluded (#115)
+      { gender: "female", age_range: "all", population_group: "REF", population: 999, asylum_location_code: "TCD" }, // breakdown — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "refugees")).toBe(412450);
+  });
+
+  it("returnees → returnee_stock (REF group only)", () => {
+    const m = buildApiMentions([lmv("hapi_returnees", { records: [
+      { gender: "all", age_range: "all", population_group: "REF", population: 250000 },
+      { gender: "all", age_range: "all", population_group: "IDP", population: 90000 }, // returned IDPs — excluded (#115)
+    ] })], "SDN", orgs);
+    expect(val(m, "returnee_stock")).toBe(250000);
+  });
+
+  it("funding: requirements_usd → required, funding_usd → received", () => {
+    const m = buildApiMentions([lmv("hapi_funding", { records: [
+      { requirements_usd: 4.2e9, funding_usd: 1.1e9, appeal_code: "H" },
+    ] })], "SDN", orgs);
+    expect(val(m, "funding_required_usd")).toBe(4.2e9);
+    expect(val(m, "funding_received_usd")).toBe(1.1e9);
+  });
+
+  it("humanitarian_needs: per-sector + overall in-need totals (INN, un-disaggregated)", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "PRO", population_status: "INN", gender: "all", age_range: "all", population: 5_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", gender: "all", age_range: "all", population: 24_000_000 },
+      { sector_code: "PRO", population_status: "TGT", gender: "all", age_range: "all", population: 999 }, // targeted — ignored
+      { sector_code: "PRO", population_status: "INN", gender: "male", age_range: "all", population: 888 }, // breakdown — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "pin_protection")).toBe(5_000_000);
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("food_security: IPC current phase-3+ population", () => {
+    const m = buildApiMentions([lmv("hapi_food_security", { records: [
+      { ipc_type: "current", ipc_phase: "3+", population: 20_000_000 },
+      { ipc_type: "projected", ipc_phase: "3+", population: 99 }, // not current — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "pin_food_security")).toBe(20_000_000);
+  });
+});
+
+describe("aggregateReports — echo dedup (ADR-0006 §5)", () => {
+  it("collapses a report echo of the same API source, not summing (funding_received)", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      needs_and_funding: { overall_funding_received_usd: nf(1.1e9, "reported", "USD", undefined, "src-ocha") },
+    }, "2026-07-05T00:00:00Z")];
+    const api = buildApiMentions(
+      [{ type: "hapi_funding", validFrom: new Date("2026-07-08T00:00:00Z"),
+         data: { records: [{ requirements_usd: 4.2e9, funding_usd: 1.15e9, appeal_code: "H" }],
+                 reference_period_end: "2026-07-05T00:00:00Z" } }],
+      "SD01", new Map([["ocha", { id: "src-ocha", reliability: 3 }]]),
+    );
+    const f = aggregateReports(rows, "SD01", new Map(), api)!.data.funding_received_usd;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // Same source id ("src-ocha") → one observation → latest (API 1.15e9), NOT 2.25e9.
+    expect(f.value).toBe(1.15e9);
+  });
+});
+
+describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
+  const dtm = (value: number, validFrom: string, refDate: string) =>
+    buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date(validFrom),
+         data: { population_displaced: value, reporting_date: refDate } }],
+      "SD01", new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]),
+    );
+
+  it("a report figure >25% off the API figure loses to it, with a signal", () => {
+    // Report is fresher (would win latest-wins) but 42% below the DTM figure.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(30000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000); // authoritative API wins the large disagreement
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.reportValue).toBe(30000);
+    expect(f.divergence!.apiValue).toBe(52000);
+    expect(f.divergence!.pctDiff).toBeCloseTo(-42.3, 1);
+    // #115: the API value must carry the API's grades, not the losing report's
+    // (reliability 1 / intrinsic 1.6) — else the aggregate scores ~1.2/10.
+    expect(f.reliability).toBe(3);
+    expect(f.intrinsic_credibility).toBeCloseTo(8.1, 1);
+  });
+
+  it("within 25% → no guard; the fresher report still wins, no signal", () => {
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(50000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(50000); // fresher report wins (3.8% < 25%)
+    expect(f.divergence == null).toBe(true);
+  });
+});
+
+describe("estimateStockFlowTotal — current total (ADR-0006 §4)", () => {
+  const d = (s: string) => new Date(s);
+
+  it("adds only flows whose as-of is after the stock's T₀", () => {
+    const est = estimateStockFlowTotal(
+      { value: 100000, t0: d("2026-06-30T00:00:00Z") },
+      [
+        { value: 5000, asOf: d("2026-06-15T00:00:00Z") }, // before T₀ — already in stock
+        { value: 3000, asOf: d("2026-07-05T00:00:00Z") }, // after T₀ — accrues
+        { value: 2000, asOf: d("2026-07-12T00:00:00Z") }, // after T₀ — accrues
+      ],
+    );
+    expect(est).not.toBeNull();
+    expect(est!.stock).toBe(100000);
+    expect(est!.flowsSince).toBe(5000);
+    expect(est!.total).toBe(105000);
+    expect(est!.flowCount).toBe(2);
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("a flow exactly at T₀ is treated as already embedded (strict >)", () => {
+    const est = estimateStockFlowTotal(
+      { value: 100000, t0: d("2026-06-30T00:00:00Z") },
+      [{ value: 5000, asOf: d("2026-06-30T00:00:00Z") }],
+    );
+    expect(est!.total).toBe(100000);
+    expect(est!.flowCount).toBe(0);
+  });
+
+  it("no stock anchor → null (nothing to accrue onto)", () => {
+    expect(estimateStockFlowTotal(null, [{ value: 5000, asOf: d("2026-07-05T00:00:00Z") }])).toBeNull();
+  });
+
+  it("no forward flows → total equals the stock", () => {
+    const est = estimateStockFlowTotal({ value: 80000, t0: d("2026-06-30T00:00:00Z") }, []);
+    expect(est!.total).toBe(80000);
+    expect(est!.flowsSince).toBe(0);
+  });
+});
+
+describe("estimateCurrentTotalFromRows — current total from rows (ADR-0006 §4)", () => {
+  const asOf = new Date("2026-08-01T00:00:00Z");
+  const rel = new Map<string, number | null>();
+
+  it("latest stock + only the flows dated after its T₀", () => {
+    const rows = [
+      row("s1", "2026-07-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z"),
+      row("f0", "2026-06-20T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(5000) } }, "2026-06-15T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+      row("f2", "2026-07-23T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(2000) } }, "2026-07-22T00:00:00Z"),
+    ];
+    const est = estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est).not.toBeNull();
+    expect(est!.stock).toBe(100000);
+    expect(est!.flowsSince).toBe(5000); // 3000 + 2000; the 5000 before T₀ is dropped
+    expect(est!.total).toBe(105000);
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("no stock in scope → null (nothing to anchor)", () => {
+    const rows = [row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("out-of-scope figures are ignored (exact scope match)", () => {
+    const rows = [row("s1", "2026-07-01T00:00:00Z", ["SD99"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("a fresher API stock anchors over an older report stock", () => {
+    const rows = [
+      row("s1", "2026-05-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(80000) } }, "2026-04-30T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+    ];
+    const api = buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+         data: { population_displaced: 120000, reporting_date: "2026-06-30T00:00:00Z" } }],
+      "SD01", new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]),
+    );
+    const est = estimateCurrentTotalFromRows(rows, api, "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est!.stock).toBe(120000); // API ref 2026-06-30 beats report ref 2026-04-30
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+    expect(est!.flowsSince).toBe(3000);
+    expect(est!.total).toBe(123000);
   });
 });

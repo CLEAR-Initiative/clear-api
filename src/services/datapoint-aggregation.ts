@@ -483,6 +483,17 @@ export interface QualityEnvelope {
    *  Surfaces the otherwise-silent suppression the week bucket makes routine —
    *  a spike here flags reports whose values didn't reach the aggregate. */
   suppressed_count: number;
+  /** ADR-0006 §7 early-warning signal: set when a report figure diverged from the
+   *  authoritative API figure by more than the threshold (so the API figure won).
+   *  Surfaces the disagreement — a possible emerging event or extraction error —
+   *  even though the aggregate uses the API value. Null/absent when in agreement
+   *  or when there is no API contributor. */
+  divergence?: {
+    reportValue: number;
+    apiValue: number;
+    /** Signed % difference of the report vs the API figure. */
+    pctDiff: number;
+  } | null;
 }
 
 /** Set-union output for label-type fields (event_types, clusters). */
@@ -570,6 +581,14 @@ interface Mention {
   /** Time-invariant information credibility (0–8.5): directness + the six
    *  document-level criteria. Recency is added at read time. */
   intrinsicCredibility: number;
+  /** Effective source id (the figure's cited `source_id`, else the report's
+   *  publisher; the API source for a location_metadata contributor). Drives the
+   *  ADR-0006 §5 echo-dedup: a report figure citing the same source as an API
+   *  contributor is one observation, not two. Null when uncited/unpublished. */
+  sourceId: string | null;
+  /** True for an authoritative `location_metadata` contributor (ADR-0006). Used
+   *  by the divergence guard (§7) to distinguish API from report figures. */
+  isApi: boolean;
   // Canonicalised, sorted event-type set for the report this mention
   // came from, joined into one string. Part of the incident key: two
   // reports at the same location and time bucket but describing
@@ -694,6 +713,8 @@ function extractNumericMentions(
       confidence,
       reliability,
       intrinsicCredibility,
+      sourceId: figureSourceId ?? row.sourceId ?? null,
+      isApi: false,
       eventKey,
     },
   ];
@@ -840,6 +861,57 @@ function computeQuality(
   return { qualityScore, confidenceMix };
 }
 
+/** "Latest underlying data" (ADR-0006 §5): newer incident/reference date wins,
+ *  then newer publication, then the lexically-smaller reportId for stability. */
+function isFresherMention(a: Mention, b: Mention): boolean {
+  const di = a.incidentDate.getTime() - b.incidentDate.getTime();
+  if (di !== 0) return di > 0;
+  const dp = a.publishedAt.getTime() - b.publishedAt.getTime();
+  if (dp !== 0) return dp > 0;
+  return a.reportId < b.reportId;
+}
+
+/** Echo dedup (ADR-0006 §5). The echo §5 targets is a report figure that cites
+ *  the SAME source as an authoritative API contributor — the same observation
+ *  reaching us twice (once via the API, once quoted in a report). Collapse each
+ *  such group to its latest so the echo can't sum alongside the API figure on
+ *  additive fields.
+ *
+ *  Crucially, a group of same-source REPORT figures with NO API member is left
+ *  intact: one publisher's weekly sitrep routinely reports different phenomena
+ *  in the same bucket (e.g. `killed` from a flood AND from a conflict), which the
+ *  incident grouping must SUM per `eventKey`, not collapse. Keying the collapse
+ *  on `(location, bucket, sourceId)` alone silently undercounts every additive
+ *  field, so it is scoped to groups that actually contain an API figure to echo.
+ *  Uncited figures (null source) pass through untouched. */
+function collapseSourceEchoes(mentions: Mention[], bucket: TimeBucket): Mention[] {
+  const SEP = "\u0000";
+  const groups = new Map<string, Mention[]>();
+  const passthrough: Mention[] = [];
+  for (const m of mentions) {
+    if (!m.sourceId) {
+      passthrough.push(m);
+      continue;
+    }
+    const key = `${m.locationId}${SEP}${bucketDate(m.incidentDate, bucket)}${SEP}${m.sourceId}`;
+    const g = groups.get(key);
+    if (g) g.push(m);
+    else groups.set(key, [m]);
+  }
+  const out = [...passthrough];
+  for (const g of groups.values()) {
+    if (g.length > 1 && g.some((m) => m.isApi)) {
+      // Report echo(es) of an API figure — one observation, keep the latest.
+      out.push(g.reduce((best, m) => (isFresherMention(m, best) ? m : best)));
+    } else {
+      // No API figure to echo — distinct report figures (possibly different
+      // event types); the incident grouping dedups them per eventKey.
+      out.push(...g);
+    }
+  }
+  return out;
+}
+
 /** Aggregate a numeric field across the report set into a
  *  QualityEnvelope. Runs the two-stage flow from §6.4.7:
  *  1. Group mentions by incident key (location + date bucket)
@@ -850,10 +922,14 @@ function aggregateNumericField(
   rule: FieldRule,
   locationScope: string | null,
   reliabilityBySource: Map<string, number | null>,
+  apiMentions: Mention[] = [],
 ): QualityEnvelope | null {
-  const mentions: Mention[] = rows.flatMap((r) =>
-    extractNumericMentions(r, rule, reliabilityBySource),
-  );
+  // Authoritative location_metadata figures (ADR-0006) join the report figures
+  // as ordinary high-quality mentions and compete under the same selection.
+  const mentions: Mention[] = [
+    ...rows.flatMap((r) => extractNumericMentions(r, rule, reliabilityBySource)),
+    ...apiMentions,
+  ];
 
   // Keep only the figures scoped to this bucket's location. Every mention
   // now carries its Figure Scope as `locationId`, so this is an exact
@@ -866,6 +942,13 @@ function aggregateNumericField(
   if (scoped.length === 0) return null;
 
   const bucket = rule.timeBucket ?? "day";
+
+  // Echo dedup (ADR-0006 §5): within a (location, bucket), figures that cite the
+  // SAME source — an authoritative API contributor and any report echoes of it —
+  // are one observation. Collapse them to the latest BEFORE the incident grouping
+  // so an echo can't sum alongside the API figure on additive fields. Provenance
+  // (contributing ids, freshness, suppressed_count) below still spans full `scoped`.
+  const deduped = collapseSourceEchoes(scoped, bucket);
 
   // Group by incident key: (figure scope location, time bucket, event-type
   // set) — the shape §6.4.1 always specified, now reachable because each
@@ -886,7 +969,7 @@ function aggregateNumericField(
   // Track, per (location, bucket) base, which event-key groups exist, so
   // an untyped mention can be merged into a lone typed sibling below.
   const groupsByBase = new Map<string, Set<string>>();
-  for (const m of scoped) {
+  for (const m of deduped) {
     const base = `${m.locationId}${SEP}${bucketDate(m.incidentDate, bucket)}`;
     const key = `${base}${SEP}${m.eventKey}`;
     const bucketList = groups.get(key);
@@ -945,6 +1028,35 @@ function aggregateNumericField(
       return null;
   }
 
+  // Divergence guard (ADR-0006 §7). For a point-in-time field, if the winning
+  // value came from reports but disagrees with the authoritative API figure by
+  // more than the threshold, the API figure wins and the gap is surfaced as an
+  // early-warning signal (possible emerging event or extraction error). Additive
+  // fields are protected by source echo-dedup (§5), so the guard is state-only.
+  let divergence: QualityEnvelope["divergence"] = null;
+  if (rule.kind === "latest_state") {
+    const apiFigs = scoped.filter((m) => m.isApi);
+    if (apiFigs.length > 0) {
+      const api = latestByPublishedAt(apiFigs);
+      const denom = Math.abs(api.value) || 1;
+      if (value !== api.value && Math.abs(value - api.value) / denom > DIVERGENCE_THRESHOLD) {
+        divergence = {
+          reportValue: value,
+          apiValue: api.value,
+          pctDiff: Number((((value - api.value) / denom) * 100).toFixed(1)),
+        };
+        value = api.value; // authoritative figure wins the large disagreement
+        // The API figure now supplies the value, so it must also supply the
+        // grades: reset the winner set to it so reliability / intrinsic /
+        // confidence_mix / unit describe the authoritative figure rather than
+        // the report that just lost — otherwise the guard's success case scores
+        // the aggregate ~1.2/10 on the loser's credibility. (§7)
+        winners.length = 0;
+        winners.push(api);
+      }
+    }
+  }
+
   // Provenance covers EVERY report that fed the figure — winners AND the
   // deduped losers — per §6.4.5(A)/(B) and PRD #268 ("every report contributing
   // to a figure appears in contributing_report_ids"). quality_score stays
@@ -974,6 +1086,7 @@ function aggregateNumericField(
     oldest_report_at: new Date(Math.min(...publishedAts)).toISOString(),
     contributing_report_ids: contributing,
     suppressed_count: scoped.length - winners.length,
+    divergence,
   };
 }
 
@@ -1007,6 +1120,458 @@ function aggregateSetUnionField(rows: ReportRow[], rule: FieldRule): SetUnionEnv
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Location-metadata reconciliation (clear-context-pipeline ADR-0006)
+// ────────────────────────────────────────────────────────────────────
+//
+// Authoritative `location_metadata` (IOM DTM, OCHA, UNHCR, IPC, …) is read at
+// aggregation time and merged in as high-quality contributors — anchoring,
+// gap-filling and reconciling the LLM-extracted report figures. Each API figure
+// becomes a `Mention` with a deterministic credibility profile (§8) and recency
+// keyed on `valid_from` (§9), then competes under the same bias-aware selection.
+
+/** One current `location_metadata` row for a scope location (`validTo IS NULL`). */
+export interface LocationMetadataRow {
+  /** e.g. "iom_dtm_displacement". */
+  type: string;
+  /** The source blob (shape is source-specific; adapters below read it). */
+  data: unknown;
+  /** When this value became current — the recency key (ADR-0006 §9). */
+  validFrom: Date;
+}
+
+/** A canonical figure an adapter pulls out of a source blob. */
+interface ApiFigure {
+  /** Aggregate field label it reconciles with (e.g. "idp_stock"). */
+  label: string;
+  value: number;
+  unit: string | null;
+  /** T₀ — the figure's own reference/as-of date (round date, period end); the
+   *  bucketing + flow-cutoff anchor. Falls back to `valid_from` when absent. */
+  referenceDate: Date | null;
+}
+
+interface ApiAdapter {
+  /** Canonical org name (matches the ADR-0004 §5 reliability seed) → resolves to
+   *  the source's `data_sources` reliability. */
+  org: string;
+  extract: (data: Record<string, unknown>) => ApiFigure[];
+}
+
+function num(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseDate(v: unknown): Date | null {
+  if (typeof v !== "string" || !v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** The HAPI blob's `records` array (built by `providers/hapi.py::build_blobs`). */
+function hapiRecords(data: Record<string, unknown>): Record<string, unknown>[] {
+  const recs = data.records;
+  return Array.isArray(recs)
+    ? recs.filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+    : [];
+}
+
+/** A HAPI record's own reference period end (blob-level fallback). */
+function hapiRefDate(data: Record<string, unknown>): Date | null {
+  return parseDate(data.reference_period_end);
+}
+
+/** True when a HAPI record is the un-disaggregated total (gender/age = "all"),
+ *  so summing these never double-counts a total against its own breakdown. */
+function isHapiTotalRow(r: Record<string, unknown>): boolean {
+  const allish = (v: unknown) => v == null || v === "all" || v === "ALL" || v === "*";
+  return allish(r.gender) && allish(r.age_range) && r.min_age == null && r.max_age == null;
+}
+
+/** HAPI refugees/returnees series carry one total-by-gender/age row PER
+ *  `population_group` (refugees: REF refugees / ASY asylum-seekers / OIP others
+ *  of concern), with NO population-group total. Summing across them inflates
+ *  `refugees` into a persons-of-concern count (and double-adds returnee types),
+ *  which — being `latest_state` — then beats fresh report figures and trips a
+ *  false §7 divergence. Restrict to the single group each label means.
+ *  ASSUMPTION: the exact enum values below are best-effort and must be VALIDATED
+ *  against live blobs; an unmatched value yields 0 (safe — reports drive it). */
+const HAPI_REFUGEE_POP_GROUP = "REF"; // refugees, not all persons of concern
+const HAPI_RETURNEE_POP_GROUP = "REF"; // returned refugees (pairs with refugees)
+
+function isHapiPopGroup(r: Record<string, unknown>, group: string): boolean {
+  return String(r.population_group ?? "").toUpperCase() === group;
+}
+
+/** OCHA HPC sector code → our per-sector PIN label; "intersectoral" → overall.
+ *  `FSC` (food security) is deliberately ABSENT: IPC/CH is the authoritative food
+ *  security classification, so `pin_food_security` is owned solely by the
+ *  `hapi_food_security` (IPC phase 3+) adapter. Mapping FSC here too made two
+ *  authoritative sources emit the same label, silently arbitrated by whichever
+ *  HAPI job ran last (valid_from) — and an API-vs-API disagreement produced no
+ *  §7 signal. One source per label removes that ambiguity (#115). */
+const HAPI_SECTOR_TO_PIN: Record<string, string> = {
+  SHL: "pin_shelter",
+  WSH: "pin_wash",
+  PRO: "pin_protection",
+  HEA: "pin_health",
+  EDU: "pin_education",
+  INTERSECTORAL: "overall_pin",
+  INT: "overall_pin",
+};
+
+/** Per-`location_metadata`-type adapters (ADR-0006 §3). Only the six reconciling
+ *  types appear here; context overlays (3W, prices, seasonal, …) are absent, so
+ *  they never feed a numeric aggregate.
+ *
+ *  HAPI SCHEMA ASSUMPTIONS — several adapters read HAPI v2 disaggregation enums
+ *  that must be VALIDATED against live blobs before launch:
+ *    - needs: `population_status="INN"` (in-need); PIN summed per `sector_code`.
+ *    - food security: IPC `ipc_phase` "3+".
+ *    - refugees/returnees: `population_group` (see HAPI_REFUGEE/RETURNEE_POP_GROUP)
+ *      — summing across groups over-counts, so a single group is selected.
+ *  With the population-group filter in place, the failure mode is safe on all of
+ *  them: an unrecognised enum yields no figure (no reconciliation) rather than a
+ *  wrong total, so reports still drive the field.
+ *
+ *  STILL PARTIALLY UNGUARDED: `hapi_humanitarian_needs` sums the `sector_code`
+ *  total rows but does not filter the `category` / `disabled_marker` dimensions,
+ *  so a subset row could add on top of its own total — validate the needs blob
+ *  shape (a category total row) before relying on per-sector PIN. */
+const API_ADAPTERS: Record<string, ApiAdapter> = {
+  // IOM DTM → IDP stock. The headline `population_displaced` is the latest
+  // round's total IDPs present; `reporting_date` is its T₀.
+  iom_dtm_displacement: {
+    org: "IOM DTM",
+    extract: (d) => {
+      const value = num(d.population_displaced);
+      if (value == null) return [];
+      return [{ label: "idp_stock", value, unit: "people", referenceDate: parseDate(d.reporting_date) }];
+    },
+  },
+
+  // UNHCR → refugees. Sum the total-disaggregation population across asylum
+  // series (each `records` entry is a destination country).
+  hapi_refugees: {
+    org: "UNHCR",
+    extract: (d) => {
+      const total = hapiRecords(d)
+        .filter(isHapiTotalRow)
+        .filter((r) => isHapiPopGroup(r, HAPI_REFUGEE_POP_GROUP))
+        .reduce((s, r) => s + (num(r.population) ?? 0), 0);
+      return total > 0
+        ? [{ label: "refugees", value: total, unit: "people", referenceDate: hapiRefDate(d) }]
+        : [];
+    },
+  },
+
+  // UNHCR → returnee STOCK (cumulative returned). Same shape as refugees.
+  hapi_returnees: {
+    org: "UNHCR",
+    extract: (d) => {
+      const total = hapiRecords(d)
+        .filter(isHapiTotalRow)
+        .filter((r) => isHapiPopGroup(r, HAPI_RETURNEE_POP_GROUP))
+        .reduce((s, r) => s + (num(r.population) ?? 0), 0);
+      return total > 0
+        ? [{ label: "returnee_stock", value: total, unit: "people", referenceDate: hapiRefDate(d) }]
+        : [];
+    },
+  },
+
+  // OCHA FTS → appeal funding required / received (summed across appeals).
+  hapi_funding: {
+    org: "OCHA",
+    extract: (d) => {
+      const recs = hapiRecords(d);
+      const required = recs.reduce((s, r) => s + (num(r.requirements_usd) ?? 0), 0);
+      const received = recs.reduce((s, r) => s + (num(r.funding_usd) ?? 0), 0);
+      const rd = hapiRefDate(d);
+      const out: ApiFigure[] = [];
+      if (required > 0) out.push({ label: "funding_required_usd", value: required, unit: "USD", referenceDate: rd });
+      if (received > 0) out.push({ label: "funding_received_usd", value: received, unit: "USD", referenceDate: rd });
+      return out;
+    },
+  },
+
+  // OCHA HPC → per-sector + overall People-in-Need. The in-need total per sector
+  // (population_status "INN", gender/age total); "intersectoral" → overall_pin.
+  hapi_humanitarian_needs: {
+    org: "OCHA",
+    extract: (d) => {
+      const bySector = new Map<string, number>();
+      for (const r of hapiRecords(d)) {
+        if (String(r.population_status ?? "").toUpperCase() !== "INN") continue;
+        if (!isHapiTotalRow(r)) continue;
+        const label = HAPI_SECTOR_TO_PIN[String(r.sector_code ?? "").toUpperCase()];
+        if (!label) continue;
+        bySector.set(label, (bySector.get(label) ?? 0) + (num(r.population) ?? 0));
+      }
+      const rd = hapiRefDate(d);
+      return [...bySector]
+        .filter(([, v]) => v > 0)
+        .map(([label, value]) => ({ label, value, unit: "people", referenceDate: rd }));
+    },
+  },
+
+  // IPC / Cadre Harmonisé → food-security PIN = the current-classification IPC
+  // phase-3+ population (prefer an explicit "3+" aggregate; else sum phases 3–5).
+  hapi_food_security: {
+    org: "IPC",
+    extract: (d) => {
+      const current = hapiRecords(d).filter((r) => {
+        const t = String(r.ipc_type ?? "").toLowerCase();
+        return t === "" || t === "current";
+      });
+      const plus = current.find((r) => String(r.ipc_phase) === "3+");
+      const value = plus
+        ? num(plus.population) ?? 0
+        : current
+            .filter((r) => ["3", "4", "5"].includes(String(r.ipc_phase)))
+            .reduce((s, r) => s + (num(r.population) ?? 0), 0);
+      return value > 0
+        ? [{ label: "pin_food_security", value, unit: "people", referenceDate: hapiRefDate(d) }]
+        : [];
+    },
+  },
+};
+
+/** Deterministic credibility profile for API contributors (ADR-0006 §8):
+ *  Directness = `reported`; the six document-level criteria all `met`. Recency is
+ *  still scored live from `valid_from` at read time. */
+const API_DIRECTNESS: ConfidenceTier = "reported";
+const API_MET_CREDIBILITY = {
+  attribution_quality: "met",
+  internal_consistency: "met",
+  plausibility_in_context: "met",
+  geographic_temporal_specificity: "met",
+  methodology_transparency: "met",
+  representativeness: "met",
+} as const;
+
+/** Divergence-guard threshold (ADR-0006 §7): when a report figure disagrees with
+ *  the authoritative API figure by more than this fraction, the API figure wins
+ *  and the disagreement is surfaced as an early-warning signal. Domain-tunable. */
+const DIVERGENCE_THRESHOLD = 0.25;
+
+/** The `location_metadata` types that feed a numeric aggregate (the adapter keys)
+ *  — the resolver loads only these current rows for the scope. */
+export const API_RECONCILING_TYPES = Object.keys(API_ADAPTERS);
+
+/** Build the `orgLower → { id, reliability }` map `buildApiMentions` needs, by
+ *  matching the reconciling adapter org names against the `data_sources` registry
+ *  (name or synonym, case-insensitive). Orgs with no registry row are omitted →
+ *  their API figures fall back to reliability 1. */
+export function buildApiReliabilityByOrg(
+  dataSources: { id: string; name: string; synonyms: string[]; reliability: number | null }[],
+): Map<string, { id: string; reliability: number | null }> {
+  const orgs = new Set(Object.values(API_ADAPTERS).map((a) => a.org.toLowerCase()));
+  const map = new Map<string, { id: string; reliability: number | null }>();
+  for (const src of dataSources) {
+    for (const raw of [src.name, ...(src.synonyms ?? [])]) {
+      const n = raw.toLowerCase();
+      if (orgs.has(n) && !map.has(n)) map.set(n, { id: src.id, reliability: src.reliability });
+    }
+  }
+  return map;
+}
+
+/** Turn the current `location_metadata` rows for one scope location into API
+ *  `Mention`s keyed by aggregate-field label, ready to merge alongside the report
+ *  mentions. `apiReliabilityByOrg` maps a lowercased org name → its
+ *  `data_sources` id + reliability grade. */
+export function buildApiMentions(
+  rows: LocationMetadataRow[],
+  locationId: string,
+  apiReliabilityByOrg: Map<string, { id: string; reliability: number | null }>,
+): Map<string, Mention[]> {
+  const byLabel = new Map<string, Mention[]>();
+  const intrinsic = intrinsicCredibilityOf(API_DIRECTNESS, API_MET_CREDIBILITY, null);
+  for (const row of rows) {
+    const adapter = API_ADAPTERS[row.type];
+    if (!adapter) continue; // context overlay — not a reconciling source
+    const src = apiReliabilityByOrg.get(adapter.org.toLowerCase());
+    const reliability = src && src.reliability != null ? src.reliability : 1;
+    const sourceId = src?.id ?? `api:${adapter.org}`;
+    const data = row.data && typeof row.data === "object" ? (row.data as Record<string, unknown>) : {};
+    for (const fig of adapter.extract(data)) {
+      const mention: Mention = {
+        // Synthetic, stable provenance id — also the dedup handle for echoes.
+        reportId: `api:${sourceId}:${row.type}:${locationId}`,
+        publishedAt: row.validFrom, // recency = now − valid_from (§9)
+        incidentDate: fig.referenceDate ?? row.validFrom, // T₀ → bucket / flow cutoff
+        locationId,
+        value: fig.value,
+        unit: fig.unit,
+        confidence: API_DIRECTNESS,
+        reliability,
+        intrinsicCredibility: intrinsic,
+        sourceId,
+        isApi: true,
+        eventKey: "",
+      };
+      const list = byLabel.get(fig.label);
+      if (list) list.push(mention);
+      else byLabel.set(fig.label, [mention]);
+    }
+  }
+  return byLabel;
+}
+
+/** Keep only API mentions whose reference date (T₀ = `incidentDate`) falls within
+ *  the window, so a current authoritative figure augments the window it describes
+ *  rather than every historical window for the location. Report rows are already
+ *  window-filtered upstream; this applies the same gate to API contributors. */
+export function filterApiMentionsToWindow(
+  byLabel: Map<string, Mention[]>,
+  windowStart: Date,
+  windowEnd: Date,
+): Map<string, Mention[]> {
+  const s = windowStart.getTime();
+  const e = windowEnd.getTime();
+  const out = new Map<string, Mention[]>();
+  for (const [label, list] of byLabel) {
+    const kept = list.filter((m) => {
+      const t = m.incidentDate.getTime();
+      return t >= s && t <= e;
+    });
+    if (kept.length > 0) out.set(label, kept);
+  }
+  return out;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Stock + flow current-total (ADR-0006 §4)
+// ────────────────────────────────────────────────────────────────────
+
+/** One stock observation: its value and reference/as-of date T₀. */
+export interface StockObservation {
+  value: number;
+  /** T₀ — the reference date the stock is "as of" (DTM round date / period end). */
+  t0: Date;
+}
+
+/** One flow observation: its value and the end of the period it covers. */
+export interface FlowObservation {
+  value: number;
+  /** The flow period's end (`reportingPeriodEnd`) — its as-of date. */
+  asOf: Date;
+}
+
+/** The estimated current total a stock/flow pair rolls up to (ADR-0006 §4). */
+export interface StockFlowEstimate {
+  /** stock + flows-since. */
+  total: number;
+  /** The anchoring authoritative stock. */
+  stock: number;
+  /** Sum of flows whose period ends strictly after T₀. */
+  flowsSince: number;
+  /** T₀ (ISO) — the cutoff; flows at/before it are already embedded in `stock`. */
+  t0: string;
+  /** How many flow observations were added (after T₀). */
+  flowCount: number;
+}
+
+/** Estimate the current total for a stock/flow metric (ADR-0006 §4):
+ *
+ *    estimated_total(now) = latest_authoritative_stock(T₀) + Σ flows with as-of > T₀
+ *
+ * A stock already embeds every flow up to its own reference date T₀, so only
+ * flows AFTER T₀ are added — earlier flows are dropped as already-counted (the
+ * invariant that kills the returnee/IDP over-count). Returns `null` with no
+ * stock anchor: there is nothing to accrue flows onto. */
+export function estimateStockFlowTotal(
+  stock: StockObservation | null,
+  flows: FlowObservation[],
+): StockFlowEstimate | null {
+  if (!stock) return null;
+  const t0 = stock.t0.getTime();
+  const forward = flows.filter((f) => f.asOf.getTime() > t0);
+  const flowsSince = forward.reduce((s, f) => s + f.value, 0);
+  return {
+    total: stock.value + flowsSince,
+    stock: stock.value,
+    flowsSince,
+    t0: stock.t0.toISOString(),
+    flowCount: forward.length,
+  };
+}
+
+/** The stock/flow field pairs a current-total can be estimated for. The stock is
+ *  a `latest_state` field (authoritative, API-reconciled); the flow is the
+ *  `additive_count` that accrues on top of it. */
+export const STOCK_FLOW_PAIRS = [
+  { metric: "displacement", stockLabel: "idp_stock", flowLabel: "new_displacements" },
+  { metric: "returns", stockLabel: "returnee_stock", flowLabel: "new_returns" },
+] as const;
+
+export type StockFlowMetric = (typeof STOCK_FLOW_PAIRS)[number]["metric"];
+
+/** Estimate a metric's current total (ADR-0006 §4) from raw report rows + the
+ *  authoritative API mentions, at one location scope.
+ *
+ * The flow sum reuses `aggregateNumericField`, so the forward flows are deduped
+ * (echo + incident grouping) exactly as they are in a normal bucket — a raw sum
+ * would double-count multi-source reports. Rows are pre-filtered to those whose
+ * content date (`reportingPeriodEnd`, the flow mention's as-of) lands strictly
+ * after the anchor stock's T₀, so `aggregateNumericField` sees only forward
+ * flows. Scope matching is exact — the same country-scoped model the headline
+ * `idp_stock` already uses (no descendant roll-up; see #273). */
+export function estimateCurrentTotalFromRows(
+  rows: ReportRow[],
+  apiMentionsByLabel: Map<string, Mention[]>,
+  locationScope: string | null,
+  stockLabel: string,
+  flowLabel: string,
+  reliabilityBySource: Map<string, number | null>,
+  asOf: Date,
+): StockFlowEstimate | null {
+  if (!locationScope) return null;
+  const stockRule = FIELD_RULES.find((r) => r.label === stockLabel);
+  const flowRule = FIELD_RULES.find((r) => r.label === flowLabel);
+  if (!stockRule || !flowRule) return null;
+
+  const asOfMs = asOf.getTime();
+  const inScope = (m: Mention) =>
+    m.locationId === locationScope && m.incidentDate.getTime() <= asOfMs;
+
+  // Anchor = latest authoritative stock: freshest reference date; on a tie an API
+  // (authoritative) figure wins, then higher selection-quality.
+  const stockMentions = [
+    ...rows.flatMap((r) => extractNumericMentions(r, stockRule, reliabilityBySource)),
+    ...(apiMentionsByLabel.get(stockLabel) ?? []),
+  ].filter(inScope);
+  if (stockMentions.length === 0) return null;
+  const anchor = stockMentions.reduce((best, m) => {
+    const dt = m.incidentDate.getTime();
+    const bt = best.incidentDate.getTime();
+    if (dt !== bt) return dt > bt ? m : best;
+    if (m.isApi !== best.isApi) return m.isApi ? m : best;
+    return selectionQuality(m) > selectionQuality(best) ? m : best;
+  });
+  const t0 = anchor.incidentDate.getTime();
+
+  // Forward flows only: rows whose content date is strictly after T₀ (and ≤ asOf).
+  // The flow mention's as-of is the row's reportingPeriodEnd, so row-level
+  // filtering is exact for the flow field. Deduped additive sum via the aggregator.
+  const flowRows = rows.filter((r) => {
+    const d = (r.reportingPeriodEnd ?? r.publishedAt).getTime();
+    return d > t0 && d <= asOfMs;
+  });
+  const flowAgg = aggregateNumericField(flowRows, flowRule, locationScope, reliabilityBySource, []);
+  const flowsSince = flowAgg?.value ?? 0;
+
+  return {
+    total: anchor.value + flowsSince,
+    stock: anchor.value,
+    flowsSince,
+    t0: anchor.incidentDate.toISOString(),
+    // Reports contributing forward flows — a provenance count, not a group count.
+    flowCount: flowAgg?.contributing_report_ids.length ?? 0,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Public entry point
 // ────────────────────────────────────────────────────────────────────
 
@@ -1021,19 +1586,29 @@ export function aggregateReports(
   rows: ReportRow[],
   locationScope: string | null,
   reliabilityBySource: Map<string, number | null> = new Map(),
+  apiMentionsByLabel: Map<string, Mention[]> = new Map(),
 ): AggregationResult | null {
-  if (rows.length === 0) return null;
+  const allApiMentions = [...apiMentionsByLabel.values()].flat();
+  // Gap-fill (ADR-0006 §2): a bucket with no reports but an authoritative API
+  // figure still aggregates — so don't bail on empty `rows` alone.
+  if (rows.length === 0 && allApiMentions.length === 0) return null;
 
   const data: Record<string, AggregatedField> = {};
   for (const rule of FIELD_RULES) {
     if (rule.kind === "set_union") {
       data[rule.label] = aggregateSetUnionField(rows, rule);
     } else if (rule.kind !== "non_aggregatable") {
-      data[rule.label] = aggregateNumericField(rows, rule, locationScope, reliabilityBySource);
+      data[rule.label] = aggregateNumericField(
+        rows, rule, locationScope, reliabilityBySource, apiMentionsByLabel.get(rule.label) ?? [],
+      );
     }
   }
 
-  const publishedAts = rows.map((r) => r.publishedAt.getTime());
+  // Bucket-level source metadata spans report rows AND API contributors.
+  const publishedAts = [
+    ...rows.map((r) => r.publishedAt.getTime()),
+    ...allApiMentions.map((m) => m.publishedAt.getTime()),
+  ];
   const newestSourceAt = new Date(Math.max(...publishedAts));
   const oldestSourceAt = new Date(Math.min(...publishedAts));
 
@@ -1049,11 +1624,13 @@ export function aggregateReports(
 
   return {
     data,
-    contributingReportIds: rows.map((r) => r.reportId),
+    contributingReportIds: Array.from(
+      new Set([...rows.map((r) => r.reportId), ...allApiMentions.map((m) => m.reportId)]),
+    ),
     newestSourceAt,
     oldestSourceAt,
     dataQualityScore: Number(dataQualityScore.toFixed(4)),
-    reportCount: rows.length,
+    reportCount: rows.length, // report rows only; API contributors are provenance
   };
 }
 

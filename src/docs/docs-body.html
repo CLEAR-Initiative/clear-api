@@ -2810,6 +2810,16 @@ thresholds tuned on the old scale must be re-tuned.</td>
     <td><code>Int!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>estimatedCurrentTotals</code></td>
+    <td><code>CurrentTotals</code></td>
+    <td>Estimated current totals — latest authoritative stock + the flows
+reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
+bucket's period: it is returned only for a bucket whose window still
+includes now (the current year/month/week and the `all` tier) and is
+`null` on any historical bucket, so a past-period row never carries a
+present-day number. Resolved lazily — the bounded `report_datapoints` scan
+runs only when this field is selected — but it is a real scan, not free.</td>
+  </tr><tr>
     <td><code>validFrom</code></td>
     <td><code>DateTime!</code></td>
     <td>Bitemporal validity — this snapshot's lifetime as a &quot;current&quot;
@@ -3099,6 +3109,15 @@ the resolver converts at read time so links stay short-lived.</td>
 on every update path (title / description / population / attachments
 / event-linkage / needs / scenarios). Useful for cache invalidation
 and &quot;recently updated&quot; surfaces.</td>
+  </tr></tbody></table><h3 id="type-currenttotals"><code>CurrentTotals</code> <span class="type-badge">object</span></h3><p>Estimated current totals for a country bucket (ADR-0006 §4). Each metric is
+`null` when there is no anchoring stock in scope to accrue flows onto.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>displacement</code></td>
+    <td><code>StockFlowEstimate</code></td>
+    <td>IDP displacement: latest `idp_stock` + `new_displacements` since T₀.</td>
+  </tr><tr>
+    <td><code>returns</code></td>
+    <td><code>StockFlowEstimate</code></td>
+    <td>Returns: latest `returnee_stock` + `new_returns` since T₀.</td>
   </tr></tbody></table><h3 id="type-dailyactivitycount"><code>DailyActivityCount</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>date</code></td>
     <td><code>String!</code></td>
@@ -4626,6 +4645,31 @@ string, or ISO date/week/month.</td>
     <td><code>count</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-stockflowestimate"><code>StockFlowEstimate</code> <span class="type-badge">object</span></h3><p>One metric's estimated current total (ADR-0006 §4): the latest
+authoritative stock plus the flows reported after its reference date T₀.
+Flows at or before T₀ are already embedded in the stock and are not added
+again — the invariant that stops returnee/IDP totals from over-counting.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>total</code></td>
+    <td><code>Float!</code></td>
+    <td>`stock` + `flowsSince` — the headline estimated current total.</td>
+  </tr><tr>
+    <td><code>stock</code></td>
+    <td><code>Float!</code></td>
+    <td>The anchoring latest authoritative stock value (API-reconciled).</td>
+  </tr><tr>
+    <td><code>flowsSince</code></td>
+    <td><code>Float!</code></td>
+    <td>Deduped sum of the flows whose as-of date is strictly after T₀.</td>
+  </tr><tr>
+    <td><code>t0</code></td>
+    <td><code>DateTime!</code></td>
+    <td>T₀ — the anchor stock's reference date. Flows at/before it are treated
+as already counted inside `stock`.</td>
+  </tr><tr>
+    <td><code>flowCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Reports contributing forward flows — a provenance count, not a count of
+distinct flow events.</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>

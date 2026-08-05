@@ -148,6 +148,15 @@ export const datapointTypeDef = gql`
     dataQualityScore: Float!
     reportCount: Int!
 
+    """Estimated current totals — latest authoritative stock + the flows
+    reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
+    bucket's period: it is returned only for a bucket whose window still
+    includes now (the current year/month/week and the \`all\` tier) and is
+    \`null\` on any historical bucket, so a past-period row never carries a
+    present-day number. Resolved lazily — the bounded \`report_datapoints\` scan
+    runs only when this field is selected — but it is a real scan, not free."""
+    estimatedCurrentTotals: CurrentTotals
+
     """Bitemporal validity — this snapshot's lifetime as a "current"
     row. \`validTo\` is null when the row is still the current one for
     its bucket; else it carries the timestamp when a newer computation
@@ -163,6 +172,34 @@ export const datapointTypeDef = gql`
     cache. The dashboard can render a "just computed" indicator so
     users know the number reflects the freshest possible view."""
     onDemand: Boolean!
+  }
+
+  """One metric's estimated current total (ADR-0006 §4): the latest
+  authoritative stock plus the flows reported after its reference date T₀.
+  Flows at or before T₀ are already embedded in the stock and are not added
+  again — the invariant that stops returnee/IDP totals from over-counting."""
+  type StockFlowEstimate {
+    """\`stock\` + \`flowsSince\` — the headline estimated current total."""
+    total: Float!
+    """The anchoring latest authoritative stock value (API-reconciled)."""
+    stock: Float!
+    """Deduped sum of the flows whose as-of date is strictly after T₀."""
+    flowsSince: Float!
+    """T₀ — the anchor stock's reference date. Flows at/before it are treated
+    as already counted inside \`stock\`."""
+    t0: DateTime!
+    """Reports contributing forward flows — a provenance count, not a count of
+    distinct flow events."""
+    flowCount: Int!
+  }
+
+  """Estimated current totals for a country bucket (ADR-0006 §4). Each metric is
+  \`null\` when there is no anchoring stock in scope to accrue flows onto."""
+  type CurrentTotals {
+    """IDP displacement: latest \`idp_stock\` + \`new_displacements\` since T₀."""
+    displacement: StockFlowEstimate
+    """Returns: latest \`returnee_stock\` + \`new_returns\` since T₀."""
+    returns: StockFlowEstimate
   }
 
   """Summary counts from a \`refreshAggregatedDatapoints\` run."""
