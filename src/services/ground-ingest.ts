@@ -14,7 +14,7 @@
  *   - Placeholder threads: V1 creates one thread per message
  *     (reviewState "unverified", lifecycleState "reported"). The
  *     clear-pipeline threading task (separate ticket) replaces these with
- *     real incident clustering.
+ *     real thread clustering.
  *
  * The DB surface is a narrow structural interface so tests can drive the
  * ingest logic with an in-memory stub (no test DB needed).

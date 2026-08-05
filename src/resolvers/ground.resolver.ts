@@ -175,8 +175,8 @@ export const groundResolvers = {
      * surface. Projects staged messages WITHOUT private-tier identity
      * (no senderName — only the pseudonymous senderRef). Returns all
      * messages for the source, oldest first, so the worker can both
-     * label unclassified rows and assemble incident threads with full
-     * context.
+     * label unclassified rows and assemble threads (clusters of staged
+     * Signals) with full context.
      */
     groundMessagesForClassification: async (
       _parent: unknown,
@@ -207,7 +207,7 @@ export const groundResolvers = {
      * PIPELINE CONTRACT: threading context for the worker — a source's
      * existing threads, oldest first, so late corrections/retractions
      * can target an existing thread via GroundThreadUpsertInput.threadId
-     * instead of spawning a duplicate incident. `states` filters on
+     * instead of spawning a duplicate thread. `states` filters on
      * lifecycleState; omitted/empty returns all. The worker selects only
      * {id, title, lifecycleState, reviewState, messageIds}; sender
      * identity is additionally scrubbed from the messages relation for
@@ -523,7 +523,7 @@ export const groundResolvers = {
 
     /**
      * PIPELINE CONTRACT: replace placeholder threading with the
-     * worker's incident clustering. Per input: create a thread — or,
+     * worker's thread clustering. Per input: create a thread — or,
      * when `threadId` is set, APPEND to that existing thread (cross-run
      * threading for late corrections/retractions) and update its
      * lifecycleState + title — point the given messages at it, delete

@@ -235,7 +235,7 @@ export async function ingestLiveMessages(options: {
       try {
         // Nested create — placeholder thread + message land atomically,
         // exactly like the export path. The clear-pipeline threading task
-        // later replaces placeholders with real incident clustering.
+        // later replaces placeholders with real thread clustering.
         await db.groundThreads.create({
           data: {
             groundSourceId: source.id,

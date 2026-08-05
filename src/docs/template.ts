@@ -135,6 +135,8 @@ export function renderDocsBody(schema: SchemaData): string {
 
         <p>Two things to internalise. First, the tiers build <em>upward</em>: a <a href="#type-signal">Signal</a> links to the <a href="#type-event">Event</a> it belongs to, which links to any <a href="#type-alert">Alert</a> raised from it. Second, <em>everything is geolocated</em> &mdash; signals, events, and alerts all reference the <a href="#type-location">Location</a> hierarchy. That&rsquo;s why the &ldquo;by location&rdquo; queries are the most powerful way to slice the data.</p>
 
+        <p>One staging area sits in front of tier 2. The <strong>ground staging tier</strong> holds staged Signals &mdash; messages ingested from ground sources such as WhatsApp groups (<a href="#type-groundmessage">GroundMessage</a>) &mdash; grouped into threads (<a href="#type-groundthread">GroundThread</a>). A thread is a cluster of staged Signals with a correction lifecycle; when a reviewer approves a thread for publication, it is promoted and becomes a <a href="#type-signal">Signal</a>. Nothing enters the signals graph from a ground source without passing that review gate.</p>
+
         <div class="notice notice-info">
           New to GraphQL? You send one <code>POST</code> request to <code>/graphql</code> with a query naming exactly the fields you want, and you get back exactly those fields &mdash; no over-fetching, no guessing at response shapes. The <a href="/graphql" target="_blank">GraphQL Sandbox</a> autocompletes every field as you type, which is the fastest way to explore.
         </div>

@@ -21,6 +21,8 @@
 
         <p>Two things to internalise. First, the tiers build <em>upward</em>: a <a href="#type-signal">Signal</a> links to the <a href="#type-event">Event</a> it belongs to, which links to any <a href="#type-alert">Alert</a> raised from it. Second, <em>everything is geolocated</em> &mdash; signals, events, and alerts all reference the <a href="#type-location">Location</a> hierarchy. That&rsquo;s why the &ldquo;by location&rdquo; queries are the most powerful way to slice the data.</p>
 
+        <p>One staging area sits in front of tier 2. The <strong>ground staging tier</strong> holds staged Signals &mdash; messages ingested from ground sources such as WhatsApp groups (<a href="#type-groundmessage">GroundMessage</a>) &mdash; grouped into threads (<a href="#type-groundthread">GroundThread</a>). A thread is a cluster of staged Signals with a correction lifecycle; when a reviewer approves a thread for publication, it is promoted and becomes a <a href="#type-signal">Signal</a>. Nothing enters the signals graph from a ground source without passing that review gate.</p>
+
         <div class="notice notice-info">
           New to GraphQL? You send one <code>POST</code> request to <code>/graphql</code> with a query naming exactly the fields you want, and you get back exactly those fields &mdash; no over-fetching, no guessing at response shapes. The <a href="/graphql" target="_blank">GraphQL Sandbox</a> autocompletes every field as you type, which is the fastest way to explore.
         </div>
@@ -590,7 +592,7 @@ review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;appr
 messages, oldest first, projected for the classification/threading
 worker — no private-tier sender identity. Returns ALL messages
 (classified and not) so one query powers both labelling and
-incident-thread assembly.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+thread assembly (clustering staged Signals into threads).<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
     <td><code>groundThreadsForSource</code></td>
     <td><code>[GroundThread]</code></td>
@@ -1146,7 +1148,8 @@ messages updated.<div class="field-args"><span class="arg"><code>inputs: [Ground
     <td><code>upsertGroundThreads</code></td>
     <td><code>[String]!</code></td>
     <td>PIPELINE CONTRACT (admin/pipeline only): replace placeholder
-threading with pipeline-built incident threads. Each input creates a
+threading with pipeline-built threads (clusters of staged
+Signals). Each input creates a
 thread (or, when `threadId` is set, APPENDS to that existing
 thread and updates its lifecycleState + title), re-points its
 messageIds at it, and deletes the placeholder threads that became
@@ -1947,11 +1950,11 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>String</code></td>
     <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
 ingest-extracted marker untouched.</td>
-  </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One incident thread produced by the pipeline threading task. Its
-messageIds are re-pointed at the thread, replacing their V1
-one-per-message placeholder threads. With `threadId` set, the input
-APPENDS to that existing thread (cross-run threading: late
-corrections/retractions join the incident they belong to) instead of
+  </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One thread (a cluster of staged Signals) produced by the pipeline
+threading task. Its messageIds are re-pointed at the thread, replacing
+their V1 one-per-message placeholder threads. With `threadId` set,
+the input APPENDS to that existing thread (cross-run threading: late
+corrections/retractions join the thread they belong to) instead of
 creating a new one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>groundSourceId</code></td>
     <td><code>String!</code></td>
@@ -3498,7 +3501,8 @@ route as JSON).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</t
     <td><code>mediaUnmatched</code></td>
     <td><code>[String!]!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-groundmessage"><code>GroundMessage</code> <span class="type-badge">object</span></h3><p>A canonical staged message parsed from a WhatsApp source. Text is
+  </tr></tbody></table><h3 id="type-groundmessage"><code>GroundMessage</code> <span class="type-badge">object</span></h3><p>A staged Signal: a canonical message parsed from a WhatsApp source,
+held in the ground staging tier until its thread is reviewed. Text is
 phone-number-redacted at persistence. senderName is private-tier data and
 is scrubbed from anything promoted to the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
@@ -3568,7 +3572,7 @@ preserved from the source text.</td>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-groundmessageforclassification"><code>GroundMessageForClassification</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged message for the
+  </tr></tbody></table><h3 id="type-groundmessageforclassification"><code>GroundMessageForClassification</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged Signal for the
 classification/threading worker (clear-pipeline's
 classify_ground_messages task). Deliberately excludes senderName —
 the pipeline never sees private-tier identity, only the pseudonymous
@@ -3657,10 +3661,11 @@ resources only&quot;). Ingest policy is judged against this record.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-groundthread"><code>GroundThread</code> <span class="type-badge">object</span></h3><p>An incident thread in the review queue. V1 threads are one-per-message
-placeholders until the pipeline threading task clusters them. Lifecycle
-state models the correction chain; review state is the human gate in
-front of the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-groundthread"><code>GroundThread</code> <span class="type-badge">object</span></h3><p>A thread — a cluster of staged Signals — in the review queue. V1
+threads are one-per-message placeholders until the pipeline threading
+task clusters them. Lifecycle state models the correction chain; review
+state is the human gate in front of the signals graph. An approved
+thread is promoted and becomes a Signal.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>ID!</code></td>
     <td>—</td>

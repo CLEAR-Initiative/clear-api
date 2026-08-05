@@ -8,7 +8,7 @@
  * reads back through the pipeline-facing GraphQL surface
  * (groundMessagesForClassification / upsertGroundMessageClassifications /
  * upsertGroundThreads — see resolvers/ground.resolver.ts) and writes
- * labels + real incident threads.
+ * labels + real threads (clusters of staged Signals).
  *
  * Fire-and-forget, same as the signal-processing enqueue in
  * signal.resolver.ts: a broker hiccup must never fail the ingest that
