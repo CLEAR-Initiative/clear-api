@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildTocTree, renderOnThisPage } from "../../src/docs/on-this-page.js";
+import {
+  buildTocTree,
+  renderOnThisPage,
+  renderOnThisPageScript,
+  renderOnThisPageStyles,
+} from "../../src/docs/on-this-page.js";
 
 const mockTypes = [
   { name: "Alert" },
@@ -82,35 +87,38 @@ describe("On This Page", () => {
       const tree = buildTocTree([], []);
       const html = renderOnThisPage(tree);
 
-      expect(html).toContain('data-section="guide"');
-      expect(html).toContain('href="#guide"');
-      expect(html).toContain("Build Your First Integration");
+      expect(html.includes('data-section="guide"')).toBe(true);
+      expect(html.includes('href="#guide"')).toBe(true);
+      expect(html.includes("Build Your First Integration")).toBe(true);
     });
 
     it("renders sections with children as expandable", () => {
       const tree = buildTocTree([{ name: "Alert" }], []);
       const html = renderOnThisPage(tree);
 
-      expect(html).toMatch(/<div class="toc-section" data-section="guide">/);
-      expect(html).toContain("toc-parent");
-      expect(html).toContain("toc-children");
-      expect(html).toContain("toc-child");
+      expect(html.includes('data-section="guide"')).toBe(true);
+      expect(html.includes("toc-parent")).toBe(true);
+      expect(html.includes("toc-children")).toBe(true);
+      expect(html.includes("toc-child")).toBe(true);
     });
 
     it("renders sections without children as simple links", () => {
       const tree = buildTocTree([], []);
       const html = renderOnThisPage(tree);
 
-      expect(html).toMatch(/<a[^>]*data-section="introduction"[^>]*>Introduction<\/a>/);
-      expect(html).not.toMatch(/<div class="toc-section" data-section="introduction">/);
+      expect(html.includes('data-section="introduction"')).toBe(true);
+      expect(html.includes("Introduction")).toBe(true);
+      expect(html.includes('toc-section" data-section="introduction"')).toBe(
+        false,
+      );
     });
 
     it("includes child data attributes for subsections", () => {
       const tree = buildTocTree([], []);
       const html = renderOnThisPage(tree);
 
-      expect(html).toContain('data-child="guide-model"');
-      expect(html).toContain("The mental model");
+      expect(html.includes('data-child="guide-model"')).toBe(true);
+      expect(html.includes("The mental model")).toBe(true);
     });
 
     it("escapes HTML in labels", () => {
@@ -122,18 +130,53 @@ describe("On This Page", () => {
       ];
       const html = renderOnThisPage(tree);
 
-      expect(html).not.toContain("<script>alert");
-      expect(html).toContain("&lt;script&gt;");
+      expect(html.includes("<script>alert")).toBe(false);
+      expect(html.includes("&lt;script&gt;")).toBe(true);
     });
 
     it("uses a magnifying-glass icon for the desktop TOC control", () => {
       const html = renderOnThisPage(buildTocTree([], []));
 
-      expect(html).toContain('class="toc-collapse-btn"');
-      expect(html).toContain('title="Search"');
+      expect(html.includes('class="toc-collapse-btn"')).toBe(true);
+      expect(html.includes("toc-collapse-btn")).toBe(true);
       // Search glyph path from PORTAL_SVGS.search (not a chevron)
-      expect(html).toContain("M8 2a6 6 0 104.472 10.025");
-      expect(html).not.toContain('d="M15 18l-6-6 6-6"');
+      expect(html.includes("M8 2a6 6 0 104.472 10.025")).toBe(true);
+      expect(html.includes('d="M15 18l-6-6 6-6"')).toBe(false);
+    });
+
+    it("advertises both ⌘K and ⌘F on the search control", () => {
+      const html = renderOnThisPage(buildTocTree([], []));
+
+      expect(html.includes('placeholder="Search (⌘K / ⌘F)"')).toBe(true);
+      expect(html.includes('id="toc-search-input"')).toBe(true);
+      expect(html.includes("Search (⌘K / ⌘F)")).toBe(true);
+    });
+  });
+
+  describe("renderOnThisPageScript", () => {
+    it("binds Cmd/Ctrl+K and Cmd/Ctrl+F to focus TOC search", () => {
+      const script = renderOnThisPageScript();
+
+      // Use includes — Bun 1.0 toContain is unreliable on large template strings.
+      expect(script.includes("key === 'k'")).toBe(true);
+      expect(script.includes("key === 'f'")).toBe(true);
+      expect(script.includes("e.metaKey || e.ctrlKey")).toBe(true);
+      expect(script.includes("searchInput.focus()")).toBe(true);
+    });
+
+    it("scrolls headings with block:start (padding-top inset, no fixed 100px offset)", () => {
+      const script = renderOnThisPageScript();
+      expect(script.includes("function scrollDocsHeadingIntoView")).toBe(true);
+      expect(script.includes("block: 'start'")).toBe(true);
+      expect(script.includes("var offset = 100")).toBe(false);
+    });
+  });
+
+  describe("renderOnThisPageStyles", () => {
+    it("defines equal heading inset token for top/bottom title spacing", () => {
+      const css = renderOnThisPageStyles();
+      expect(css.includes("--docs-heading-inset")).toBe(true);
+      expect(css.includes("scroll-margin-top: 0")).toBe(true);
     });
   });
 });

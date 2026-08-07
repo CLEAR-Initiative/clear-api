@@ -26,6 +26,12 @@ import {
   slugifyName,
 } from "./admin-orgs.js";
 import { approveUserById } from "../services/approve-user.js";
+import {
+  MIN_PASSWORD_LENGTH,
+  findValidResetToken,
+  resetPasswordWithToken,
+  sendPasswordResetEmail,
+} from "../services/password-reset.js";
 import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
 import { env } from "../utils/env.js";
 import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
@@ -33,6 +39,7 @@ import {
   renderPortal,
   renderLoginPage,
   safePortalNext,
+  renderResetPasswordPage,
   renderAdminPending,
   renderAdminMetrics,
   renderAdminOrganisations,
@@ -103,6 +110,96 @@ portalRouter.get("/", async (req, res) => {
   // Render portal for all authenticated users (admins can navigate to /portal/admin via sidebar)
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(renderPortal({ userEmail: user.email, userRole: user.role }));
+});
+
+// ─── Password reset — unauthenticated by design ───────────────────────────
+//
+// The portal router is mounted before the app's global express.json(), so
+// these handlers bring their own JSON parser.
+
+const jsonBody = express.json({ limit: "16kb" });
+
+/**
+ * Kick off a forgot-password email.
+ *
+ * Always 204, whatever happens: unknown address, throttled, or a dead
+ * mail provider all look identical from here. Anything else would turn
+ * this into an account-enumeration oracle.
+ */
+portalRouter.post("/forgot-password", jsonBody, async (req, res) => {
+  const email =
+    typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+
+  if (email) {
+    try {
+      await sendPasswordResetEmail(prisma, email);
+    } catch (err) {
+      // The service swallows send failures itself; this catches the
+      // unexpected (e.g. DB down). Still a 204 — the client can't be
+      // told which addresses exist.
+      console.error(
+        "[PORTAL] forgot-password failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  res.status(204).end();
+});
+
+/**
+ * Render the page behind the emailed link. The token is validated up
+ * front so an expired link shows a dead-link message instead of a form
+ * that can only fail on submit.
+ */
+portalRouter.get("/reset-password", async (req, res) => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  const kind = req.query.kind === "setup" ? "setup" : "reset";
+  const valid = token ? await findValidResetToken(prisma, token) : null;
+
+  res
+    .status(valid ? 200 : 400)
+    // The URL carries a live credential — keep it out of caches and out
+    // of the Referer header on the font/CDN requests this page makes.
+    .setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(
+    renderResetPasswordPage({ token, kind, tokenValid: valid !== null }),
+  );
+});
+
+/** Consume the token and set the new password. */
+portalRouter.post("/reset-password", jsonBody, async (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token : "";
+  const newPassword =
+    typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+
+  let result;
+  try {
+    result = await resetPasswordWithToken(prisma, token, newPassword);
+  } catch (err) {
+    console.error(
+      "[PORTAL] reset-password failed:",
+      err instanceof Error ? err.message : err,
+    );
+    res.status(500).json({ message: "Could not update your password." });
+    return;
+  }
+
+  if (result.ok) {
+    res.status(204).end();
+    return;
+  }
+
+  // `USER_NOT_FOUND` means the token outlived its user — indistinguishable
+  // from a dead link as far as the person holding it is concerned.
+  const message =
+    result.reason === "WEAK_PASSWORD"
+      ? `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`
+      : "This link is invalid or has expired. Request a new one.";
+
+  res.status(400).json({ message });
 });
 
 // ─── /portal/admin — SuperAdmin dashboard ─────────────────────────────────

@@ -21,6 +21,8 @@
 
         <p>Two things to internalise. First, the tiers build <em>upward</em>: a <a href="#type-signal">Signal</a> links to the <a href="#type-event">Event</a> it belongs to, which links to any <a href="#type-alert">Alert</a> raised from it. Second, <em>everything is geolocated</em> &mdash; signals, events, and alerts all reference the <a href="#type-location">Location</a> hierarchy. That&rsquo;s why the &ldquo;by location&rdquo; queries are the most powerful way to slice the data.</p>
 
+        <p>One staging area sits in front of tier 2. The <strong>ground staging tier</strong> holds staged Signals &mdash; messages ingested from ground sources such as WhatsApp groups (<a href="#type-groundmessage">GroundMessage</a>) &mdash; grouped into threads (<a href="#type-groundthread">GroundThread</a>). A thread is a cluster of staged Signals with a correction lifecycle; when a reviewer approves a thread for publication, it is promoted and becomes a <a href="#type-signal">Signal</a>. Nothing enters the signals graph from a ground source without passing that review gate.</p>
+
         <div class="notice notice-info">
           New to GraphQL? You send one <code>POST</code> request to <code>/graphql</code> with a query naming exactly the fields you want, and you get back exactly those fields &mdash; no over-fetching, no guessing at response shapes. The <a href="/graphql" target="_blank">GraphQL Sandbox</a> autocompletes every field as you type, which is the fastest way to explore.
         </div>
@@ -225,6 +227,11 @@ const data = await fetch('/graphql', {
     <td><code>[Signal!]!</code></td>
     <td>List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants).<div class="field-args"><span class="arg"><code>locationId: String!</code></span></div></td>
   </tr><tr>
+    <td><code>signalLocationChallenges</code></td>
+    <td><code>[SignalLocationChallenge!]!</code></td>
+    <td>Open Signal Location challenges (for map dual-pin rendering). Team-scoped
+like signals when teamId is given; status defaults to &quot;consideration&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
+  </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
     <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
@@ -235,11 +242,11 @@ const data = await fetch('/graphql', {
   </tr><tr>
     <td><code>publicEvent</code></td>
     <td><code>PublicEvent</code></td>
-    <td>Resolve a public share-link to its cached event snapshot. No auth —
+    <td>Resolve a public share-link to its cached event snapshot. No auth -
 the (eventId, token) pair from the URL is the gate, and the snapshot
 only contains the safe fields enumerated on `PublicEvent`. Returns
 null when the Redis cache has no entry for that pair (link expired,
-revoked, or evicted under memory pressure — caller treats all three
+revoked, or evicted under memory pressure - caller treats all three
 the same).<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>token: String!</code></span></div></td>
   </tr><tr>
     <td><code>existingPublicEventLink</code></td>
@@ -247,7 +254,7 @@ the same).<div class="field-args"><span class="arg"><code>eventId: String!</code
     <td>Look up the most recently-minted public share link for an event,
 if one still exists in the cache. The Share modal calls this on
 open so it can reuse an existing link rather than minting a fresh
-token every time. Returns null when no live link exists — the
+token every time. Returns null when no live link exists - the
 caller then mints one via `createPublicEventLink`. Requires
 `requireContentReader` (admin / analyst / viewer); pending users
 are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
@@ -317,7 +324,7 @@ By default only current values. Pass current: false for the full history.<div cl
   </tr><tr>
     <td><code>locationMetadataHistory</code></td>
     <td><code>[LocationMetadata!]!</code></td>
-    <td>History of a (location, type) pair — newest first. Includes the current
+    <td>History of a (location, type) pair - newest first. Includes the current
 row plus every superseded one.<div class="field-args"><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>type: String!</code></span></div></td>
   </tr><tr>
     <td><code>myApiKeys</code></td>
@@ -346,7 +353,7 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
   </tr><tr>
     <td><code>invitationByToken</code></td>
     <td><code>InvitationInfo</code></td>
-    <td>Look up an invitation by token (public — used on accept-invite page).<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
+    <td>Look up an invitation by token (public - used on accept-invite page).<div class="field-args"><span class="arg"><code>token: String!</code></span></div></td>
   </tr><tr>
     <td><code>myAlertSubscriptions</code></td>
     <td><code>[AlertSubscription!]!</code></td>
@@ -381,7 +388,7 @@ options). Honours teamId as a location-scope filter.<div class="field-args"><spa
   </tr><tr>
     <td><code>entityStats</code></td>
     <td><code>EntityStats!</code></td>
-    <td>Cross-entity stats query — returns a total plus optional buckets grouped
+    <td>Cross-entity stats query - returns a total plus optional buckets grouped
 by type / severity / day / week / month. Filter shape mirrors the page
 queries so a &quot;current view&quot; can compute its own counts.<div class="field-args"><span class="arg"><code>input: EntityStatsInput!</code></span></div></td>
   </tr><tr>
@@ -408,13 +415,13 @@ compute as-of that date.<div class="field-args"><span class="arg"><code>asOf: Da
   </tr><tr>
     <td><code>dauSeries</code></td>
     <td><code>[DauPoint!]!</code></td>
-    <td>Daily Active Users time series — one point per UTC date in the
+    <td>Daily Active Users time series - one point per UTC date in the
 window. Admin only. Days with zero logins are omitted; the dashboard
 can backfill them client-side when plotting.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
   </tr><tr>
     <td><code>mauSeries</code></td>
     <td><code>[MauPoint!]!</code></td>
-    <td>Monthly Active Users time series — one point per UTC calendar
+    <td>Monthly Active Users time series - one point per UTC calendar
 month in the window. Admin only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
   </tr><tr>
     <td><code>pipelineCountries</code></td>
@@ -444,7 +451,7 @@ for the given locale. Admin/pipeline only. Lets the backfill
 driver enqueue only entities the worker would actually translate,
 instead of relying on per-task staleness diffs to no-op thousands
 of already-current rounds. Stale rows (row exists but hashes are
-out of date) are NOT returned here — they're rare and handled by
+out of date) are NOT returned here - they're rare and handled by
 the per-entity enrichment hooks.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr>
     <td><code>resolveKnowledgebaseLocation</code></td>
@@ -452,7 +459,7 @@ the per-entity enrichment hooks.<div class="field-args"><span class="arg"><code>
     <td>Resolve a knowledge-base location reference to a `locations.id`.
 Pcode wins over name; `adminLevel` narrows the name match so a
 village that shares its state's name doesn't collide. Returns null
-when neither the pcode nor the name matches — the ingest keeps the
+when neither the pcode nor the name matches - the ingest keeps the
 raw pcode on the row so a future backfill can re-resolve. A name given
 without `adminLevel` that matches more than one admin level is
 ambiguous and also returns null (rather than guessing the deepest
@@ -461,13 +468,13 @@ Admin / pipeline only.<div class="field-args"><span class="arg"><code>pcode: Str
   </tr><tr>
     <td><code>resolveGazetteerLocation</code></td>
     <td><code>GazetteerHit</code></td>
-    <td>Resolve a place name against the offline GeoNames gazetteer — the
+    <td>Resolve a place name against the offline GeoNames gazetteer - the
 first tier of the hybrid geo-resolver. Tries an exact normalised-name
 match, then a `pg_trgm` fuzzy match, preferring populated places / admin
 areas (feature class P/A) and the more-populous tie-break. `countryCode`
 (ISO-3166-1 alpha-2, e.g. &quot;SD&quot;) scopes the search; omit to search every
 loaded country. `minSimilarity` (default 0.4) floors the fuzzy match.
-Returns null on no match — the geoparser then falls back to LocationIQ
+Returns null on no match - the geoparser then falls back to LocationIQ
 for landmarks/POIs the gazetteer lacks. Admin / pipeline only.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>countryCode: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
   </tr><tr>
     <td><code>searchKnowledgebase</code></td>
@@ -476,7 +483,7 @@ for landmarks/POIs the gazetteer lacks. Admin / pipeline only.<div class="field-
 with Reciprocal Rank Fusion (k=60) and returned in descending
 score order. Both retrievers run in parallel over the same filter
 set; each contributes up to 50 candidates before fusion. The
-embedding provider is the one configured in the environment —
+embedding provider is the one configured in the environment -
 keep the write and read sides on the same provider or turn on
 `filters.currentEmbeddingModelOnly` to guarantee vector-space
 consistency. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span></div></td>
@@ -498,21 +505,32 @@ authenticated content reader.<div class="field-args"><span class="arg"><code>rep
   </tr><tr>
     <td><code>situationAnalysis</code></td>
     <td><code>SituationAnalysis</code></td>
-    <td>Current situation-analysis snapshot for a (country, year).
-`year` derives `windowStart = Jan 1` / `windowEnd = Dec 31`
-server-side. Falls back to `year(now())` when `year` is null.
-Returns null when no snapshot exists — the dashboard should
-render an empty state and wait for the next weekly generation.
-Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>year: Int</code></span><span class="arg"><code>asOf: DateTime</code> — Historical read — return the version that was current at
+    <td>Current situation-analysis snapshot for one bucket of a country.
+Buckets are keyed `(countryLocationId, windowKind, windowStart)`.
+By default reads the yearly bucket, where `year` derives
+`windowStart = Jan 1` server-side and falls back to `year(now())`
+when null - the dashboard's usual call. Pass `windowKind` +
+`windowStart` instead to read a finer bucket (e.g. monthly, to diff
+one month against the previous). Returns null when no snapshot
+exists - the dashboard should render an empty state and wait for the
+next weekly generation. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>year: Int</code></span><span class="arg"><code>windowKind: String</code> — Bucket granularity, part of the bucket key. Defaults to
+`yearly`. The pipeline owns this taxonomy (currently `yearly`
+and `monthly`), so it is not validated against a fixed list here -
+an unknown value simply matches no row and returns null.</span><span class="arg"><code>windowStart: DateTime</code> — Exact bucket start, matched for equality. Required when
+`windowKind` is anything other than `yearly`, because a year
+alone cannot identify a finer bucket. Must be the same instant the
+writer used (midnight UTC on the first day of the window), so pass
+the value the pipeline computed rather than reconstructing it.
+`windowEnd` is never matched on.</span><span class="arg"><code>asOf: DateTime</code> — Historical read - return the version that was current at
 this timestamp (defaults to now).</span><span class="arg"><code>schemaVersion: String</code> — Pin the read to a payload schema version. Defaults to the most
 recently written version for the bucket. Versions coexist rather
-than supersede — an older payload shape stays readable, so pass
+than supersede - an older payload shape stays readable, so pass
 this to keep a client on a shape it understands. Read
 `schemaVersion` off the returned row to see what you got.</span></div></td>
   </tr><tr>
     <td><code>situationAnalysesForCountry</code></td>
     <td><code>[SituationAnalysis!]!</code></td>
-    <td>Trend / history view — one row per year for a country, current
+    <td>Trend / history view - one row per year for a country, current
 versions only, newest year first. Never mixes schema versions: a
 bump changes what the numbers mean, so one series is always one
 version. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>schemaVersion: String</code> — Pin the trend to a payload schema version. Defaults to the
@@ -525,7 +543,7 @@ chart a historical payload shape.</span></div></td>
 exists for the given schema version. Used by the Dagster
 aggregation asset to distinguish first-run backfill (wide
 lookback window) from routine weekly refreshes (narrow window).
-Any authenticated content reader — this is a cheap existence
+Any authenticated content reader - this is a cheap existence
 check with no sensitive data on it.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span></div></td>
   </tr><tr>
     <td><code>aggregatedDatapoint</code></td>
@@ -535,7 +553,7 @@ scope. Cache-first: returns the pre-computed snapshot when one
 is current (`validTo IS NULL` or covers the `asOf` timestamp);
 otherwise assembles the bucket on-demand from `report_datapoints`
 and returns it with `onDemand = true`. Returns null when no
-contributing reports exist in scope.<div class="field-args"><span class="arg"><code>locationId: String</code> — Null = country-wide roll-up (yearly / all-time tiers).</span><span class="arg"><code>windowStart: DateTime!</code></span><span class="arg"><code>windowEnd: DateTime!</code></span><span class="arg"><code>windowKind: String!</code></span><span class="arg"><code>schemaVersion: String</code> — Defaults to the currently-configured pipeline schema version.</span><span class="arg"><code>asOf: DateTime</code> — Historical snapshot lookup — return the version that was current
+contributing reports exist in scope.<div class="field-args"><span class="arg"><code>locationId: String</code> — Null = country-wide roll-up (yearly / all-time tiers).</span><span class="arg"><code>windowStart: DateTime!</code></span><span class="arg"><code>windowEnd: DateTime!</code></span><span class="arg"><code>windowKind: String!</code></span><span class="arg"><code>schemaVersion: String</code> — Defaults to the currently-configured pipeline schema version.</span><span class="arg"><code>asOf: DateTime</code> — Historical snapshot lookup - return the version that was current
 at this timestamp. Defaults to `now`.</span></div></td>
   </tr><tr>
     <td><code>webhookSubscriptions</code></td>
@@ -549,6 +567,43 @@ at this timestamp. Defaults to `now`.</span></div></td>
     <td><code>webhookDeliveries</code></td>
     <td><code>[WebhookDelivery!]!</code></td>
     <td>Recent delivery attempts for a subscription, newest first.<div class="field-args"><span class="arg"><code>subscriptionId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundSources</code></td>
+    <td><code>[GroundSource!]!</code></td>
+    <td>All ground sources (per-source policy records), newest first.</td>
+  </tr><tr>
+    <td><code>groundThreads</code></td>
+    <td><code>[GroundThread!]!</code></td>
+    <td>Review queue: ground threads, newest first. Filter by source and/or
+review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;approved_public&quot; |
+&quot;rejected&quot;).<div class="field-args"><span class="arg"><code>groundSourceId: String</code></span><span class="arg"><code>reviewState: String</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundThread</code></td>
+    <td><code>GroundThread</code></td>
+    <td>One ground thread with its messages, or null if not found.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessages</code></td>
+    <td><code>[GroundMessage!]!</code></td>
+    <td>Staged messages, oldest first. Filter by source and/or thread.<div class="field-args"><span class="arg"><code>groundSourceId: String</code></span><span class="arg"><code>threadId: String</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessagesForClassification</code></td>
+    <td><code>[GroundMessageForClassification!]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): a source's staged
+messages, oldest first, projected for the classification/threading
+worker — no private-tier sender identity. Returns ALL messages
+(classified and not) so one query powers both labelling and
+thread assembly (clustering staged Signals into threads).<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>groundThreadsForSource</code></td>
+    <td><code>[GroundThread]</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): threading context for the
+classification worker — a source's existing threads, oldest first,
+so late corrections/retractions can target an existing thread via
+GroundThreadUpsertInput.threadId. `states` filters on
+lifecycleState (&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; |
+&quot;retracted&quot;); omitted/empty returns all. The worker selects
+{id, title, lifecycleState, reviewState, messageIds} — no message
+content, no sender identity.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>states: [String!]</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -668,6 +723,12 @@ creating an isolated event. Admin/pipeline only.<div class="field-args"><span cl
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-submitsignallocationchallenge">
+    <td><code>submitSignalLocationChallenge</code></td>
+    <td><code>SignalLocationChallenge!</code></td>
+    <td>Create or replace the open (consideration) Location challenge for a Signal.
+Auth: any approved logged-in team member who can view the Signal. Queue only —
+does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="field-args"><span class="arg"><code>input: SubmitSignalLocationChallengeInput!</code></span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -700,6 +761,14 @@ not stored on the event.<div class="field-args"><span class="arg"><code>eventId:
     <td><code>deleteDataSource</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a data source.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-resolvedatasource">
+    <td><code>resolveDataSource</code></td>
+    <td><code>String!</code></td>
+    <td>Idempotently resolve an organisation/source name to a data_sources id,
+creating an ungraded row if none matches (admin/pipeline only). Matching order:
+exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (&gt;= minSimilarity,
+default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
+future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
   </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>
@@ -740,7 +809,10 @@ Upsert keyed by (locationId, type).<div class="field-args"><span class="arg"><co
     <td><code>upsertLocationMetadataBatch</code></td>
     <td><code>[LocationMetadata!]!</code></td>
     <td>Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
-Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently.<div class="field-args"><span class="arg"><code>inputs: [UpsertLocationMetadataInput!]!</code></span></div></td>
+Returns the current row for each input. Rows whose locationId doesn't exist are
+skipped silently. Idempotent: an input whose blob is identical to the currently-open
+row is left untouched (no new history version), so re-running an ingest with unchanged
+data is a no-op.<div class="field-args"><span class="arg"><code>inputs: [UpsertLocationMetadataInput!]!</code></span></div></td>
   </tr><tr id="mutation-deletelocationmetadata">
     <td><code>deleteLocationMetadata</code></td>
     <td><code>Boolean!</code></td>
@@ -1032,6 +1104,61 @@ Restricted to admin / analyst — the ingest costs LLM + embedding
 credits per document. When DAGSTER_URL is unset the mutation
 still stages the PDF in S3 but returns a UNKNOWN-status job with
 no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
+  </tr><tr id="mutation-creategroundsource">
+    <td><code>createGroundSource</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Create a ground source — the per-source policy record (consent
+scope, privacy default, reviewer roles, retention) that every ingest
+from a WhatsApp group or hotline is gated on. Admin only; group
+kinds require a complete consent record (consentScope +
+consentRecordedAt + consentRecordedBy).<div class="field-args"><span class="arg"><code>input: CreateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-updategroundsource">
+    <td><code>updateGroundSource</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Update a source's policy record (admin only, partial). The merged
+row is re-validated — a group-kind source cannot be left without a
+complete consent record, so legacy rows must have consent supplied
+in the same update. transportId is immutable.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateGroundSourceInput!</code></span></div></td>
+  </tr><tr id="mutation-setgroundsourceactive">
+    <td><code>setGroundSourceActive</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>Activate or deactivate a source (admin only). Deactivation is the
+live-capture kill switch: the ingest consent gate rejects every
+payload for an inactive source. Deliberately exempt from
+consent-record validation so an incomplete legacy row can still be
+shut off immediately.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>isActive: Boolean!</code></span></div></td>
+  </tr><tr id="mutation-reviewgroundthread">
+    <td><code>reviewGroundThread</code></td>
+    <td><code>GroundThread!</code></td>
+    <td>Review a ground thread: decision is &quot;approve_private&quot;,
+&quot;approve_public&quot;, or &quot;reject&quot;. Role-gated per source (the caller's
+global role must appear in the source's reviewerRoles; platform
+admins always pass). Transitions follow the V1 state machine —
+notably approved_public is terminal. approve_public also promotes
+the thread into the standard signals graph via createSignal, with
+all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundmessageclassifications">
+    <td><code>upsertGroundMessageClassifications</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back
+classifications from the classify_ground_messages worker. Unknown
+messageIds are skipped with a warning. Returns the number of
+messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageClassificationInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundthreads">
+    <td><code>upsertGroundThreads</code></td>
+    <td><code>[String]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): replace placeholder
+threading with pipeline-built threads (clusters of staged
+Signals). Each input creates a
+thread (or, when `threadId` is set, APPENDS to that existing
+thread and updates its lifecycleState + title), re-points its
+messageIds at it, and deletes the placeholder threads that became
+empty. Messages whose current thread has already been human-reviewed
+(or promoted) are NEVER re-threaded, and a promoted `threadId`
+target is never mutated (a new thread is created instead) — the
+review gate outranks the pipeline. Returns one thread id per input,
+in order; null where an input had no movable messages (no thread
+created or updated).<div class="field-args"><span class="arg"><code>inputs: [GroundThreadUpsertInput!]!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1303,6 +1430,14 @@ Ignored for platform-level callers.</td>
     <td><code>infoUrl</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>synonyms</code></td>
+    <td><code>[String!]</code></td>
+    <td>Alias set for source-name normalisation (see resolveDataSource).</td>
+  </tr><tr>
+    <td><code>reliability</code></td>
+    <td><code>Int</code></td>
+    <td>NATO Admiralty-style reliability grade 1–4; null = ungraded.</td>
   </tr></tbody></table><h3 id="type-createdevuserinput"><code>CreateDevUserInput</code> <span class="type-badge">input</span></h3><p>Input for `createDevUser`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -1399,6 +1534,43 @@ a team-level team_admin or field_coordinator on that team instead of a
 platform admin/analyst. Purely an authorisation hint — the event itself
 has no team column; team affiliation is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr></tbody></table><h3 id="type-creategroundsourceinput"><code>CreateGroundSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>transportId</code></td>
+    <td><code>String!</code></td>
+    <td>WhatsApp group JID (or hotline number). Must be unique.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>REQUIRED (with consentRecordedAt + consentRecordedBy) for the
+group kinds; hotline consent is explicit by design.</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String</code></td>
+    <td>Defaults to &quot;private&quot;.</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]</code></td>
+    <td>Defaults to [&quot;admin&quot;, &quot;analyst&quot;].</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createlocationinput"><code>CreateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
     <td><code>Int</code></td>
@@ -1765,6 +1937,49 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>sourceLng</code></td>
     <td><code>Float</code></td>
     <td>Source coordinate's longitude. See sourceLat.</td>
+  </tr></tbody></table><h3 id="type-groundmessageclassificationinput"><code>GroundMessageClassificationInput</code> <span class="type-badge">input</span></h3><p>One classification write-back from the pipeline worker.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;.</td>
+  </tr><tr>
+    <td><code>uncertaintyMarker</code></td>
+    <td><code>String</code></td>
+    <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
+ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One thread (a cluster of staged Signals) produced by the pipeline
+threading task. Its messageIds are re-pointed at the thread, replacing
+their V1 one-per-message placeholder threads. With `threadId` set,
+the input APPENDS to that existing thread (cross-run threading: late
+corrections/retractions join the thread they belong to) instead of
+creating a new one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lifecycleState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; | &quot;retracted&quot;.</td>
+  </tr><tr>
+    <td><code>messageIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>Optional target thread for cross-run appends. When set, messageIds
+are appended to this thread and its lifecycleState + title are
+updated — provided the thread is not yet promoted (reviewState !=
+&quot;approved_public&quot; and no promotedSignalId) and belongs to
+groundSourceId. A promoted/terminal (or unknown/wrong-source) target
+is never mutated: a NEW thread is created instead, with a warning.</td>
   </tr></tbody></table><h3 id="type-inviteuserinput"><code>InviteUserInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -1947,6 +2162,27 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-submitsignallocationchallengeinput"><code>SubmitSignalLocationChallengeInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedLng</code></td>
+    <td><code>Float</code></td>
+    <td>Omit both to file a bare challenge. Provide both (finite, in range) for a
+Location correction — one without the other is rejected.</td>
+  </tr><tr>
+    <td><code>proposedLat</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-subscribetoalertsbatchinput"><code>SubscribeToAlertsBatchInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]!</code></td>
@@ -2056,6 +2292,14 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
     <td><code>infoUrl</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>synonyms</code></td>
+    <td><code>[String!]</code></td>
+    <td>Alias set for source-name normalisation (see resolveDataSource).</td>
+  </tr><tr>
+    <td><code>reliability</code></td>
+    <td><code>Int</code></td>
+    <td>NATO Admiralty-style reliability grade 1–4; null = ungraded.</td>
   </tr></tbody></table><h3 id="type-updateeventinput"><code>UpdateEventInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>signalIds</code></td>
     <td><code>[String!]</code></td>
@@ -2123,6 +2367,41 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
+left unchanged; transportId is immutable (it is the identity that
+externalIds are minted against). The merged row is re-validated: group
+kinds must end up with a complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String</code></td>
+    <td>&quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
@@ -2319,6 +2598,12 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td><code>extractedByModel</code></td>
     <td><code>String!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>The report's publisher source (a `data_sources` id), resolved by the
+pipeline via `resolveDataSource`. Null until source attribution backfills;
+a figure's own cited source lives per-figure inside `data`. See clear-context-pipeline ADR-0004.</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisinput"><code>UpsertSituationAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>countryLocationId</code></td>
     <td><code>String!</code></td>
@@ -2490,11 +2775,18 @@ tiers). Otherwise references `locations.id`.</td>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
     <td>Flat map keyed by field label. Each value is either a
-QualityEnvelope (for numeric fields — `{ value, unit,
-quality_score, confidence_mix, newest_report_at, oldest_report_at,
-contributing_report_ids }`), a SetUnionEnvelope (for label
-fields — `{ values, contributing_report_ids }`), or `null`
-when no report in scope reported that field.</td>
+QualityEnvelope (for numeric fields), a SetUnionEnvelope (for label
+fields — `{ values, contributing_report_ids }`), or `null` when
+no report in scope reported that field.
+
+A numeric QualityEnvelope carries `{ value, unit, confidence_mix,
+newest_report_at, oldest_report_at, contributing_report_ids }` plus
+the credibility fields (clear-context-pipeline ADR-0004/0005): the
+cached time-invariant `reliability` (1–4) and `intrinsic_credibility`
+(0–8.5), and — added on every read — `recency` (0–1.5),
+`information_credibility` (0–10), and `data_quality` (**0–10**), the
+per-field headline. The legacy `quality_score` (0–1, directness-only)
+is retained for backwards compatibility.</td>
   </tr><tr>
     <td><code>contributingReportIds</code></td>
     <td><code>[String!]!</code></td>
@@ -2510,11 +2802,26 @@ when no report in scope reported that field.</td>
   </tr><tr>
     <td><code>dataQualityScore</code></td>
     <td><code>Float!</code></td>
-    <td>—</td>
+    <td>Bucket headline data quality on a **0–10** scale (clear-context-pipeline
+ADR-0005): the mean of the fields' read-time `data_quality`
+(`(reliability × 2.5 × information_credibility) / 10`, Recency folded
+in at read). The stored column carries the same 0–10 scale. NOTE: this
+is a scale change from the pre-data-quality `quality_score` (0–1) —
+thresholds tuned on the old scale must be re-tuned.</td>
   </tr><tr>
     <td><code>reportCount</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>estimatedCurrentTotals</code></td>
+    <td><code>CurrentTotals</code></td>
+    <td>Estimated current totals — latest authoritative stock + the flows
+reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
+bucket's period: it is returned only for a bucket whose window still
+includes now (the current year/month/week and the `all` tier) and is
+`null` on any historical bucket, so a past-period row never carries a
+present-day number. Resolved lazily — the bounded `report_datapoints` scan
+runs only when this field is selected — but it is a real scan, not free.</td>
   </tr><tr>
     <td><code>validFrom</code></td>
     <td><code>DateTime!</code></td>
@@ -2805,6 +3112,15 @@ the resolver converts at read time so links stay short-lived.</td>
 on every update path (title / description / population / attachments
 / event-linkage / needs / scenarios). Useful for cache invalidation
 and &quot;recently updated&quot; surfaces.</td>
+  </tr></tbody></table><h3 id="type-currenttotals"><code>CurrentTotals</code> <span class="type-badge">object</span></h3><p>Estimated current totals for a country bucket (ADR-0006 §4). Each metric is
+`null` when there is no anchoring stock in scope to accrue flows onto.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>displacement</code></td>
+    <td><code>StockFlowEstimate</code></td>
+    <td>IDP displacement: latest `idp_stock` + `new_displacements` since T₀.</td>
+  </tr><tr>
+    <td><code>returns</code></td>
+    <td><code>StockFlowEstimate</code></td>
+    <td>Returns: latest `returnee_stock` + `new_returns` since T₀.</td>
   </tr></tbody></table><h3 id="type-dailyactivitycount"><code>DailyActivityCount</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>date</code></td>
     <td><code>String!</code></td>
@@ -2841,6 +3157,16 @@ and &quot;recently updated&quot; surfaces.</td>
     <td><code>infoUrl</code></td>
     <td><code>String</code></td>
     <td>URL with more information about this source.</td>
+  </tr><tr>
+    <td><code>synonyms</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Alias set for source-name normalisation — variants that resolve to this
+same source (e.g. &quot;IOM DTM&quot; / &quot;Displacement Tracking Matrix&quot; / &quot;DTM&quot;).</td>
+  </tr><tr>
+    <td><code>reliability</code></td>
+    <td><code>Int</code></td>
+    <td>NATO Admiralty-style source-reliability grade, 1 (least) – 4 (most).
+Null = ungraded; the data-quality formula treats null as 1. See clear-context-pipeline ADR-0004.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
@@ -3158,6 +3484,246 @@ pg_trgm similarity of the best fuzzy match.</td>
     <td><code>exact</code></td>
     <td><code>Boolean!</code></td>
     <td>True when matched exactly on the normalised name, false when fuzzy.</td>
+  </tr></tbody></table><h3 id="type-groundingestresult"><code>GroundIngestResult</code> <span class="type-badge">object</span></h3><p>Result of a chat-export ingest (also returned by the REST upload
+route as JSON).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>created</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>mediaStored</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>mediaUnmatched</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessage"><code>GroundMessage</code> <span class="type-badge">object</span></h3><p>A staged Signal: a canonical message parsed from a WhatsApp source,
+held in the ground staging tier until its thread is reviewed. Text is
+phone-number-redacted at persistence. senderName is private-tier data and
+is scrubbed from anything promoted to the signals graph.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>externalId</code></td>
+    <td><code>String!</code></td>
+    <td>Idempotency id, scheme &quot;whatsapp:{groupJid}:{messageId}&quot;.</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>senderRef</code></td>
+    <td><code>String!</code></td>
+    <td>Pseudonymous per-(source, sender) reference, e.g. &quot;s_ab12cd34ef56&quot;.</td>
+  </tr><tr>
+    <td><code>senderName</code></td>
+    <td><code>String</code></td>
+    <td>Raw sender display name. Private tier only — never promoted.</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>Message text (redacted). Empty for caption-less media messages.</td>
+  </tr><tr>
+    <td><code>mediaKeys</code></td>
+    <td><code>[String!]!</code></td>
+    <td>S3 keys of stored attachments.</td>
+  </tr><tr>
+    <td><code>mediaUrls</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Presigned GET URLs for mediaKeys (1 h expiry), generated at read
+time — URLs are never stored.</td>
+  </tr><tr>
+    <td><code>mediaRefs</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Attachment filenames referenced by the export.</td>
+  </tr><tr>
+    <td><code>omittedMediaCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Media the export omitted (&quot;image omitted&quot;) — the message still
+counts as a media message.</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String</code></td>
+    <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;; null
+until the pipeline classification task labels the message.</td>
+  </tr><tr>
+    <td><code>uncertainty</code></td>
+    <td><code>String</code></td>
+    <td>Contributor's own uncertainty tag (&quot;unconfirmed&quot;, &quot;rumour&quot;),
+preserved from the source text.</td>
+  </tr><tr>
+    <td><code>isEdited</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessageforclassification"><code>GroundMessageForClassification</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged Signal for the
+classification/threading worker (clear-pipeline's
+classify_ground_messages task). Deliberately excludes senderName —
+the pipeline never sees private-tier identity, only the pseudonymous
+senderRef.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>senderRef</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>hasMedia</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message carries stored media, export-referenced
+attachments, or export-omitted media.</td>
+  </tr><tr>
+    <td><code>classification</code></td>
+    <td><code>String</code></td>
+    <td>Current label, null while unclassified.</td>
+  </tr><tr>
+    <td><code>threadId</code></td>
+    <td><code>String</code></td>
+    <td>Current thread (placeholder or pipeline-built).</td>
+  </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
+future hotline). Carries the consent scope, privacy default, reviewer
+roles, and retention rule for everything ingested from the source. The
+whole ground staging tier is private: admin/analyst only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>Source kind: &quot;staff_group&quot; | &quot;partner_group&quot; | &quot;hotline&quot;.</td>
+  </tr><tr>
+    <td><code>transportId</code></td>
+    <td><code>String!</code></td>
+    <td>Transport binding — WhatsApp group JID, or hotline number.</td>
+  </tr><tr>
+    <td><code>consentScope</code></td>
+    <td><code>String</code></td>
+    <td>What the source's members consented to (free text, e.g. &quot;links and
+resources only&quot;). Ingest policy is judged against this record.</td>
+  </tr><tr>
+    <td><code>consentRecordedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>consentRecordedBy</code></td>
+    <td><code>String</code></td>
+    <td>Who recorded/gave the consent (person name/role, not a user id).</td>
+  </tr><tr>
+    <td><code>privacyDefault</code></td>
+    <td><code>String!</code></td>
+    <td>Review default for derived threads. V1: always &quot;private&quot;.</td>
+  </tr><tr>
+    <td><code>reviewerRoles</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Global roles allowed to review threads from this source.</td>
+  </tr><tr>
+    <td><code>retentionRule</code></td>
+    <td><code>String</code></td>
+    <td>Free-text retention rule; enforcement is operational in V1.</td>
+  </tr><tr>
+    <td><code>isActive</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundthread"><code>GroundThread</code> <span class="type-badge">object</span></h3><p>A thread — a cluster of staged Signals — in the review queue. V1
+threads are one-per-message placeholders until the pipeline threading
+task clusters them. Lifecycle state models the correction chain; review
+state is the human gate in front of the signals graph. An approved
+thread is promoted and becomes a Signal.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groundSourceId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>GroundSource!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lifecycleState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quot; | &quot;corrected&quot; | &quot;retracted&quot;.</td>
+  </tr><tr>
+    <td><code>reviewState</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;unverified&quot; | &quot;approved_private&quot; | &quot;approved_public&quot; | &quot;rejected&quot;.</td>
+  </tr><tr>
+    <td><code>reviewedBy</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of the reviewer who last transitioned reviewState.</td>
+  </tr><tr>
+    <td><code>reviewedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reviewNote</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>promotedSignalId</code></td>
+    <td><code>String</code></td>
+    <td>Id of the `signals` row created when this thread was promoted
+(approved_public only).</td>
+  </tr><tr>
+    <td><code>messages</code></td>
+    <td><code>[GroundMessage!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>messageIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Ids of the thread's messages, oldest first. The pipeline worker
+selects this (via groundThreadsForSource) instead of `messages` —
+it carries no message content and no sender identity.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -3614,6 +4180,11 @@ ensureCountryLocation: [minLng, minLat, maxLng, maxLat].</p><table class="ref-ta
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>iso3</code></td>
+    <td><code>String!</code></td>
+    <td>ISO 3166-1 alpha-3 code (e.g. &quot;SDN&quot;). Used by pipeline ingests that scope
+external APIs by country (HAPI location_code, IOM DTM Admin0Pcode).</td>
+  </tr><tr>
     <td><code>bbox</code></td>
     <td><code>[Float!]!</code></td>
     <td>—</td>
@@ -3934,6 +4505,57 @@ field; for Dataminr, parsed from raw text via regex.</td>
     <td><code>comments</code></td>
     <td><code>[UserComment!]!</code></td>
     <td>User comments on this signal.</td>
+  </tr><tr>
+    <td><code>locationChallenge</code></td>
+    <td><code>SignalLocationChallenge</code></td>
+    <td>Open Location challenge for this signal, if any (null when none).</td>
+  </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal, with an optional Location
+correction (Location trust v1). Queue only — status is always &quot;consideration&quot;,
+there is no accept/reject, and it never mutates the Signal's own geometry.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>v1 is always &quot;consideration&quot;.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>Optional note explaining why the pin looks wrong.</td>
+  </tr><tr>
+    <td><code>proposedLng</code></td>
+    <td><code>Float</code></td>
+    <td>Proposed corrected point. Both lng and lat are set together, or both null
+(a bare challenge with no correction).</td>
+  </tr><tr>
+    <td><code>proposedLat</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedName</code></td>
+    <td><code>String</code></td>
+    <td>Optional label for the proposed point.</td>
+  </tr><tr>
+    <td><code>createdBy</code></td>
+    <td><code>String!</code></td>
+    <td>Auth user id of whoever filed the challenge.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>hasProposedPoint</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when proposedLng/proposedLat are both set.</td>
   </tr></tbody></table><h3 id="type-signalspage"><code>SignalsPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>items</code></td>
     <td><code>[Signal!]!</code></td>
@@ -4028,6 +4650,31 @@ string, or ISO date/week/month.</td>
     <td><code>count</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-stockflowestimate"><code>StockFlowEstimate</code> <span class="type-badge">object</span></h3><p>One metric's estimated current total (ADR-0006 §4): the latest
+authoritative stock plus the flows reported after its reference date T₀.
+Flows at or before T₀ are already embedded in the stock and are not added
+again — the invariant that stops returnee/IDP totals from over-counting.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>total</code></td>
+    <td><code>Float!</code></td>
+    <td>`stock` + `flowsSince` — the headline estimated current total.</td>
+  </tr><tr>
+    <td><code>stock</code></td>
+    <td><code>Float!</code></td>
+    <td>The anchoring latest authoritative stock value (API-reconciled).</td>
+  </tr><tr>
+    <td><code>flowsSince</code></td>
+    <td><code>Float!</code></td>
+    <td>Deduped sum of the flows whose as-of date is strictly after T₀.</td>
+  </tr><tr>
+    <td><code>t0</code></td>
+    <td><code>DateTime!</code></td>
+    <td>T₀ — the anchor stock's reference date. Flows at/before it are treated
+as already counted inside `stock`.</td>
+  </tr><tr>
+    <td><code>flowCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Reports contributing forward flows — a provenance count, not a count of
+distinct flow events.</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>

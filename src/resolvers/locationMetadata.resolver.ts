@@ -15,6 +15,26 @@ interface UpsertLocationMetadataInput {
  */
 const CURRENT_FILTER = { validTo: null };
 
+/**
+ * Canonical JSON string: object keys sorted recursively (key order is
+ * insignificant in JSON), array order preserved (significant). Used by the
+ * batch upsert to detect when an incoming blob is byte-identical to the
+ * currently-open row so a no-op re-ingest doesn't append a redundant history
+ * row. Note: array order IS compared, so producers must emit stable ordering to
+ * benefit (unstable order just falls through to a normal supersede — never a
+ * correctness issue).
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const body = Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+    .join(",");
+  return `{${body}}`;
+}
+
 export const locationMetadataResolvers = {
   Query: {
     locationMetadata: async (
@@ -112,7 +132,9 @@ export const locationMetadataResolvers = {
       args: { inputs: UpsertLocationMetadataInput[] },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      // Pipeline ingests (clear-context-pipeline location-metadata assets) call
+      // this with the `pipeline` role — matching the single-row upsert.
+      requireRole(context, ["admin", "pipeline"]);
       const { inputs } = args;
 
       if (inputs.length === 0) return [];
@@ -135,42 +157,76 @@ export const locationMetadataResolvers = {
       if (valid.length === 0) return [];
 
       const now = new Date();
+      const keyOf = (locationId: string, type: string) => JSON.stringify([locationId, type]);
 
-      // Two steps inside one transaction (callback form so we can pass a
-      // generous timeout — array form is capped at the default 5s, which a
-      // 200-row IOM DTM batch routinely exceeds against a remote DB):
-      //   1. Close every currently-open row matching any (locationId, type)
-      //      in the batch (one updateMany with an OR clause).
-      //   2. Insert all new rows in a createMany (one round-trip instead of N).
-      const closeClauses = valid.map((i) => ({
-        locationId: i.locationId,
-        type: i.type,
-        validTo: null,
-      }));
-
-      const newRowsData = valid.map((i) => ({
-        locationId: i.locationId,
-        type: i.type,
-        data: i.data as InputJsonValue,
-        validFrom: now,
-      }));
-
+      // One transaction (callback form so we can pass a generous timeout — array
+      // form is capped at the default 5s, which a 200-row IOM DTM batch routinely
+      // exceeds against a remote DB):
+      //   1. Read the currently-open row for each (locationId, type) in the batch.
+      //   2. Skip inputs whose blob is byte-identical to that open row — a no-op
+      //      re-ingest must not append a redundant history version (idempotent
+      //      re-materialisation). Those rows are returned unchanged.
+      //   3. For the rest, close the open row (validTo = now) and insert the new
+      //      one (createMany, one round-trip).
       const created = await context.prisma.$transaction(
         async (tx) => {
+          const openRows = await tx.locationMetadata.findMany({
+            where: {
+              OR: valid.map((i) => ({
+                locationId: i.locationId,
+                type: i.type,
+                validTo: null,
+              })),
+            },
+          });
+          const openByKey = new Map(
+            openRows.map((r) => [keyOf(r.locationId, r.type), r]),
+          );
+
+          const changed: UpsertLocationMetadataInput[] = [];
+          const unchanged: typeof openRows = [];
+          for (const i of valid) {
+            const open = openByKey.get(keyOf(i.locationId, i.type));
+            if (open && stableStringify(open.data) === stableStringify(i.data)) {
+              unchanged.push(open);
+            } else {
+              changed.push(i);
+            }
+          }
+
+          // Everything already current — no writes at all, return the open rows.
+          if (changed.length === 0) return unchanged;
+
           await tx.locationMetadata.updateMany({
-            where: { OR: closeClauses },
+            where: {
+              OR: changed.map((i) => ({
+                locationId: i.locationId,
+                type: i.type,
+                validTo: null,
+              })),
+            },
             data: { validTo: now },
           });
-          await tx.locationMetadata.createMany({ data: newRowsData });
-          // Return the rows just created. Identifiable by validFrom = now
-          // (set above) — safer than relying on insertion order.
-          return tx.locationMetadata.findMany({
+          await tx.locationMetadata.createMany({
+            data: changed.map((i) => ({
+              locationId: i.locationId,
+              type: i.type,
+              data: i.data as InputJsonValue,
+              validFrom: now,
+            })),
+          });
+          // The rows just created are identifiable by validFrom = now (set
+          // above) — safer than relying on insertion order. Return them
+          // alongside the unchanged open rows so the caller sees the current
+          // row for every input it sent.
+          const inserted = await tx.locationMetadata.findMany({
             where: {
-              type: { in: [...new Set(valid.map((i) => i.type))] },
-              locationId: { in: valid.map((i) => i.locationId) },
+              type: { in: [...new Set(changed.map((i) => i.type))] },
+              locationId: { in: changed.map((i) => i.locationId) },
               validFrom: now,
             },
           });
+          return [...inserted, ...unchanged];
         },
         { timeout: 60_000, maxWait: 10_000 },
       );

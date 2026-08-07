@@ -31,7 +31,17 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
     // stub tests only touch a couple of delegates; casting directly
     // through `Context["prisma"]` trips the newer strict overlap
     // check. Same pattern crisis.resolver.test.ts and friends use.
-    prisma: prisma as unknown as Context["prisma"],
+    prisma: {
+      // Default stub for the aggregation paths' reliability lookup
+      // (loadReliabilityBySource → dataSources.findMany). Tests that don't care
+      // about source reliability get no grades → every figure resolves to
+      // reliability 1, matching pre-data-quality behaviour. Overridable below.
+      dataSources: { findMany: vi.fn().mockResolvedValue([]) },
+      // Default stub for the location_metadata reconciliation read (ADR-0006).
+      // No API contributors by default → aggregation is report-only, as before.
+      locationMetadata: { findMany: vi.fn().mockResolvedValue([]) },
+      ...prisma,
+    } as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -151,11 +161,56 @@ describe("Query.aggregatedDatapoint", () => {
     expect(result).not.toBeNull();
     expect(result?.onDemand).toBe(false);
     expect(result?.id).toBe("agg1");
+    // Legacy-shape data (no per-field credibility envelope) — finalisation
+    // scores nothing, so the persisted score must be kept, NOT overwritten
+    // with a spurious 0. (#110)
+    expect(result?.dataQualityScore).toBe(0.8);
   });
 
-  it("defaults to schema v1 when the query omits schemaVersion", async () => {
+  it("finalises the score for a new-shape cached row (#110)", async () => {
+    // A v2 envelope carries reliability + intrinsic_credibility, so the
+    // read path re-scores data_quality live (0–10) rather than keeping the
+    // stored value.
+    const cachedRow = {
+      id: "agg2",
+      windowStart: args.windowStart,
+      windowEnd: args.windowEnd,
+      windowKind: "weekly",
+      locationId: "sd0201",
+      data: {
+        killed_total: {
+          value: 5,
+          quality_score: 0.8,
+          reliability: 3,
+          intrinsic_credibility: 8.1,
+          newest_report_at: args.windowEnd.toISOString(),
+        },
+      },
+      contributingReportIds: ["r1"],
+      newestSourceAt: new Date(),
+      oldestSourceAt: new Date(),
+      dataQualityScore: 0.123, // stale stored value — must be replaced
+      reportCount: 1,
+      validFrom: new Date(),
+      validTo: null,
+      schemaVersion: "v2",
+      computedAt: new Date(),
+    };
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst: vi.fn().mockResolvedValue(cachedRow) },
+      reportDatapoint: { findMany: vi.fn() },
+    });
+    const result = await aggregatedDatapoint(null, { ...args, asOf: args.windowEnd }, ctx);
+    // Finalised: reliability 3, intrinsic 8.1, recency full (asOf == newest) →
+    // info_cred 9.6, data_quality = (3 × 2.5 × 9.6)/10 = 7.2, on the 0–10 scale.
+    expect(result?.dataQualityScore).toBeCloseTo(7.2, 4);
+    expect(result?.dataQualityScore).not.toBe(0.123);
+  });
+
+  it("defaults to schema v2 when the query omits schemaVersion", async () => {
     // A version-less query must read the version the current pipeline
-    // writes (v1) — otherwise freshly-aggregated buckets go unread.
+    // writes (v2 after the data-quality/stock-flow bump) — otherwise
+    // freshly-aggregated buckets go unread. (#110)
     const findFirst = vi.fn().mockResolvedValue(null);
     const ctx = buildContext(VIEWER, {
       aggregatedDatapoint: { findFirst },
@@ -164,7 +219,7 @@ describe("Query.aggregatedDatapoint", () => {
     await aggregatedDatapoint(null, args, ctx);
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ schemaVersion: "v1" }),
+        where: expect.objectContaining({ schemaVersion: "v2" }),
       }),
     );
   });
@@ -739,5 +794,80 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     expect(bucketsByKind.all!.size).toBe(0);
     // One bucket total, holding both reports.
     expect(createTx).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AggregatedDatapoint.estimatedCurrentTotals — lazy current-total field (ADR-0006 §4)
+// ---------------------------------------------------------------------------
+describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
+  const estimatedCurrentTotals = datapointResolvers.AggregatedDatapoint.estimatedCurrentTotals;
+  const fig = (value: number, scope: string) => ({
+    value, unit: "people", confidence: "reported",
+    source_quote: "…", chunk_index: 0, page_number: 1, scope_location_id: scope,
+  });
+  const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+
+  it("returns null for a historical bucket without scanning reports", async () => {
+    // A past-period bucket must not carry a now-figure (#115). The gate is the
+    // window, not the kind — a historical yearly/monthly/weekly all return null.
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = {
+      locationId: "SD0", windowKind: "yearly",
+      windowEnd: new Date(iso(400)), schemaVersion: "v1",
+    };
+    expect(await estimatedCurrentTotals(parent, {}, ctx)).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the bucket has no location", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = { locationId: null, windowKind: "yearly", schemaVersion: "v1" };
+    expect(await estimatedCurrentTotals(parent, {}, ctx)).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  const dispRows = () => [
+    { reportId: "s1", publishedAt: new Date(iso(40)), reportingPeriodStart: null,
+      reportingPeriodEnd: new Date(iso(35)), locationIds: ["SD0"], sourceId: null,
+      data: { displacement: { idp_stock: fig(100000, "SD0") } } },
+    { reportId: "f1", publishedAt: new Date(iso(10)), reportingPeriodStart: null,
+      reportingPeriodEnd: new Date(iso(8)), locationIds: ["SD0"], sourceId: null,
+      data: { displacement: { new_displacements: fig(3000, "SD0") } } },
+  ];
+
+  it("computes the displacement total for a current yearly bucket", async () => {
+    const findMany = vi.fn().mockResolvedValue(dispRows());
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = {
+      locationId: "SD0", windowKind: "yearly",
+      windowEnd: new Date(iso(-30)), schemaVersion: "v1",
+    };
+    const result = (await estimatedCurrentTotals(parent, {}, ctx)) as {
+      displacement: { stock: number; flowsSince: number; total: number } | null;
+      returns: unknown;
+    };
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(result.displacement).not.toBeNull();
+    expect(result.displacement!.stock).toBe(100000);
+    expect(result.displacement!.flowsSince).toBe(3000);
+    expect(result.displacement!.total).toBe(103000);
+    expect(result.returns).toBeNull(); // no returnee_stock in scope
+  });
+
+  it("also computes for a current MONTHLY bucket (not gated by kind, #115)", async () => {
+    const findMany = vi.fn().mockResolvedValue(dispRows());
+    const ctx = buildContext(VIEWER, { reportDatapoint: { findMany } });
+    const parent = {
+      locationId: "SD0", windowKind: "monthly",
+      windowEnd: new Date(iso(-3)), schemaVersion: "v1",
+    };
+    const result = (await estimatedCurrentTotals(parent, {}, ctx)) as {
+      displacement: { total: number } | null;
+    };
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(result.displacement!.total).toBe(103000);
   });
 });

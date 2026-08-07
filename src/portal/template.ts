@@ -304,9 +304,16 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     .form-group label { display: block; font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.25rem; }
 
     /* Buttons */
-    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-weight: 500; cursor: pointer; font-size: 0.875rem; transition: all 0.15s; font-family: var(--font); }
-    .btn-primary { background: var(--color-accent); color: var(--on-accent); }
-    .btn-primary:hover { background: var(--color-accent-hover); }
+    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid transparent; font-weight: 600; cursor: pointer; font-size: 0.875rem; transition: background 0.15s, border-color 0.15s, color 0.15s; font-family: var(--font); }
+    .btn-primary {
+      background: var(--color-accent);
+      color: var(--on-accent);
+      border-color: var(--color-accent-border, #7c2d12);
+    }
+    .btn-primary:hover {
+      background: var(--color-accent-hover);
+      border-color: var(--color-accent);
+    }
     .btn-danger { background: transparent; border: 1px solid var(--color-danger); color: var(--color-danger); }
     .btn-danger:hover { background: var(--color-danger); color: #fff; }
     .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
@@ -1118,6 +1125,7 @@ export function renderLoginPage(opts?: { next?: string }): string {
     button:hover { background: #ff6a33; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
+    .notice { color: #4ade80; font-size: 0.8rem; margin-top: 0.25rem; line-height: 1.4; }
     .toggle { text-align: center; font-size: 0.8rem; color: #9a9ca3; margin-top: 1.25rem; }
     .toggle a { color: #f2612a; text-decoration: none; }
     .toggle a:hover { text-decoration: underline; }
@@ -1149,17 +1157,70 @@ export function renderLoginPage(opts?: { next?: string }): string {
       <input type="password" id="signin-password" autocomplete="current-password" placeholder="Your password">
       <button id="signin-btn" onclick="signIn()">Sign In</button>
       <div class="error" id="signin-error"></div>
+      <div class="toggle"><a href="#" onclick="showForm('forgot'); return false;">Forgot your password?</a></div>
       <div class="toggle">Don't have an account? <a href="#" onclick="showForm('register'); return false;">Create one</a></div>
+    </div>
+
+    <!-- Forgot Password Form -->
+    <div id="forgot-form" style="display:none">
+      <h1>Reset Password</h1>
+      <p>Enter your email and we'll send you a link to choose a new password.</p>
+      <label for="forgot-email">Email</label>
+      <input type="email" id="forgot-email" autocomplete="email" placeholder="you@example.com">
+      <button id="forgot-btn" onclick="requestReset()">Send Reset Link</button>
+      <div class="error" id="forgot-error"></div>
+      <div class="notice" id="forgot-notice"></div>
+      <div class="toggle"><a href="#" onclick="showForm('signin'); return false;">Back to sign in</a></div>
     </div>
   </div>
   <script>
     var LOGIN_NEXT = ${nextJson};
 
     function showForm(name) {
-      document.getElementById('signin-form').style.display = name === 'signin' ? 'block' : 'none';
-      document.getElementById('register-form').style.display = name === 'register' ? 'block' : 'none';
+      ['signin', 'register', 'forgot'].forEach(function (form) {
+        document.getElementById(form + '-form').style.display = form === name ? 'block' : 'none';
+      });
       document.getElementById('signin-error').textContent = '';
       document.getElementById('register-error').textContent = '';
+      document.getElementById('forgot-error').textContent = '';
+      document.getElementById('forgot-notice').textContent = '';
+    }
+
+    async function requestReset() {
+      var email = document.getElementById('forgot-email').value.trim();
+      var errorEl = document.getElementById('forgot-error');
+      var noticeEl = document.getElementById('forgot-notice');
+      errorEl.textContent = '';
+      noticeEl.textContent = '';
+      if (!email) {
+        errorEl.textContent = 'Email is required.';
+        return;
+      }
+      var btn = document.getElementById('forgot-btn');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      try {
+        var res = await fetch('/portal/forgot-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email }),
+        });
+        if (res.ok) {
+          // Deliberately the same message whether or not the address is
+          // registered — the server won't tell us, and neither should the UI.
+          noticeEl.textContent = 'If that email is registered, a reset link is on its way. The link expires in 1 hour.';
+          btn.textContent = 'Sent';
+          return;
+        }
+        errorEl.textContent = 'Something went wrong. Please try again.';
+      } catch (e) {
+        errorEl.textContent = 'Network error. Please try again.';
+      } finally {
+        if (btn.textContent !== 'Sent') {
+          btn.disabled = false;
+          btn.textContent = 'Send Reset Link';
+        }
+      }
     }
 
     async function signIn() {
@@ -1242,6 +1303,158 @@ export function renderLoginPage(opts?: { next?: string }): string {
     document.getElementById('register-password').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') register();
     });
+    document.getElementById('forgot-email').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') requestReset();
+    });
+  </script>
+</body>
+</html>`;
+}
+
+export interface ResetPasswordPageOptions {
+  /** Reset token from the emailed link. Empty when it's missing entirely. */
+  token: string;
+  /**
+   * `"setup"` renders first-time "choose a password" copy for the
+   * dev-user welcome link; `"reset"` is the forgot-password wording.
+   */
+  kind: "reset" | "setup";
+  /**
+   * False when the token is missing, unknown, or expired — the form is
+   * replaced by a dead-link message so nobody types a new password into
+   * something that cannot succeed.
+   */
+  tokenValid: boolean;
+}
+
+/**
+ * Standalone page behind the emailed reset link. Unauthenticated by
+ * design: possession of the token IS the credential, so requiring a
+ * session here would make the flow useless.
+ */
+export function renderResetPasswordPage({
+  token,
+  kind,
+  tokenValid,
+}: ResetPasswordPageOptions): string {
+  const isSetup = kind === "setup";
+  const heading = isSetup ? "Choose a Password" : "Set a New Password";
+  const blurb = isSetup
+    ? "Welcome to CLEAR. Pick a password to finish setting up your account."
+    : "Pick a new password for your account. Signing in elsewhere will require it.";
+  const submitLabel = isSetup ? "Set Password" : "Reset Password";
+
+  const body = tokenValid
+    ? `      <h1>${heading}</h1>
+      <p>${blurb}</p>
+      <input type="hidden" id="reset-token" value="${escapeHtml(token)}">
+      <label for="password">New password</label>
+      <input type="password" id="password" autocomplete="new-password" placeholder="Min. 8 characters">
+      <label for="confirm">Confirm password</label>
+      <input type="password" id="confirm" autocomplete="new-password" placeholder="Repeat your password">
+      <button id="submit-btn" onclick="submitReset()">${submitLabel}</button>
+      <div class="error" id="error"></div>
+      <div class="notice" id="notice"></div>
+      <div class="toggle"><a href="/portal">Back to sign in</a></div>`
+    : `      <h1>Link Expired</h1>
+      <p>This ${isSetup ? "setup" : "reset"} link is no longer valid. Reset links expire after 1 hour and can only be used once.</p>
+      <div class="toggle"><a href="/portal">Request a new link</a></div>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer Portal &mdash; ${escapeHtml(heading)}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta name="referrer" content="no-referrer">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0a0a0b; color: #f5f5f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #141417; border: 1px solid #26262b; border-radius: 12px; padding: 2rem; width: 380px; }
+    .card h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+    .card p { font-size: 0.85rem; color: #9a9ca3; margin-bottom: 1.5rem; line-height: 1.5; }
+    label { display: block; font-size: 0.8rem; color: #9a9ca3; margin-bottom: 0.25rem; }
+    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid #26262b; background: #0e0e10; color: #f5f5f6; font-size: 0.875rem; margin-bottom: 1rem; font-family: inherit; }
+    input:focus { outline: none; border-color: #f2612a; }
+    button { width: 100%; padding: 0.6rem; background: #f2612a; color: #0a0a0b; border: none; border-radius: 8px; font-size: 0.875rem; cursor: pointer; font-family: inherit; font-weight: 600; }
+    button:hover { background: #ff6a33; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
+    .notice { color: #4ade80; font-size: 0.8rem; margin-top: 0.25rem; line-height: 1.4; }
+    .toggle { text-align: center; font-size: 0.8rem; color: #9a9ca3; margin-top: 1.25rem; }
+    .toggle a { color: #f2612a; text-decoration: none; }
+    .toggle a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+${body}
+  </div>
+  <script>
+    // Read the token out of the DOM rather than interpolating it into this
+    // script. It arrives from the query string, and JSON.stringify does not
+    // escape "/" — a token containing "</scr'+'ipt>" would close this block
+    // early and turn the rest of the page into attacker-controlled HTML.
+    // The hidden input is attribute-escaped, and absent on the expired-link
+    // page, hence the null guard.
+    var tokenField = document.getElementById('reset-token');
+    var TOKEN = tokenField ? tokenField.value : '';
+
+    async function submitReset() {
+      var password = document.getElementById('password').value;
+      var confirm = document.getElementById('confirm').value;
+      var errorEl = document.getElementById('error');
+      var noticeEl = document.getElementById('notice');
+      errorEl.textContent = '';
+      noticeEl.textContent = '';
+
+      if (password.length < 8) {
+        errorEl.textContent = 'Password must be at least 8 characters.';
+        return;
+      }
+      if (password !== confirm) {
+        errorEl.textContent = 'Passwords do not match.';
+        return;
+      }
+
+      var btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        var res = await fetch('/portal/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, newPassword: password }),
+        });
+        if (res.ok) {
+          noticeEl.textContent = 'Password updated. Redirecting to sign in...';
+          setTimeout(function () { window.location.href = '/portal'; }, 1500);
+          return;
+        }
+        var err = {};
+        try { err = await res.json(); } catch (e) {}
+        errorEl.textContent = err.message || 'Could not update your password. The link may have expired.';
+      } catch (e) {
+        errorEl.textContent = 'Network error. Please try again.';
+      } finally {
+        if (!noticeEl.textContent) {
+          btn.disabled = false;
+          btn.textContent = ${JSON.stringify(submitLabel)};
+        }
+      }
+    }
+
+    var confirmField = document.getElementById('confirm');
+    if (confirmField) {
+      confirmField.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') submitReset();
+      });
+    }
   </script>
 </body>
 </html>`;

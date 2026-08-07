@@ -218,6 +218,7 @@ describe("Mutation.resetPassword", () => {
         findFirst: vi
           .fn()
           .mockResolvedValue({ id: "v1", identifier: "password-reset:a@b.dev" }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       user: { findUnique: vi.fn().mockResolvedValue(null) },
     });
@@ -228,13 +229,15 @@ describe("Mutation.resetPassword", () => {
 
   it("updates the credential account password and consumes the token", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const del = vi.fn().mockResolvedValue({ id: "v1" });
+    // The token is claimed with an atomic deleteMany, not a delete — see
+    // the concurrent-claim guard in services/password-reset.ts.
+    const del = vi.fn().mockResolvedValue({ count: 1 });
     const ctx = buildContext(null, {
       verification: {
         findFirst: vi
           .fn()
           .mockResolvedValue({ id: "v1", identifier: "password-reset:a@b.dev" }),
-        delete: del,
+        deleteMany: del,
       },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", name: "A" }) },
       account: { updateMany },

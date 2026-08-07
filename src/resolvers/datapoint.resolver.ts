@@ -20,6 +20,14 @@ import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 import {
   aggregateReports,
+  buildApiMentions,
+  buildApiReliabilityByOrg,
+  estimateCurrentTotalFromRows,
+  filterApiMentionsToWindow,
+  finaliseReadTimeQuality,
+  API_RECONCILING_TYPES,
+  STOCK_FLOW_PAIRS,
+  type LocationMetadataRow,
   type ReportRow,
 } from "../services/datapoint-aggregation.js";
 
@@ -39,15 +47,24 @@ interface UpsertReportDatapointsInput {
   data: Prisma.InputJsonValue;
   schemaVersion: string;
   extractedByModel: string;
+  sourceId?: string | null;
 }
 
-// Default schema version — matches the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py). A version-less
-// `aggregatedDatapoint` query reads buckets of this version, so it must
-// point at the version the current pipeline writes, or freshly-aggregated
-// buckets go unread. Pre-launch we keep a single "v1" and re-extract on
-// schema changes rather than bumping; keep this in sync if that changes.
-const DEFAULT_SCHEMA_VERSION = "v1";
+// Default schema version — MUST match the SCHEMA_VERSION constant in the
+// Python-side extraction module (datapoints_schemas.py), currently "v2". A
+// version-less `aggregatedDatapoint` query reads buckets of this version, so a
+// mismatch makes freshly-aggregated buckets go unread. The data-quality /
+// stock-flow change bumped the pipeline v1→v2 and re-extracts the whole corpus;
+// this default moves in lockstep. ROLLOUT: flip only alongside (or after) that
+// re-extraction — version-less reads return null for v2 until v2 rows exist.
+const DEFAULT_SCHEMA_VERSION = "v2";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How far back the estimated-current-total scan reads report_datapoints
+ *  (ADR-0006 §4). Two years covers the current + prior reporting year — enough
+ *  to anchor on the latest stock and sum the flows since — without scanning the
+ *  entire back-catalogue on an all-time bucket read. */
+const CURRENT_TOTAL_LOOKBACK_DAYS = 730;
 
 /** Compute the four higher-tier windows a given `windowStart`
  *  belongs to. Used by the refresh mutation to enumerate all
@@ -171,7 +188,21 @@ type PrismaReportDatapoint = Awaited<
   ReturnType<Context["prisma"]["reportDatapoint"]["findFirst"]>
 >;
 
-function toReportRow(row: NonNullable<PrismaReportDatapoint>): ReportRow {
+// The aggregator only reads these seven columns, so `toReportRow` accepts any
+// row carrying them — a full row OR a `select`-narrowed one (the current-total
+// path selects exactly these). Keeps the aggregator decoupled from Prisma.
+type ReportRowFields = Pick<
+  NonNullable<PrismaReportDatapoint>,
+  | "reportId"
+  | "publishedAt"
+  | "reportingPeriodStart"
+  | "reportingPeriodEnd"
+  | "locationIds"
+  | "data"
+  | "sourceId"
+>;
+
+function toReportRow(row: ReportRowFields): ReportRow {
   return {
     reportId: row.reportId,
     publishedAt: row.publishedAt,
@@ -179,7 +210,78 @@ function toReportRow(row: NonNullable<PrismaReportDatapoint>): ReportRow {
     reportingPeriodEnd: row.reportingPeriodEnd,
     locationIds: row.locationIds,
     data: row.data,
+    sourceId: row.sourceId,
   };
+}
+
+/** Load the source-reliability registry into a `Map<sourceId → reliability>`
+ *  for the aggregator. `data_sources` is a small table (dozens of rows), so
+ *  one full load per aggregation run is cheaper than per-figure lookups. */
+async function loadReliabilityBySource(
+  prisma: Context["prisma"],
+): Promise<Map<string, number | null>> {
+  const sources = await prisma.dataSources.findMany({
+    select: { id: true, reliability: true },
+  });
+  return new Map(sources.map((s) => [s.id, s.reliability]));
+}
+
+/** Build the org→reliability map the API adapters need, from the `data_sources`
+ *  registry. Location-independent, so it's loaded once per aggregation run. */
+async function loadApiReliabilityByOrg(prisma: Context["prisma"]) {
+  const sources = await prisma.dataSources.findMany({
+    select: { id: true, name: true, synonyms: true, reliability: true },
+  });
+  return buildApiReliabilityByOrg(sources);
+}
+
+/** Current (`validTo IS NULL`) reconciling-type `location_metadata` for one
+ *  location → API mentions (ADR-0006). Empty for a null location. */
+async function loadApiMentions(
+  prisma: Context["prisma"],
+  locationId: string | null,
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+) {
+  if (!locationId) return buildApiMentions([], "", apiReliabilityByOrg);
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { type: true, data: true, validFrom: true },
+  });
+  const lmRows: LocationMetadataRow[] = rows.map((r) => ({
+    type: r.type,
+    data: r.data,
+    validFrom: r.validFrom,
+  }));
+  return buildApiMentions(lmRows, locationId, apiReliabilityByOrg);
+}
+
+/** Empty API-mention map, correctly typed (Mention is internal to the service). */
+const EMPTY_API_MENTIONS: ReturnType<typeof buildApiMentions> = new Map();
+
+/** Batch variant for the refresh path: current reconciling `location_metadata`
+ *  for many locations in one query → `Map<locationId, apiMentionsByLabel>`, built
+ *  once per location. Each bucket then window-filters its location's mentions. */
+async function loadApiMentionsByLocation(
+  prisma: Context["prisma"],
+  locationIds: string[],
+  apiReliabilityByOrg: Awaited<ReturnType<typeof loadApiReliabilityByOrg>>,
+): Promise<Map<string, ReturnType<typeof buildApiMentions>>> {
+  const map = new Map<string, ReturnType<typeof buildApiMentions>>();
+  if (locationIds.length === 0) return map;
+  const rows = await prisma.locationMetadata.findMany({
+    where: { locationId: { in: locationIds }, validTo: null, type: { in: API_RECONCILING_TYPES } },
+    select: { locationId: true, type: true, data: true, validFrom: true },
+  });
+  const byLoc = new Map<string, LocationMetadataRow[]>();
+  for (const r of rows) {
+    const list = byLoc.get(r.locationId) ?? [];
+    list.push({ type: r.type, data: r.data, validFrom: r.validFrom });
+    byLoc.set(r.locationId, list);
+  }
+  for (const [loc, lmRows] of byLoc) {
+    map.set(loc, buildApiMentions(lmRows, loc, apiReliabilityByOrg));
+  }
+  return map;
 }
 
 export const datapointResolvers = {
@@ -243,7 +345,26 @@ export const datapointResolvers = {
         orderBy: { validFrom: "desc" },
       });
       if (cached) {
-        return { ...cached, onDemand: false };
+        // Finalise data_quality with read-time Recency (clear-context-pipeline ADR-0005 §2): the cache
+        // holds the time-invariant parts; freshness is scored live at `asOf`.
+        const finalised = finaliseReadTimeQuality(
+          (cached.data ?? {}) as Record<string, unknown>,
+          asOf,
+        );
+        return {
+          ...cached,
+          data: finalised.data,
+          // Legacy/pre-v2 buckets carry no per-field credibility envelope, so
+          // `finaliseReadTimeQuality` finalises nothing and its score is a
+          // meaningless 0. Keep the persisted score in that case rather than
+          // overwriting a real value with 0 until a corpus refresh rewrites the
+          // row in the new (0–10) shape. (#110)
+          dataQualityScore:
+            finalised.finalisedFieldCount > 0
+              ? finalised.dataQualityScore
+              : cached.dataQualityScore,
+          onDemand: false,
+        };
       }
 
       // ── On-demand fallback ────────────────────────────────────────
@@ -263,13 +384,31 @@ export const datapointResolvers = {
           },
         },
       });
-      if (rows.length === 0) return null;
+      // Authoritative location_metadata for this scope, gated to the window
+      // (ADR-0006). Loaded even when there are no reports — the API figure can
+      // gap-fill the bucket on its own.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = filterApiMentionsToWindow(
+        await loadApiMentions(context.prisma, args.locationId ?? null, apiOrgMap),
+        args.windowStart,
+        args.windowEnd,
+      );
+      if (rows.length === 0 && apiMentions.size === 0) return null;
 
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
       const result = aggregateReports(
         rows.map(toReportRow),
         args.locationId ?? null,
+        reliabilityBySource,
+        apiMentions,
       );
       if (!result) return null;
+
+      // Finalise data_quality with read-time Recency, same as the cache path.
+      const finalised = finaliseReadTimeQuality(
+        result.data as Record<string, unknown>,
+        asOf,
+      );
 
       return {
         // Synthesised row — not persisted. `id` uses a stable synthetic
@@ -280,11 +419,11 @@ export const datapointResolvers = {
         windowEnd: args.windowEnd,
         windowKind: args.windowKind,
         locationId: args.locationId ?? null,
-        data: result.data,
+        data: finalised.data,
         contributingReportIds: result.contributingReportIds,
         newestSourceAt: result.newestSourceAt,
         oldestSourceAt: result.oldestSourceAt,
-        dataQualityScore: result.dataQualityScore,
+        dataQualityScore: finalised.dataQualityScore,
         reportCount: result.reportCount,
         validFrom: new Date(),
         validTo: null,
@@ -292,6 +431,77 @@ export const datapointResolvers = {
         computedAt: new Date(),
         onDemand: true,
       };
+    },
+  },
+
+  AggregatedDatapoint: {
+    // Estimated current total (ADR-0006 §4): latest authoritative stock + flows
+    // reported after its reference date T₀. Resolved lazily — the report scan
+    // runs only when a client selects the field. Meaningful only at the
+    // country (A0-scoped) yearly/all tier; every other bucket returns null.
+    estimatedCurrentTotals: async (
+      parent: {
+        locationId?: string | null;
+        windowKind?: string;
+        windowEnd?: Date | string | null;
+        schemaVersion?: string;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      if (!parent.locationId) return null;
+
+      const asOf = new Date();
+      // "Current" means as-of-now, so only attach the estimate to a bucket whose
+      // window still includes now — a historical bucket (a past year, month or
+      // week) must not carry a now-figure labelled as the period's number. The
+      // `all` tier (far-future windowEnd) always qualifies. This is gated on the
+      // window, NOT the window kind: the situation analysis consumes yearly AND
+      // monthly buckets (and weekly is a valid current scope too).
+      const windowEnd = parent.windowEnd ? new Date(parent.windowEnd) : null;
+      if (windowEnd && windowEnd.getTime() < asOf.getTime()) return null;
+
+      const schemaVersion = parent.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
+      // Bounded lookback: a "current" estimate only needs the latest stock and
+      // the flows after it — both recent — so cap the scan rather than reading
+      // the whole back-catalogue. NOT free: like the on-demand path this fetches
+      // by window only, since a figure's scope needn't be in the report's named
+      // `locationIds` (#273), so a `locationIds` pre-filter would drop valid
+      // figures. `select` keeps the payload to the columns the aggregator reads.
+      const since = new Date(asOf.getTime() - CURRENT_TOTAL_LOOKBACK_DAYS * DAY_MS);
+      const rows = await context.prisma.reportDatapoint.findMany({
+        where: { schemaVersion, reportingPeriodEnd: { gte: since, lte: asOf } },
+        select: {
+          reportId: true,
+          publishedAt: true,
+          reportingPeriodStart: true,
+          reportingPeriodEnd: true,
+          locationIds: true,
+          sourceId: true,
+          data: true,
+        },
+      });
+      // API stock (idp_stock / returnee_stock) is a current figure; asOf is now,
+      // so the full current set is in-window — no window filter needed here.
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentions = await loadApiMentions(context.prisma, parent.locationId, apiOrgMap);
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
+      const reportRows = rows.map(toReportRow);
+
+      const totals: Record<string, unknown> = {};
+      for (const pair of STOCK_FLOW_PAIRS) {
+        totals[pair.metric] = estimateCurrentTotalFromRows(
+          reportRows,
+          apiMentions,
+          parent.locationId,
+          pair.stockLabel,
+          pair.flowLabel,
+          reliabilityBySource,
+          asOf,
+        );
+      }
+      return totals;
     },
   },
 
@@ -339,6 +549,7 @@ export const datapointResolvers = {
         data: input.data,
         schemaVersion: input.schemaVersion,
         extractedByModel: input.extractedByModel,
+        sourceId: input.sourceId ?? null,
       } as const;
 
       await context.prisma.reportDatapoint.upsert({
@@ -390,6 +601,10 @@ export const datapointResolvers = {
         };
       }
 
+      // Source-reliability registry, loaded once for every bucket this refresh
+      // recomputes (feeds each figure's data_quality via the aggregator).
+      const reliabilityBySource = await loadReliabilityBySource(context.prisma);
+
       // ── 2. Collect every figure's scope, resolve its admin level ─
       // Buckets are keyed by FIGURE SCOPE now (#273), not by the places a
       // report merely mentions. A figure scoped to Kordofan belongs in
@@ -408,6 +623,17 @@ export const datapointResolvers = {
       const hierarchy = await resolveLocationHierarchy(
         context.prisma,
         [...allScopeIds],
+      );
+
+      // API contributors (ADR-0006): current location_metadata for every scope
+      // location, built once and window-filtered per bucket below. (Buckets are
+      // report-scoped, so a location with API data but no report figures is
+      // reconciled on the on-demand read path, not pre-computed here.)
+      const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
+      const apiMentionsByLocation = await loadApiMentionsByLocation(
+        context.prisma,
+        [...allScopeIds],
+        apiOrgMap,
       );
 
       // ── 3. Group reports into the four bucket tiers ──────────────
@@ -485,8 +711,25 @@ export const datapointResolvers = {
       const now = new Date();
 
       for (const { key, rows } of buckets.values()) {
-        const agg = aggregateReports(rows, key.locationId);
+        const apiMentions = filterApiMentionsToWindow(
+          (key.locationId && apiMentionsByLocation.get(key.locationId)) || EMPTY_API_MENTIONS,
+          key.windowStart,
+          key.windowEnd,
+        );
+        const agg = aggregateReports(rows, key.locationId, reliabilityBySource, apiMentions);
         if (!agg) continue;
+
+        // Persist the finalised headline score (0–10, Recency folded in at
+        // `now`) so the stored `data_quality_score` column matches what both
+        // read paths serve. `aggregateReports` returns the pre-finalised
+        // per-field mean (0–1); persisting that would leave the column an order
+        // of magnitude off the API — and off any external reader of the column
+        // (e.g. the Django app on this database). (#110). The `data` blob stays
+        // pre-finalised on purpose; the read paths re-score Recency at read time.
+        const persistedScore = finaliseReadTimeQuality(
+          agg.data as Record<string, unknown>,
+          now,
+        ).dataQualityScore;
 
         await context.prisma.$transaction(async (tx) => {
           const superseded = await tx.aggregatedDatapoint.updateMany({
@@ -512,7 +755,7 @@ export const datapointResolvers = {
               contributingReportIds: agg.contributingReportIds,
               newestSourceAt: agg.newestSourceAt,
               oldestSourceAt: agg.oldestSourceAt,
-              dataQualityScore: agg.dataQualityScore,
+              dataQualityScore: persistedScore,
               reportCount: agg.reportCount,
               validFrom: now,
               schemaVersion,

@@ -3,6 +3,8 @@
  *
  * DB-free: `context.prisma.dataSources` (and `.signals`) are stubbed per-test
  * with `vi.fn()` delegates. Covers:
+ *   0. The `requireAuth` gate on both queries (UNAUTHENTICATED when logged
+ *      out; any authenticated role — including the pipeline M2M key — passes).
  *   1. The `requireRole(["admin"])` gate on every mutation
  *      (FORBIDDEN for non-admins, UNAUTHENTICATED when logged out).
  *   2. `createDataSource` defaulting `isActive` to `true` and passing the
@@ -29,6 +31,52 @@ function buildContext(user: User, dataSources: Record<string, unknown> = {}, sig
 }
 
 const { createDataSource, updateDataSource, deleteDataSource } = dataSourceResolvers.Mutation;
+const { dataSources: dataSourcesQuery, dataSource: dataSourceQuery } = dataSourceResolvers.Query;
+
+describe("Query.dataSources", () => {
+  it("throws UNAUTHENTICATED when logged out and does not touch the DB", () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(null, { findMany });
+    expect(() => dataSourcesQuery(null, {}, ctx)).toThrowError(
+      expect.objectContaining({ extensions: { code: "UNAUTHENTICATED" } }),
+    );
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns all sources for any authenticated user (viewer)", () => {
+    const rows = [{ id: "ds1" }, { id: "ds2" }];
+    const findMany = vi.fn().mockReturnValue(rows);
+    const ctx = buildContext({ id: "u1", role: "viewer" }, { findMany });
+    expect(dataSourcesQuery(null, {}, ctx)).toBe(rows);
+    expect(findMany).toHaveBeenCalledWith();
+  });
+
+  it("admits the pipeline role (M2M API key)", () => {
+    const rows = [{ id: "ds1" }];
+    const findMany = vi.fn().mockReturnValue(rows);
+    const ctx = buildContext({ id: "m2m", role: "pipeline" }, { findMany });
+    expect(dataSourcesQuery(null, {}, ctx)).toBe(rows);
+  });
+});
+
+describe("Query.dataSource", () => {
+  it("throws UNAUTHENTICATED when logged out and does not touch the DB", () => {
+    const findUnique = vi.fn();
+    const ctx = buildContext(null, { findUnique });
+    expect(() => dataSourceQuery(null, { id: "ds1" }, ctx)).toThrowError(
+      expect.objectContaining({ extensions: { code: "UNAUTHENTICATED" } }),
+    );
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns the source by id for any authenticated user", () => {
+    const row = { id: "ds1" };
+    const findUnique = vi.fn().mockReturnValue(row);
+    const ctx = buildContext({ id: "u1", role: "viewer" }, { findUnique });
+    expect(dataSourceQuery(null, { id: "ds1" }, ctx)).toBe(row);
+    expect(findUnique).toHaveBeenCalledWith({ where: { id: "ds1" } });
+  });
+});
 
 describe("Mutation.createDataSource", () => {
   it("creates a source, defaulting isActive to true", async () => {

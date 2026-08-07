@@ -1,14 +1,15 @@
 /**
  * Situation-analysis resolver.
  *
- * Query surface is deliberately narrow — the dashboard reads one
- * snapshot per (country, year), or a small history list for a
- * country. Everything expensive (LLM generation, RAG lookups) happens
- * in the Dagster asset ahead of time; the resolver only reads.
+ * Query surface is deliberately narrow - the dashboard reads one
+ * snapshot per bucket (yearly by default, or an explicit
+ * windowKind + windowStart), or a small history list for a country.
+ * Everything expensive (LLM generation, RAG lookups) happens in the
+ * Dagster asset ahead of time; the resolver only reads.
  *
  * Write path: `upsertSituationAnalysis` is called by the Dagster
  * `weekly_situation_analyses` asset. Bitemporal supersede-then-insert
- * inside one transaction — same pattern as
+ * inside one transaction - same pattern as
  * `refreshAggregatedDatapoints`.
  */
 
@@ -22,7 +23,7 @@ import { requireContentReader, requireRole } from "../utils/auth-guard.js";
 // constant. The pipeline
 // (`clear-context-pipeline/.../situation/schemas.py`) owns SCHEMA_VERSION
 // and bumps it independently; a constant here would mean writes keep
-// succeeding while every read returns null — an empty dashboard with no
+// succeeding while every read returns null - an empty dashboard with no
 // signal, until someone remembers to bump a constant in another repo and
 // redeploy. That lockstep is not enforceable across repos, so don't
 // reintroduce it.
@@ -34,13 +35,13 @@ const YEARLY = "yearly";
  *  window that skips the pre-computed cache bucket.
  *
  *  Only the START is derived. Reads key on
- *  (countryLocationId, windowKind, windowStart) — never on windowEnd.
+ *  (countryLocationId, windowKind, windowStart) - never on windowEnd.
  *  windowEnd is a derived detail that the pipeline and this resolver each
  *  compute independently, in different languages: the writer produced
  *  23:59:59.000 and this file used to look for 23:59:59.999, so exact
  *  equality never matched and every read returned null while every write
- *  succeeded. windowStart has no such ambiguity — both sides agree on
- *  midnight — and windowKind carries the granularity explicitly rather
+ *  succeeded. windowStart has no such ambiguity - both sides agree on
+ *  midnight - and windowKind carries the granularity explicitly rather
  *  than implying it from a pair of timestamps. */
 function calendarYearStart(year: number): Date {
   return new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
@@ -66,6 +67,8 @@ export const situationAnalysisResolvers = {
       args: {
         countryLocationId: string;
         year?: number | null;
+        windowKind?: string | null;
+        windowStart?: Date | null;
         asOf?: Date | null;
         schemaVersion?: string | null;
       },
@@ -73,19 +76,35 @@ export const situationAnalysisResolvers = {
     ) => {
       requireContentReader(context);
 
-      // Default to the current calendar year — the dashboard's
-      // most common call passes no year at all and expects "now".
-      const targetYear = args.year ?? new Date().getUTCFullYear();
-      const windowStart = calendarYearStart(targetYear);
+      const windowKind = args.windowKind ?? YEARLY;
+
+      // Two ways to name a bucket. The dashboard passes a year (or
+      // nothing) and gets the yearly bucket; the pipeline passes the
+      // windowKind + windowStart it computed, which is the only way to
+      // reach a finer bucket. `year` cannot identify one - Jan 1 is a
+      // valid start for both the yearly and the January monthly bucket -
+      // so rather than derive a start that silently matches the wrong
+      // row, require the caller to be explicit.
+      let windowStart: Date;
+      if (args.windowStart) {
+        windowStart = args.windowStart;
+      } else if (windowKind === YEARLY) {
+        windowStart = calendarYearStart(args.year ?? new Date().getUTCFullYear());
+      } else {
+        throw new GraphQLError(
+          `situationAnalysis: windowStart is required when windowKind is "${windowKind}" (only "${YEARLY}" can be derived from year)`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
 
       const asOf = args.asOf ?? new Date();
 
-      // Bitemporal read — return the row whose validity window covers
+      // Bitemporal read - return the row whose validity window covers
       // asOf. Order-by validFrom desc handles a mid-transaction race
       // where two rows momentarily overlap (never expected but safe).
       //
       // Schema version: pin it if the caller asked for one, otherwise the
-      // newest write wins. Versions coexist rather than supersede — the
+      // newest write wins. Versions coexist rather than supersede - the
       // uniqueness index is per-version, so rows of two schema versions can
       // both be current for one bucket, and a client that wants the older payload
       // shape can still ask for it. The client reads `schemaVersion` off
@@ -93,7 +112,7 @@ export const situationAnalysisResolvers = {
       return context.prisma.situationAnalysis.findFirst({
         where: {
           countryLocationId: args.countryLocationId,
-          windowKind: YEARLY,
+          windowKind,
           windowStart,
           ...(args.schemaVersion ? { schemaVersion: args.schemaVersion } : {}),
           validFrom: { lte: asOf },
@@ -115,19 +134,19 @@ export const situationAnalysisResolvers = {
       requireContentReader(context);
 
       // Trend view: current rows of a SINGLE schema version, newest year
-      // first. A trend must not mix versions — a bump changes what the
+      // first. A trend must not mix versions - a bump changes what the
       // numbers mean, so a chart spanning two schema versions would plot two
       // different quantities as one series. That constraint is about
       // mixing, not about which version: pin it if the caller asked,
       // otherwise default to the country's most recently written one.
-      // Older versions stay queryable — pass `schemaVersion` to chart a
+      // Older versions stay queryable - pass `schemaVersion` to chart a
       // historical payload shape.
       //
       // Scoped to yearly rows: one point per year is what a trend means
       // here, and a future monthly analysis must not silently interleave
       // itself into the same series.
       //
-      // Bounded to keep a chart's data payload predictable — 5 rows
+      // Bounded to keep a chart's data payload predictable - 5 rows
       // covers a rolling half-decade, which is the natural horizon
       // for situation-analysis comparisons.
       const limit = Math.min(Math.max(args.limit ?? 5, 1), 20);
@@ -198,8 +217,8 @@ export const situationAnalysisResolvers = {
         // Stamp validTo on the previous current row (if any) FIRST.
         // The partial unique index (WHERE valid_to IS NULL) rejects
         // the insert below unless the prior current row is already
-        // stamped as superseded — ordering matters.
-        // Supersede on the same key the unique index enforces —
+        // stamped as superseded - ordering matters.
+        // Supersede on the same key the unique index enforces -
         // (country, windowKind, windowStart, schemaVersion). windowEnd is
         // deliberately absent: it is a derived detail, and including it
         // here would mean a writer that shifted its end-of-day by a

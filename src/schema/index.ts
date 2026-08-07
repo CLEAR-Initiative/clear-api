@@ -5,6 +5,7 @@ import { userTypeDef } from "./typeDefs/types/user.js";
 import { alertTypeDef } from "./typeDefs/types/alert.js";
 import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
+import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
 import { locationTypeDef } from "./typeDefs/types/location.js";
@@ -30,6 +31,7 @@ import { gazetteerTypeDef } from "./typeDefs/types/gazetteer.js";
 import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
 import { situationAnalysisTypeDef } from "./typeDefs/types/situationAnalysis.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
+import { groundTypeDef } from "./typeDefs/types/ground.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -39,6 +41,7 @@ export const typeDefs = [
   alertTypeDef,
   detectionTypeDef,
   signalTypeDef,
+  signalLocationChallengeTypeDef,
   eventTypeDef,
   dataSourceTypeDef,
   locationTypeDef,
@@ -64,4 +67,5 @@ export const typeDefs = [
   datapointTypeDef,
   situationAnalysisTypeDef,
   webhookTypeDef,
+  groundTypeDef,
 ];

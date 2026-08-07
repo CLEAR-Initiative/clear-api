@@ -22,14 +22,20 @@ import { describe, it, expect } from "vitest";
 
 import {
   aggregateReports,
+  buildApiMentions,
+  estimateCurrentTotalFromRows,
+  estimateStockFlowTotal,
+  finaliseReadTimeQuality,
   FIELD_RULES,
+  type LocationMetadataRow,
   type ReportRow,
 } from "../../src/services/datapoint-aggregation.js";
 
 /** Convenience — build a NumericField dict as the LLM emits it. Pass
  *  `scope` to pin this figure's Figure Scope explicitly; otherwise `row`
- *  stamps the report's primary location onto it. */
-function nf(value: number, confidence = "reported", unit = "people", scope?: string) {
+ *  stamps the report's primary location onto it. `sourceId` sets the figure's
+ *  cited source (for data-quality / reliability tests). */
+function nf(value: number, confidence = "reported", unit = "people", scope?: string, sourceId?: string) {
   return {
     value,
     unit,
@@ -38,6 +44,7 @@ function nf(value: number, confidence = "reported", unit = "people", scope?: str
     chunk_index: 0,
     page_number: 1,
     ...(scope !== undefined ? { scope_location_id: scope } : {}),
+    ...(sourceId !== undefined ? { source_id: sourceId } : {}),
   };
 }
 
@@ -69,6 +76,7 @@ function row(
   locationIds: string[],
   data: Record<string, unknown>,
   reportingPeriodEnd?: string,
+  sourceId?: string,
 ): ReportRow {
   stampScope(data, locationIds[0] ?? null);
   return {
@@ -78,6 +86,7 @@ function row(
     reportingPeriodEnd: reportingPeriodEnd ? new Date(reportingPeriodEnd) : new Date(publishedAt),
     locationIds,
     data,
+    sourceId: sourceId ?? null,
   };
 }
 
@@ -87,7 +96,8 @@ describe("FIELD_RULES registry", () => {
       "additive_count", "latest_state", "set_union", "max", "non_aggregatable",
     ]);
     const validPolicies = new Set([
-      "latest_wins", "max_within_report_then_latest", "set_union_all",
+      "latest_wins", "latest_wins_with_confidence_override",
+      "max_within_report_then_latest", "set_union_all",
     ]);
     for (const rule of FIELD_RULES) {
       expect(validKinds.has(rule.kind)).toBe(true);
@@ -112,8 +122,12 @@ describe("aggregateReports — empty input", () => {
 });
 
 describe("aggregateReports — additive count (killed_total)", () => {
-  it("sums two distinct-day incidents in the same week + location", () => {
-    // Different days → different incident keys → both counted.
+  it("dedupes two reports for the same week (period totals, not per-day events)", () => {
+    // Both figures are weekly period-totals for the same week + location, so
+    // they're competing observations of one measurement — deduped to ONE, not
+    // summed (clear-context-pipeline ADR-0002: no per-day breakdown). Which one
+    // wins is now bias-aware: killed_total is `overreport`, so among
+    // comparable-quality figures the LOWER value is taken (clear-context-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
@@ -127,13 +141,18 @@ describe("aggregateReports — additive count (killed_total)", () => {
     const field = result!.data.killed_total;
     expect(field).not.toBeNull();
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    expect(field.value).toBe(8);
+    expect(field.value).toBe(3); // deduped (not summed to 8); overreport bias → lower
+    // Provenance is preserved even for the deduped-away row (§6.4.5 A):
+    // both reports are recorded, and the suppression is counted.
     expect(field.contributing_report_ids.sort()).toEqual(["r1", "r2"]);
+    expect(field.suppressed_count).toBe(1);
   });
 
-  it("dedupes same-day competing reports — latest publishedAt wins", () => {
+  it("dedupes same-day competing reports — bias-selected winner, not summed", () => {
     // Same day, same location → same incident key. Both are competing
-    // observations of one event; the newer publication wins.
+    // observations of one event. With uniform reliability the confidence gap
+    // (reported vs verified) stays within the data-quality margin D, so they're
+    // comparable and the overreport bias takes the LOWER figure (clear-context-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(10, "reported") } },
@@ -145,8 +164,89 @@ describe("aggregateReports — additive count (killed_total)", () => {
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    // Not 25 (naïve sum) — 15 (winner value).
-    expect(field.value).toBe(15);
+    // Not 25 (naïve sum) — deduped; overreport bias → the lower value (10).
+    expect(field.value).toBe(10);
+  });
+});
+
+describe("aggregateReports — latest_wins_with_confidence_override (additive counts)", () => {
+  // Confidence override: same incident (same week bucket + location),
+  // a newer lower-tier report vs a slightly older verified one.
+  it("a verified row within 3 days overrides a newer lower-tier winner", () => {
+    const rows = [
+      row("r-verified", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-media", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(40); // verified overrides the fresher media row
+  });
+
+  it("does NOT override when the verified row is outside the 3-day window", () => {
+    const rows = [
+      row("r-verified", "2026-07-01T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-media", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(55); // 6 days apart → plain latest_wins → media
+  });
+
+  it("keeps the freshest row when it is itself verified", () => {
+    const rows = [
+      row("r-media", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-verified", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(40); // freshest is verified → wins outright
+  });
+});
+
+describe("aggregateReports — week bucket for summed figures", () => {
+  it("dedupes two same-week reports (weekly period totals, not per-day events)", () => {
+    // 2026-07-06 (Mon) and 2026-07-08 (Wed) are the same ISO week. The figures
+    // are weekly period-totals for the same week + location → one measurement,
+    // deduped to the latest, not summed (clear-context-pipeline ADR-0002).
+    const rows = [
+      row("r-mon", "2026-07-06T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(2, "reported") },
+      }, "2026-07-06T00:00:00Z"),
+      row("r-wed", "2026-07-08T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(3, "reported") },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(3); // deduped to the latest, not summed to 5
+  });
+
+  it("sums reports from different weeks", () => {
+    // 2026-07-01 (ISO week 27) and 2026-07-08 (week 28) → different periods →
+    // genuinely different figures → summed.
+    const rows = [
+      row("wk27", "2026-07-01T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(2, "reported") },
+      }, "2026-07-01T00:00:00Z"),
+      row("wk28", "2026-07-08T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(3, "reported") },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const field = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!field || !("value" in field)) throw new Error("expected numeric field");
+    expect(field.value).toBe(5); // 2 + 3 across two distinct weeks
   });
 });
 
@@ -271,6 +371,23 @@ describe("aggregateReports — scope filtering (#273)", () => {
   });
 });
 
+describe("aggregateReports — stable tie-break on equal publishedAt", () => {
+  it("breaks a publishedAt tie by confidence weight, not input order", () => {
+    // Same week + scope + publishedAt → one group, a tie for 'latest'. The
+    // higher-confidence row must win deterministically regardless of order.
+    const mk = (id: string, conf: string, v: number) =>
+      row(id, "2026-07-06T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(v, conf) } },
+      }, "2026-07-06T00:00:00Z");
+    const forward = aggregateReports([mk("a", "reported", 10), mk("b", "media", 20)], "SD0201");
+    const reverse = aggregateReports([mk("b", "media", 20), mk("a", "reported", 10)], "SD0201");
+    const fv = forward!.data.killed_total, rv = reverse!.data.killed_total;
+    if (!fv || !("value" in fv) || !rv || !("value" in rv)) throw new Error("expected numeric");
+    expect(fv.value).toBe(10);   // reported (0.8) beats media (0.3)
+    expect(rv.value).toBe(10);   // ...and it's order-independent
+  });
+});
+
 describe("aggregateReports — quality envelope", () => {
   it("weights the quality score by confidence tier", () => {
     // Two contributing reports, both `verified` → quality_score ≈ 1.0.
@@ -289,22 +406,30 @@ describe("aggregateReports — quality envelope", () => {
     expect(field.confidence_mix.verified).toBeCloseTo(1.0, 4);
   });
 
-  it("mixes tiers correctly when reports have different confidences", () => {
-    // One verified (weight 1.0) + one media (weight 0.3) → mean ≈ 0.65.
+  it("same-week mixed tiers: verified overrides, media stays in the mix, freshness holds (§6.4.5 B)", () => {
+    // One group (same week + scope). A newer media 55 vs a verified 40 two days
+    // older → the confidence override picks the verified figure. The media row
+    // contributes NO value but is recorded in confidence_mix for transparency,
+    // quality_score reflects the winner, and newest_report_at is the newer
+    // media publish date (not the older winner's).
     const rows = [
-      row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(3, "verified") } },
-      }, "2026-07-02T00:00:00Z"),
-      row("r2", "2026-07-04T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(5, "media") } },
-      }, "2026-07-04T00:00:00Z"),
+      row("r-verified", "2026-07-01T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(40, "verified") } },
+      }, "2026-07-01T00:00:00Z"),
+      row("r-media", "2026-07-03T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(55, "media") } },
+      }, "2026-07-03T00:00:00Z"),
     ];
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("quality_score" in field)) throw new Error("expected numeric field");
-    expect(field.quality_score).toBeCloseTo(0.65, 2);
-    expect(field.confidence_mix.verified).toBeCloseTo(0.5, 4);
-    expect(field.confidence_mix.media).toBeCloseTo(0.5, 4);
+    expect(field.value).toBe(40);                              // verified wins the value
+    expect(field.quality_score).toBeCloseTo(1.0, 4);           // winner-weighted (verified)
+    expect(field.confidence_mix.verified).toBeCloseTo(0.5, 4); // media still shown...
+    expect(field.confidence_mix.media).toBeCloseTo(0.5, 4);    // ...for transparency
+    expect(field.contributing_report_ids.sort()).toEqual(["r-media", "r-verified"]);
+    expect(field.suppressed_count).toBe(1);
+    expect(field.newest_report_at).toBe("2026-07-03T00:00:00.000Z"); // newer row, not the winner
   });
 
   it("folds unknown confidence tiers to `unverified`", () => {
@@ -402,7 +527,7 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
     expect(b.value).toBe(5);
   });
 
-  it("two figures at the SAME scope + week dedupe (latest wins), not sum", () => {
+  it("two figures at the SAME scope + week dedupe (bias-selected), not sum", () => {
     const rows = [
       row("r1", "2026-07-08T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "reported") } },
@@ -413,7 +538,7 @@ describe("aggregateReports — incident-key dedup edge cases", () => {
     ];
     const f = aggregateReports(rows, "SD0201")!.data.killed_total;
     if (!f || !("value" in f)) throw new Error("expected numeric field");
-    expect(f.value).toBe(5); // latest publishedAt wins, not 8
+    expect(f.value).toBe(3); // deduped (not 8); overreport bias → the lower value
   });
 });
 
@@ -431,8 +556,9 @@ describe("aggregateReports — time bucket granularity", () => {
     const result = aggregateReports(rows, "SD0201");
     const field = result!.data.killed_total;
     if (!field || !("value" in field)) throw new Error("expected numeric field");
-    // Latest wins → 5 (not 8).
-    expect(field.value).toBe(5);
+    // Same-day dedupe (not summed to 8). Both `reported` → comparable → the
+    // overreport bias takes the lower value (3).
+    expect(field.value).toBe(3);
   });
 
   it("uses month bucket for latest_state (idp_stock) — same-month dedupes", () => {
@@ -769,5 +895,521 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
     const ac = result.data.active_clusters;
     if (!ac || !("values" in ac)) throw new Error("expected set-union field");
     expect(ac.values).toEqual(["Protection", "WASH"]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// DQ P3 — data quality: reliability, bias-aware selection, quartile-drop
+// ────────────────────────────────────────────────────────────────────
+
+describe("aggregateReports — reliability-driven override (clear-context-pipeline ADR-0005 §4)", () => {
+  it("a higher-reliability source overrides a fresher, weaker one within reach", () => {
+    // killed_total (overreport, window 7d/x2 → 3.5d reach). The strong source
+    // (reliability 3) has data_quality far above the weak one (Δ ≥ D=1.0), so it
+    // overrides despite being older AND despite carrying the HIGHER value —
+    // proving the reliability override beats the overreport bias's "lower wins".
+    const rows = [
+      row("r-weak", "2026-07-07T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(30, "reported", "people", undefined, "src-weak") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-strong", "2026-07-05T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(50, "reported", "people", undefined, "src-strong") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const map = new Map<string, number | null>([["src-weak", 1], ["src-strong", 3]]);
+    const f = aggregateReports(rows, "SD0201", map)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(50); // grade-3 source wins outright; bias never gets to pick
+  });
+
+  it("a higher-reliability source OUTSIDE the override reach does not override", () => {
+    // Same as above but the strong source is 6 days older than the freshest —
+    // beyond the 3.5d reach — so it's excluded and the freshest weak row stands.
+    const rows = [
+      row("r-weak", "2026-07-10T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(30, "reported", "people", undefined, "src-weak") } },
+      }, "2026-07-02T00:00:00Z"),
+      row("r-strong", "2026-07-04T00:00:00Z", ["SD0201"], {
+        casualties: { killed: { total: nf(50, "reported", "people", undefined, "src-strong") } },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const map = new Map<string, number | null>([["src-weak", 1], ["src-strong", 3]]);
+    const f = aggregateReports(rows, "SD0201", map)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(30); // strong source too old to reach → freshest weak wins
+  });
+});
+
+describe("aggregateReports — directional bias tie-break (clear-context-pipeline ADR-0005 §4)", () => {
+  it("an underreport field takes the HIGHER of two comparable figures", () => {
+    // security_incidents_count (additive, underreport). Uniform reliability →
+    // comparable quality → bias decides → the higher (incidents under-recorded).
+    const rows = [
+      row("r1", "2026-07-07T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(5, "reported") },
+      }, "2026-07-02T00:00:00Z"),
+      row("r2", "2026-07-05T00:00:00Z", ["SD0201"], {
+        access_and_incidents: { security_incidents_count: nf(8, "reported") },
+      }, "2026-07-02T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD0201")!.data.security_incidents_count;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8); // underreport → higher, even though r1 is fresher
+  });
+});
+
+describe("aggregateReports — max quartile-drop (overall_affected, clear-context-pipeline ADR-0005 §4)", () => {
+  it("drops the lowest-quality winner before taking the max", () => {
+    // Four monthly buckets → four cross-group winners. The 9999 outlier comes
+    // from an `unverified` figure (lowest data quality); the bottom quartile
+    // (1 of 4) is dropped, so the max of the remaining {100,200,300} wins.
+    const rows = [
+      row("r1", "2026-01-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(100, "reported") },
+      }, "2026-01-15T00:00:00Z"),
+      row("r2", "2026-04-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(200, "reported") },
+      }, "2026-04-15T00:00:00Z"),
+      row("r3", "2026-07-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(300, "reported") },
+      }, "2026-07-15T00:00:00Z"),
+      row("r4", "2026-10-15T00:00:00Z", ["SD01"], {
+        needs_and_funding: { overall_affected: nf(9999, "unverified") },
+      }, "2026-10-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.overall_affected;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(300); // low-quality 9999 outlier dropped; max of the rest
+  });
+});
+
+describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-context-pipeline ADR-0005 §2)", () => {
+  const envelope = (over: Record<string, unknown>) => ({
+    value: 1000,
+    unit: "people",
+    quality_score: 0.8,
+    reliability: 3,
+    intrinsic_credibility: 5.0,
+    confidence_mix: {},
+    newest_report_at: "2026-07-05T00:00:00Z",
+    oldest_report_at: "2026-07-05T00:00:00Z",
+    contributing_report_ids: ["r1"],
+    suppressed_count: 0,
+    ...over,
+  });
+
+  it("full recency inside the window → data_quality folds it in", () => {
+    // idp_stock window 30d; newest report 5 days before asOf → within window →
+    // recency 1.5. info_cred = 5.0 + 1.5 = 6.5; dq = (3 × 2.5 × 6.5) / 10 = 4.875.
+    const asOf = new Date("2026-07-10T00:00:00Z");
+    const { data, dataQualityScore } = finaliseReadTimeQuality(
+      { idp_stock: envelope({}) },
+      asOf,
+    );
+    const f = data.idp_stock as Record<string, number>;
+    expect(f.recency).toBe(1.5);
+    expect(f.information_credibility).toBe(6.5);
+    expect(f.data_quality).toBeCloseTo(4.875, 3);
+    expect(dataQualityScore).toBeCloseTo(4.875, 3);
+  });
+
+  it("half recency past the window, zero past 2×", () => {
+    const half = finaliseReadTimeQuality(
+      // 45 days old, window 30d → within 2× → recency 0.75.
+      { idp_stock: envelope({ newest_report_at: "2026-05-26T00:00:00Z" }) },
+      new Date("2026-07-10T00:00:00Z"),
+    ).data.idp_stock as Record<string, number>;
+    expect(half.recency).toBe(0.75);
+    expect(half.data_quality).toBeCloseTo((3 * 2.5 * (5.0 + 0.75)) / 10, 3);
+
+    const stale = finaliseReadTimeQuality(
+      // 70 days old, > 2×30 → recency 0.
+      { idp_stock: envelope({ newest_report_at: "2026-05-01T00:00:00Z" }) },
+      new Date("2026-07-10T00:00:00Z"),
+    ).data.idp_stock as Record<string, number>;
+    expect(stale.recency).toBe(0);
+    expect(stale.data_quality).toBeCloseTo((3 * 2.5 * 5.0) / 10, 3);
+  });
+
+  it("leaves set-union / null fields untouched", () => {
+    const { data } = finaliseReadTimeQuality(
+      { event_types: { values: ["flood"], contributing_report_ids: ["r1"] }, idp_stock: null },
+      new Date("2026-07-10T00:00:00Z"),
+    );
+    expect(data.event_types).toEqual({ values: ["flood"], contributing_report_ids: ["r1"] });
+    expect(data.idp_stock).toBeNull();
+  });
+});
+
+describe("aggregateReports — per-figure credibility override (clear-context-pipeline ADR-0004 §4)", () => {
+  const docUnmet = {
+    attribution_quality: "unmet", internal_consistency: "unmet",
+    plausibility_in_context: "unmet", geographic_temporal_specificity: "unmet",
+    methodology_transparency: "unmet", representativeness: "unmet",
+  };
+  const allMet = {
+    attribution_quality: "met", internal_consistency: "met",
+    plausibility_in_context: "met", geographic_temporal_specificity: "met",
+    methodology_transparency: "met", representativeness: "met",
+  };
+
+  it("uses the figure's own credibility over the document-level fallback", () => {
+    const killed = { ...nf(10, "reported"), credibility: allMet };
+    const rows = [row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
+      casualties: { killed: { total: killed } },
+      narrative_and_confidence: { information_credibility: docUnmet },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // reported directness (2.0×0.8=1.6) + six met (6.5) = 8.1 — the figure's own
+    // ratings win over the document's all-unmet (which would give 1.6).
+    expect(f.intrinsic_credibility).toBeCloseTo(8.1, 3);
+  });
+
+  it("inherits document-level credibility where the figure gives no override", () => {
+    const rows = [row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
+      casualties: { killed: { total: nf(10, "reported") } },
+      narrative_and_confidence: { information_credibility: docUnmet },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD0201")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // no per-figure override → all six inherit the document's unmet → 1.6 + 0.
+    expect(f.intrinsic_credibility).toBeCloseTo(1.6, 3);
+  });
+});
+
+describe("bias-aware selection — confidence override at graded reliability (#110)", () => {
+  it("at reliability 3, a verified figure overrides a lower unverified one (killed_total)", () => {
+    // The whole point of grading sources: at reliability 3 the verified→unverified
+    // selectionQuality spread is 1.35 > DATA_QUALITY_MARGIN (1.0), so the override
+    // fires and the verified figure wins — NOT the lower one the overreport bias
+    // would otherwise pick. (Guards the reviewer's concern that the override was
+    // unreachable — true only at reliability 1, where source_id is unbackfilled.)
+    // Same source on both: §5 echo-dedup no longer collapses same-source REPORT
+    // figures (only report echoes of an API figure), so both still compete.
+    const rel = new Map<string, number | null>([["src-graded", 3]]);
+    const rows = [
+      row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(50, "verified", "people", "SD01", "src-graded") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-unverified", "2026-07-09T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(30, "unverified", "people", "SD01", "src-graded") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(50);
+  });
+
+  it("at reliability 1 (ungraded), the override cannot fire and overreport bias picks the lower", () => {
+    // Same figures, ungraded source (reliability 1): spread 0.45 < 1.0, so both
+    // stay comparable and the overreport bias takes the lower value. This is the
+    // documented pre-re-extraction fallback, not a bug. (#110)
+    const rows = [
+      row("r-verified", "2026-07-08T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(50, "verified", "people", "SD01") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-unverified", "2026-07-09T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(30, "unverified", "people", "SD01") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", new Map())!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(30);
+  });
+});
+
+describe("echo dedup — same publisher across event types (#115)", () => {
+  it("two figures from one publisher on different event types SUM, not collapse", () => {
+    // Regression for the §5 over-collapse: keying echo-dedup on (loc, bucket,
+    // sourceId) alone merged a publisher's flood-killed and conflict-killed into
+    // one before the additive sum. With the collapse scoped to API-echo groups,
+    // these distinct event-type figures reach the incident grouping and sum.
+    const rel = new Map<string, number | null>([["ocha", 3]]);
+    const rows = [
+      row("r-flood", "2026-07-08T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(20, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-08T00:00:00Z"),
+      row("r-conflict", "2026-07-09T00:00:00Z", ["SD01"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(30, "reported", "people", "SD01", "ocha") } },
+      }, "2026-07-09T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", rel)!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected a numeric field");
+    expect(f.value).toBe(50);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// LM P4a — location_metadata reconciliation (ADR-0006)
+// ────────────────────────────────────────────────────────────────────
+
+describe("buildApiMentions — DTM → idp_stock adapter (ADR-0006 §3/§8/§9)", () => {
+  const orgMap = new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]);
+
+  it("adapts a DTM blob into an idp_stock mention with the deterministic profile", () => {
+    const rows: LocationMetadataRow[] = [{
+      type: "iom_dtm_displacement",
+      validFrom: new Date("2026-07-05T00:00:00Z"),
+      data: { population_displaced: 52000, reporting_date: "2026-07-01T00:00:00Z" },
+    }];
+    const byLabel = buildApiMentions(rows, "SD01", orgMap);
+    const idp = byLabel.get("idp_stock")!;
+    expect(idp).toHaveLength(1);
+    const m = idp[0]! as unknown as {
+      value: number; reliability: number; confidence: string; locationId: string;
+      intrinsicCredibility: number; publishedAt: Date; incidentDate: Date; reportId: string;
+    };
+    expect(m.value).toBe(52000);
+    expect(m.reliability).toBe(3); // from the org map
+    expect(m.confidence).toBe("reported"); // deterministic directness (§8)
+    expect(m.locationId).toBe("SD01");
+    // deterministic credibility: reported 2.0×0.8=1.6 + six met 6.5 = 8.1
+    expect(m.intrinsicCredibility).toBeCloseTo(8.1, 3);
+    expect(m.publishedAt.toISOString()).toBe("2026-07-05T00:00:00.000Z"); // recency = valid_from (§9)
+    expect(m.incidentDate.toISOString()).toBe("2026-07-01T00:00:00.000Z"); // T₀ = reporting_date
+    expect(m.reportId).toContain("api:src-dtm"); // synthetic provenance/dedup id
+  });
+
+  it("ignores context-overlay types and unknown reliabilities → 1", () => {
+    const rows: LocationMetadataRow[] = [
+      { type: "ocha_3w", validFrom: new Date("2026-07-05T00:00:00Z"), data: {} }, // overlay, no adapter
+      { type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+        data: { population_displaced: 10, reporting_date: "2026-07-01T00:00:00Z" } },
+    ];
+    const byLabel = buildApiMentions(rows, "SD01", new Map()); // no org → reliability 1
+    expect(byLabel.has("ocha_3w")).toBe(false);
+    expect((byLabel.get("idp_stock")![0]! as unknown as { reliability: number }).reliability).toBe(1);
+  });
+});
+
+describe("aggregateReports — reconciliation (ADR-0006 §2)", () => {
+  const orgMap = new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]);
+  const dtm = (value: number, validFrom: string, refDate: string) =>
+    buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date(validFrom),
+         data: { population_displaced: value, reporting_date: refDate } }],
+      "SD01", orgMap,
+    );
+
+  it("gap-fills a bucket with no reports from the authoritative API figure", () => {
+    const result = aggregateReports([], "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-07-01T00:00:00Z"));
+    expect(result).not.toBeNull();
+    const f = result!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000);
+    expect(result!.reportCount).toBe(0); // no reports — API-sourced
+  });
+
+  it("freshens a stale report — the daily API figure (newer valid_from) wins idp_stock", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(48000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    // Same month bucket; API valid_from (07-05) is fresher than the report (07-02).
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000); // idp_stock is latest-wins → freshest (API) wins
+    expect(f.contributing_report_ids.some((id) => id.startsWith("api:"))).toBe(true);
+  });
+});
+
+describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
+  const orgs = new Map([
+    ["unhcr", { id: "src-unhcr", reliability: 3 }],
+    ["ocha", { id: "src-ocha", reliability: 3 }],
+    ["ipc", { id: "src-ipc", reliability: 3 }],
+  ]);
+  const lmv = (type: string, data: Record<string, unknown>): LocationMetadataRow =>
+    ({ type, data, validFrom: new Date("2026-07-08T00:00:00Z") });
+  const val = (m: Map<string, unknown[]>, label: string) =>
+    (m.get(label)?.[0] as { value: number } | undefined)?.value;
+
+  it("refugees: sums only the REF population_group totals, not persons of concern", () => {
+    const m = buildApiMentions([lmv("hapi_refugees", { records: [
+      { gender: "all", age_range: "all", population_group: "REF", population: 312450, asylum_location_code: "TCD" },
+      { gender: "all", age_range: "all", population_group: "REF", population: 100000, asylum_location_code: "EGY" },
+      { gender: "all", age_range: "all", population_group: "ASY", population: 50000, asylum_location_code: "TCD" }, // asylum-seekers — excluded (#115)
+      { gender: "female", age_range: "all", population_group: "REF", population: 999, asylum_location_code: "TCD" }, // breakdown — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "refugees")).toBe(412450);
+  });
+
+  it("returnees → returnee_stock (REF group only)", () => {
+    const m = buildApiMentions([lmv("hapi_returnees", { records: [
+      { gender: "all", age_range: "all", population_group: "REF", population: 250000 },
+      { gender: "all", age_range: "all", population_group: "IDP", population: 90000 }, // returned IDPs — excluded (#115)
+    ] })], "SDN", orgs);
+    expect(val(m, "returnee_stock")).toBe(250000);
+  });
+
+  it("funding: requirements_usd → required, funding_usd → received", () => {
+    const m = buildApiMentions([lmv("hapi_funding", { records: [
+      { requirements_usd: 4.2e9, funding_usd: 1.1e9, appeal_code: "H" },
+    ] })], "SDN", orgs);
+    expect(val(m, "funding_required_usd")).toBe(4.2e9);
+    expect(val(m, "funding_received_usd")).toBe(1.1e9);
+  });
+
+  it("humanitarian_needs: per-sector + overall in-need totals (INN, un-disaggregated)", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "PRO", population_status: "INN", gender: "all", age_range: "all", population: 5_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", gender: "all", age_range: "all", population: 24_000_000 },
+      { sector_code: "PRO", population_status: "TGT", gender: "all", age_range: "all", population: 999 }, // targeted — ignored
+      { sector_code: "PRO", population_status: "INN", gender: "male", age_range: "all", population: 888 }, // breakdown — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "pin_protection")).toBe(5_000_000);
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("food_security: IPC current phase-3+ population", () => {
+    const m = buildApiMentions([lmv("hapi_food_security", { records: [
+      { ipc_type: "current", ipc_phase: "3+", population: 20_000_000 },
+      { ipc_type: "projected", ipc_phase: "3+", population: 99 }, // not current — ignored
+    ] })], "SDN", orgs);
+    expect(val(m, "pin_food_security")).toBe(20_000_000);
+  });
+});
+
+describe("aggregateReports — echo dedup (ADR-0006 §5)", () => {
+  it("collapses a report echo of the same API source, not summing (funding_received)", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      needs_and_funding: { overall_funding_received_usd: nf(1.1e9, "reported", "USD", undefined, "src-ocha") },
+    }, "2026-07-05T00:00:00Z")];
+    const api = buildApiMentions(
+      [{ type: "hapi_funding", validFrom: new Date("2026-07-08T00:00:00Z"),
+         data: { records: [{ requirements_usd: 4.2e9, funding_usd: 1.15e9, appeal_code: "H" }],
+                 reference_period_end: "2026-07-05T00:00:00Z" } }],
+      "SD01", new Map([["ocha", { id: "src-ocha", reliability: 3 }]]),
+    );
+    const f = aggregateReports(rows, "SD01", new Map(), api)!.data.funding_received_usd;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    // Same source id ("src-ocha") → one observation → latest (API 1.15e9), NOT 2.25e9.
+    expect(f.value).toBe(1.15e9);
+  });
+});
+
+describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
+  const dtm = (value: number, validFrom: string, refDate: string) =>
+    buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date(validFrom),
+         data: { population_displaced: value, reporting_date: refDate } }],
+      "SD01", new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]),
+    );
+
+  it("a report figure >25% off the API figure loses to it, with a signal", () => {
+    // Report is fresher (would win latest-wins) but 42% below the DTM figure.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(30000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000); // authoritative API wins the large disagreement
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.reportValue).toBe(30000);
+    expect(f.divergence!.apiValue).toBe(52000);
+    expect(f.divergence!.pctDiff).toBeCloseTo(-42.3, 1);
+    // #115: the API value must carry the API's grades, not the losing report's
+    // (reliability 1 / intrinsic 1.6) — else the aggregate scores ~1.2/10.
+    expect(f.reliability).toBe(3);
+    expect(f.intrinsic_credibility).toBeCloseTo(8.1, 1);
+  });
+
+  it("within 25% → no guard; the fresher report still wins, no signal", () => {
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(50000, "reported") },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(50000); // fresher report wins (3.8% < 25%)
+    expect(f.divergence == null).toBe(true);
+  });
+});
+
+describe("estimateStockFlowTotal — current total (ADR-0006 §4)", () => {
+  const d = (s: string) => new Date(s);
+
+  it("adds only flows whose as-of is after the stock's T₀", () => {
+    const est = estimateStockFlowTotal(
+      { value: 100000, t0: d("2026-06-30T00:00:00Z") },
+      [
+        { value: 5000, asOf: d("2026-06-15T00:00:00Z") }, // before T₀ — already in stock
+        { value: 3000, asOf: d("2026-07-05T00:00:00Z") }, // after T₀ — accrues
+        { value: 2000, asOf: d("2026-07-12T00:00:00Z") }, // after T₀ — accrues
+      ],
+    );
+    expect(est).not.toBeNull();
+    expect(est!.stock).toBe(100000);
+    expect(est!.flowsSince).toBe(5000);
+    expect(est!.total).toBe(105000);
+    expect(est!.flowCount).toBe(2);
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("a flow exactly at T₀ is treated as already embedded (strict >)", () => {
+    const est = estimateStockFlowTotal(
+      { value: 100000, t0: d("2026-06-30T00:00:00Z") },
+      [{ value: 5000, asOf: d("2026-06-30T00:00:00Z") }],
+    );
+    expect(est!.total).toBe(100000);
+    expect(est!.flowCount).toBe(0);
+  });
+
+  it("no stock anchor → null (nothing to accrue onto)", () => {
+    expect(estimateStockFlowTotal(null, [{ value: 5000, asOf: d("2026-07-05T00:00:00Z") }])).toBeNull();
+  });
+
+  it("no forward flows → total equals the stock", () => {
+    const est = estimateStockFlowTotal({ value: 80000, t0: d("2026-06-30T00:00:00Z") }, []);
+    expect(est!.total).toBe(80000);
+    expect(est!.flowsSince).toBe(0);
+  });
+});
+
+describe("estimateCurrentTotalFromRows — current total from rows (ADR-0006 §4)", () => {
+  const asOf = new Date("2026-08-01T00:00:00Z");
+  const rel = new Map<string, number | null>();
+
+  it("latest stock + only the flows dated after its T₀", () => {
+    const rows = [
+      row("s1", "2026-07-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z"),
+      row("f0", "2026-06-20T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(5000) } }, "2026-06-15T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+      row("f2", "2026-07-23T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(2000) } }, "2026-07-22T00:00:00Z"),
+    ];
+    const est = estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est).not.toBeNull();
+    expect(est!.stock).toBe(100000);
+    expect(est!.flowsSince).toBe(5000); // 3000 + 2000; the 5000 before T₀ is dropped
+    expect(est!.total).toBe(105000);
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("no stock in scope → null (nothing to anchor)", () => {
+    const rows = [row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("out-of-scope figures are ignored (exact scope match)", () => {
+    const rows = [row("s1", "2026-07-01T00:00:00Z", ["SD99"], { displacement: { idp_stock: nf(100000) } }, "2026-06-30T00:00:00Z")];
+    expect(estimateCurrentTotalFromRows(rows, new Map(), "SD01", "idp_stock", "new_displacements", rel, asOf)).toBeNull();
+  });
+
+  it("a fresher API stock anchors over an older report stock", () => {
+    const rows = [
+      row("s1", "2026-05-01T00:00:00Z", ["SD01"], { displacement: { idp_stock: nf(80000) } }, "2026-04-30T00:00:00Z"),
+      row("f1", "2026-07-16T00:00:00Z", ["SD01"], { displacement: { new_displacements: nf(3000) } }, "2026-07-15T00:00:00Z"),
+    ];
+    const api = buildApiMentions(
+      [{ type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+         data: { population_displaced: 120000, reporting_date: "2026-06-30T00:00:00Z" } }],
+      "SD01", new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]),
+    );
+    const est = estimateCurrentTotalFromRows(rows, api, "SD01", "idp_stock", "new_displacements", rel, asOf);
+    expect(est!.stock).toBe(120000); // API ref 2026-06-30 beats report ref 2026-04-30
+    expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
+    expect(est!.flowsSince).toBe(3000);
+    expect(est!.total).toBe(123000);
   });
 });

@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
@@ -7,6 +6,7 @@ import { logActivity } from "../utils/activity-log.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
 import { approveUserById } from "../services/approve-user.js";
+import { buildResetUrl, issueResetToken } from "../services/password-reset.js";
 
 interface CreateDevUserInput {
   email: string;
@@ -15,11 +15,10 @@ interface CreateDevUserInput {
 }
 
 // 7 days. Welcome emails may sit unread for a while; the short forgot-
-// password TTL (1 hour) is not appropriate here. Identifier prefix
-// matches the existing resetPassword mutation so the same resolver can
-// consume the token.
+// password TTL (1 hour) is not appropriate here. Token shape and
+// identifier prefix come from the shared password-reset service, so the
+// portal's reset page consumes this link without special-casing.
 const SET_PASSWORD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const SET_PASSWORD_IDENTIFIER_PREFIX = "password-reset:";
 
 // Match the cap on the user-side createApiKey mutation.
 const MAX_ACTIVE_KEYS_PER_USER = 10;
@@ -32,31 +31,23 @@ function normaliseEmail(raw: string): string {
 
 /**
  * Issue a long-lived set-password token for the given email and return the
- * user-facing URL. Stored in the same `verification` table the existing
- * `requestPasswordReset` / `resetPassword` mutations use, so the existing
- * `/auth/reset-password` page can consume it without changes.
+ * user-facing URL. Delegates to the shared password-reset service, so the
+ * link lands on the Developer Portal's reset page — the same page the
+ * forgot-password flow uses.
+ *
+ * The `kind=setup` flag swaps that page's headline copy to "Welcome to
+ * CLEAR — choose a password" for a less jarring first impression; the
+ * flow works identically without it.
  */
 async function issueSetPasswordUrl(
   prisma: Context["prisma"],
   email: string,
 ): Promise<string> {
-  const identifier = `${SET_PASSWORD_IDENTIFIER_PREFIX}${email}`;
-  // Clear any older outstanding tokens for the same email so the welcome
-  // email's link is the only one that works. Idempotent if there are
-  // none.
-  await prisma.verification.deleteMany({ where: { identifier } });
-
-  const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + SET_PASSWORD_TTL_MS);
-  await prisma.verification.create({
-    data: { identifier, value: token, expiresAt },
-  });
-
-  // The reset-password page already supports the same token shape. The
-  // `kind=setup` query flag lets it swap the headline copy to "Welcome to
-  // CLEAR — choose a password" for a less jarring first impression; if
-  // the page ignores it the flow still works.
-  return `${env.FRONTEND_URL}/auth/reset-password?token=${token}&kind=setup`;
+  // Clearing older outstanding tokens for the same email — so the
+  // welcome email's link is the only one that works — happens inside
+  // `issueResetToken`.
+  const token = await issueResetToken(prisma, email, SET_PASSWORD_TTL_MS);
+  return buildResetUrl(token, "setup");
 }
 
 export const devUserResolvers = {

@@ -112,6 +112,11 @@ export const mutationTypeDef = gql`
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
+    """Create or replace the open (consideration) Location challenge for a Signal.
+    Auth: any approved logged-in team member who can view the Signal. Queue only —
+    does NOT accept/reject and does NOT mutate the Signal's geometry."""
+    submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!
@@ -138,6 +143,13 @@ export const mutationTypeDef = gql`
 
     """Delete a data source."""
     deleteDataSource(id: String!): Boolean!
+
+    """Idempotently resolve an organisation/source name to a data_sources id,
+    creating an ungraded row if none matches (admin/pipeline only). Matching order:
+    exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
+    default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
+    future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004."""
+    resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
 
     # ─── Locations ─────────────────────────────────────────────────────────────
     """Create a new location."""
@@ -169,7 +181,10 @@ export const mutationTypeDef = gql`
     upsertLocationMetadata(input: UpsertLocationMetadataInput!): LocationMetadata!
 
     """Bulk-upsert multiple (locationId, type, data) rows in a single call (admin/pipeline only).
-    Returns the resulting rows. Rows whose locationId doesn't exist are skipped silently."""
+    Returns the current row for each input. Rows whose locationId doesn't exist are
+    skipped silently. Idempotent: an input whose blob is identical to the currently-open
+    row is left untouched (no new history version), so re-running an ingest with unchanged
+    data is a no-op."""
     upsertLocationMetadataBatch(inputs: [UpsertLocationMetadataInput!]!): [LocationMetadata!]!
 
     """Delete a location's metadata entry for a given type (admin only)."""
@@ -442,6 +457,58 @@ export const mutationTypeDef = gql`
       sourceUrl: String
       publishedAt: DateTime!
     ): KnowledgebaseIngestJob!
+
+    # ─── Ground intel staging tier ─────────────────────────────────────
+    """Create a ground source — the per-source policy record (consent
+    scope, privacy default, reviewer roles, retention) that every ingest
+    from a WhatsApp group or hotline is gated on. Admin only; group
+    kinds require a complete consent record (consentScope +
+    consentRecordedAt + consentRecordedBy)."""
+    createGroundSource(input: CreateGroundSourceInput!): GroundSource!
+
+    """Update a source's policy record (admin only, partial). The merged
+    row is re-validated — a group-kind source cannot be left without a
+    complete consent record, so legacy rows must have consent supplied
+    in the same update. transportId is immutable."""
+    updateGroundSource(id: String!, input: UpdateGroundSourceInput!): GroundSource!
+
+    """Activate or deactivate a source (admin only). Deactivation is the
+    live-capture kill switch: the ingest consent gate rejects every
+    payload for an inactive source. Deliberately exempt from
+    consent-record validation so an incomplete legacy row can still be
+    shut off immediately."""
+    setGroundSourceActive(id: String!, isActive: Boolean!): GroundSource!
+
+    """Review a ground thread: decision is "approve_private",
+    "approve_public", or "reject". Role-gated per source (the caller's
+    global role must appear in the source's reviewerRoles; platform
+    admins always pass). Transitions follow the V1 state machine —
+    notably approved_public is terminal. approve_public also promotes
+    the thread into the standard signals graph via createSignal, with
+    all sender identity scrubbed."""
+    reviewGroundThread(id: String!, decision: String!, note: String): GroundThread!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back
+    classifications from the classify_ground_messages worker. Unknown
+    messageIds are skipped with a warning. Returns the number of
+    messages updated."""
+    upsertGroundMessageClassifications(
+      inputs: [GroundMessageClassificationInput!]!
+    ): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
+    threading with pipeline-built threads (clusters of staged
+    Signals). Each input creates a
+    thread (or, when \`threadId\` is set, APPENDS to that existing
+    thread and updates its lifecycleState + title), re-points its
+    messageIds at it, and deletes the placeholder threads that became
+    empty. Messages whose current thread has already been human-reviewed
+    (or promoted) are NEVER re-threaded, and a promoted \`threadId\`
+    target is never mutated (a new thread is created instead) — the
+    review gate outranks the pipeline. Returns one thread id per input,
+    in order; null where an input had no movable messages (no thread
+    created or updated)."""
+    upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
@@ -650,6 +717,10 @@ export const mutationTypeDef = gql`
     isActive: Boolean
     baseUrl: String
     infoUrl: String
+    """Alias set for source-name normalisation (see resolveDataSource)."""
+    synonyms: [String!]
+    """NATO Admiralty-style reliability grade 1–4; null = ungraded."""
+    reliability: Int
   }
 
   input UpdateDataSourceInput {
@@ -658,6 +729,10 @@ export const mutationTypeDef = gql`
     isActive: Boolean
     baseUrl: String
     infoUrl: String
+    """Alias set for source-name normalisation (see resolveDataSource)."""
+    synonyms: [String!]
+    """NATO Admiralty-style reliability grade 1–4; null = ungraded."""
+    reliability: Int
   }
 
   input CreateLocationInput {
