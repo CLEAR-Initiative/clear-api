@@ -1234,10 +1234,11 @@ const HAPI_SECTOR_TO_PIN: Record<string, string> = {
  *  them: an unrecognised enum yields no figure (no reconciliation) rather than a
  *  wrong total, so reports still drive the field.
  *
- *  STILL PARTIALLY UNGUARDED: `hapi_humanitarian_needs` sums the `sector_code`
- *  total rows but does not filter the `category` / `disabled_marker` dimensions,
- *  so a subset row could add on top of its own total — validate the needs blob
- *  shape (a category total row) before relying on per-sector PIN. */
+ *  needs: `hapi_humanitarian_needs` reduces each sector to one figure at a single
+ *  admin level (coarsest), the latest reference-period edition, and the aggregate
+ *  category only — so neither an admin breakdown, an older HNO edition, nor a
+ *  population-group/age/sex subset can add on top of its own total (verified
+ *  against a live Sudan blob that otherwise summed to 195M — see the adapter). */
 const API_ADAPTERS: Record<string, ApiAdapter> = {
   // IOM DTM → IDP stock. The headline `population_displaced` is the latest
   // round's total IDPs present; `reporting_date` is its T₀.
@@ -1294,23 +1295,92 @@ const API_ADAPTERS: Record<string, ApiAdapter> = {
     },
   },
 
-  // OCHA HPC → per-sector + overall People-in-Need. The in-need total per sector
-  // (population_status "INN", gender/age total); "intersectoral" → overall_pin.
+  // OCHA HPC → per-sector + overall People-in-Need (population_status "INN";
+  // "intersectoral" → overall_pin). A single blob overlaps THREE dimensions that
+  // each double/triple-count if summed blindly, so we reduce every label to one
+  // figure by collapsing all three, then sum only what legitimately tiles:
+  //   - admin_level: a national (admin 0) total plus its own admin-1/admin-2
+  //     breakdown. Sum WITHIN one level only — the coarsest present (admin 0 is
+  //     the single national row; if absent, the admin-1 rows tile the country and
+  //     sum, and so on). Levels are never mixed.
+  //   - reference period: the blob carries several HNO/HRP editions (2024, 2025,
+  //     2026 …). Keep only the LATEST edition; older ones must not add on top.
+  //   - category: mixes the aggregate ("total"/"all"/empty) with population-group,
+  //     age, and sex SUBSETS ("Refugees", "IDP", "Children", "Female", "Elderly",
+  //     …), each contained in the total. Keep the aggregate only; when "total" and
+  //     empty both appear (a duplicate), prefer "total".
+  // Verified against live Sudan blob cmse4urwi… (411 records, admin 0): blind
+  // summing all three dimensions reported overall_pin 195M for a ~50M-population
+  // country; the correct current-edition national intersectoral PIN is 33.7M.
   hapi_humanitarian_needs: {
     org: "OCHA",
     extract: (d) => {
-      const bySector = new Map<string, number>();
-      for (const r of hapiRecords(d)) {
-        if (String(r.population_status ?? "").toUpperCase() !== "INN") continue;
-        if (!isHapiTotalRow(r)) continue;
+      const inn = hapiRecords(d).filter(
+        (r) => String(r.population_status ?? "").toUpperCase() === "INN" && isHapiTotalRow(r),
+      );
+      if (inn.length === 0) return [];
+
+      const catOf = (r: Record<string, unknown>) => String(r.category ?? "").toLowerCase();
+      // The blob's `category` mixes the aggregate ("total"/"all"/empty) with
+      // population-group, age, and sex SUBSETS ("Refugees", "IDP", "Children",
+      // "Female", "Male", "Elderly", "Adult", "Disability", …). Only the
+      // aggregate rows may be summed; the subsets are contained in it.
+      const isAggregateCat = (r: Record<string, unknown>) =>
+        catOf(r) === "" || catOf(r) === "total" || catOf(r) === "all";
+      const isTotalCat = (r: Record<string, unknown>) => catOf(r) === "total" || catOf(r) === "all";
+      const periodEndMs = (r: Record<string, unknown>) =>
+        parseDate(r.reference_period_end)?.getTime() ?? 0;
+
+      // Group INN rows by our PIN label (sector_code → label), then reduce each
+      // label to ONE figure, collapsing every dimension that would double-count.
+      const byLabel = new Map<string, Record<string, unknown>[]>();
+      for (const r of inn) {
         const label = HAPI_SECTOR_TO_PIN[String(r.sector_code ?? "").toUpperCase()];
         if (!label) continue;
-        bySector.set(label, (bySector.get(label) ?? 0) + (num(r.population) ?? 0));
+        const list = byLabel.get(label);
+        if (list) list.push(r);
+        else byLabel.set(label, [r]);
       }
-      const rd = hapiRefDate(d);
-      return [...bySector]
-        .filter(([, v]) => v > 0)
-        .map(([label, value]) => ({ label, value, unit: "people", referenceDate: rd }));
+
+      const out: ApiFigure[] = [];
+      for (const [label, allRows] of byLabel) {
+        // (1) Single admin level — coarsest present; never mix admin 0 with 1/2.
+        const levels = allRows.map((r) => num(r.admin_level)).filter((v): v is number => v != null);
+        const coarsest = levels.length ? Math.min(...levels) : null;
+        let rows = coarsest == null ? allRows : allRows.filter((r) => num(r.admin_level) === coarsest);
+
+        // (2) Single edition — the latest reference period only. Older HNO/HRP
+        // editions in the same blob must NOT sum on top of the current one.
+        const latest = Math.max(...rows.map(periodEndMs));
+        rows = rows.filter((r) => periodEndMs(r) === latest);
+
+        // (3) Aggregate category only — drop the population-group/age/sex subsets.
+        // When an explicit "total" exists, use it and drop the empty-category
+        // duplicate; otherwise the empty rows ARE the aggregate. If an edition
+        // ships no aggregate at all (unexpected), fall back to the single largest
+        // row — a safe lower bound that can't over-count.
+        const agg = rows.filter(isAggregateCat);
+        let kept: Record<string, unknown>[];
+        if (agg.length === 0) {
+          kept = [rows.reduce((a, b) => ((num(b.population) ?? 0) > (num(a.population) ?? 0) ? b : a))];
+        } else if (agg.some(isTotalCat)) {
+          kept = agg.filter(isTotalCat);
+        } else {
+          kept = agg;
+        }
+
+        // (4) Sum what remains — one admin level, one edition, aggregate category:
+        // at admin 0 the single national row; at admin 1 the states that tile the
+        // country. Same-level units sum; nothing else does.
+        const value = kept.reduce((s, r) => s + (num(r.population) ?? 0), 0);
+        if (value > 0) {
+          out.push({
+            label, value, unit: "people",
+            referenceDate: parseDate(kept[0]!.reference_period_end) ?? hapiRefDate(d),
+          });
+        }
+      }
+      return out;
     },
   },
 

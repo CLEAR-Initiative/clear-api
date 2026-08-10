@@ -1263,6 +1263,77 @@ describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
     expect(val(m, "overall_pin")).toBe(24_000_000);
   });
 
+  it("humanitarian_needs: dedupes the category total/empty pair — no 2× (live blob cmse5d3gk…)", () => {
+    // The real Sudan blob carries each sector twice at admin_level 0: once with
+    // an empty category, once with category "total". Blind-summing reported ~2×.
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 7_900_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 7_943_720 },
+      { sector_code: "PRO", population_status: "INN", admin_level: 0, category: "", population: 6_187_970 },
+      { sector_code: "PRO", population_status: "INN", admin_level: 0, category: "total", population: 6_187_970 },
+    ] })], "SDN", orgs);
+    // Canonical "total" kept, empty dropped — NOT 15.84M / 12.38M.
+    expect(val(m, "overall_pin")).toBe(7_943_720);
+    expect(val(m, "pin_protection")).toBe(6_187_970);
+  });
+
+  it("humanitarian_needs: sums within one admin level — admin-0 total, not +admin-1 breakdown", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 24_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 10_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 14_000_000 },
+    ] })], "SDN", orgs);
+    // Coarsest level (admin 0) is the national total; admin-1 states are NOT added on top.
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("humanitarian_needs: with no national row, sums the admin-1 rows that tile the country", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 10_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 14_000_000 },
+    ] })], "SDN", orgs);
+    // Same-level units sum — the admin-1 rows tile Sudan → national total.
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("humanitarian_needs: keeps the latest edition — older HNO years don't sum on top", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 30_440_770, reference_period_end: "2025-12-08" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 33_699_770, reference_period_end: "2026-12-31" },
+    ] })], "SDN", orgs);
+    // Latest edition (2026) wins; the 2025 total is NOT added → 33.7M, not 64.1M.
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
+  it("humanitarian_needs: drops population-group/age/sex subsets carried in `category`", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 33_699_770, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "Children", population: 15_646_556, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "Female", population: 15_311_707, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "IDP", population: 8_881_784, reference_period_end: "2026-12-31" },
+    ] })], "SDN", orgs);
+    // Subsets are contained in the total → excluded; only the aggregate counts.
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
+  it("humanitarian_needs: real Sudan blob shape (editions × subgroups) → 33.7M, not 195M", () => {
+    const rec = (category: string, population: number, end: string) => ({
+      sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category, population, reference_period_end: end,
+    });
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      rec("", 33_699_770, "2026-12-31"),            // 2026 aggregate — the correct answer
+      rec("total", 30_440_770, "2025-12-08"),       // 2025 aggregate — older edition
+      rec("Children", 15_646_556, "2025-12-08"),
+      rec("Female", 15_311_707, "2025-12-08"),
+      rec("Male", 15_129_063, "2025-12-08"),
+      rec("IDP", 8_881_784, "2025-12-08"),
+      rec("Refugees", 892_161, "2025-12-08"),
+      rec("Famine Response", 7_585_262, "2024-12-31"),
+      rec("IDPs", 7_071_676, "2024-12-31"),
+    ] })], "SDN", orgs);
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
   it("food_security: IPC current phase-3+ population", () => {
     const m = buildApiMentions([lmv("hapi_food_security", { records: [
       { ipc_type: "current", ipc_phase: "3+", population: 20_000_000 },
