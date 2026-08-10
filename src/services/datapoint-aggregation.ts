@@ -462,6 +462,23 @@ export interface ReportRow {
 /** What one aggregated numeric field looks like on the output. */
 export interface QualityEnvelope {
   value: number;
+  /** Confidence band around the headline. `value` stays the point estimate;
+   *  `[value_low, value_high]` is the honest error bar, derived from the
+   *  contributing figures' own reported ranges and their disagreement with each
+   *  other. Equal to `value` when every contributor is an exact point that
+   *  agrees. (Interval-and-range model, ADR-0007.) */
+  value_low: number;
+  value_high: number;
+  /** `value_high − value_low` — a first-class uncertainty signal beside
+   *  `data_quality` (a wide band = noisy/disagreeing evidence). */
+  range_width: number;
+  /** The field's systematic quality-bias direction (ADR-0005 §3 / ADR-0007 §8),
+   *  surfaced so the consumer can PROJECT the [value_low, value_high] band to a
+   *  single headline at the display edge: `overreport` → the low end
+   *  (conservative against inflation), `underreport` → the high end, `neutral` →
+   *  the midpoint. The aggregate stays lossless here; the projection is the
+   *  consumer's choice (design §8 "project late"). Null on fields with no bias. */
+  bias: QualityBias | null;
   unit: string | null;
   /** Confidence-only (Directness) view, retained per clear-context-pipeline ADR-0005 — mean of the
    *  winners' CONFIDENCE_WEIGHTS. The headline is now `data_quality`, which the
@@ -573,6 +590,35 @@ interface Mention {
   incidentDate: Date;
   locationId: string;
   value: number;
+  /** The magnitude RANGE this figure reports. Equal to `value` for an exact
+   *  count; a real band for a stated range ("between 500 and 700"), an
+   *  approximation ("around 600"), or a one-sided figure ("at least 500", where
+   *  the extractor also supplies a plausible finite other end). The aggregator
+   *  uses these to (a) publish an honest confidence band on the result and
+   *  (b) combine overlapping figures in range-space instead of collapsing to a
+   *  single number too early. */
+  valueLow: number;
+  valueHigh: number;
+  /** How the source bounded THIS number: "exact" (a precise count), "at_least"
+   *  (a firm floor), "at_most" (a firm ceiling), or "approx" (symmetric
+   *  vagueness). This is per-figure evidence and, where stated, overrides the
+   *  field-wide `qualityBias` prior. */
+  qualifier: string;
+  /** What the number measures over time: "stock_as_of" a point-in-time total
+   *  ("currently displaced"), "period_flow" a quantity accrued during a period
+   *  ("newly displaced this week"), or "cumulative_to_date" a running total —
+   *  or null when the extractor couldn't tell. A stock reduces as a point in
+   *  time; a flow is integrated over its interval — reading one as the other is
+   *  the classic mis-aggregation this field prevents. */
+  measureType: string | null;
+  /** The time period this figure describes — its own stated period when the
+   *  text gives one, else the report's overall reporting period. A point
+   *  (start === end) for a stock. When start < end the figure is a flow spread
+   *  over the interval, which is what lets overlapping-period figures be
+   *  reconciled (rather than double-counted) and split across bucket
+   *  boundaries. */
+  basisPeriodStart: Date | null;
+  basisPeriodEnd: Date | null;
   unit: string | null;
   confidence: ConfidenceTier;
   /** Source-reliability grade (1–4) of this figure's source (its cited
@@ -668,6 +714,12 @@ function extractNumericMentions(
   if (!raw || typeof raw !== "object") return [];
   const nf = raw as {
     value?: number;
+    value_low?: unknown;
+    value_high?: unknown;
+    qualifier?: unknown;
+    measure_type?: unknown;
+    basis_period_start?: unknown;
+    basis_period_end?: unknown;
     unit?: string;
     confidence?: string;
     scope_location_id?: unknown;
@@ -676,6 +728,20 @@ function extractNumericMentions(
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
+
+  // Interval-and-range fields (ADR-0007, schema v3). Fall back to the point
+  // for pre-v3 figures that carry only `value`, so mixed corpora don't break.
+  const lowRaw = Number(nf.value_low);
+  const highRaw = Number(nf.value_high);
+  let valueLow = Number.isFinite(lowRaw) ? lowRaw : value;
+  let valueHigh = Number.isFinite(highRaw) ? highRaw : value;
+  if (valueLow > valueHigh) [valueLow, valueHigh] = [valueHigh, valueLow];
+  const qualifier = typeof nf.qualifier === "string" ? nf.qualifier : "exact";
+  const measureType = typeof nf.measure_type === "string" ? nf.measure_type : null;
+  // Figure-stated basis period, else the report's reporting period.
+  const basisPeriodStart = parseDate(nf.basis_period_start) ?? row.reportingPeriodStart;
+  const basisPeriodEnd =
+    parseDate(nf.basis_period_end) ?? row.reportingPeriodEnd ?? row.publishedAt;
 
   // The figure's scope. No scope → unattributed → excluded from every
   // bucket (never rolled up).
@@ -709,6 +775,12 @@ function extractNumericMentions(
       incidentDate,
       locationId: scopeLocationId,
       value,
+      valueLow,
+      valueHigh,
+      qualifier,
+      measureType,
+      basisPeriodStart,
+      basisPeriodEnd,
       unit,
       confidence,
       reliability,
@@ -912,6 +984,178 @@ function collapseSourceEchoes(mentions: Mention[], bucket: TimeBucket): Mention[
   return out;
 }
 
+/** Start of the bucket containing `dt` (UTC): midnight for a day, the Monday for
+ *  an ISO week, the 1st for a month — the boundary the flow sweep partitions on. */
+function bucketStart(dt: Date, bucket: TimeBucket): Date {
+  const d = new Date(dt);
+  d.setUTCHours(0, 0, 0, 0);
+  if (bucket === "week") {
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // back to Monday
+    return d;
+  }
+  if (bucket === "month") return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  return d;
+}
+
+/** The next bucket boundary after the bucket containing `dt`. */
+function nextBucketStart(dt: Date, bucket: TimeBucket): Date {
+  const s = bucketStart(dt, bucket);
+  if (bucket === "week") return new Date(s.getTime() + 7 * DAY_MS);
+  if (bucket === "month") return new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 1));
+  return new Date(s.getTime() + DAY_MS);
+}
+
+/** True when a figure describes a genuine time INTERVAL (≥ ~1 day) and so feeds
+ *  the flow rate sweep; a same-day / point figure (no known start) does not. */
+function hasFlowInterval(f: Mention): boolean {
+  return (
+    f.basisPeriodStart != null &&
+    f.basisPeriodEnd != null &&
+    f.basisPeriodEnd.getTime() - f.basisPeriodStart.getTime() >= DAY_MS
+  );
+}
+
+interface Contrib {
+  value: number;
+  low: number;
+  high: number;
+}
+
+/** Breakpoint-partition flow sweep (ADR-0007 §6.2) — fixes overlapping periods
+ *  (#2) and bucket-boundary spanning (#3) together, for ONE event-group. When
+ *  the group has any real-interval figure, EVERY figure in the group is treated
+ *  as an interval (a point as its single day); the timeline is cut at every
+ *  figure edge AND bucket boundary; and on each atomic sub-interval the covering
+ *  figures' daily RATE-ranges are reconciled by `pickWinner` (data-quality
+ *  override, else qualityBias direction) into one rate, integrated over the
+ *  sub-interval, and added to the bucket that contains it. So an overlap
+ *  reconciles instead of summing, and a period straddling two buckets splits by
+ *  rate. Returns null when the group has no interval figure — the caller then
+ *  places the point figures directly in their end-date bucket. */
+function sweepFlowGroup(
+  figures: Mention[],
+  rule: FieldRule,
+  bucket: TimeBucket,
+): Map<string, Contrib> | null {
+  if (!figures.some(hasFlowInterval)) return null;
+  const spans = figures.map((f) => {
+    if (hasFlowInterval(f)) {
+      return { fig: f, start: f.basisPeriodStart!.getTime(), end: f.basisPeriodEnd!.getTime() };
+    }
+    const s = f.incidentDate.getTime(); // a point figure covers its single day
+    return { fig: f, start: s, end: s + DAY_MS };
+  });
+  const minStart = Math.min(...spans.map((s) => s.start));
+  const maxEnd = Math.max(...spans.map((s) => s.end));
+  const cutSet = new Set<number>([minStart, maxEnd]);
+  for (const s of spans) {
+    cutSet.add(s.start);
+    cutSet.add(s.end);
+  }
+  for (
+    let b = nextBucketStart(new Date(minStart), bucket);
+    b.getTime() < maxEnd;
+    b = nextBucketStart(b, bucket)
+  ) {
+    cutSet.add(b.getTime());
+  }
+  const cuts = [...cutSet].sort((a, z) => a - z);
+  const out = new Map<string, Contrib>();
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const t0 = cuts[i]!;
+    const t1 = cuts[i + 1]!;
+    const subDays = (t1 - t0) / DAY_MS;
+    if (subDays <= 0) continue;
+    const covering = spans.filter((s) => s.start <= t0 && s.end >= t1);
+    if (covering.length === 0) continue;
+    // Reconcile the covering daily rate-ranges: clone each as a pseudo-mention
+    // whose value IS its rate, so pickWinner's bias/quality logic picks the rate.
+    const rateMentions = covering.map(({ fig, start, end }) => {
+      const days = (end - start) / DAY_MS || 1;
+      return { ...fig, value: fig.value / days, valueLow: fig.valueLow / days, valueHigh: fig.valueHigh / days };
+    });
+    const winner = pickWinner(rateMentions, rule);
+    const key = bucketDate(new Date(t0), bucket);
+    const acc = out.get(key) ?? { value: 0, low: 0, high: 0 };
+    acc.value += winner.value * subDays;
+    acc.low += winner.valueLow * subDays;
+    acc.high += winner.valueHigh * subDays;
+    out.set(key, acc);
+  }
+  return out;
+}
+
+/** Additive cross-group combine: the §6.2 flow sweep (overlap/boundary) per
+ *  event-group, then §7.3 event-type containment PER BUCKET, then sum across
+ *  buckets. Containment: an unqualified (empty event-type) figure is a SUPERSET
+ *  of the qualified sub-causes in the same bucket, so that bucket's total is
+ *  max(Σ qualified, the widest unqualified) — never the whole ADDED on top of
+ *  its own parts ("1M killed" + "100k drone deaths" → 1M, not 1.1M, #4). Max —
+ *  not sum — on the unknown relationship: an undercount is recoverable, a silent
+ *  double-count is not. Distinct qualified sets are disjoint and sum. Across
+ *  buckets we always sum (a monthly total is the sum of its weeks). A point-only
+ *  group keeps the simple place-in-bucket behaviour, so nothing regresses for
+ *  figures that carry no basis-period interval. Returns the point + [low, high]. */
+function combineAdditiveWithContainment(
+  winners: Mention[],
+  rule: FieldRule,
+  bucket: TimeBucket,
+): Contrib {
+  const byEvent = new Map<string, Mention[]>();
+  for (const w of winners) {
+    const list = byEvent.get(w.eventKey);
+    if (list) list.push(w);
+    else byEvent.set(w.eventKey, [w]);
+  }
+  const perGroup = new Map<string, Map<string, Contrib>>();
+  for (const [ek, figs] of byEvent) {
+    const swept = sweepFlowGroup(figs, rule, bucket);
+    if (swept) {
+      perGroup.set(ek, swept);
+      continue;
+    }
+    const m = new Map<string, Contrib>();
+    for (const f of figs) {
+      const key = bucketDate(f.incidentDate, bucket);
+      const acc = m.get(key) ?? { value: 0, low: 0, high: 0 };
+      acc.value += f.value;
+      acc.low += f.valueLow;
+      acc.high += f.valueHigh;
+      m.set(key, acc);
+    }
+    perGroup.set(ek, m);
+  }
+  const allBuckets = new Set<string>();
+  for (const m of perGroup.values()) for (const k of m.keys()) allBuckets.add(k);
+  const untyped = perGroup.get("");
+  const total: Contrib = { value: 0, low: 0, high: 0 };
+  for (const key of allBuckets) {
+    let tv = 0;
+    let tl = 0;
+    let th = 0;
+    for (const [ek, m] of perGroup) {
+      if (ek === "") continue;
+      const c = m.get(key);
+      if (c) {
+        tv += c.value;
+        tl += c.low;
+        th += c.high;
+      }
+    }
+    const u = untyped?.get(key);
+    if (u) {
+      total.value += Math.max(tv, u.value);
+      total.low += Math.max(tl, u.low);
+      total.high += Math.max(th, u.high);
+    } else {
+      total.value += tv;
+      total.low += tl;
+      total.high += th;
+    }
+  }
+  return total;
+}
+
 /** Aggregate a numeric field across the report set into a
  *  QualityEnvelope. Runs the two-stage flow from §6.4.7:
  *  1. Group mentions by incident key (location + date bucket)
@@ -1006,10 +1250,16 @@ function aggregateNumericField(
 
   // Cross-group combine per field-kind
   let value: number;
+  // Set by the additive branch — the containment-aware [low, high] band, reused
+  // by the confidence-band block below instead of a naïve Σ of every winner.
+  let additiveBand: { low: number; high: number } | null = null;
   switch (rule.kind) {
-    case "additive_count":
-      value = winners.reduce((sum, w) => sum + w.value, 0);
+    case "additive_count": {
+      const combined = combineAdditiveWithContainment(winners, rule, bucket);
+      value = combined.value;
+      additiveBand = { low: combined.low, high: combined.high };
       break;
+    }
     case "latest_state":
       // Across incident groups, pick the freshest snapshot.
       value = pickWinner(winners).value;
@@ -1028,18 +1278,30 @@ function aggregateNumericField(
       return null;
   }
 
-  // Divergence guard (ADR-0006 §7). For a point-in-time field, if the winning
-  // value came from reports but disagrees with the authoritative API figure by
-  // more than the threshold, the API figure wins and the gap is surfaced as an
-  // early-warning signal (possible emerging event or extraction error). Additive
-  // fields are protected by source echo-dedup (§5), so the guard is state-only.
+  // Divergence guard (ADR-0006 §7, generalised to ranges by ADR-0007 §9). For a
+  // point-in-time field, if the report estimate disagrees with the authoritative
+  // API figure the API wins and the gap is surfaced as an early-warning signal.
+  //
+  // §9 range-overlap test: when the report figures carry a real band, an API
+  // anchor INSIDE that band is agreement (it tightens the estimate — no signal);
+  // an anchor the band EXCLUDES is the divergence. For all-exact report figures
+  // (no stated width) we fall back to the ADR-0006 §7 fixed-percentage tolerance,
+  // so exact-figure behaviour is unchanged — this strictly generalises the guard
+  // rather than tightening it. Additive fields are protected by echo-dedup (§5).
   let divergence: QualityEnvelope["divergence"] = null;
   if (rule.kind === "latest_state") {
     const apiFigs = scoped.filter((m) => m.isApi);
-    if (apiFigs.length > 0) {
+    const reportFigs = scoped.filter((m) => !m.isApi);
+    if (apiFigs.length > 0 && reportFigs.length > 0) {
       const api = latestByPublishedAt(apiFigs);
       const denom = Math.abs(api.value) || 1;
-      if (value !== api.value && Math.abs(value - api.value) / denom > DIVERGENCE_THRESHOLD) {
+      const reportLow = Math.min(...reportFigs.map((m) => m.valueLow));
+      const reportHigh = Math.max(...reportFigs.map((m) => m.valueHigh));
+      const hasRealBand = reportHigh > reportLow;
+      const inConflict = hasRealBand
+        ? api.value < reportLow || api.value > reportHigh
+        : value !== api.value && Math.abs(value - api.value) / denom > DIVERGENCE_THRESHOLD;
+      if (inConflict) {
         divergence = {
           reportValue: value,
           apiValue: api.value,
@@ -1075,8 +1337,35 @@ function aggregateNumericField(
   const meanReliability = winners.reduce((s, w) => s + w.reliability, 0) / winners.length;
   const meanIntrinsicCred =
     winners.reduce((s, w) => s + w.intrinsicCredibility, 0) / winners.length;
+
+  // Publish an honest confidence band around the headline `value`, derived from
+  // the contributing figures' own reported ranges plus their disagreement. The
+  // band is combined the SAME way the point was, so `value` always lies inside
+  // it:
+  //  - additive: the band the additive combine produced alongside the point
+  //    (flow figures integrated over their intervals, event-type supersets
+  //    capped, distinct causes summed) — not a naïve Σ of every figure.
+  //  - latest_state / max: the band spans every considered figure's reported
+  //    range, so a disagreement (including an API-vs-report gap) shows up as a
+  //    wide band rather than being hidden behind a single number.
+  let valueLow: number;
+  let valueHigh: number;
+  if (additiveBand) {
+    valueLow = additiveBand.low;
+    valueHigh = additiveBand.high;
+  } else {
+    valueLow = Math.min(...scoped.map((m) => m.valueLow));
+    valueHigh = Math.max(...scoped.map((m) => m.valueHigh));
+  }
+  valueLow = Math.min(valueLow, value);
+  valueHigh = Math.max(valueHigh, value);
+
   return {
     value,
+    value_low: Number(valueLow.toFixed(4)),
+    value_high: Number(valueHigh.toFixed(4)),
+    range_width: Number((valueHigh - valueLow).toFixed(4)),
+    bias: rule.qualityBias ?? null,
     unit,
     quality_score: Number(qualityScore.toFixed(4)),
     reliability: Number(meanReliability.toFixed(4)),
@@ -1148,6 +1437,9 @@ interface ApiFigure {
   /** T₀ — the figure's own reference/as-of date (round date, period end); the
    *  bucketing + flow-cutoff anchor. Falls back to `valid_from` when absent. */
   referenceDate: Date | null;
+  /** Interval-and-range measure type (ADR-0007), when the adapter can state it
+   *  (most API figures are `stock_as_of` snapshots). Defaults to null. */
+  measureType?: string | null;
 }
 
 interface ApiAdapter {
@@ -1472,6 +1764,13 @@ export function buildApiMentions(
         incidentDate: fig.referenceDate ?? row.validFrom, // T₀ → bucket / flow cutoff
         locationId,
         value: fig.value,
+        // API figures are exact points as of their reference date (ADR-0007).
+        valueLow: fig.value,
+        valueHigh: fig.value,
+        qualifier: "exact",
+        measureType: fig.measureType ?? null,
+        basisPeriodStart: fig.referenceDate ?? row.validFrom,
+        basisPeriodEnd: fig.referenceDate ?? row.validFrom,
         unit: fig.unit,
         confidence: API_DIRECTNESS,
         reliability,

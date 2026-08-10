@@ -121,6 +121,79 @@ describe("aggregateReports — empty input", () => {
   });
 });
 
+describe("aggregateReports — confidence band (ADR-0007 Phase 2)", () => {
+  // Range-aware figure: spreads nf() and attaches a stated [low, high].
+  const nfR = (value: number, low: number, high: number, confidence = "reported") => ({
+    ...nf(value, confidence),
+    value_low: low,
+    value_high: high,
+  });
+
+  it("exact points → zero-width band (value_low == value_high == value)", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(8000) },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8000);
+    expect(f.value_low).toBe(8000);
+    expect(f.value_high).toBe(8000);
+    expect(f.range_width).toBe(0);
+  });
+
+  it("a stated range on one figure surfaces as the band", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nfR(8000, 7000, 9000) },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8000);          // headline point unchanged
+    expect(f.value_low).toBe(7000);
+    expect(f.value_high).toBe(9000);
+    expect(f.range_width).toBe(2000);
+  });
+
+  it("disagreeing latest_state figures widen the band to span both", () => {
+    // Two exact stocks for the same week+location: latest wins the point,
+    // but the band spans the disagreement.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(8000) },
+      }, "2026-07-02T00:00:00Z"),
+      row("r2", "2026-07-05T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(6000) },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(6000);          // freshest wins the point
+    expect(f.value_low).toBe(6000);
+    expect(f.value_high).toBe(8000);
+    expect(f.range_width).toBe(2000);    // the disagreement is visible
+  });
+
+  it("additive field sums the contributing ranges", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: nfR(800, 700, 900) } },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(800);
+    expect(f.value_low).toBe(700);
+    expect(f.value_high).toBe(900);
+  });
+
+  it("surfaces the field bias for late projection (§8)", () => {
+    // killed_total is overreport → the consumer projects the band to its LOW end.
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: nf(800) } },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.bias).toBe("overreport");
+  });
+});
+
 describe("aggregateReports — additive count (killed_total)", () => {
   it("dedupes two reports for the same week (period totals, not per-day events)", () => {
     // Both figures are weekly period-totals for the same week + location, so
@@ -813,12 +886,14 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
     expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // deduped, not 8
   });
 
-  it("leaves the untyped group separate when MULTIPLE typed groups share the bucket", () => {
-    // conflict + flood are two distinct phenomena; an untyped figure can't
-    // be assigned to one, so it is not merged (documented, ADR-0002).
+  it("untyped superset does not sum onto its qualified sub-causes (ADR-0007 §7.3, #4)", () => {
+    // conflict + flood are two distinct phenomena; an untyped figure can't be
+    // assigned to one, so it stays a separate group (ADR-0002). But an untyped
+    // total IS a superset of the qualified sub-causes in the same bucket, so
+    // the containment rule takes max(Σ parts, whole), never parts + whole.
     const rows = [
       row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(5) } },
+        casualties: { killed: { total: nf(10) } }, // "10 killed", no cause
       }),
       row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
         timing_and_scope: { event_types: ["conflict"] },
@@ -829,8 +904,23 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
         casualties: { killed: { total: nf(2) } },
       }),
     ];
-    // conflict(3) + flood(2) + untyped(5), all distinct groups → 10.
+    // max(conflict 3 + flood 2 = 5, untyped whole 10) = 10 — NOT 15.
     expect(kt(aggregateReports(rows, "SD0201"))).toBe(10);
+  });
+
+  it("distinct qualified sub-causes still sum (disjoint phenomena, #4)", () => {
+    // No untyped superset present → conflict and flood are disjoint → sum.
+    const rows = [
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+      row("r-flood", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(2) } },
+      }),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(5);
   });
 
   it("untyped and typed figures at DIFFERENT scopes never interact", () => {
@@ -1361,6 +1451,52 @@ describe("aggregateReports — echo dedup (ADR-0006 §5)", () => {
   });
 });
 
+describe("aggregateReports — flow breakpoint sweep (ADR-0007 §6.2)", () => {
+  const kt = (r: ReturnType<typeof aggregateReports>) => {
+    const f = r!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    return f.value;
+  };
+  const flowFig = (value: number, start: string, end: string) => ({
+    ...nf(value, "reported"),
+    basis_period_start: start,
+    basis_period_end: end,
+  });
+
+  it("overlapping periods reconcile the overlap instead of double-counting (#2)", () => {
+    // A: 2–10 Apr, 800 (100/day). B: 5–15 Apr, 660 (66/day). killed = overreport.
+    // [2,5) A only → 300; [5,10) overlap → lower rate 66 → 330; [10,15) B → 330.
+    const rows = [
+      row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(960); // not 1460 (sum), not 800 (max)
+  });
+
+  it("disjoint periods sum (no overlap to reconcile)", () => {
+    const rows = [
+      row("rA", "2026-04-06T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(400, "2026-04-01T00:00:00Z", "2026-04-05T00:00:00Z") } },
+      }, "2026-04-05T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(600, "2026-04-10T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(1000);
+  });
+
+  it("a single interval figure integrates to its own value", () => {
+    const rows = [row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+    }, "2026-04-10T00:00:00Z")];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(800);
+  });
+});
+
 describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
   const dtm = (value: number, validFrom: string, refDate: string) =>
     buildApiMentions(
@@ -1395,6 +1531,31 @@ describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
     if (!f || !("value" in f)) throw new Error("expected numeric field");
     expect(f.value).toBe(50000); // fresher report wins (3.8% < 25%)
     expect(f.divergence == null).toBe(true);
+  });
+
+  it("§9: an API anchor INSIDE the report band is agreement — no signal", () => {
+    // Report gives a wide band [30k, 55k]; DTM 52k falls inside it, so the
+    // anchor tightens rather than diverges — the fresher report value wins.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: { ...nf(40000, "reported"), value_low: 30000, value_high: 55000 } },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(40000);         // report wins; anchor inside band
+    expect(f.divergence == null).toBe(true);
+  });
+
+  it("§9: an API anchor OUTSIDE the report band is the divergence — API wins", () => {
+    // Report band is tight [35k, 45k]; DTM 52k is outside it → disjoint → signal.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: { ...nf(40000, "reported"), value_low: 35000, value_high: 45000 } },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000);         // API wins the disjoint disagreement
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.reportValue).toBe(40000);
+    expect(f.divergence!.apiValue).toBe(52000);
   });
 });
 
