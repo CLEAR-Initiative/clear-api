@@ -466,13 +466,13 @@ export interface QualityEnvelope {
    *  `[value_low, value_high]` is the honest error bar, derived from the
    *  contributing figures' own reported ranges and their disagreement with each
    *  other. Equal to `value` when every contributor is an exact point that
-   *  agrees. (Interval-and-range model, ADR-0007.) */
+   *  agrees. (Interval-and-range model, clear-context-pipeline ADR-0007.) */
   value_low: number;
   value_high: number;
   /** `value_high − value_low` — a first-class uncertainty signal beside
    *  `data_quality` (a wide band = noisy/disagreeing evidence). */
   range_width: number;
-  /** The field's systematic quality-bias direction (ADR-0005 §3 / ADR-0007 §8),
+  /** The field's systematic quality-bias direction (clear-context-pipeline ADR-0005 §3 / ADR-0007 §8),
    *  surfaced so the consumer can PROJECT the [value_low, value_high] band to a
    *  single headline at the display edge: `overreport` → the low end
    *  (conservative against inflation), `underreport` → the high end, `neutral` →
@@ -600,16 +600,24 @@ interface Mention {
   valueLow: number;
   valueHigh: number;
   /** How the source bounded THIS number: "exact" (a precise count), "at_least"
-   *  (a firm floor), "at_most" (a firm ceiling), or "approx" (symmetric
-   *  vagueness). This is per-figure evidence and, where stated, overrides the
-   *  field-wide `qualityBias` prior. */
+   *  (a firm floor — the truth is ≥ value), "at_most" (a firm ceiling — ≤ value),
+   *  or "approx" (symmetric vagueness around value). Per-figure evidence of
+   *  reporting bias, distinct from the field-wide `qualityBias` prior on the
+   *  FieldRule. CAPTURED, NOT YET ROUTED: nothing in the reducer reads this field
+   *  — the confidence band comes from valueLow/valueHigh and bias is projected
+   *  from the field-level qualityBias — so it neither overrides nor changes any
+   *  number today. It rides on the mention so a later phase can switch bias
+   *  projection to this per-figure evidence without a schema or re-extraction. */
   qualifier: string;
   /** What the number measures over time: "stock_as_of" a point-in-time total
    *  ("currently displaced"), "period_flow" a quantity accrued during a period
-   *  ("newly displaced this week"), or "cumulative_to_date" a running total —
-   *  or null when the extractor couldn't tell. A stock reduces as a point in
-   *  time; a flow is integrated over its interval — reading one as the other is
-   *  the classic mis-aggregation this field prevents. */
+   *  ("newly displaced this week"), "cumulative_to_date" a running total since an
+   *  origin, or null when the extractor couldn't tell. The intent is to stop a
+   *  stock (which should reduce as a point in time) being read as a flow (which is
+   *  integrated over its interval) — the classic mis-aggregation. CAPTURED, NOT
+   *  YET ROUTED: reduction is still chosen by the static FieldRule.kind plus the
+   *  presence of a multi-day basis period (see `hasFlowInterval`), NOT by this
+   *  field; it is stored now so routing can move to it later without re-extracting. */
   measureType: string | null;
   /** The time period this figure describes — its own stated period when the
    *  text gives one, else the report's overall reporting period. A point
@@ -729,8 +737,18 @@ function extractNumericMentions(
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
 
-  // Interval-and-range fields (ADR-0007, schema v3). Fall back to the point
-  // for pre-v3 figures that carry only `value`, so mixed corpora don't break.
+  // Interval-and-range fields (clear-context-pipeline ADR-0007, schema v3). A
+  // pre-v3 figure carries only `value`, and the two fallbacks differ:
+  //  - the value RANGE collapses to the point (valueLow = valueHigh = value), so
+  //    a v2 figure has a zero-width band and reads exactly as before; but
+  //  - the basis PERIOD (below) falls back to the REPORT's reporting period, not
+  //    to a point. So a v2 figure whose report states a multi-day reporting period
+  //    is treated as a flow over that period and enters the breakpoint sweep. A
+  //    lone such figure integrates back to its own value (no change); only where
+  //    v2 figures OVERLAP does the number move — from the old double-count to a
+  //    reconciled total (the same §6.2 fix, now also covering v2 data). So this is
+  //    not a pure no-op on v2 aggregates: it corrects overlaps rather than
+  //    preserving them.
   const lowRaw = Number(nf.value_low);
   const highRaw = Number(nf.value_high);
   let valueLow = Number.isFinite(lowRaw) ? lowRaw : value;
@@ -1021,17 +1039,43 @@ interface Contrib {
   high: number;
 }
 
-/** Breakpoint-partition flow sweep (ADR-0007 §6.2) — fixes overlapping periods
+/** The headline daily rate for a flow sub-interval covered by several figures
+ *  (clear-context-pipeline ADR-0007 §8 bias-as-projection). Mirrors `pickWinner`'s confidence-override
+ *  tie-break — top data-quality tier, then `qualityBias` direction — but WITHOUT
+ *  the freshness gate, because on a flow overlap every covering figure measures
+ *  the same elapsed days, so recency must not decide (that gate is what let a
+ *  weekly cadence silently take the freshest rate instead of the bias-selected
+ *  one). Data-quality override still holds: an authoritative figure outside the
+ *  bias direction still governs the point. Other within-group policies keep their
+ *  ordinary `pickWinner` point — only the bias-aware additive policy overlaps. */
+function reconcileRatePoint(rates: Mention[], rule: FieldRule): number {
+  if ((rule.withinGroupPolicy ?? "latest_wins") === "latest_wins_with_confidence_override") {
+    const maxQ = Math.max(...rates.map(selectionQuality));
+    const topTier = rates.filter((m) => selectionQuality(m) >= maxQ - DATA_QUALITY_MARGIN);
+    return biasWinner(topTier, rule.qualityBias ?? "neutral").value;
+  }
+  return pickWinner(rates, rule).value;
+}
+
+/** Breakpoint-partition flow sweep (clear-context-pipeline ADR-0007 §6.2) — fixes overlapping periods
  *  (#2) and bucket-boundary spanning (#3) together, for ONE event-group. When
  *  the group has any real-interval figure, EVERY figure in the group is treated
  *  as an interval (a point as its single day); the timeline is cut at every
  *  figure edge AND bucket boundary; and on each atomic sub-interval the covering
- *  figures' daily RATE-ranges are reconciled by `pickWinner` (data-quality
- *  override, else qualityBias direction) into one rate, integrated over the
- *  sub-interval, and added to the bucket that contains it. So an overlap
- *  reconciles instead of summing, and a period straddling two buckets splits by
- *  rate. Returns null when the group has no interval figure — the caller then
- *  places the point figures directly in their end-date bucket. */
+ *  figures' daily RATE-ranges are reconciled into ONE rate-range (see
+ *  `reconcileRatePoint`), integrated over the sub-interval, and added to the
+ *  bucket that contains it. So an overlap reconciles instead of summing, and a
+ *  period straddling two buckets splits by rate.
+ *
+ *  Reconciliation carries a RANGE, it does not pick a single winner (clear-context-pipeline ADR-0007
+ *  §6.2 + §8): on an overlap both figures genuinely measure the same elapsed
+ *  days, so the band is the UNION of their daily rate-ranges (min low … max high)
+ *  — their disagreement is real uncertainty, surfaced as width — and the headline
+ *  rate is the bias projection onto that band. Crucially recency does NOT gate
+ *  the overlap: a later sitrep re-counting the same days is a second observation,
+ *  not fresher truth that supersedes the earlier count, so quality/bias decides,
+ *  not publish order. Returns null when the group has no interval figure — the
+ *  caller then places the point figures directly in their end-date bucket. */
 function sweepFlowGroup(
   figures: Mention[],
   rule: FieldRule,
@@ -1068,18 +1112,23 @@ function sweepFlowGroup(
     if (subDays <= 0) continue;
     const covering = spans.filter((s) => s.start <= t0 && s.end >= t1);
     if (covering.length === 0) continue;
-    // Reconcile the covering daily rate-ranges: clone each as a pseudo-mention
-    // whose value IS its rate, so pickWinner's bias/quality logic picks the rate.
-    const rateMentions = covering.map(({ fig, start, end }) => {
+    // Each covering figure's DAILY rate-range over its own basis period: clone as
+    // a pseudo-mention whose value/low/high ARE per-day rates.
+    const rates = covering.map(({ fig, start, end }) => {
       const days = (end - start) / DAY_MS || 1;
       return { ...fig, value: fig.value / days, valueLow: fig.valueLow / days, valueHigh: fig.valueHigh / days };
     });
-    const winner = pickWinner(rateMentions, rule);
+    // Band = union of the covering rate-ranges (overlap disagreement is real
+    // uncertainty, not something to collapse). Point = bias projection onto it,
+    // no recency gate (both figures measure these same days). See the header.
+    const lowRate = Math.min(...rates.map((r) => r.valueLow));
+    const highRate = Math.max(...rates.map((r) => r.valueHigh));
+    const pointRate = reconcileRatePoint(rates, rule);
     const key = bucketDate(new Date(t0), bucket);
     const acc = out.get(key) ?? { value: 0, low: 0, high: 0 };
-    acc.value += winner.value * subDays;
-    acc.low += winner.valueLow * subDays;
-    acc.high += winner.valueHigh * subDays;
+    acc.value += pointRate * subDays;
+    acc.low += lowRate * subDays;
+    acc.high += highRate * subDays;
     out.set(key, acc);
   }
   return out;
@@ -1278,7 +1327,7 @@ function aggregateNumericField(
       return null;
   }
 
-  // Divergence guard (ADR-0006 §7, generalised to ranges by ADR-0007 §9). For a
+  // Divergence guard (clear-context-pipeline ADR-0006 §7, generalised to ranges by ADR-0007 §9). For a
   // point-in-time field, if the report estimate disagrees with the authoritative
   // API figure the API wins and the gap is surfaced as an early-warning signal.
   //
@@ -1297,7 +1346,15 @@ function aggregateNumericField(
       const denom = Math.abs(api.value) || 1;
       const reportLow = Math.min(...reportFigs.map((m) => m.valueLow));
       const reportHigh = Math.max(...reportFigs.map((m) => m.valueHigh));
-      const hasRealBand = reportHigh > reportLow;
+      // "Real band" is a per-FIGURE property (a stated range, `valueHigh >
+      // valueLow`), NOT the aggregate spread. Two EXACT figures that merely
+      // disagree (40k, 48k) span a wide [reportLow, reportHigh] but neither
+      // carries a measurement band — treating that spread as one would swallow a
+      // divergent API anchor sitting between them ("inside the band" → no signal,
+      // API never wins). Only when some figure genuinely brackets its estimate do
+      // we run the containment test; all-exact figures take the §7 % fallback
+      // against the headline, so pure disagreement still trips the guard.
+      const hasRealBand = reportFigs.some((m) => m.valueHigh > m.valueLow);
       const inConflict = hasRealBand
         ? api.value < reportLow || api.value > reportHigh
         : value !== api.value && Math.abs(value - api.value) / denom > DIVERGENCE_THRESHOLD;
@@ -1348,6 +1405,13 @@ function aggregateNumericField(
   //  - latest_state / max: the band spans every considered figure's reported
   //    range, so a disagreement (including an API-vs-report gap) shows up as a
   //    wide band rather than being hidden behind a single number.
+  //
+  // Deferred (clear-context-pipeline ADR-0007 §7.2): for a stock this WIDENS to
+  // the union of the figures' ranges (honest, shows disagreement). §7.2's stronger
+  // move — INTERSECTING comparable-quality bounds to tighten the estimate, and
+  // raising a divergence when two stock ranges don't overlap — is a follow-up, not
+  // in this PR. The union never hides disagreement (it can only over-widen), so
+  // deferring it is safe; it just doesn't yet tighten from independent bounds.
   let valueLow: number;
   let valueHigh: number;
   if (additiveBand) {
@@ -1437,7 +1501,7 @@ interface ApiFigure {
   /** T₀ — the figure's own reference/as-of date (round date, period end); the
    *  bucketing + flow-cutoff anchor. Falls back to `valid_from` when absent. */
   referenceDate: Date | null;
-  /** Interval-and-range measure type (ADR-0007), when the adapter can state it
+  /** Interval-and-range measure type (clear-context-pipeline ADR-0007), when the adapter can state it
    *  (most API figures are `stock_as_of` snapshots). Defaults to null. */
   measureType?: string | null;
 }
@@ -1764,7 +1828,7 @@ export function buildApiMentions(
         incidentDate: fig.referenceDate ?? row.validFrom, // T₀ → bucket / flow cutoff
         locationId,
         value: fig.value,
-        // API figures are exact points as of their reference date (ADR-0007).
+        // API figures are exact points as of their reference date (clear-context-pipeline ADR-0007).
         valueLow: fig.value,
         valueHigh: fig.value,
         qualifier: "exact",

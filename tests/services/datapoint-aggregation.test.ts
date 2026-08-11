@@ -1495,6 +1495,44 @@ describe("aggregateReports — flow breakpoint sweep (ADR-0007 §6.2)", () => {
     }, "2026-04-10T00:00:00Z")];
     expect(kt(aggregateReports(rows, "SD01"))).toBe(800);
   });
+
+  it("the overlap is decided by bias, not recency (publish order is irrelevant)", () => {
+    // Same figures as the #2 case but with publish dates SWAPPED so the higher-
+    // rate figure A (100/day) is now the freshest. The old recency gate would let
+    // A take the overlap → 1130 (18% over-report). Under range reconciliation the
+    // overlap is bias-projected (overreport → 66), so the point is still 960 —
+    // recency can no longer inflate a flow the field is meant to resist inflating.
+    const rows = [
+      row("rA", "2026-04-20T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(960);
+  });
+
+  it("the overlap disagreement widens the band (union of covering rates)", () => {
+    // [2,5) A only → [300,300]; [5,10) overlap → rate band [66,100] → [330,500];
+    // [10,15) B only → [330,330]. Point projects to the low end (overreport), so
+    // value == value_low == 960 and the A-vs-B disagreement surfaces as the 170
+    // of upward width (value_high 1130) — not swallowed by a single winner.
+    const rows = [
+      row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(960);
+    expect(f.value_low).toBe(960);
+    expect(f.value_high).toBe(1130);
+    expect(f.range_width).toBe(170);
+  });
 });
 
 describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
@@ -1556,6 +1594,27 @@ describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
     expect(f.divergence).toBeTruthy();
     expect(f.divergence!.reportValue).toBe(40000);
     expect(f.divergence!.apiValue).toBe(52000);
+  });
+
+  it("§9: two EXACT disagreeing figures don't fake a band — % fallback still fires", () => {
+    // Both figures are exact points (no stated width): 30k and 80k. Their spread
+    // [30k, 80k] is NOT a measurement band. A DTM anchor at 55k sits between them
+    // — the old aggregate-spread test read that as "inside the band" and let the
+    // 30k report stand. Per-figure width → hasRealBand=false → the 25% fallback
+    // vs the headline fires (30k is 45% below 55k) → the authoritative API wins.
+    const rows = [
+      row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(30000, "reported") },
+      }, "2026-06-30T00:00:00Z"),
+      row("r2", "2026-07-08T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(80000, "reported") },
+      }, "2026-06-30T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(55000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(55000);         // API wins; the exact spread is not a band
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.apiValue).toBe(55000);
   });
 });
 
