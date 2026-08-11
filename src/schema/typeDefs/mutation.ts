@@ -430,11 +430,19 @@ export const mutationTypeDef = gql`
     bucket is inserted with \`validFrom = now()\`; the previous
     "current" row for the same bucket key has its \`validTo\` stamped
     in the same transaction. History rows are preserved. Admin /
-    pipeline only."""
+    pipeline only.
+
+    Pass \`countryLocationId\` (an admin-0 location id) to SCOPE the
+    refresh to that country's subtree — only reports scoped under that
+    country are recomputed. Omit it to refresh every country in the
+    window (the original global behaviour). The per-country partitioned
+    pipeline passes it so each country's run recomputes only its own
+    buckets instead of a redundant global pass."""
     refreshAggregatedDatapoints(
       from: DateTime!
       to: DateTime!
       schemaVersion: String!
+      countryLocationId: String
     ): RefreshAggregatedDatapointsResult!
 
     """Upload a PDF into the manual-ingest S3 inbox and trigger the

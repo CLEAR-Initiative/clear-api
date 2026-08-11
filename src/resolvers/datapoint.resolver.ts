@@ -299,15 +299,25 @@ export const datapointResolvers = {
 
     hasAggregatedDatapoints: async (
       _parent: unknown,
-      args: { schemaVersion: string },
+      args: { schemaVersion: string; countryLocationId?: string | null },
       context: Context,
     ): Promise<boolean> => {
       requireContentReader(context);
       // Only "current" rows (validTo IS NULL) count — a table full of
       // superseded history rows shouldn't fool the pipeline into
       // thinking it's already backfilled.
+      //
+      // When countryLocationId is given, scope the check to that country: its
+      // yearly/all-time buckets are keyed AT the country (admin-0) location, so a
+      // current row at that locationId means the country has been aggregated.
+      // This makes first-run detection PER COUNTRY — a country onboarded after
+      // others still gets the wide initial window on its first run.
       const row = await context.prisma.aggregatedDatapoint.findFirst({
-        where: { schemaVersion: args.schemaVersion, validTo: null },
+        where: {
+          schemaVersion: args.schemaVersion,
+          validTo: null,
+          ...(args.countryLocationId ? { locationId: args.countryLocationId } : {}),
+        },
         select: { id: true },
       });
       return row !== null;
@@ -574,7 +584,12 @@ export const datapointResolvers = {
 
     refreshAggregatedDatapoints: async (
       _parent: unknown,
-      args: { from: Date; to: Date; schemaVersion: string },
+      args: {
+        from: Date;
+        to: Date;
+        schemaVersion: string;
+        countryLocationId?: string | null;
+      },
       context: Context,
     ): Promise<{
       computedBuckets: number;
@@ -583,7 +598,7 @@ export const datapointResolvers = {
       schemaVersion: string;
     }> => {
       requireRole(context, ["admin", "pipeline"]);
-      const { from, to, schemaVersion } = args;
+      const { from, to, schemaVersion, countryLocationId } = args;
 
       // ── 1. Pull every report in the target window ────────────────
       const reports = await context.prisma.reportDatapoint.findMany({
@@ -675,6 +690,12 @@ export const datapointResolvers = {
         for (const scopeId of scopeIdsByReport.get(r.reportId) ?? []) {
           const chain = hierarchy.get(scopeId);
           if (!chain) continue;
+          // Country scoping: when a countryLocationId is given, only compute
+          // buckets whose admin-0 ancestor IS that country, so a per-country
+          // partition run recomputes only its own subtree (weekly-A2 through
+          // all-time-A0) instead of a redundant global pass. `chain.a0` is the
+          // scope's country ancestor (or the scope itself when it's admin-0).
+          if (countryLocationId && chain.a0 !== countryLocationId) continue;
           if (chain.a0 === scopeId) {
             push({ windowStart: year.start, windowEnd: year.end, windowKind: "yearly", locationId: scopeId }, row);
             push({ windowStart: month.start, windowEnd: month.end, windowKind: "monthly", locationId: scopeId }, row);
