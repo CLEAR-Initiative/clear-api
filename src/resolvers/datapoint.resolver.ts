@@ -51,13 +51,13 @@ interface UpsertReportDatapointsInput {
 }
 
 // Default schema version — MUST match the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py), currently "v2". A
+// Python-side extraction module (datapoints_schemas.py), currently "v3". A
 // version-less `aggregatedDatapoint` query reads buckets of this version, so a
-// mismatch makes freshly-aggregated buckets go unread. The data-quality /
-// stock-flow change bumped the pipeline v1→v2 and re-extracts the whole corpus;
-// this default moves in lockstep. ROLLOUT: flip only alongside (or after) that
-// re-extraction — version-less reads return null for v2 until v2 rows exist.
-const DEFAULT_SCHEMA_VERSION = "v2";
+// mismatch makes freshly-aggregated buckets go unread. The interval-and-range
+// change bumped the pipeline v2→v3 and re-extracts the whole corpus; this
+// default moves in lockstep. ROLLOUT: flip only alongside (or after) that
+// re-extraction — version-less reads return null for v3 until v3 rows exist.
+const DEFAULT_SCHEMA_VERSION = "v3";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How far back the estimated-current-total scan reads report_datapoints
