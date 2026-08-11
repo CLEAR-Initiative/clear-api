@@ -113,19 +113,41 @@ describe("Query.hasAggregatedDatapoints", () => {
     expect(result).toBe(false);
   });
 
-  it("scopes the check to the country when countryLocationId is given", async () => {
-    // Per-country first-run detection: the where must pin locationId to the
-    // country (its A0 buckets), so a country onboarded after others still reads
-    // as "not yet aggregated" and gets the wide initial window.
+  it("scopes the check to the country SUBTREE when countryLocationId is given", async () => {
+    // Per-country first-run detection: match a current row anywhere in the
+    // country's subtree (A0 + descendants), not only the exact A0 location — a
+    // country reported only sub-nationally has no A0 row (A123).
     const findFirst = vi.fn().mockResolvedValue(null);
-    const ctx = buildContext(VIEWER, { aggregatedDatapoint: { findFirst } });
+    const findManyLocations = vi.fn().mockResolvedValue([{ id: "eth0" }, { id: "eth10" }, { id: "eth0101" }]);
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst },
+      locations: { findMany: findManyLocations },
+    });
     await hasAggregatedDatapoints(
       null, { schemaVersion: "v1", countryLocationId: "eth0" }, ctx,
     );
-    expect(findFirst).toHaveBeenCalledWith({
-      where: { schemaVersion: "v1", validTo: null, locationId: "eth0" },
+    // Subtree resolved by (id = country) OR (ancestorIds has country)…
+    expect(findManyLocations).toHaveBeenCalledWith({
+      where: { OR: [{ id: "eth0" }, { ancestorIds: { has: "eth0" } }] },
       select: { id: true },
     });
+    // …then the existence check matches any of those location ids.
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { schemaVersion: "v1", validTo: null, locationId: { in: ["eth0", "eth10", "eth0101"] } },
+      select: { id: true },
+    });
+  });
+
+  it("returns false for an unresolvable countryLocationId (treated as first-run)", async () => {
+    const findManyLocations = vi.fn().mockResolvedValue([]); // no such location / subtree
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst: vi.fn() },
+      locations: { findMany: findManyLocations },
+    });
+    const result = await hasAggregatedDatapoints(
+      null, { schemaVersion: "v1", countryLocationId: "bogus" }, ctx,
+    );
+    expect(result).toBe(false);
   });
 
   it("rejects pending users", async () => {
@@ -597,7 +619,11 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     });
     return buildContext(PIPELINE, {
       reportDatapoint: { findMany: findManyReports },
-      locations: { findMany: findManyLocations },
+      // B123 validation resolves the country id; a real location is returned here.
+      locations: {
+        findMany: findManyLocations,
+        findUnique: vi.fn().mockResolvedValue({ id: "country0", level: 0 }),
+      },
       $transaction: transactionRun,
     });
   };
@@ -623,6 +649,22 @@ describe("Mutation.refreshAggregatedDatapoints", () => {
     }, buildCountryScopeCtx());
     expect(result.computedBuckets).toBe(0);
     expect(result.supersededBuckets).toBe(0);
+  });
+
+  it("throws on an unresolvable countryLocationId (B123 — not a silent no-op)", async () => {
+    const ctx = buildContext(PIPELINE, {
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([]) },
+      locations: { findMany: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn(),
+    });
+    await expect(
+      refreshAggregatedDatapoints(null, {
+        from: new Date("2026-04-01T00:00:00Z"),
+        to: new Date("2026-07-10T00:00:00Z"),
+        schemaVersion: "v1",
+        countryLocationId: "bogus",
+      }, ctx),
+    ).rejects.toThrow(GraphQLError);
   });
 
   it("skips higher tiers when a report location has no A0/A1 ancestor", async () => {

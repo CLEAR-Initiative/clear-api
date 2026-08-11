@@ -433,11 +433,13 @@ export const mutationTypeDef = gql`
     pipeline only.
 
     Pass \`countryLocationId\` (an admin-0 location id) to SCOPE the
-    refresh to that country's subtree — only reports scoped under that
-    country are recomputed. Omit it to refresh every country in the
-    window (the original global behaviour). The per-country partitioned
-    pipeline passes it so each country's run recomputes only its own
-    buckets instead of a redundant global pass."""
+    refresh to that country's subtree — only that country's buckets are
+    (re)computed (the window's reports are still scanned; the bucket step
+    filters to scopes whose admin-0 ancestor is this country). Omit it to
+    refresh every country in the window (the original global behaviour).
+    The per-country partitioned pipeline passes it so each country's run
+    recomputes only its own buckets instead of a redundant global pass.
+    An unresolvable id errors rather than silently computing nothing."""
     refreshAggregatedDatapoints(
       from: DateTime!
       to: DateTime!

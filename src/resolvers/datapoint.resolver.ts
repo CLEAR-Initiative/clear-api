@@ -306,17 +306,32 @@ export const datapointResolvers = {
       // Only "current" rows (validTo IS NULL) count — a table full of
       // superseded history rows shouldn't fool the pipeline into
       // thinking it's already backfilled.
-      //
-      // When countryLocationId is given, scope the check to that country: its
-      // yearly/all-time buckets are keyed AT the country (admin-0) location, so a
-      // current row at that locationId means the country has been aggregated.
-      // This makes first-run detection PER COUNTRY — a country onboarded after
-      // others still gets the wide initial window on its first run.
+      let subtreeIds: string[] | null = null;
+      if (args.countryLocationId) {
+        // Per-country signal: a row anywhere in the country's SUBTREE, not only
+        // at the admin-0 location. The four-tier walk keys yearly/all-time at
+        // admin-0 but weekly/monthly at the reporting sub-locations with NO
+        // ancestor roll-up, so a country reported only sub-nationally has no A0
+        // row — matching on `locationId === countryLocationId` alone would read
+        // it as never-aggregated and recompute the wide window every run (A123).
+        // Resolve the country + its descendants and match any of them.
+        const subtree = await context.prisma.locations.findMany({
+          where: {
+            OR: [
+              { id: args.countryLocationId },
+              { ancestorIds: { has: args.countryLocationId } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (subtree.length === 0) return false; // unresolvable id → treat as first-run
+        subtreeIds = subtree.map((l) => l.id);
+      }
       const row = await context.prisma.aggregatedDatapoint.findFirst({
         where: {
           schemaVersion: args.schemaVersion,
           validTo: null,
-          ...(args.countryLocationId ? { locationId: args.countryLocationId } : {}),
+          ...(subtreeIds ? { locationId: { in: subtreeIds } } : {}),
         },
         select: { id: true },
       });
@@ -599,6 +614,23 @@ export const datapointResolvers = {
     }> => {
       requireRole(context, ["admin", "pipeline"]);
       const { from, to, schemaVersion, countryLocationId } = args;
+
+      // Validate the scope id up front (B123): a typo'd / unresolvable
+      // countryLocationId matches no scope's admin-0 ancestor, so the refresh
+      // would silently compute 0 buckets — indistinguishable from a real no-op.
+      // Fail loudly instead so a caller bug surfaces rather than "did nothing".
+      if (countryLocationId) {
+        const country = await context.prisma.locations.findUnique({
+          where: { id: countryLocationId },
+          select: { id: true, level: true },
+        });
+        if (!country) {
+          throw new GraphQLError(
+            `refreshAggregatedDatapoints: countryLocationId '${countryLocationId}' is not a known location`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+      }
 
       // ── 1. Pull every report in the target window ────────────────
       const reports = await context.prisma.reportDatapoint.findMany({
