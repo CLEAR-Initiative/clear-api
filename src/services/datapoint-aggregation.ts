@@ -844,45 +844,59 @@ function selectionQuality(m: Mention): number {
  *  `underreport` → the HIGHER, `neutral` → the freshest. Value ties fall back to
  *  freshest, keeping the result stable and independent of input order.
  *
- *  Per-figure QUALIFIER as a hard directional constraint (clear-context-pipeline ADR-0007). The
- *  `qualifier` is a different axis from the field `qualityBias`: it is what the
- *  SOURCE asserted about THIS figure's own bound, and it can point the opposite
- *  way from the field's systematic-skew prior. So they COMPOSE rather than one
- *  replacing the other — the qualifier constrains, the bias breaks the tie within
- *  what the constraint leaves:
- *    - an `at_least` figure asserts a firm FLOOR (truth ≥ its value), so an
- *      overreport (lean-low) headline may not be projected BELOW that floor — the
- *      strongest asserted floor wins if it binds harder than the lean-low pick;
- *    - an `at_most` figure asserts a firm CEILING (truth ≤ its value), so an
- *      underreport (lean-high) headline may not exceed it — the strongest ceiling
- *      wins if it binds.
- *  `approx` / `exact` assert no firm bound and leave the bias pick unchanged, so
- *  a corpus of exact figures behaves exactly as before. */
-function biasWinner(candidates: Mention[], bias: QualityBias): Mention {
-  if (bias !== "overreport" && bias !== "underreport") {
+ *  Per-figure QUALIFIER as a hard constraint, clamped in BOTH directions
+ *  independently of the field bias (clear-context-pipeline ADR-0007). The `qualifier` is a
+ *  different axis from `qualityBias` — what the SOURCE asserted about THIS figure's
+ *  bound — and can point either way, so they COMPOSE: the strongest `at_least`
+ *  FLOOR (truth ≥ value) and strongest `at_most` CEILING (truth ≤ value) bound the
+ *  projection, and the bias only breaks the tie inside `[floor, ceiling]`. A bias
+ *  pick that would dip below the floor or exceed the ceiling is clamped to that
+ *  bound (whichever binds), whatever the bias direction — so an `at_most` ceiling
+ *  caps an overreport pick too, not only an underreport one. Opposing qualifiers
+ *  (`at_least X` with `at_most Y`, X > Y) are an impossible contradiction: we log
+ *  and fall back to freshest rather than silently breach either bound. `approx` /
+ *  `exact` assert no bound, so an all-exact corpus is unchanged. */
+function biasWinner(
+  candidates: Mention[],
+  bias: QualityBias,
+  // Pool the firm bounds are read from — defaults to `candidates`, but the point
+  // path passes the WHOLE incident group so a qualifier isn't defeated by the
+  // recency gate that trims `candidates` (a stale `at_least`/`at_most` about the
+  // same measurement still bounds the truth — B6).
+  constraintPool: Mention[] = candidates,
+): Mention {
+  // Firm bounds from per-figure qualifiers, independent of the field bias: the
+  // strongest asserted FLOOR and CEILING across the pool.
+  const floorFig = constraintPool
+    .filter((m) => m.qualifier === "at_least")
+    .reduce<Mention | null>((hi, m) => (hi === null || m.value > hi.value ? m : hi), null);
+  const ceilFig = constraintPool
+    .filter((m) => m.qualifier === "at_most")
+    .reduce<Mention | null>((lo, m) => (lo === null || m.value < lo.value ? m : lo), null);
+
+  // Contradiction: `at_least X` with `at_most Y` where X > Y — no value satisfies
+  // both. Don't breach one bound to honour the other; pick deterministically.
+  if (floorFig !== null && ceilFig !== null && floorFig.value > ceilFig.value) {
+    console.warn(
+      `[datapoint-aggregation] contradictory qualifiers in one group: ` +
+        `at_least ${floorFig.value} vs at_most ${ceilFig.value}`,
+    );
     return latestByPublishedAt(candidates);
   }
-  const prefersHigher = bias === "underreport";
-  const base = candidates.reduce((best, m) => {
-    if (m.value === best.value) return latestByPublishedAt([best, m]);
-    const takeM = prefersHigher ? m.value > best.value : m.value < best.value;
-    return takeM ? m : best;
-  });
-  if (!prefersHigher) {
-    // overreport → don't project below any figure's asserted `at_least` floor;
-    // the strongest (highest) floor binds.
-    const floor = candidates
-      .filter((m) => m.qualifier === "at_least")
-      .reduce<Mention | null>((hi, m) => (hi === null || m.value > hi.value ? m : hi), null);
-    if (floor !== null && floor.value > base.value) return floor;
-  } else {
-    // underreport → don't project above any figure's asserted `at_most` ceiling;
-    // the strongest (lowest) ceiling binds.
-    const ceil = candidates
-      .filter((m) => m.qualifier === "at_most")
-      .reduce<Mention | null>((lo, m) => (lo === null || m.value < lo.value ? m : lo), null);
-    if (ceil !== null && ceil.value < base.value) return ceil;
-  }
+
+  const base =
+    bias === "overreport" || bias === "underreport"
+      ? candidates.reduce((best, m) => {
+          if (m.value === best.value) return latestByPublishedAt([best, m]);
+          const takeM = bias === "underreport" ? m.value > best.value : m.value < best.value;
+          return takeM ? m : best;
+        })
+      : latestByPublishedAt(candidates);
+
+  // Clamp the pick into [floor, ceiling]; the bound it would cross wins. Applies
+  // to every bias direction (incl. neutral), so a qualifier is never ignored.
+  if (floorFig !== null && base.value < floorFig.value) return floorFig;
+  if (ceilFig !== null && base.value > ceilFig.value) return ceilFig;
   return base;
 }
 
@@ -940,7 +954,9 @@ function pickWinner(mentions: Mention[], rule?: FieldRule): Mention {
     );
     const maxQ = Math.max(...recent.map(selectionQuality));
     const topTier = recent.filter((m) => selectionQuality(m) >= maxQ - DATA_QUALITY_MARGIN);
-    return biasWinner(topTier, rule?.qualityBias ?? "neutral");
+    // Bias picks within the fresh top tier, but qualifier floors/ceilings bind
+    // from the WHOLE group (B6) — a stale `at_least`/`at_most` still bounds it.
+    return biasWinner(topTier, rule?.qualityBias ?? "neutral", mentions);
   }
 
   if (policy === "latest_wins" || policy === "set_union_all") return latest;
@@ -1089,26 +1105,43 @@ function asOfTime(m: Mention): number {
  *  A `cumulative_to_date` / `stock_as_of` is a running total to its as-of date,
  *  NOT a period increment — summing two snapshots, or a snapshot alongside the
  *  flows it already contains, double-counts. So:
- *   1. Sort the snapshots by as-of and FIRST-DIFFERENCE them: consecutive
- *      snapshots imply the increment between them (`Cᵢ − Cᵢ₋₁`, clamped ≥ 0, its
- *      band the difference of their bands); the earliest snapshot is the total
- *      over `[its origin, its as-of]` (a point at the as-of when no origin is
- *      stated). Each becomes a synthetic `period_flow` over that sub-interval.
+ *   1. Collapse snapshots sharing the SAME as-of to one (re-observations, not a
+ *      series — freshest wins), then sort by as-of and FIRST-DIFFERENCE:
+ *      consecutive snapshots imply the increment between them (`Cᵢ − Cᵢ₋₁`, band
+ *      = difference of bands); a DROP (`Cᵢ < Cᵢ₋₁`) is a counter reset, so `Cᵢ` is
+ *      taken as a fresh total since the previous as-of (not a zeroed increment).
+ *      The earliest snapshot is the total over `[its origin, its as-of]`, or — with
+ *      no stated origin — the day ending at its as-of (`[t−1d, t]`, so it doesn't
+ *      overlap and get reconciled away by the first increment). Each becomes a
+ *      synthetic `period_flow`. The increments telescope to the latest running
+ *      total, mirroring `estimateStockFlowTotal`'s "latest stock + forward flows".
  *   2. The snapshots' union `[earliest origin … latest as-of]` is their coverage.
- *      Reported flows falling INSIDE it are already subsumed by the running total
- *      → dropped; flows entirely OUTSIDE it (before the origin or after the last
- *      as-of) are kept and extend the series.
+ *      A reported flow entirely OUTSIDE it is kept (extends the series); one that
+ *      PARTIALLY overlaps keeps its non-overlapping portion(s), scaled by duration;
+ *      one entirely INSIDE is subsumed by the running total and dropped.
  *  The result is fed to the breakpoint sweep like any other flows, so a cumulative
  *  is integrated over exactly its own span and never added on top of the flows it
  *  already contains. When the cumulative undershoots the reported flows (bad data)
- *  we drop the flows and keep the total — an undercount is recoverable, a
- *  double-count is not. */
+ *  we favour the total — an undercount is recoverable, a double-count is not. */
 function reconcileCumulativesToFlows(
   cumulatives: Mention[],
   reportedFlows: Mention[],
 ): Mention[] {
   if (cumulatives.length === 0) return reportedFlows;
-  const snaps = [...cumulatives].sort((a, b) => asOfTime(a) - asOfTime(b));
+
+  // Collapse competing snapshots reported at the SAME as-of to one (they are
+  // re-observations of one running total, not a series — differencing them would
+  // fabricate a spurious increment); the freshest wins. Then sort by as-of.
+  const byAsOf = new Map<number, Mention[]>();
+  for (const c of cumulatives) {
+    const g = byAsOf.get(asOfTime(c));
+    if (g) g.push(c);
+    else byAsOf.set(asOfTime(c), [c]);
+  }
+  const snaps = [...byAsOf.entries()]
+    .sort((a, z) => a[0] - z[0])
+    .map(([, group]) => latestByPublishedAt(group));
+
   const derived: Mention[] = [];
   let covStart = Infinity;
   let covEnd = -Infinity;
@@ -1120,16 +1153,26 @@ function reconcileCumulativesToFlows(
     let value: number;
     let low: number;
     let high: number;
-    if (prev) {
-      // Increment between consecutive running totals — a flow over (t_prev, t].
+    if (prev && cur.value >= prev.value) {
+      // Normal increment between consecutive running totals — a flow over (t_prev, t].
       start = asOfTime(prev);
-      value = Math.max(0, cur.value - prev.value);
+      value = cur.value - prev.value;
       low = Math.max(0, cur.valueLow - prev.valueHigh);
       high = Math.max(0, cur.valueHigh - prev.valueLow);
+    } else if (prev) {
+      // The running total DROPPED (`cur < prev`): a counter reset / new origin,
+      // not a negative increment. Treat `cur` as a fresh total accrued since the
+      // previous snapshot — recovers the post-reset accrual instead of zeroing it.
+      start = asOfTime(prev);
+      value = cur.value;
+      low = cur.valueLow;
+      high = cur.valueHigh;
     } else {
-      // Earliest snapshot: the whole total over [stated origin, as-of], or a
-      // point at the as-of when the running total names no origin.
-      start = cur.basisPeriodStart ? cur.basisPeriodStart.getTime() : t;
+      // Earliest snapshot: the total over [stated origin, as-of]. With NO stated
+      // origin, lump it into the day ENDING at the as-of (`[t − 1d, t]`), not a
+      // zero-length point at `t` — a point would overlap the first increment's
+      // `[t, t₂]` span and be reconciled away by the sweep instead of summed.
+      start = cur.basisPeriodStart ? cur.basisPeriodStart.getTime() : t - DAY_MS;
       value = cur.value;
       low = cur.valueLow;
       high = cur.valueHigh;
@@ -1147,13 +1190,35 @@ function reconcileCumulativesToFlows(
       measureType: "period_flow", // now an increment, so the sweep integrates it
     });
   }
-  // Keep only reported flows that lie ENTIRELY outside the cumulative coverage;
-  // those inside are already accounted for by the differenced totals.
-  const kept = reportedFlows.filter((f) => {
-    const fe = (f.basisPeriodEnd ?? f.incidentDate).getTime();
+
+  // Reported flows are already counted inside a cumulative's coverage. Keep a flow
+  // ENTIRELY outside it as-is; for one that PARTIALLY overlaps, keep its
+  // non-overlapping portion(s) scaled by duration (the overlapping middle is
+  // subsumed) rather than dropping the whole flow.
+  const kept: Mention[] = [];
+  for (const f of reportedFlows) {
     const fs = (f.basisPeriodStart ?? f.incidentDate).getTime();
-    return fe <= covStart || fs >= covEnd;
-  });
+    const fe = (f.basisPeriodEnd ?? f.incidentDate).getTime();
+    if (fe <= covStart || fs >= covEnd) {
+      kept.push(f);
+      continue;
+    }
+    const dur = Math.max(fe - fs, DAY_MS); // guard points / zero-length
+    const clip = (s: number, e: number): void => {
+      const frac = (e - s) / dur;
+      kept.push({
+        ...f,
+        value: f.value * frac,
+        valueLow: f.valueLow * frac,
+        valueHigh: f.valueHigh * frac,
+        basisPeriodStart: new Date(s),
+        basisPeriodEnd: new Date(e),
+        incidentDate: new Date(e),
+      });
+    };
+    if (fs < covStart) clip(fs, Math.min(fe, covStart)); // portion before coverage
+    if (fe > covEnd) clip(Math.max(fs, covEnd), fe); // portion after coverage
+  }
   return [...derived, ...kept];
 }
 

@@ -1656,6 +1656,95 @@ describe("aggregateReports — qualifier + measure_type projection (ADR-0007)", 
     if (!f || !("value" in f)) throw new Error("expected numeric field");
     expect(f.value).toBe(960);
   });
+
+  // ── Review fixes B2–B6 ──────────────────────────────────────────────
+
+  it("B3: opposing qualifiers don't breach a bound (no silent ceiling break)", () => {
+    // at_least 500 AND at_most 400 for one incident is an impossible contradiction.
+    // The old code returned 500 under overreport, breaching the 400 ceiling; now it
+    // falls back to the freshest (here the at_most 400) rather than breach it.
+    const rows = [
+      row("r1", "2026-04-05T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "at_least", value_low: 500, value_high: 800 } } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(400, "reported"), qualifier: "at_most", value_low: 300, value_high: 400 } } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(400); // freshest; NOT 500 (which would breach the ceiling)
+  });
+
+  it("B6: a stale at_least floor still binds despite the recency gate", () => {
+    // r1 (`at_least 500`) is published 10 days before r2 — outside killed's 3.5-day
+    // override reach, so the recency gate drops it from the bias pool. Its floor
+    // must still bind (same week's measurement), so the headline is 500, not 300.
+    const rows = [
+      row("r1", "2026-04-01T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "at_least", value_low: 500, value_high: 900 } } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(300, "reported") } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(500); // floor binds from the whole group, not just fresh rows
+  });
+
+  it("B2: a no-origin cumulative base is summed, not reconciled away", () => {
+    // Two cumulatives, the earliest with NO stated origin. The base (5000) must be
+    // summed with the later increment (8000−5000=3000) → 8000, not lost to overlap.
+    const cumulNoOrigin = (value: number) => ({ ...nf(value, "reported"), measure_type: "cumulative_to_date" });
+    const rows = [
+      row("rC1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumulNoOrigin(5000) } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rC2", "2026-04-18T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumulNoOrigin(8000) } },
+      }, "2026-04-17T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(8000, 4); // base 5000 + increment 3000, not swallowed
+  });
+
+  it("B4: a cumulative reset recovers post-reset accrual (not zeroed)", () => {
+    // Running total drops 8000 → 2000 (counter reset). Expected 8000 + 2000 = 10000,
+    // not 8000 (the old `max(0, cur−prev)=0` dropped the 2000).
+    const cumul2 = (value: number, start: string, end: string) => ({
+      ...nf(value, "reported"), basis_period_start: start, basis_period_end: end, measure_type: "cumulative_to_date",
+    });
+    const rows = [
+      row("rC1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul2(8000, "2026-01-01T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rC2", "2026-04-25T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul2(2000, "2026-04-11T00:00:00Z", "2026-04-24T00:00:00Z") } },
+      }, "2026-04-24T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(10000, 4);
+  });
+
+  it("B5: a partial-overlap reported flow keeps its non-overlapping portion", () => {
+    // Cumulative covers Jan–Apr15; a 1500 flow over Apr10–25 (15d) straddles the
+    // boundary. The Apr15–25 portion (10d → 1000) is kept; the Apr10–15 overlap is
+    // subsumed. Total 5000 + 1000 = 6000, not 5000 (whole flow dropped).
+    const rows = [
+      row("rCumul", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(5000, "2026-01-01T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+      row("rFlow", "2026-04-26T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(1500, "2026-04-10T00:00:00Z", "2026-04-25T00:00:00Z") } },
+      }, "2026-04-25T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(6000, 4);
+  });
 });
 
 describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
