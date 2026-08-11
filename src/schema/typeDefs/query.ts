@@ -334,9 +334,13 @@ export const queryTypeDef = gql`
     exists for the given schema version. Used by the Dagster
     aggregation asset to distinguish first-run backfill (wide
     lookback window) from routine weekly refreshes (narrow window).
-    Any authenticated content reader - this is a cheap existence
-    check with no sensitive data on it."""
-    hasAggregatedDatapoints(schemaVersion: String!): Boolean!
+    Pass \`countryLocationId\` (an admin-0 location id) to scope the
+    check to ONE country, so a newly-onboarded country's first run
+    uses the initial window even after other countries are established
+    — the four-tier walk always produces yearly/all-time buckets AT the
+    country location, so an A0 row is the per-country signal. Any
+    authenticated content reader - a cheap existence check."""
+    hasAggregatedDatapoints(schemaVersion: String!, countryLocationId: String): Boolean!
 
     """Aggregated datapoints for a (window × window_kind × location)
     scope. Cache-first: returns the pre-computed snapshot when one

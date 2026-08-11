@@ -543,8 +543,12 @@ chart a historical payload shape.</span></div></td>
 exists for the given schema version. Used by the Dagster
 aggregation asset to distinguish first-run backfill (wide
 lookback window) from routine weekly refreshes (narrow window).
-Any authenticated content reader - this is a cheap existence
-check with no sensitive data on it.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span></div></td>
+Pass `countryLocationId` (an admin-0 location id) to scope the
+check to ONE country, so a newly-onboarded country's first run
+uses the initial window even after other countries are established
+— the four-tier walk always produces yearly/all-time buckets AT the
+country location, so an A0 row is the per-country signal. Any
+authenticated content reader - a cheap existence check.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span><span class="arg"><code>countryLocationId: String</code></span></div></td>
   </tr><tr>
     <td><code>aggregatedDatapoint</code></td>
     <td><code>AggregatedDatapoint</code></td>
@@ -1086,7 +1090,16 @@ yearly × country, all-time × country) for reports whose
 bucket is inserted with `validFrom = now()`; the previous
 &quot;current&quot; row for the same bucket key has its `validTo` stamped
 in the same transaction. History rows are preserved. Admin /
-pipeline only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span><span class="arg"><code>schemaVersion: String!</code></span></div></td>
+pipeline only.
+
+Pass `countryLocationId` (an admin-0 location id) to SCOPE the
+refresh to that country's subtree — only that country's buckets are
+(re)computed (the window's reports are still scanned; the bucket step
+filters to scopes whose admin-0 ancestor is this country). Omit it to
+refresh every country in the window (the original global behaviour).
+The per-country partitioned pipeline passes it so each country's run
+recomputes only its own buckets instead of a redundant global pass.
+An unresolvable id errors rather than silently computing nothing.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span><span class="arg"><code>schemaVersion: String!</code></span><span class="arg"><code>countryLocationId: String</code></span></div></td>
   </tr><tr id="mutation-uploadknowledgebasedocument">
     <td><code>uploadKnowledgebaseDocument</code></td>
     <td><code>KnowledgebaseIngestJob!</code></td>
