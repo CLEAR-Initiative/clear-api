@@ -603,21 +603,21 @@ interface Mention {
    *  (a firm floor — the truth is ≥ value), "at_most" (a firm ceiling — ≤ value),
    *  or "approx" (symmetric vagueness around value). Per-figure evidence of
    *  reporting bias, distinct from the field-wide `qualityBias` prior on the
-   *  FieldRule. CAPTURED, NOT YET ROUTED: nothing in the reducer reads this field
-   *  — the confidence band comes from valueLow/valueHigh and bias is projected
-   *  from the field-level qualityBias — so it neither overrides nor changes any
-   *  number today. It rides on the mention so a later phase can switch bias
-   *  projection to this per-figure evidence without a schema or re-extraction. */
+   *  FieldRule. ROUTED (`biasWinner`): a hard directional CONSTRAINT on bias
+   *  projection — an `at_least` floor may not be projected below, an `at_most`
+   *  ceiling not above, whatever the field bias; the bias only breaks the tie
+   *  within what the qualifier leaves. `approx`/`exact` add no constraint. */
   qualifier: string;
   /** What the number measures over time: "stock_as_of" a point-in-time total
    *  ("currently displaced"), "period_flow" a quantity accrued during a period
    *  ("newly displaced this week"), "cumulative_to_date" a running total since an
-   *  origin, or null when the extractor couldn't tell. The intent is to stop a
-   *  stock (which should reduce as a point in time) being read as a flow (which is
-   *  integrated over its interval) — the classic mis-aggregation. CAPTURED, NOT
-   *  YET ROUTED: reduction is still chosen by the static FieldRule.kind plus the
-   *  presence of a multi-day basis period (see `hasFlowInterval`), NOT by this
-   *  field; it is stored now so routing can move to it later without re-extracting. */
+   *  origin, or null when the extractor couldn't tell. Stops a running total being
+   *  read as a period increment — the classic mis-aggregation. ROUTED for the
+   *  additive combine (`reconcileCumulativesToFlows`): `stock_as_of` /
+   *  `cumulative_to_date` figures are first-differenced into the increments they
+   *  imply and reconciled with reported flows, never summed as flows. It does NOT
+   *  change the field-level combine strategy — `FieldRule.kind` still owns sum vs
+   *  latest vs max vs union; measure_type only refines stock-vs-flow within it. */
   measureType: string | null;
   /** The time period this figure describes — its own stated period when the
    *  text gives one, else the report's overall reporting period. A point
@@ -842,17 +842,62 @@ function selectionQuality(m: Mention): number {
 /** Pick among comparable-quality candidates by the field's directional bias
  *  (clear-context-pipeline ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
  *  `underreport` → the HIGHER, `neutral` → the freshest. Value ties fall back to
- *  freshest, keeping the result stable and independent of input order. */
-function biasWinner(candidates: Mention[], bias: QualityBias): Mention {
-  if (bias === "overreport" || bias === "underreport") {
-    const prefersHigher = bias === "underreport";
-    return candidates.reduce((best, m) => {
-      if (m.value === best.value) return latestByPublishedAt([best, m]);
-      const takeM = prefersHigher ? m.value > best.value : m.value < best.value;
-      return takeM ? m : best;
-    });
+ *  freshest, keeping the result stable and independent of input order.
+ *
+ *  Per-figure QUALIFIER as a hard constraint, clamped in BOTH directions
+ *  independently of the field bias (clear-context-pipeline ADR-0007). The `qualifier` is a
+ *  different axis from `qualityBias` — what the SOURCE asserted about THIS figure's
+ *  bound — and can point either way, so they COMPOSE: the strongest `at_least`
+ *  FLOOR (truth ≥ value) and strongest `at_most` CEILING (truth ≤ value) bound the
+ *  projection, and the bias only breaks the tie inside `[floor, ceiling]`. A bias
+ *  pick that would dip below the floor or exceed the ceiling is clamped to that
+ *  bound (whichever binds), whatever the bias direction — so an `at_most` ceiling
+ *  caps an overreport pick too, not only an underreport one. Opposing qualifiers
+ *  (`at_least X` with `at_most Y`, X > Y) are an impossible contradiction: we log
+ *  and fall back to freshest rather than silently breach either bound. `approx` /
+ *  `exact` assert no bound, so an all-exact corpus is unchanged. */
+function biasWinner(
+  candidates: Mention[],
+  bias: QualityBias,
+  // Pool the firm bounds are read from — defaults to `candidates`, but the point
+  // path passes the WHOLE incident group so a qualifier isn't defeated by the
+  // recency gate that trims `candidates` (a stale `at_least`/`at_most` about the
+  // same measurement still bounds the truth — B6).
+  constraintPool: Mention[] = candidates,
+): Mention {
+  // Firm bounds from per-figure qualifiers, independent of the field bias: the
+  // strongest asserted FLOOR and CEILING across the pool.
+  const floorFig = constraintPool
+    .filter((m) => m.qualifier === "at_least")
+    .reduce<Mention | null>((hi, m) => (hi === null || m.value > hi.value ? m : hi), null);
+  const ceilFig = constraintPool
+    .filter((m) => m.qualifier === "at_most")
+    .reduce<Mention | null>((lo, m) => (lo === null || m.value < lo.value ? m : lo), null);
+
+  // Contradiction: `at_least X` with `at_most Y` where X > Y — no value satisfies
+  // both. Don't breach one bound to honour the other; pick deterministically.
+  if (floorFig !== null && ceilFig !== null && floorFig.value > ceilFig.value) {
+    console.warn(
+      `[datapoint-aggregation] contradictory qualifiers in one group: ` +
+        `at_least ${floorFig.value} vs at_most ${ceilFig.value}`,
+    );
+    return latestByPublishedAt(candidates);
   }
-  return latestByPublishedAt(candidates);
+
+  const base =
+    bias === "overreport" || bias === "underreport"
+      ? candidates.reduce((best, m) => {
+          if (m.value === best.value) return latestByPublishedAt([best, m]);
+          const takeM = bias === "underreport" ? m.value > best.value : m.value < best.value;
+          return takeM ? m : best;
+        })
+      : latestByPublishedAt(candidates);
+
+  // Clamp the pick into [floor, ceiling]; the bound it would cross wins. Applies
+  // to every bias direction (incl. neutral), so a qualifier is never ignored.
+  if (floorFig !== null && base.value < floorFig.value) return floorFig;
+  if (ceilFig !== null && base.value > ceilFig.value) return ceilFig;
+  return base;
 }
 
 /** Freshest mention by `publishedAt`, with a STABLE tie-break so an equal
@@ -909,7 +954,9 @@ function pickWinner(mentions: Mention[], rule?: FieldRule): Mention {
     );
     const maxQ = Math.max(...recent.map(selectionQuality));
     const topTier = recent.filter((m) => selectionQuality(m) >= maxQ - DATA_QUALITY_MARGIN);
-    return biasWinner(topTier, rule?.qualityBias ?? "neutral");
+    // Bias picks within the fresh top tier, but qualifier floors/ceilings bind
+    // from the WHOLE group (B6) — a stale `at_least`/`at_most` still bounds it.
+    return biasWinner(topTier, rule?.qualityBias ?? "neutral", mentions);
   }
 
   if (policy === "latest_wins" || policy === "set_union_all") return latest;
@@ -1033,6 +1080,148 @@ function hasFlowInterval(f: Mention): boolean {
   );
 }
 
+/** True when a figure is a snapshot / running-total rather than a period
+ *  increment (clear-context-pipeline ADR-0007 measure_type): `stock_as_of` (a point-in-time
+ *  total) or `cumulative_to_date` (a running total since an origin). Such a
+ *  figure must be pulled OUT of the flow sweep — integrating a total as if it
+ *  were a per-period rate fabricates a bogus daily flow. Only the two EXPLICIT
+ *  measure types are pulled; a null / `period_flow` / unlabeled figure keeps the
+ *  ordinary flow handling (safe for the mixed / pre-v3 corpus). `measure_type`
+ *  does NOT change the field-level combine strategy (`kind` still owns sum vs
+ *  latest vs max) — it only refines stock-vs-flow WITHIN an additive field. */
+function isPeriodTotal(f: Mention): boolean {
+  return f.measureType === "stock_as_of" || f.measureType === "cumulative_to_date";
+}
+
+/** As-of date of a running-total snapshot: its stated period end, else its
+ *  incident date. */
+function asOfTime(m: Mention): number {
+  return (m.basisPeriodEnd ?? m.incidentDate).getTime();
+}
+
+/** Reconcile cumulative / stock (as-of running-total) figures against reported
+ *  period flows into ONE coherent set of period-flow increments (clear-context-pipeline ADR-0007).
+ *
+ *  A `cumulative_to_date` / `stock_as_of` is a running total to its as-of date,
+ *  NOT a period increment — summing two snapshots, or a snapshot alongside the
+ *  flows it already contains, double-counts. So:
+ *   1. Collapse snapshots sharing the SAME as-of to one (re-observations, not a
+ *      series — freshest wins), then sort by as-of and FIRST-DIFFERENCE:
+ *      consecutive snapshots imply the increment between them (`Cᵢ − Cᵢ₋₁`, band
+ *      = difference of bands); a DROP (`Cᵢ < Cᵢ₋₁`) is a counter reset, so `Cᵢ` is
+ *      taken as a fresh total since the previous as-of (not a zeroed increment).
+ *      The earliest snapshot is the total over `[its origin, its as-of]`, or — with
+ *      no stated origin — the day ending at its as-of (`[t−1d, t]`, so it doesn't
+ *      overlap and get reconciled away by the first increment). Each becomes a
+ *      synthetic `period_flow`. The increments telescope to the latest running
+ *      total, mirroring `estimateStockFlowTotal`'s "latest stock + forward flows".
+ *   2. The snapshots' union `[earliest origin … latest as-of]` is their coverage.
+ *      A reported flow entirely OUTSIDE it is kept (extends the series); one that
+ *      PARTIALLY overlaps keeps its non-overlapping portion(s), scaled by duration;
+ *      one entirely INSIDE is subsumed by the running total and dropped.
+ *  The result is fed to the breakpoint sweep like any other flows, so a cumulative
+ *  is integrated over exactly its own span and never added on top of the flows it
+ *  already contains. When the cumulative undershoots the reported flows (bad data)
+ *  we favour the total — an undercount is recoverable, a double-count is not. */
+function reconcileCumulativesToFlows(
+  cumulatives: Mention[],
+  reportedFlows: Mention[],
+): Mention[] {
+  if (cumulatives.length === 0) return reportedFlows;
+
+  // Collapse competing snapshots reported at the SAME as-of to one (they are
+  // re-observations of one running total, not a series — differencing them would
+  // fabricate a spurious increment); the freshest wins. Then sort by as-of.
+  const byAsOf = new Map<number, Mention[]>();
+  for (const c of cumulatives) {
+    const g = byAsOf.get(asOfTime(c));
+    if (g) g.push(c);
+    else byAsOf.set(asOfTime(c), [c]);
+  }
+  const snaps = [...byAsOf.entries()]
+    .sort((a, z) => a[0] - z[0])
+    .map(([, group]) => latestByPublishedAt(group));
+
+  const derived: Mention[] = [];
+  let covStart = Infinity;
+  let covEnd = -Infinity;
+  for (let i = 0; i < snaps.length; i++) {
+    const cur = snaps[i]!;
+    const t = asOfTime(cur);
+    const prev = i > 0 ? snaps[i - 1]! : null;
+    let start: number;
+    let value: number;
+    let low: number;
+    let high: number;
+    if (prev && cur.value >= prev.value) {
+      // Normal increment between consecutive running totals — a flow over (t_prev, t].
+      start = asOfTime(prev);
+      value = cur.value - prev.value;
+      low = Math.max(0, cur.valueLow - prev.valueHigh);
+      high = Math.max(0, cur.valueHigh - prev.valueLow);
+    } else if (prev) {
+      // The running total DROPPED (`cur < prev`): a counter reset / new origin,
+      // not a negative increment. Treat `cur` as a fresh total accrued since the
+      // previous snapshot — recovers the post-reset accrual instead of zeroing it.
+      start = asOfTime(prev);
+      value = cur.value;
+      low = cur.valueLow;
+      high = cur.valueHigh;
+    } else {
+      // Earliest snapshot: the total over [stated origin, as-of]. With NO stated
+      // origin, lump it into the day ENDING at the as-of (`[t − 1d, t]`), not a
+      // zero-length point at `t` — a point would overlap the first increment's
+      // `[t, t₂]` span and be reconciled away by the sweep instead of summed.
+      start = cur.basisPeriodStart ? cur.basisPeriodStart.getTime() : t - DAY_MS;
+      value = cur.value;
+      low = cur.valueLow;
+      high = cur.valueHigh;
+    }
+    covStart = Math.min(covStart, start);
+    covEnd = Math.max(covEnd, t);
+    derived.push({
+      ...cur,
+      value,
+      valueLow: low,
+      valueHigh: high,
+      basisPeriodStart: new Date(start),
+      basisPeriodEnd: new Date(t),
+      incidentDate: new Date(t),
+      measureType: "period_flow", // now an increment, so the sweep integrates it
+    });
+  }
+
+  // Reported flows are already counted inside a cumulative's coverage. Keep a flow
+  // ENTIRELY outside it as-is; for one that PARTIALLY overlaps, keep its
+  // non-overlapping portion(s) scaled by duration (the overlapping middle is
+  // subsumed) rather than dropping the whole flow.
+  const kept: Mention[] = [];
+  for (const f of reportedFlows) {
+    const fs = (f.basisPeriodStart ?? f.incidentDate).getTime();
+    const fe = (f.basisPeriodEnd ?? f.incidentDate).getTime();
+    if (fe <= covStart || fs >= covEnd) {
+      kept.push(f);
+      continue;
+    }
+    const dur = Math.max(fe - fs, DAY_MS); // guard points / zero-length
+    const clip = (s: number, e: number): void => {
+      const frac = (e - s) / dur;
+      kept.push({
+        ...f,
+        value: f.value * frac,
+        valueLow: f.valueLow * frac,
+        valueHigh: f.valueHigh * frac,
+        basisPeriodStart: new Date(s),
+        basisPeriodEnd: new Date(e),
+        incidentDate: new Date(e),
+      });
+    };
+    if (fs < covStart) clip(fs, Math.min(fe, covStart)); // portion before coverage
+    if (fe > covEnd) clip(Math.max(fs, covEnd), fe); // portion after coverage
+  }
+  return [...derived, ...kept];
+}
+
 interface Contrib {
   value: number;
   low: number;
@@ -1144,7 +1333,12 @@ function sweepFlowGroup(
  *  double-count is not. Distinct qualified sets are disjoint and sum. Across
  *  buckets we always sum (a monthly total is the sum of its weeks). A point-only
  *  group keeps the simple place-in-bucket behaviour, so nothing regresses for
- *  figures that carry no basis-period interval. Returns the point + [low, high]. */
+ *  figures that carry no basis-period interval. Figures tagged as running TOTALS
+ *  (`stock_as_of` / `cumulative_to_date`) are first-differenced into the period
+ *  increments they imply and reconciled against the reported flows before the
+ *  sweep (see `reconcileCumulativesToFlows`), so a running total is integrated
+ *  over its own span and never added on top of the flows it already contains.
+ *  Returns the point + [low, high]. */
 function combineAdditiveWithContainment(
   winners: Mention[],
   rule: FieldRule,
@@ -1158,19 +1352,30 @@ function combineAdditiveWithContainment(
   }
   const perGroup = new Map<string, Map<string, Contrib>>();
   for (const [ek, figs] of byEvent) {
-    const swept = sweepFlowGroup(figs, rule, bucket);
-    if (swept) {
-      perGroup.set(ek, swept);
-      continue;
-    }
-    const m = new Map<string, Contrib>();
-    for (const f of figs) {
-      const key = bucketDate(f.incidentDate, bucket);
-      const acc = m.get(key) ?? { value: 0, low: 0, high: 0 };
-      acc.value += f.value;
-      acc.low += f.valueLow;
-      acc.high += f.valueHigh;
-      m.set(key, acc);
+    // Reconcile running totals (stock_as_of / cumulative_to_date) against the
+    // reported period flows into one coherent flow set — the cumulatives are
+    // first-differenced into the increments they imply and the flows they already
+    // contain are dropped (see `reconcileCumulativesToFlows`), so nothing is
+    // integrated as a rate it isn't, and nothing is added on top of what a running
+    // total already counts.
+    const flows = reconcileCumulativesToFlows(
+      figs.filter(isPeriodTotal),
+      figs.filter((f) => !isPeriodTotal(f)),
+    );
+
+    // The breakpoint sweep (overlap/boundary), else the simple place-in-bucket
+    // sum for a point-only group.
+    let m = sweepFlowGroup(flows, rule, bucket);
+    if (m === null) {
+      m = new Map<string, Contrib>();
+      for (const f of flows) {
+        const key = bucketDate(f.incidentDate, bucket);
+        const acc = m.get(key) ?? { value: 0, low: 0, high: 0 };
+        acc.value += f.value;
+        acc.low += f.valueLow;
+        acc.high += f.valueHigh;
+        m.set(key, acc);
+      }
     }
     perGroup.set(ek, m);
   }
