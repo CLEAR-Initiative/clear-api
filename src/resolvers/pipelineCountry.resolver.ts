@@ -13,11 +13,15 @@ import { requireAuth } from "../utils/auth-guard.js";
 const PIPELINE_COUNTRIES: ReadonlyArray<{
   name: string;
   iso3: string;
+  // Admin-0 pcode (ISO-2). The name-independent key the pipeline resolves the
+  // country's level-0 location by — the backfilled name is often the long
+  // official form ("Venezuela (Bolivarian Republic of)") that exact-name misses.
+  pcode: string;
   bbox: number[];
 }> = [
-  { name: "Sudan", iso3: "SDN", bbox: [21.8, 8.5, 38.6, 22.0] },
-  { name: "Afghanistan", iso3: "AFG", bbox: [60.5, 29.4, 74.9, 38.5] },
-  { name: "Venezuela", iso3: "VEN", bbox: [-73.4, 0.6, -59.8, 12.3] },
+  { name: "Sudan", iso3: "SDN", pcode: "SD", bbox: [21.8, 8.5, 38.6, 22.0] },
+  { name: "Afghanistan", iso3: "AFG", pcode: "AF", bbox: [60.5, 29.4, 74.9, 38.5] },
+  { name: "Venezuela", iso3: "VEN", pcode: "VE", bbox: [-73.4, 0.6, -59.8, 12.3] },
 ];
 
 export const pipelineCountryResolvers = {
@@ -28,6 +32,7 @@ export const pipelineCountryResolvers = {
       return PIPELINE_COUNTRIES.map((c) => ({
         name: c.name,
         iso3: c.iso3,
+        pcode: c.pcode,
         bbox: [...c.bbox],
       }));
     },
