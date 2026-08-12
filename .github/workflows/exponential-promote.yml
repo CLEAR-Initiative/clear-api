@@ -12,9 +12,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: '20' }
       - run: npm i -g exponential-cli
       - name: Auth
@@ -23,15 +21,20 @@ jobs:
         run: exponential auth login --token "$EXPO_TOKEN" --api-url "$EXPO_API_URL"
       - name: Resolve merged PR -> Tickets
         env:
+          GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_URL: ${{ github.event.pull_request.base.repo.html_url }}
         run: |
           set -euo pipefail
+          # Child-PR refs (#123) come from the PR's commit messages via the API,
+          # not `git log base..head`: after a squash-merge the head commits are
+          # unreachable (branch auto-deleted), so that range fails on re-runs
+          # and races branch deletion on first runs.
           {
             echo "$PR_URL"
-            git log "$BASE_SHA..$HEAD_SHA" --format=%B \
+            gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER/commits" \
+              --paginate --jq '.[].commit.message' \
               | { grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -u \
               | sed "s@^@${REPO_URL}/pull/@"
           } | sort -u > /tmp/prs
