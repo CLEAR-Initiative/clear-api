@@ -1,12 +1,12 @@
 /**
- * Structured datapoint resolver — Layer 2 read path.
+ * Structured datapoint resolver - Layer 2 read path.
  *
  * Two entry points:
- *   - Query `reportDatapoint(reportId)` — per-report structured
+ *   - Query `reportDatapoint(reportId)` - per-report structured
  *     payload for the dashboard's provenance drill-down and the
  *     chatbot's "what did report X say?" path. Any authenticated
  *     content reader.
- *   - Mutation `upsertReportDatapoints(input)` — pipeline-only.
+ *   - Mutation `upsertReportDatapoints(input)` - pipeline-only.
  *     Replaces the row for `reportId` atomically. Idempotent via
  *     Prisma's `upsert`.
  *
@@ -50,19 +50,19 @@ interface UpsertReportDatapointsInput {
   sourceId?: string | null;
 }
 
-// Default schema version — MUST match the SCHEMA_VERSION constant in the
+// Default schema version - MUST match the SCHEMA_VERSION constant in the
 // Python-side extraction module (datapoints_schemas.py), currently "v3". A
 // version-less `aggregatedDatapoint` query reads buckets of this version, so a
 // mismatch makes freshly-aggregated buckets go unread. The interval-and-range
 // change bumped the pipeline v2→v3 and re-extracts the whole corpus; this
 // default moves in lockstep. ROLLOUT: flip only alongside (or after) that
-// re-extraction — version-less reads return null for v3 until v3 rows exist.
+// re-extraction - version-less reads return null for v3 until v3 rows exist.
 const DEFAULT_SCHEMA_VERSION = "v3";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How far back the estimated-current-total scan reads report_datapoints
- *  (ADR-0006 §4). Two years covers the current + prior reporting year — enough
- *  to anchor on the latest stock and sum the flows since — without scanning the
+ *  (ADR-0006 §4). Two years covers the current + prior reporting year - enough
+ *  to anchor on the latest stock and sum the flows since - without scanning the
  *  entire back-catalogue on an all-time bucket read. */
 const CURRENT_TOTAL_LOOKBACK_DAYS = 730;
 
@@ -73,10 +73,10 @@ const CURRENT_TOTAL_LOOKBACK_DAYS = 730;
  *  weekly:  ISO Monday..Sunday containing the date
  *  monthly: 1st..last of the calendar month
  *  yearly:  Jan 1 .. Dec 31 of the calendar year
- *  all:     [epoch, +∞) — one bucket per country ever
+ *  all:     [epoch, +∞) - one bucket per country ever
  */
 function weekOf(dt: Date): { start: Date; end: Date } {
-  // ISO week — Monday is day 1, Sunday is day 7.
+  // ISO week - Monday is day 1, Sunday is day 7.
   const day = dt.getUTCDay() || 7; // Sunday → 7
   const start = new Date(dt);
   start.setUTCHours(0, 0, 0, 0);
@@ -163,7 +163,7 @@ async function resolveLocationHierarchy(
 }
 
 /** Collect the distinct Figure-Scope location ids across a report's
- *  `data` blob — every `scope_location_id` a NumericField carries. These,
+ *  `data` blob - every `scope_location_id` a NumericField carries. These,
  *  not the report's mentioned `locationIds`, are what a figure is bucketed
  *  by (#273). A NumericField is a leaf, so we don't recurse into one. */
 function collectFigureScopeIds(data: unknown, out: Set<string>): void {
@@ -189,7 +189,7 @@ type PrismaReportDatapoint = Awaited<
 >;
 
 // The aggregator only reads these seven columns, so `toReportRow` accepts any
-// row carrying them — a full row OR a `select`-narrowed one (the current-total
+// row carrying them - a full row OR a `select`-narrowed one (the current-total
 // path selects exactly these). Keeps the aggregator decoupled from Prisma.
 type ReportRowFields = Pick<
   NonNullable<PrismaReportDatapoint>,
@@ -303,7 +303,7 @@ export const datapointResolvers = {
       context: Context,
     ): Promise<boolean> => {
       requireContentReader(context);
-      // Only "current" rows (validTo IS NULL) count — a table full of
+      // Only "current" rows (validTo IS NULL) count - a table full of
       // superseded history rows shouldn't fool the pipeline into
       // thinking it's already backfilled.
       let subtreeIds: string[] | null = null;
@@ -312,7 +312,7 @@ export const datapointResolvers = {
         // at the admin-0 location. The four-tier walk keys yearly/all-time at
         // admin-0 but weekly/monthly at the reporting sub-locations with NO
         // ancestor roll-up, so a country reported only sub-nationally has no A0
-        // row — matching on `locationId === countryLocationId` alone would read
+        // row - matching on `locationId === countryLocationId` alone would read
         // it as never-aggregated and recompute the wide window every run (A123).
         // Resolve the country + its descendants and match any of them.
         const subtree = await context.prisma.locations.findMany({
@@ -394,7 +394,7 @@ export const datapointResolvers = {
 
       // ── On-demand fallback ────────────────────────────────────────
       // Pull the report_datapoints in this window and aggregate here.
-      // Selection is by window only — NOT by the report's mentioned
+      // Selection is by window only - NOT by the report's mentioned
       // `locationIds`. A report is relevant to `locationId` when a FIGURE
       // is scoped there, which needn't coincide with the places the report
       // names (#273); the aggregator's scope filter keeps only the figures
@@ -410,7 +410,7 @@ export const datapointResolvers = {
         },
       });
       // Authoritative location_metadata for this scope, gated to the window
-      // (ADR-0006). Loaded even when there are no reports — the API figure can
+      // (ADR-0006). Loaded even when there are no reports - the API figure can
       // gap-fill the bucket on its own.
       const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
       const apiMentions = filterApiMentionsToWindow(
@@ -436,7 +436,7 @@ export const datapointResolvers = {
       );
 
       return {
-        // Synthesised row — not persisted. `id` uses a stable synthetic
+        // Synthesised row - not persisted. `id` uses a stable synthetic
         // form so the dashboard can key its components consistently
         // across cache-hit and on-demand responses.
         id: `ondemand:${args.windowKind}:${args.windowStart.toISOString()}:${args.locationId ?? "country"}`,
@@ -459,9 +459,32 @@ export const datapointResolvers = {
     },
   },
 
+  ReportDatapoint: {
+    // The report's publisher. Resolved lazily so a caller that only wants
+    // titles doesn't pay for the join.
+    //
+    // One findUnique per report, so selecting `source` over a long list is
+    // N+1. Fine at current call sizes (the situation-analysis dashboard
+    // hydrates a few dozen cited reports at a time); batch through a
+    // DataLoader before using it on an unbounded list.
+    source: async (
+      parent: { sourceId?: string | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      // Null for v1 rows, which predate source attribution and were never
+      // re-extracted. The client falls back to the sourceUrl host.
+      if (!parent.sourceId) return null;
+      return context.prisma.dataSources.findUnique({
+        where: { id: parent.sourceId },
+      });
+    },
+  },
+
   AggregatedDatapoint: {
     // Estimated current total (ADR-0006 §4): latest authoritative stock + flows
-    // reported after its reference date T₀. Resolved lazily — the report scan
+    // reported after its reference date T₀. Resolved lazily - the report scan
     // runs only when a client selects the field. Meaningful only at the
     // country (A0-scoped) yearly/all tier; every other bucket returns null.
     estimatedCurrentTotals: async (
@@ -479,7 +502,7 @@ export const datapointResolvers = {
 
       const asOf = new Date();
       // "Current" means as-of-now, so only attach the estimate to a bucket whose
-      // window still includes now — a historical bucket (a past year, month or
+      // window still includes now - a historical bucket (a past year, month or
       // week) must not carry a now-figure labelled as the period's number. The
       // `all` tier (far-future windowEnd) always qualifies. This is gated on the
       // window, NOT the window kind: the situation analysis consumes yearly AND
@@ -489,7 +512,7 @@ export const datapointResolvers = {
 
       const schemaVersion = parent.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
       // Bounded lookback: a "current" estimate only needs the latest stock and
-      // the flows after it — both recent — so cap the scan rather than reading
+      // the flows after it - both recent - so cap the scan rather than reading
       // the whole back-catalogue. NOT free: like the on-demand path this fetches
       // by window only, since a figure's scope needn't be in the report's named
       // `locationIds` (#273), so a `locationIds` pre-filter would drop valid
@@ -508,7 +531,7 @@ export const datapointResolvers = {
         },
       });
       // API stock (idp_stock / returnee_stock) is a current figure; asOf is now,
-      // so the full current set is in-window — no window filter needed here.
+      // so the full current set is in-window - no window filter needed here.
       const apiOrgMap = await loadApiReliabilityByOrg(context.prisma);
       const apiMentions = await loadApiMentions(context.prisma, parent.locationId, apiOrgMap);
       const reliabilityBySource = await loadReliabilityBySource(context.prisma);
@@ -550,7 +573,7 @@ export const datapointResolvers = {
         );
       }
 
-      // Idempotent replace-in-place — atomicity comes from the unique
+      // Idempotent replace-in-place - atomicity comes from the unique
       // constraint on `report_id`. Detect "was this a replace or a
       // new row" up front so the caller can log accurately (Prisma
       // upsert doesn't return that distinction).
@@ -583,7 +606,7 @@ export const datapointResolvers = {
         update: {
           ...commonFields,
           // `extractedAt` uses `@default(now())` but Prisma's update
-          // path doesn't touch it unless we set it explicitly — we
+          // path doesn't touch it unless we set it explicitly - we
           // want the fresh timestamp so the reviewer-audit workflow
           // can filter "extracted in the last N days" correctly.
           extractedAt: new Date(),
@@ -617,7 +640,7 @@ export const datapointResolvers = {
 
       // Validate the scope id up front (B123): a typo'd / unresolvable
       // countryLocationId matches no scope's admin-0 ancestor, so the refresh
-      // would silently compute 0 buckets — indistinguishable from a real no-op.
+      // would silently compute 0 buckets - indistinguishable from a real no-op.
       // Fail loudly instead so a caller bug surfaces rather than "did nothing".
       if (countryLocationId) {
         const country = await context.prisma.locations.findUnique({
@@ -655,7 +678,7 @@ export const datapointResolvers = {
       // ── 2. Collect every figure's scope, resolve its admin level ─
       // Buckets are keyed by FIGURE SCOPE now (#273), not by the places a
       // report merely mentions. A figure scoped to Kordofan belongs in
-      // Kordofan's bucket and nowhere else — no roll-up into ancestors.
+      // Kordofan's bucket and nowhere else - no roll-up into ancestors.
       // We resolve the hierarchy of the scope ids only to read each
       // scope's OWN admin level (its window tier); the chain returns the
       // id itself at its level, so `chain.aN === scopeId` identifies it.
@@ -704,7 +727,7 @@ export const datapointResolvers = {
       for (const r of reports) {
         const row = toReportRow(r);
         // `reportingPeriodEnd` drives which window this report belongs
-        // to across all four tiers — the same convention aggregators
+        // to across all four tiers - the same convention aggregators
         // use for incident dates in the atomic tier.
         const anchor = r.reportingPeriodEnd ?? r.publishedAt;
         const week = weekOf(anchor);
@@ -712,7 +735,7 @@ export const datapointResolvers = {
         const year = yearOf(anchor);
 
         // Route each of the report's figure scopes to ITS OWN bucket, at
-        // the window tier for the scope's admin level — no roll-up. The
+        // the window tier for the scope's admin level - no roll-up. The
         // aggregator's scope filter then keeps only this report's figures
         // that are scoped to that location. Window tier by level: A0 →
         // yearly + monthly + all-time, A1 → monthly, A2 (or deeper) → weekly.
@@ -735,7 +758,7 @@ export const datapointResolvers = {
           } else if (chain.a1 === scopeId) {
             push({ windowStart: month.start, windowEnd: month.end, windowKind: "monthly", locationId: scopeId }, row);
           } else {
-            // A2 or deeper — atomic weekly tier at the scope itself.
+            // A2 or deeper - atomic weekly tier at the scope itself.
             push({ windowStart: week.start, windowEnd: week.end, windowKind: "weekly", locationId: scopeId }, row);
           }
         }
@@ -749,13 +772,13 @@ export const datapointResolvers = {
       //
       // Cascade: when a yearly-country bucket is written, stamp
       // `validTo` on the corresponding `situation_analyses` current
-      // row inside the same transaction — the situation analysis
+      // row inside the same transaction - the situation analysis
       // depends transitively on that bucket, so writing a fresh
       // aggregation makes the situation snapshot stale by definition.
       // The next weekly Dagster regen picks up the invalidated row
       // and produces a fresh snapshot; between the two, the dashboard
       // gets no current row (empty-state UX). The cascade ignores
-      // schema_version — situation_analyses versioning is independent
+      // schema_version - situation_analyses versioning is independent
       // of aggregation versioning, and there is at most one current
       // row per schema version anyway.
       let computedBuckets = 0;
@@ -776,7 +799,7 @@ export const datapointResolvers = {
         // `now`) so the stored `data_quality_score` column matches what both
         // read paths serve. `aggregateReports` returns the pre-finalised
         // per-field mean (0–1); persisting that would leave the column an order
-        // of magnitude off the API — and off any external reader of the column
+        // of magnitude off the API - and off any external reader of the column
         // (e.g. the Django app on this database). (#110). The `data` blob stays
         // pre-finalised on purpose; the read paths re-score Recency at read time.
         const persistedScore = finaliseReadTimeQuality(
@@ -820,11 +843,11 @@ export const datapointResolvers = {
           // AND monthly-country tiers each drive a situation-analysis
           // snapshot, so a fresh bucket write at either tier makes the
           // matching snapshot stale. (weekly-A2 and monthly-A1 changes
-          // don't — they roll up into a country bucket write handled here.
+          // don't - they roll up into a country bucket write handled here.
           // A monthly-A1 (state) bucket also reaches this branch but
           // no-ops: situation analyses are keyed by countryLocationId, so a
           // state locationId matches no row.) Match on
-          // (countryLocationId, windowKind, windowStart) — the situation
+          // (countryLocationId, windowKind, windowStart) - the situation
           // bucket key. windowKind (not windowEnd) is deliberate: window
           // ends drift by a millisecond between this aggregator (.999) and
           // the pipeline's situation upsert (.000), so an end-based match
