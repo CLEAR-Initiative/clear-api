@@ -30,6 +30,11 @@ export const queryTypeDef = gql`
     like signals when teamId is given; status defaults to "consideration"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
 
+    """Signals awaiting downstream processing (status = NEW), oldest-first — the
+    Dagster event-driven drain. \`source\` filters by DataSource name (e.g.
+    "dataminr"); \`first\` caps the batch (default 100, max 500). Admin/pipeline only."""
+    pendingSignals(first: Int, source: String): [Signal!]!
+
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean): [Event!]!
 
@@ -146,6 +151,11 @@ export const queryTypeDef = gql`
     """Look up a crisis by ID."""
     crisis(id: String!): Crisis
 
+    """Crises awaiting enrichment (enrichmentStatus = PENDING), oldest-first — the
+    Dagster enrichment drain. \`first\` caps the batch (default 100, max 500).
+    Admin/pipeline only."""
+    pendingCrises(first: Int): [Crisis!]!
+
     # ─── Paginated lists ───────────────────────────────────────────────────────
     """Paginated alerts feed with severity / location / type / date filters and
     explicit ordering. Use this instead of \`alerts(...)\` when the UI needs
@@ -206,6 +216,12 @@ export const queryTypeDef = gql`
     Admin/pipeline only. Used by clear-pipeline to compare stored source
     hashes against the canonical row and decide which fields to re-translate."""
     translations(entityType: String!, entityId: String!): [TranslationRow!]!
+
+    """Entities enqueued for (re)translation, oldest-first — the Dagster
+    translation drain (durable replacement for the lazy-on-read Celery enqueue).
+    Optional entityType/locale filters; \`first\` caps the batch (default 100, max
+    500). Admin/pipeline only."""
+    pendingTranslations(first: Int, entityType: String, locale: String): [TranslationQueueItem!]!
 
     """Per-(entityType, locale) translation coverage snapshot for the
     admin dashboard. Admin only. Each row reports canonicalCount (how

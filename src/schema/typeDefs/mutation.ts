@@ -87,6 +87,11 @@ export const mutationTypeDef = gql`
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
 
+    """Mark signals as done for the Dagster drain — the downstream pipeline calls
+    this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
+    and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only."""
+    markSignalsProcessed(ids: [String!]!, status: SignalStatus): Int!
+
     """Create a manual signal from a field officer, partner, or government source.
     Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
     createManualSignal(input: CreateManualSignalInput!): Signal!
@@ -338,6 +343,10 @@ export const mutationTypeDef = gql`
     """Create a new crisis from a list of event IDs. Links all provided events to the new crisis."""
     createCrisisFromEvents(input: CreateCrisisFromEventsInput!): Crisis!
 
+    """Mark a crisis ENRICHED for the Dagster drain — the enrichment consumer calls
+    this once narrative/scenarios/needs-analysis are current. Idempotent. Admin/pipeline only."""
+    markCrisisEnriched(id: String!): Crisis!
+
     """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists."""
     addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
 
@@ -385,8 +394,20 @@ export const mutationTypeDef = gql`
 
     """Upsert one or more per-locale translation rows for an event,
     crisis, or location. The translated data blob mirrors the canonical
-    entity's JSON shape per locale. Admin/pipeline only."""
+    entity's JSON shape per locale. Admin/pipeline only. Clears any matching
+    rows from the translation queue (the write is the drain-completion signal)."""
     upsertTranslations(input: UpsertTranslationsInput!): UpsertTranslationsResult!
+
+    """Enqueue an entity for (re)translation at a locale — the durable replacement
+    for the lazy-on-read Celery enqueue. Idempotent (one row per entity+locale).
+    Admin/pipeline only."""
+    enqueueTranslation(entityType: String!, entityId: String!, locale: String!): TranslationQueueItem!
+
+    """Remove an entity/locale from the translation queue (explicit drain
+    completion). Returns true when a queued row was removed. upsertTranslations
+    clears the queue itself, so this is only for consumers not writing via it.
+    Admin/pipeline only."""
+    markTranslated(entityType: String!, entityId: String!, locale: String!): Boolean!
 
     # ─── Knowledge base ────────────────────────────────────────────────────────
     """Replace all knowledgebase rows for \`reportId\` with \`chunks\`.
@@ -634,6 +655,10 @@ export const mutationTypeDef = gql`
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
     rawData: JSON!
+    """Pointer to the raw payload blob in the S3 data lake (bronze layer),
+    written by the Dagster ingest asset. Optional — rawData carries the payload
+    for sources not yet landing in the lake."""
+    rawS3Key: String
     publishedAt: String!
     collectedAt: String
     url: String

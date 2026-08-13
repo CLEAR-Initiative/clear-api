@@ -48,6 +48,26 @@ enum Frequency {
   monthly
 }
 
+/// Signal processing status — the durable drain marker for the Celery→Dagster
+/// migration. NEW = ingested, awaiting downstream processing; PROCESSED =
+/// classify→group→alert done; FAILED = terminal failure. Replaces the old
+/// Redis-tracked status. Existing rows are backfilled to PROCESSED so the first
+/// Dagster drain skips history.
+enum SignalStatus {
+  NEW
+  PROCESSED
+  FAILED
+}
+
+/// Crisis enrichment status — the drain marker for the crisis enrichment
+/// (narrative / scenarios / needs-analysis) work. PENDING = needs
+/// (re)enrichment (set on crisis create, event add, event remove); ENRICHED =
+/// current. Existing rows backfilled to ENRICHED.
+enum CrisisEnrichmentStatus {
+  PENDING
+  ENRICHED
+}
+
 // ─── Auth (Better Auth) ────────────────────────────────────────────────────
 
 model user {
@@ -194,6 +214,25 @@ model translations {
   /// Secondary admin queries ("what's covered in Arabic?") use this.
   @@index([entityType, locale])
   @@map("translations")
+}
+
+/// Durable pending-translation queue for the Celery→Dagster migration. Replaces
+/// the lazy-on-read Celery broker enqueue: clear-api inserts a row when an
+/// entity needs (re)translation at a locale; a Dagster sensor drains it,
+/// translates, upserts the `translations` row, then deletes the queue row.
+/// One row per (entityType, entityId, locale) — a re-enqueue is a no-op upsert.
+model translationQueue {
+  id         String   @id @default(cuid())
+  /// 'event' | 'crisis' | 'location' — mirrors `translations.entityType`.
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  /// BCP-47 locale (lowercased), matching `translations.locale`.
+  locale     String
+  enqueuedAt DateTime @default(now()) @map("enqueued_at")
+
+  @@unique([entityType, entityId, locale])
+  @@index([enqueuedAt])
+  @@map("translation_queue")
 }
 
 model session {
@@ -537,8 +576,17 @@ model signals {
   externalId String? @map("external_id")
 
   rawData     Json     @map("raw_data")
+  /// Pointer to the raw payload blob in the S3 data lake (bronze layer),
+  /// written by the Dagster ingest asset. `rawData` (the JSON column) is kept
+  /// through the migration and for sources that don't land in the lake yet.
+  rawS3Key    String?  @map("raw_s3_key")
   publishedAt DateTime @map("published_at")
   collectedAt DateTime @default(now()) @map("collected_at")
+
+  /// Durable processing status for the Dagster event-driven drain. Defaults to
+  /// NEW on ingest; the downstream drain flips it to PROCESSED (or FAILED).
+  status      SignalStatus @default(NEW)
+  processedAt DateTime?    @map("processed_at")
 
   url         String?
   title       String?
@@ -590,6 +638,8 @@ model signals {
   @@unique([sourceId, externalId])
   @@index([sourceId])
   @@index([publishedAt])
+  /// Drives the Dagster drain query: pending signals (status = NEW) oldest-first.
+  @@index([status, publishedAt])
 }
 
 /// Analyst Location challenge on a Signal, with an optional Location correction
@@ -737,6 +787,11 @@ model crises {
   populationAffected BigInt?    @map("population_affected")
   populationInArea   BigInt?    @map("population_in_area")
 
+  /// Durable enrichment status for the Dagster drain. Set to PENDING on crisis
+  /// create / event add / event remove; the enrichment consumer flips it to
+  /// ENRICHED once narrative/scenarios/needs-analysis are current.
+  enrichmentStatus CrisisEnrichmentStatus @default(PENDING) @map("enrichment_status")
+
   userFeedbacks userFeedbacks[]
   userComments  userComments[]
   eventCrises   eventCrises[]
@@ -749,6 +804,8 @@ model crises {
   /// is a belt-and-braces for raw SQL writes that skip the ORM.
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
+  /// Drives the Dagster drain query: crises needing enrichment (PENDING).
+  @@index([enrichmentStatus])
   @@map("crises")
 }
 

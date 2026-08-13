@@ -194,9 +194,89 @@ export const translationResolvers = {
       }
       return out;
     },
+
+    // The Dagster translation drain: entities enqueued for (re)translation,
+    // oldest-first. This is the durable replacement for the lazy-on-read Celery
+    // broker enqueue. Optional entityType/locale filters let a per-locale
+    // consumer drain just its slice. Admin/pipeline only.
+    pendingTranslations: async (
+      _parent: unknown,
+      args: { first?: number | null; entityType?: string | null; locale?: string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      const where: { entityType?: string; locale?: string } = {};
+      if (args.entityType) where.entityType = args.entityType.toLowerCase();
+      if (args.locale) where.locale = args.locale.toLowerCase();
+      return context.prisma.translationQueue.findMany({
+        where,
+        orderBy: { enqueuedAt: "asc" },
+        take,
+      });
+    },
   },
 
   Mutation: {
+    // Durable replacement for the lazy-on-read Celery enqueue: mark an entity as
+    // needing (re)translation at a locale so the Dagster drain picks it up. One
+    // row per (entityType, entityId, locale) — a re-enqueue keeps the original
+    // enqueuedAt (idempotent). Admin/pipeline only.
+    enqueueTranslation: async (
+      _parent: unknown,
+      args: { entityType: string; entityId: string; locale: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const entityType = args.entityType.toLowerCase() as TranslatableEntityType;
+      if (!VALID_ENTITY_TYPES.has(entityType)) {
+        throw new GraphQLError(
+          `Invalid entityType "${args.entityType}". Must be one of: event, crisis, location.`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      const locale = args.locale.toLowerCase();
+      if (locale === DEFAULT_LOCALE) {
+        throw new GraphQLError(
+          "locale 'en' is canonical and is never translated.",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      if (!isSupportedLocale(locale)) {
+        throw new GraphQLError(`Unsupported locale "${locale}".`, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      await assertEntityExists(context, entityType, args.entityId);
+      return context.prisma.translationQueue.upsert({
+        where: {
+          entityType_entityId_locale: { entityType, entityId: args.entityId, locale },
+        },
+        create: { entityType, entityId: args.entityId, locale },
+        update: {}, // idempotent — keep the original enqueuedAt
+      });
+    },
+
+    // Explicit drain completion: remove an entity/locale from the queue. Returns
+    // true when a queued row was actually removed. `upsertTranslations` clears
+    // the queue itself, so consumers writing via that path need not call this.
+    // Admin/pipeline only.
+    markTranslated: async (
+      _parent: unknown,
+      args: { entityType: string; entityId: string; locale: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const result = await context.prisma.translationQueue.deleteMany({
+        where: {
+          entityType: args.entityType.toLowerCase(),
+          entityId: args.entityId,
+          locale: args.locale.toLowerCase(),
+        },
+      });
+      return result.count > 0;
+    },
+
     upsertTranslations: async (
       _parent: unknown,
       args: { input: UpsertTranslationsInput },
@@ -311,6 +391,17 @@ export const translationResolvers = {
           });
         }),
       );
+
+      // The write IS the drain-completion signal: clear any queued
+      // (re)translation requests for the locales we just wrote. Best-effort —
+      // a leftover queue row would only cause a harmless re-drain.
+      await context.prisma.translationQueue.deleteMany({
+        where: {
+          entityType,
+          entityId: input.entityId,
+          locale: { in: input.translations.map((t) => t.locale.toLowerCase()) },
+        },
+      });
 
       return {
         entityType,
