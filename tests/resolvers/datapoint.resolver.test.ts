@@ -997,3 +997,33 @@ describe("AggregatedDatapoint.estimatedCurrentTotals", () => {
     expect(result.displacement!.total).toBe(103000);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────
+// ReportDatapoint.source
+// ────────────────────────────────────────────────────────────────────
+
+describe("ReportDatapoint.source", () => {
+  const source = datapointResolvers.ReportDatapoint.source;
+
+  it("resolves the publisher from sourceId", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ id: "ds1", name: "IOM DTM" });
+    const ctx = buildContext(VIEWER, { dataSources: { findUnique } });
+    const result = await source({ sourceId: "ds1" }, null, ctx);
+    expect(result).toEqual({ id: "ds1", name: "IOM DTM" });
+    expect(findUnique).toHaveBeenCalledWith({ where: { id: "ds1" } });
+  });
+
+  it("returns null without querying when sourceId is unset", async () => {
+    // v1 rows predate source attribution and were never re-extracted.
+    const findUnique = vi.fn();
+    const ctx = buildContext(VIEWER, { dataSources: { findUnique } });
+    expect(await source({ sourceId: null }, null, ctx)).toBeNull();
+    expect(await source({}, null, ctx)).toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("is gated on requireContentReader", async () => {
+    const ctx = buildContext(PENDING, { dataSources: { findUnique: vi.fn() } });
+    await expect(source({ sourceId: "ds1" }, null, ctx)).rejects.toThrow(GraphQLError);
+  });
+});
