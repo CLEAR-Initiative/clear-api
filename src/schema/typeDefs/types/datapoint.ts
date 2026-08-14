@@ -1,13 +1,13 @@
 import { gql } from "graphql-tag";
 
 /**
- * Structured humanitarian datapoints — Layers 1 and 2 of the read path
+ * Structured humanitarian datapoints - Layers 1 and 2 of the read path
  * (see clear-context-pipeline/docs/humanitarian-datapoint-extraction.md).
  *
  * This file covers Layer 2 (per-report). Layer 1 (aggregated
  * datapoints + runtime rollup) ships in Phase 2.
  *
- * The `data` payload is intentionally a JSON scalar — the exhaustive
+ * The `data` payload is intentionally a JSON scalar - the exhaustive
  * datapoint schema is defined and validated on the ingest side
  * (Pydantic sub-schemas in `datapoints_schemas.py`); modelling it in
  * GraphQL would double-encode a taxonomy that already evolves per
@@ -19,7 +19,7 @@ export const datapointTypeDef = gql`
   \`data\` are the six domain names: \`timing_and_scope\`,
   \`casualties\`, \`displacement\`, \`needs_and_funding\`,
   \`access_and_incidents\`, \`narrative_and_confidence\`. A domain
-  whose extraction failed is written as \`null\` — the operator can
+  whose extraction failed is written as \`null\` - the operator can
   re-run a targeted extraction on that domain later without touching
   the successful ones."""
   type ReportDatapoint {
@@ -44,7 +44,7 @@ export const datapointTypeDef = gql`
     \`disease-outbreak\`, …). Multi-hazard reports carry multiple."""
     eventTypes: [String!]!
 
-    """Denormalised hot totals — cheap dashboard filter/sort keys.
+    """Denormalised hot totals - cheap dashboard filter/sort keys.
     NULL when the report doesn't headline the figure; DO NOT sum
     these across rows (the JSON blob carries the incident-safe form)."""
     totalAffected: Int
@@ -63,6 +63,21 @@ export const datapointTypeDef = gql`
     \`claude-sonnet-4-6\`). Used by the reviewer-audit workflow."""
     extractedByModel: String!
     extractedAt: DateTime!
+
+    """The report's publisher (a \`data_sources\` id), resolved by the pipeline
+    via \`resolveDataSource\`. This is the report-level fallback; a figure's own
+    cited origin lives per-figure inside \`data\`. See clear-context-pipeline
+    ADR-0004."""
+    sourceId: String
+
+    """The resolved publisher, e.g. "IOM DTM" or "WFP". Exposed alongside
+    \`sourceId\` so a client can label a report without a second round trip.
+
+    **Null for rows extracted before source attribution landed (schema v1).**
+    Those were never re-extracted, so clients must keep a fallback - deriving a
+    publisher from the \`sourceUrl\` host yields the aggregator ("reliefweb.int"),
+    not the publisher, so it is a label of last resort."""
+    source: DataSource
   }
 
   """Input for \`upsertReportDatapoints\`. Field names / types
@@ -94,7 +109,7 @@ export const datapointTypeDef = gql`
     sourceId: String
   }
 
-  """Result of \`upsertReportDatapoints\` — summary for logs."""
+  """Result of \`upsertReportDatapoints\` - summary for logs."""
   type UpsertReportDatapointsResult {
     reportId: String!
     schemaVersion: String!
@@ -103,9 +118,9 @@ export const datapointTypeDef = gql`
     createdOrReplaced: Boolean!
   }
 
-  # ─── Layer 1 — Aggregated cache ─────────────────────────────────────
+  # ─── Layer 1 - Aggregated cache ─────────────────────────────────────
 
-  """One aggregated bucket — the roll-up of every contributing
+  """One aggregated bucket - the roll-up of every contributing
   \`report_datapoint\` for a scope (window × window_kind × location).
   Consumed by the situation-analysis dashboard tiles and by chatbot
   factual queries. See \`AggregatedField\` docstring for the JSON
@@ -123,14 +138,14 @@ export const datapointTypeDef = gql`
 
     """Flat map keyed by field label. Each value is either a
     QualityEnvelope (for numeric fields), a SetUnionEnvelope (for label
-    fields — \`{ values, contributing_report_ids }\`), or \`null\` when
+    fields - \`{ values, contributing_report_ids }\`), or \`null\` when
     no report in scope reported that field.
 
     A numeric QualityEnvelope carries \`{ value, unit, confidence_mix,
     newest_report_at, oldest_report_at, contributing_report_ids }\` plus
     the credibility fields (clear-context-pipeline ADR-0004/0005): the
     cached time-invariant \`reliability\` (1–4) and \`intrinsic_credibility\`
-    (0–8.5), and — added on every read — \`recency\` (0–1.5),
+    (0–8.5), and - added on every read - \`recency\` (0–1.5),
     \`information_credibility\` (0–10), and \`data_quality\` (**0–10**), the
     per-field headline. The legacy \`quality_score\` (0–1, directness-only)
     is retained for backwards compatibility."""
@@ -143,21 +158,21 @@ export const datapointTypeDef = gql`
     ADR-0005): the mean of the fields' read-time \`data_quality\`
     (\`(reliability × 2.5 × information_credibility) / 10\`, Recency folded
     in at read). The stored column carries the same 0–10 scale. NOTE: this
-    is a scale change from the pre-data-quality \`quality_score\` (0–1) —
+    is a scale change from the pre-data-quality \`quality_score\` (0–1) -
     thresholds tuned on the old scale must be re-tuned."""
     dataQualityScore: Float!
     reportCount: Int!
 
-    """Estimated current totals — latest authoritative stock + the flows
+    """Estimated current totals - latest authoritative stock + the flows
     reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
     bucket's period: it is returned only for a bucket whose window still
     includes now (the current year/month/week and the \`all\` tier) and is
     \`null\` on any historical bucket, so a past-period row never carries a
-    present-day number. Resolved lazily — the bounded \`report_datapoints\` scan
-    runs only when this field is selected — but it is a real scan, not free."""
+    present-day number. Resolved lazily - the bounded \`report_datapoints\` scan
+    runs only when this field is selected - but it is a real scan, not free."""
     estimatedCurrentTotals: CurrentTotals
 
-    """Bitemporal validity — this snapshot's lifetime as a "current"
+    """Bitemporal validity - this snapshot's lifetime as a "current"
     row. \`validTo\` is null when the row is still the current one for
     its bucket; else it carries the timestamp when a newer computation
     superseded it."""
@@ -177,18 +192,18 @@ export const datapointTypeDef = gql`
   """One metric's estimated current total (ADR-0006 §4): the latest
   authoritative stock plus the flows reported after its reference date T₀.
   Flows at or before T₀ are already embedded in the stock and are not added
-  again — the invariant that stops returnee/IDP totals from over-counting."""
+  again - the invariant that stops returnee/IDP totals from over-counting."""
   type StockFlowEstimate {
-    """\`stock\` + \`flowsSince\` — the headline estimated current total."""
+    """\`stock\` + \`flowsSince\` - the headline estimated current total."""
     total: Float!
     """The anchoring latest authoritative stock value (API-reconciled)."""
     stock: Float!
     """Deduped sum of the flows whose as-of date is strictly after T₀."""
     flowsSince: Float!
-    """T₀ — the anchor stock's reference date. Flows at/before it are treated
+    """T₀ - the anchor stock's reference date. Flows at/before it are treated
     as already counted inside \`stock\`."""
     t0: DateTime!
-    """Reports contributing forward flows — a provenance count, not a count of
+    """Reports contributing forward flows - a provenance count, not a count of
     distinct flow events."""
     flowCount: Int!
   }

@@ -543,8 +543,12 @@ chart a historical payload shape.</span></div></td>
 exists for the given schema version. Used by the Dagster
 aggregation asset to distinguish first-run backfill (wide
 lookback window) from routine weekly refreshes (narrow window).
-Any authenticated content reader - this is a cheap existence
-check with no sensitive data on it.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span></div></td>
+Pass `countryLocationId` (an admin-0 location id) to scope the
+check to ONE country, so a newly-onboarded country's first run
+uses the initial window even after other countries are established
+— the four-tier walk always produces yearly/all-time buckets AT the
+country location, so an A0 row is the per-country signal. Any
+authenticated content reader - a cheap existence check.<div class="field-args"><span class="arg"><code>schemaVersion: String!</code></span><span class="arg"><code>countryLocationId: String</code></span></div></td>
   </tr><tr>
     <td><code>aggregatedDatapoint</code></td>
     <td><code>AggregatedDatapoint</code></td>
@@ -1086,7 +1090,16 @@ yearly × country, all-time × country) for reports whose
 bucket is inserted with `validFrom = now()`; the previous
 &quot;current&quot; row for the same bucket key has its `validTo` stamped
 in the same transaction. History rows are preserved. Admin /
-pipeline only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span><span class="arg"><code>schemaVersion: String!</code></span></div></td>
+pipeline only.
+
+Pass `countryLocationId` (an admin-0 location id) to SCOPE the
+refresh to that country's subtree — only that country's buckets are
+(re)computed (the window's reports are still scanned; the bucket step
+filters to scopes whose admin-0 ancestor is this country). Omit it to
+refresh every country in the window (the original global behaviour).
+The per-country partitioned pipeline passes it so each country's run
+recomputes only its own buckets instead of a redundant global pass.
+An unresolvable id errors rather than silently computing nothing.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span><span class="arg"><code>schemaVersion: String!</code></span><span class="arg"><code>countryLocationId: String</code></span></div></td>
   </tr><tr id="mutation-uploadknowledgebasedocument">
     <td><code>uploadKnowledgebaseDocument</code></td>
     <td><code>KnowledgebaseIngestJob!</code></td>
@@ -2746,7 +2759,7 @@ the top 50 most-active users in the window.</td>
     <td><code>byDay</code></td>
     <td><code>[DailyActivityCount!]!</code></td>
     <td>Daily activity counts across the window (UTC dates).</td>
-  </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket — the roll-up of every contributing
+  </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket - the roll-up of every contributing
 `report_datapoint` for a scope (window × window_kind × location).
 Consumed by the situation-analysis dashboard tiles and by chatbot
 factual queries. See `AggregatedField` docstring for the JSON
@@ -2776,14 +2789,14 @@ tiers). Otherwise references `locations.id`.</td>
     <td><code>JSON!</code></td>
     <td>Flat map keyed by field label. Each value is either a
 QualityEnvelope (for numeric fields), a SetUnionEnvelope (for label
-fields — `{ values, contributing_report_ids }`), or `null` when
+fields - `{ values, contributing_report_ids }`), or `null` when
 no report in scope reported that field.
 
 A numeric QualityEnvelope carries `{ value, unit, confidence_mix,
 newest_report_at, oldest_report_at, contributing_report_ids }` plus
 the credibility fields (clear-context-pipeline ADR-0004/0005): the
 cached time-invariant `reliability` (1–4) and `intrinsic_credibility`
-(0–8.5), and — added on every read — `recency` (0–1.5),
+(0–8.5), and - added on every read - `recency` (0–1.5),
 `information_credibility` (0–10), and `data_quality` (**0–10**), the
 per-field headline. The legacy `quality_score` (0–1, directness-only)
 is retained for backwards compatibility.</td>
@@ -2806,7 +2819,7 @@ is retained for backwards compatibility.</td>
 ADR-0005): the mean of the fields' read-time `data_quality`
 (`(reliability × 2.5 × information_credibility) / 10`, Recency folded
 in at read). The stored column carries the same 0–10 scale. NOTE: this
-is a scale change from the pre-data-quality `quality_score` (0–1) —
+is a scale change from the pre-data-quality `quality_score` (0–1) -
 thresholds tuned on the old scale must be re-tuned.</td>
   </tr><tr>
     <td><code>reportCount</code></td>
@@ -2815,17 +2828,17 @@ thresholds tuned on the old scale must be re-tuned.</td>
   </tr><tr>
     <td><code>estimatedCurrentTotals</code></td>
     <td><code>CurrentTotals</code></td>
-    <td>Estimated current totals — latest authoritative stock + the flows
+    <td>Estimated current totals - latest authoritative stock + the flows
 reported after it (ADR-0006 §4). This is an **as-of-now** figure, NOT the
 bucket's period: it is returned only for a bucket whose window still
 includes now (the current year/month/week and the `all` tier) and is
 `null` on any historical bucket, so a past-period row never carries a
-present-day number. Resolved lazily — the bounded `report_datapoints` scan
-runs only when this field is selected — but it is a real scan, not free.</td>
+present-day number. Resolved lazily - the bounded `report_datapoints` scan
+runs only when this field is selected - but it is a real scan, not free.</td>
   </tr><tr>
     <td><code>validFrom</code></td>
     <td><code>DateTime!</code></td>
-    <td>Bitemporal validity — this snapshot's lifetime as a &quot;current&quot;
+    <td>Bitemporal validity - this snapshot's lifetime as a &quot;current&quot;
 row. `validTo` is null when the row is still the current one for
 its bucket; else it carries the timestamp when a newer computation
 superseded it.</td>
@@ -4185,6 +4198,12 @@ ensureCountryLocation: [minLng, minLat, maxLng, maxLat].</p><table class="ref-ta
     <td>ISO 3166-1 alpha-3 code (e.g. &quot;SDN&quot;). Used by pipeline ingests that scope
 external APIs by country (HAPI location_code, IOM DTM Admin0Pcode).</td>
   </tr><tr>
+    <td><code>pcode</code></td>
+    <td><code>String!</code></td>
+    <td>The admin-0 location's pcode (ISO 3166-1 alpha-2, e.g. &quot;SD&quot;). The strong,
+name-independent key for resolving the country's level-0 location — the
+stored name is often the long official form, which exact-name lookup misses.</td>
+  </tr><tr>
     <td><code>bbox</code></td>
     <td><code>[Float!]!</code></td>
     <td>—</td>
@@ -4342,7 +4361,7 @@ yet for the affected countries.</td>
 `data` are the six domain names: `timing_and_scope`,
 `casualties`, `displacement`, `needs_and_funding`,
 `access_and_incidents`, `narrative_and_confidence`. A domain
-whose extraction failed is written as `null` — the operator can
+whose extraction failed is written as `null` - the operator can
 re-run a targeted extraction on that domain later without touching
 the successful ones.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
@@ -4389,7 +4408,7 @@ CLEAR location. A nightly backfill re-attempts these.</td>
   </tr><tr>
     <td><code>totalAffected</code></td>
     <td><code>Int</code></td>
-    <td>Denormalised hot totals — cheap dashboard filter/sort keys.
+    <td>Denormalised hot totals - cheap dashboard filter/sort keys.
 NULL when the report doesn't headline the figure; DO NOT sum
 these across rows (the JSON blob carries the incident-safe form).</td>
   </tr><tr>
@@ -4419,6 +4438,23 @@ versions must not be aggregated together.</td>
     <td><code>extractedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>The report's publisher (a `data_sources` id), resolved by the pipeline
+via `resolveDataSource`. This is the report-level fallback; a figure's own
+cited origin lives per-figure inside `data`. See clear-context-pipeline
+ADR-0004.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>DataSource</code></td>
+    <td>The resolved publisher, e.g. &quot;IOM DTM&quot; or &quot;WFP&quot;. Exposed alongside
+`sourceId` so a client can label a report without a second round trip.
+
+**Null for rows extracted before source attribution landed (schema v1).**
+Those were never re-extracted, so clients must keep a fallback - deriving a
+publisher from the `sourceUrl` host yields the aggregator (&quot;reliefweb.int&quot;),
+not the publisher, so it is a label of last resort.</td>
   </tr></tbody></table><h3 id="type-rotatedevuserapikeyresult"><code>RotateDevUserApiKeyResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `rotateDevUserApiKey` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -4653,10 +4689,10 @@ string, or ISO date/week/month.</td>
   </tr></tbody></table><h3 id="type-stockflowestimate"><code>StockFlowEstimate</code> <span class="type-badge">object</span></h3><p>One metric's estimated current total (ADR-0006 §4): the latest
 authoritative stock plus the flows reported after its reference date T₀.
 Flows at or before T₀ are already embedded in the stock and are not added
-again — the invariant that stops returnee/IDP totals from over-counting.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+again - the invariant that stops returnee/IDP totals from over-counting.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Float!</code></td>
-    <td>`stock` + `flowsSince` — the headline estimated current total.</td>
+    <td>`stock` + `flowsSince` - the headline estimated current total.</td>
   </tr><tr>
     <td><code>stock</code></td>
     <td><code>Float!</code></td>
@@ -4668,12 +4704,12 @@ again — the invariant that stops returnee/IDP totals from over-counting.</p><t
   </tr><tr>
     <td><code>t0</code></td>
     <td><code>DateTime!</code></td>
-    <td>T₀ — the anchor stock's reference date. Flows at/before it are treated
+    <td>T₀ - the anchor stock's reference date. Flows at/before it are treated
 as already counted inside `stock`.</td>
   </tr><tr>
     <td><code>flowCount</code></td>
     <td><code>Int!</code></td>
-    <td>Reports contributing forward flows — a provenance count, not a count of
+    <td>Reports contributing forward flows - a provenance count, not a count of
 distinct flow events.</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
@@ -4792,7 +4828,7 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>chunksInserted</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-upsertreportdatapointsresult"><code>UpsertReportDatapointsResult</code> <span class="type-badge">object</span></h3><p>Result of `upsertReportDatapoints` — summary for logs.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-upsertreportdatapointsresult"><code>UpsertReportDatapointsResult</code> <span class="type-badge">object</span></h3><p>Result of `upsertReportDatapoints` - summary for logs.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
     <td>—</td>

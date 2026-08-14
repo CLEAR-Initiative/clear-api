@@ -121,6 +121,79 @@ describe("aggregateReports — empty input", () => {
   });
 });
 
+describe("aggregateReports — confidence band (ADR-0007 Phase 2)", () => {
+  // Range-aware figure: spreads nf() and attaches a stated [low, high].
+  const nfR = (value: number, low: number, high: number, confidence = "reported") => ({
+    ...nf(value, confidence),
+    value_low: low,
+    value_high: high,
+  });
+
+  it("exact points → zero-width band (value_low == value_high == value)", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nf(8000) },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8000);
+    expect(f.value_low).toBe(8000);
+    expect(f.value_high).toBe(8000);
+    expect(f.range_width).toBe(0);
+  });
+
+  it("a stated range on one figure surfaces as the band", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: nfR(8000, 7000, 9000) },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(8000);          // headline point unchanged
+    expect(f.value_low).toBe(7000);
+    expect(f.value_high).toBe(9000);
+    expect(f.range_width).toBe(2000);
+  });
+
+  it("disagreeing latest_state figures widen the band to span both", () => {
+    // Two exact stocks for the same week+location: latest wins the point,
+    // but the band spans the disagreement.
+    const rows = [
+      row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(8000) },
+      }, "2026-07-02T00:00:00Z"),
+      row("r2", "2026-07-05T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(6000) },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(6000);          // freshest wins the point
+    expect(f.value_low).toBe(6000);
+    expect(f.value_high).toBe(8000);
+    expect(f.range_width).toBe(2000);    // the disagreement is visible
+  });
+
+  it("additive field sums the contributing ranges", () => {
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: nfR(800, 700, 900) } },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(800);
+    expect(f.value_low).toBe(700);
+    expect(f.value_high).toBe(900);
+  });
+
+  it("surfaces the field bias for late projection (§8)", () => {
+    // killed_total is overreport → the consumer projects the band to its LOW end.
+    const rows = [row("r1", "2026-07-02T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: nf(800) } },
+    }, "2026-07-02T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.bias).toBe("overreport");
+  });
+});
+
 describe("aggregateReports — additive count (killed_total)", () => {
   it("dedupes two reports for the same week (period totals, not per-day events)", () => {
     // Both figures are weekly period-totals for the same week + location, so
@@ -813,12 +886,14 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
     expect(kt(aggregateReports(rows, "SD0201"))).toBe(3); // deduped, not 8
   });
 
-  it("leaves the untyped group separate when MULTIPLE typed groups share the bucket", () => {
-    // conflict + flood are two distinct phenomena; an untyped figure can't
-    // be assigned to one, so it is not merged (documented, ADR-0002).
+  it("untyped superset does not sum onto its qualified sub-causes (ADR-0007 §7.3, #4)", () => {
+    // conflict + flood are two distinct phenomena; an untyped figure can't be
+    // assigned to one, so it stays a separate group (ADR-0002). But an untyped
+    // total IS a superset of the qualified sub-causes in the same bucket, so
+    // the containment rule takes max(Σ parts, whole), never parts + whole.
     const rows = [
       row("r-untyped", "2026-07-02T00:00:00Z", ["SD0201"], {
-        casualties: { killed: { total: nf(5) } },
+        casualties: { killed: { total: nf(10) } }, // "10 killed", no cause
       }),
       row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
         timing_and_scope: { event_types: ["conflict"] },
@@ -829,8 +904,23 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
         casualties: { killed: { total: nf(2) } },
       }),
     ];
-    // conflict(3) + flood(2) + untyped(5), all distinct groups → 10.
+    // max(conflict 3 + flood 2 = 5, untyped whole 10) = 10 — NOT 15.
     expect(kt(aggregateReports(rows, "SD0201"))).toBe(10);
+  });
+
+  it("distinct qualified sub-causes still sum (disjoint phenomena, #4)", () => {
+    // No untyped superset present → conflict and flood are disjoint → sum.
+    const rows = [
+      row("r-conflict", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["conflict"] },
+        casualties: { killed: { total: nf(3) } },
+      }),
+      row("r-flood", "2026-07-02T00:00:00Z", ["SD0201"], {
+        timing_and_scope: { event_types: ["flood"] },
+        casualties: { killed: { total: nf(2) } },
+      }),
+    ];
+    expect(kt(aggregateReports(rows, "SD0201"))).toBe(5);
   });
 
   it("untyped and typed figures at DIFFERENT scopes never interact", () => {
@@ -1263,6 +1353,77 @@ describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
     expect(val(m, "overall_pin")).toBe(24_000_000);
   });
 
+  it("humanitarian_needs: dedupes the category total/empty pair — no 2× (live blob cmse5d3gk…)", () => {
+    // The real Sudan blob carries each sector twice at admin_level 0: once with
+    // an empty category, once with category "total". Blind-summing reported ~2×.
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 7_900_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 7_943_720 },
+      { sector_code: "PRO", population_status: "INN", admin_level: 0, category: "", population: 6_187_970 },
+      { sector_code: "PRO", population_status: "INN", admin_level: 0, category: "total", population: 6_187_970 },
+    ] })], "SDN", orgs);
+    // Canonical "total" kept, empty dropped — NOT 15.84M / 12.38M.
+    expect(val(m, "overall_pin")).toBe(7_943_720);
+    expect(val(m, "pin_protection")).toBe(6_187_970);
+  });
+
+  it("humanitarian_needs: sums within one admin level — admin-0 total, not +admin-1 breakdown", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 24_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 10_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 14_000_000 },
+    ] })], "SDN", orgs);
+    // Coarsest level (admin 0) is the national total; admin-1 states are NOT added on top.
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("humanitarian_needs: with no national row, sums the admin-1 rows that tile the country", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 10_000_000 },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 1, category: "total", population: 14_000_000 },
+    ] })], "SDN", orgs);
+    // Same-level units sum — the admin-1 rows tile Sudan → national total.
+    expect(val(m, "overall_pin")).toBe(24_000_000);
+  });
+
+  it("humanitarian_needs: keeps the latest edition — older HNO years don't sum on top", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "total", population: 30_440_770, reference_period_end: "2025-12-08" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 33_699_770, reference_period_end: "2026-12-31" },
+    ] })], "SDN", orgs);
+    // Latest edition (2026) wins; the 2025 total is NOT added → 33.7M, not 64.1M.
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
+  it("humanitarian_needs: drops population-group/age/sex subsets carried in `category`", () => {
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "", population: 33_699_770, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "Children", population: 15_646_556, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "Female", population: 15_311_707, reference_period_end: "2026-12-31" },
+      { sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category: "IDP", population: 8_881_784, reference_period_end: "2026-12-31" },
+    ] })], "SDN", orgs);
+    // Subsets are contained in the total → excluded; only the aggregate counts.
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
+  it("humanitarian_needs: real Sudan blob shape (editions × subgroups) → 33.7M, not 195M", () => {
+    const rec = (category: string, population: number, end: string) => ({
+      sector_code: "INTERSECTORAL", population_status: "INN", admin_level: 0, category, population, reference_period_end: end,
+    });
+    const m = buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      rec("", 33_699_770, "2026-12-31"),            // 2026 aggregate — the correct answer
+      rec("total", 30_440_770, "2025-12-08"),       // 2025 aggregate — older edition
+      rec("Children", 15_646_556, "2025-12-08"),
+      rec("Female", 15_311_707, "2025-12-08"),
+      rec("Male", 15_129_063, "2025-12-08"),
+      rec("IDP", 8_881_784, "2025-12-08"),
+      rec("Refugees", 892_161, "2025-12-08"),
+      rec("Famine Response", 7_585_262, "2024-12-31"),
+      rec("IDPs", 7_071_676, "2024-12-31"),
+    ] })], "SDN", orgs);
+    expect(val(m, "overall_pin")).toBe(33_699_770);
+  });
+
   it("food_security: IPC current phase-3+ population", () => {
     const m = buildApiMentions([lmv("hapi_food_security", { records: [
       { ipc_type: "current", ipc_phase: "3+", population: 20_000_000 },
@@ -1287,6 +1448,302 @@ describe("aggregateReports — echo dedup (ADR-0006 §5)", () => {
     if (!f || !("value" in f)) throw new Error("expected numeric field");
     // Same source id ("src-ocha") → one observation → latest (API 1.15e9), NOT 2.25e9.
     expect(f.value).toBe(1.15e9);
+  });
+});
+
+describe("aggregateReports — flow breakpoint sweep (ADR-0007 §6.2)", () => {
+  const kt = (r: ReturnType<typeof aggregateReports>) => {
+    const f = r!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    return f.value;
+  };
+  const flowFig = (value: number, start: string, end: string) => ({
+    ...nf(value, "reported"),
+    basis_period_start: start,
+    basis_period_end: end,
+  });
+
+  it("overlapping periods reconcile the overlap instead of double-counting (#2)", () => {
+    // A: 2–10 Apr, 800 (100/day). B: 5–15 Apr, 660 (66/day). killed = overreport.
+    // [2,5) A only → 300; [5,10) overlap → lower rate 66 → 330; [10,15) B → 330.
+    const rows = [
+      row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(960); // not 1460 (sum), not 800 (max)
+  });
+
+  it("disjoint periods sum (no overlap to reconcile)", () => {
+    const rows = [
+      row("rA", "2026-04-06T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(400, "2026-04-01T00:00:00Z", "2026-04-05T00:00:00Z") } },
+      }, "2026-04-05T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(600, "2026-04-10T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(1000);
+  });
+
+  it("a single interval figure integrates to its own value", () => {
+    const rows = [row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+      casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+    }, "2026-04-10T00:00:00Z")];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(800);
+  });
+
+  it("the overlap is decided by bias, not recency (publish order is irrelevant)", () => {
+    // Same figures as the #2 case but with publish dates SWAPPED so the higher-
+    // rate figure A (100/day) is now the freshest. The old recency gate would let
+    // A take the overlap → 1130 (18% over-report). Under range reconciliation the
+    // overlap is bias-projected (overreport → 66), so the point is still 960 —
+    // recency can no longer inflate a flow the field is meant to resist inflating.
+    const rows = [
+      row("rA", "2026-04-20T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    expect(kt(aggregateReports(rows, "SD01"))).toBe(960);
+  });
+
+  it("the overlap disagreement widens the band (union of covering rates)", () => {
+    // [2,5) A only → [300,300]; [5,10) overlap → rate band [66,100] → [330,500];
+    // [10,15) B only → [330,330]. Point projects to the low end (overreport), so
+    // value == value_low == 960 and the A-vs-B disagreement surfaces as the 170
+    // of upward width (value_high 1130) — not swallowed by a single winner.
+    const rows = [
+      row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flowFig(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(960);
+    expect(f.value_low).toBe(960);
+    expect(f.value_high).toBe(1130);
+    expect(f.range_width).toBe(170);
+  });
+});
+
+describe("aggregateReports — qualifier + measure_type projection (ADR-0007)", () => {
+  // qualifier composes with the field bias: it is a HARD directional constraint,
+  // the bias breaks the tie within it.
+
+  it("qualifier at_least raises the overreport floor (headline not projected below it)", () => {
+    // killed = overreport (lean low). Two competing figures for one incident: an
+    // exact 400 and an `at_least 500`. The 500 asserts truth ≥ 500, so the
+    // overreport projection may not land on 400 — the floor binds.
+    const rows = [
+      row("r1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(400, "reported") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "at_least", value_low: 500, value_high: 800 } } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(500); // the at_least floor, not the lower exact 400
+  });
+
+  it("qualifier at_most caps the underreport ceiling (headline not projected above it)", () => {
+    // new_displacements = underreport (lean high). An exact 800 vs `at_most 700`.
+    // The 700 asserts truth ≤ 700, so the lean-high projection is capped there.
+    const rows = [
+      row("r1", "2026-04-11T00:00:00Z", ["SD01"], {
+        displacement: { new_displacements: nf(800, "reported") },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        displacement: { new_displacements: { ...nf(700, "reported"), qualifier: "at_most", value_low: 500, value_high: 700 } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.new_displacements;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(700); // capped at the at_most ceiling, not the higher 800
+  });
+
+  it("qualifier approx / exact leave the bias pick unchanged", () => {
+    // approx asserts no firm bound → overreport still picks the lower value.
+    const rows = [
+      row("r1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(400, "reported"), qualifier: "approx", value_low: 380, value_high: 420 } } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "approx", value_low: 470, value_high: 530 } } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(400); // overreport → lower value; approx adds no constraint
+  });
+
+  const flow = (value: number, start: string, end: string) => ({
+    ...nf(value, "reported"),
+    basis_period_start: start, basis_period_end: end, measure_type: "period_flow",
+  });
+  const cumul = (value: number, start: string, end: string) => ({
+    ...nf(value, "reported"),
+    basis_period_start: start, basis_period_end: end, measure_type: "cumulative_to_date",
+  });
+
+  it("a running total subsumes the reported flows inside its span (no double-count)", () => {
+    // Cumulative 5000 killed Jan–Apr is the authoritative total-to-date; a 200
+    // weekly flow inside that span is already counted in it → dropped, not added.
+    const rows = [
+      row("rFlow", "2026-04-10T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(200, "2026-04-06T00:00:00Z", "2026-04-09T00:00:00Z") } },
+      }, "2026-04-09T00:00:00Z"),
+      row("rCumul", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(5000, "2026-01-01T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(5000, 4); // not 5200 (sum) — the flow is subsumed
+  });
+
+  it("consecutive cumulative snapshots are differenced, not summed", () => {
+    // C(Mar31)=3000 then C(Apr30)=5000 → increments 3000 + 2000 = 5000, not 8000.
+    const rows = [
+      row("rC1", "2026-04-01T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(3000, "2026-01-01T00:00:00Z", "2026-03-31T00:00:00Z") } },
+      }, "2026-03-31T00:00:00Z"),
+      row("rC2", "2026-05-01T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(5000, "2026-01-01T00:00:00Z", "2026-04-30T00:00:00Z") } },
+      }, "2026-04-30T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(5000, 4); // latest running total via differencing, NOT 8000
+  });
+
+  it("a reported flow AFTER the last snapshot extends the total", () => {
+    // Cumulative 5000 to Apr15 + a 300 flow Apr20–27 (outside coverage) → 5300.
+    const rows = [
+      row("rCumul", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(5000, "2026-01-01T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+      row("rFlow", "2026-04-28T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(300, "2026-04-20T00:00:00Z", "2026-04-27T00:00:00Z") } },
+      }, "2026-04-27T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(5300, 4);
+  });
+
+  it("period_flow figures are unaffected — the sweep still reconciles them (960)", () => {
+    // Boundary: with no running total present, the flow sweep behaves as before.
+    const rows = [
+      row("rA", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(800, "2026-04-02T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rB", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(660, "2026-04-05T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(960);
+  });
+
+  // ── Review fixes B2–B6 ──────────────────────────────────────────────
+
+  it("B3: opposing qualifiers don't breach a bound (no silent ceiling break)", () => {
+    // at_least 500 AND at_most 400 for one incident is an impossible contradiction.
+    // The old code returned 500 under overreport, breaching the 400 ceiling; now it
+    // falls back to the freshest (here the at_most 400) rather than breach it.
+    const rows = [
+      row("r1", "2026-04-05T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "at_least", value_low: 500, value_high: 800 } } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(400, "reported"), qualifier: "at_most", value_low: 300, value_high: 400 } } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(400); // freshest; NOT 500 (which would breach the ceiling)
+  });
+
+  it("B6: a stale at_least floor still binds despite the recency gate", () => {
+    // r1 (`at_least 500`) is published 10 days before r2 — outside killed's 3.5-day
+    // override reach, so the recency gate drops it from the bias pool. Its floor
+    // must still bind (same week's measurement), so the headline is 500, not 300.
+    const rows = [
+      row("r1", "2026-04-01T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: { ...nf(500, "reported"), qualifier: "at_least", value_low: 500, value_high: 900 } } },
+      }, "2026-04-10T00:00:00Z"),
+      row("r2", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: nf(300, "reported") } },
+      }, "2026-04-10T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(500); // floor binds from the whole group, not just fresh rows
+  });
+
+  it("B2: a no-origin cumulative base is summed, not reconciled away", () => {
+    // Two cumulatives, the earliest with NO stated origin. The base (5000) must be
+    // summed with the later increment (8000−5000=3000) → 8000, not lost to overlap.
+    const cumulNoOrigin = (value: number) => ({ ...nf(value, "reported"), measure_type: "cumulative_to_date" });
+    const rows = [
+      row("rC1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumulNoOrigin(5000) } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rC2", "2026-04-18T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumulNoOrigin(8000) } },
+      }, "2026-04-17T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(8000, 4); // base 5000 + increment 3000, not swallowed
+  });
+
+  it("B4: a cumulative reset recovers post-reset accrual (not zeroed)", () => {
+    // Running total drops 8000 → 2000 (counter reset). Expected 8000 + 2000 = 10000,
+    // not 8000 (the old `max(0, cur−prev)=0` dropped the 2000).
+    const cumul2 = (value: number, start: string, end: string) => ({
+      ...nf(value, "reported"), basis_period_start: start, basis_period_end: end, measure_type: "cumulative_to_date",
+    });
+    const rows = [
+      row("rC1", "2026-04-11T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul2(8000, "2026-01-01T00:00:00Z", "2026-04-10T00:00:00Z") } },
+      }, "2026-04-10T00:00:00Z"),
+      row("rC2", "2026-04-25T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul2(2000, "2026-04-11T00:00:00Z", "2026-04-24T00:00:00Z") } },
+      }, "2026-04-24T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(10000, 4);
+  });
+
+  it("B5: a partial-overlap reported flow keeps its non-overlapping portion", () => {
+    // Cumulative covers Jan–Apr15; a 1500 flow over Apr10–25 (15d) straddles the
+    // boundary. The Apr15–25 portion (10d → 1000) is kept; the Apr10–15 overlap is
+    // subsumed. Total 5000 + 1000 = 6000, not 5000 (whole flow dropped).
+    const rows = [
+      row("rCumul", "2026-04-16T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: cumul(5000, "2026-01-01T00:00:00Z", "2026-04-15T00:00:00Z") } },
+      }, "2026-04-15T00:00:00Z"),
+      row("rFlow", "2026-04-26T00:00:00Z", ["SD01"], {
+        casualties: { killed: { total: flow(1500, "2026-04-10T00:00:00Z", "2026-04-25T00:00:00Z") } },
+      }, "2026-04-25T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01")!.data.killed_total;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBeCloseTo(6000, 4);
   });
 });
 
@@ -1324,6 +1781,52 @@ describe("aggregateReports — divergence guard (ADR-0006 §7)", () => {
     if (!f || !("value" in f)) throw new Error("expected numeric field");
     expect(f.value).toBe(50000); // fresher report wins (3.8% < 25%)
     expect(f.divergence == null).toBe(true);
+  });
+
+  it("§9: an API anchor INSIDE the report band is agreement — no signal", () => {
+    // Report gives a wide band [30k, 55k]; DTM 52k falls inside it, so the
+    // anchor tightens rather than diverges — the fresher report value wins.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: { ...nf(40000, "reported"), value_low: 30000, value_high: 55000 } },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(40000);         // report wins; anchor inside band
+    expect(f.divergence == null).toBe(true);
+  });
+
+  it("§9: an API anchor OUTSIDE the report band is the divergence — API wins", () => {
+    // Report band is tight [35k, 45k]; DTM 52k is outside it → disjoint → signal.
+    const rows = [row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+      displacement: { idp_stock: { ...nf(40000, "reported"), value_low: 35000, value_high: 45000 } },
+    }, "2026-06-30T00:00:00Z")];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(52000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(52000);         // API wins the disjoint disagreement
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.reportValue).toBe(40000);
+    expect(f.divergence!.apiValue).toBe(52000);
+  });
+
+  it("§9: two EXACT disagreeing figures don't fake a band — % fallback still fires", () => {
+    // Both figures are exact points (no stated width): 30k and 80k. Their spread
+    // [30k, 80k] is NOT a measurement band. A DTM anchor at 55k sits between them
+    // — the old aggregate-spread test read that as "inside the band" and let the
+    // 30k report stand. Per-figure width → hasRealBand=false → the 25% fallback
+    // vs the headline fires (30k is 45% below 55k) → the authoritative API wins.
+    const rows = [
+      row("r1", "2026-07-10T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(30000, "reported") },
+      }, "2026-06-30T00:00:00Z"),
+      row("r2", "2026-07-08T00:00:00Z", ["SD01"], {
+        displacement: { idp_stock: nf(80000, "reported") },
+      }, "2026-06-30T00:00:00Z"),
+    ];
+    const f = aggregateReports(rows, "SD01", new Map(), dtm(55000, "2026-07-05T00:00:00Z", "2026-06-30T00:00:00Z"))!.data.idp_stock;
+    if (!f || !("value" in f)) throw new Error("expected numeric field");
+    expect(f.value).toBe(55000);         // API wins; the exact spread is not a band
+    expect(f.divergence).toBeTruthy();
+    expect(f.divergence!.apiValue).toBe(55000);
   });
 });
 
