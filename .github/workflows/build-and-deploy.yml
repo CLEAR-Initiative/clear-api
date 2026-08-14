@@ -69,19 +69,31 @@ jobs:
     name: Deploy to ${{ github.ref_name }}
     needs: build
     runs-on: ubuntu-latest
+    # `packages: read` lets the run's GITHUB_TOKEN pull the private GHCR image;
+    # we pass it into the SSH session and `docker login` there so the deploy no
+    # longer depends on a persistent (expirable) `docker login` on the VM.
+    permissions:
+      contents: read
+      packages: read
     # Picks up the matching GitHub Environment — secrets like APP_VM_HOST
     # / APP_VM_SSH_KEY are scoped per environment in repo settings.
     environment: ${{ github.ref_name }}
     steps:
       - name: SSH and roll the deployment
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.APP_VM_HOST }}
           username: ubuntu
           key: ${{ secrets.APP_VM_SSH_KEY }}
+          envs: GHCR_TOKEN
           script_stop: true
           script: |
             set -e
+            # Authenticate to GHCR every deploy — no reliance on a VM-side login
+            # that can silently expire (the cause of the `denied` pull error).
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             cd /srv/app
             docker compose pull clear-api
             # --force-recreate ensures the container picks up the freshly
