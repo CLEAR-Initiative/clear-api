@@ -15,6 +15,7 @@ import { GraphQLError } from "graphql";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
 import { translationResolvers } from "../../src/resolvers/translation.resolver.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import type { Context } from "../../src/context.js";
 
 function ctx(prisma: unknown, role: string | null = "admin"): Context {
@@ -89,6 +90,41 @@ describe("markSignalsProcessed", () => {
     const n = await signalResolvers.Mutation.markSignalsProcessed({}, { ids: [] }, ctx({ signals: { updateMany } }));
     expect(n).toBe(0);
     expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A2. Event (alert-stage queue) ───────────────────────────────────────────
+
+describe("eventsPendingAlert", () => {
+  it("filters severity>=minSeverity + no-alert oldest-first and clamps `first` to [1, 500]", async () => {
+    const findMany = vi.fn(async () => []);
+    const context = ctx({ events: { findMany } });
+
+    await eventResolvers.Query.eventsPendingAlert({}, { first: 9999, minSeverity: 3 }, context);
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { severity: { gte: 3 }, alerts: { none: {} } },
+      orderBy: { firstSignalCreatedAt: "asc" },
+      take: 500, // clamped down from 9999
+    });
+  });
+
+  it("defaults minSeverity to 4 and `first` to 100", async () => {
+    const findMany = vi.fn(async () => []);
+    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }));
+    expect(findMany).toHaveBeenCalledWith({
+      where: { severity: { gte: 4 }, alerts: { none: {} } },
+      orderBy: { firstSignalCreatedAt: "asc" },
+      take: 100,
+    });
+  });
+
+  it("rejects a viewer (admin/analyst only)", async () => {
+    const findMany = vi.fn();
+    await expect(
+      eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }, "viewer")),
+    ).rejects.toBeInstanceOf(GraphQLError);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });
 

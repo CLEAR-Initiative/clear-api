@@ -121,6 +121,31 @@ export const eventResolvers = {
         ...(include ? { include } : {}),
       });
     },
+    // The Dagster alert-stage queue: events that need an alert but don't have
+    // one yet — severity at or above `minSeverity` (default 4) AND no alert row
+    // (`alerts: { none: {} }`). Ordered oldest-first by the event's
+    // earliest-signal timestamp so the alert worker drains in ingestion order.
+    // `first` caps the batch (default 100, clamped to [1, 500]). Admin/pipeline
+    // only.
+    eventsPendingAlert: async (
+      _parent: unknown,
+      args: { first?: number | null; minSeverity?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      const minSeverity = args.minSeverity ?? 4;
+      const include = eventTranslationsInclude(context.locale);
+      return context.prisma.events.findMany({
+        where: {
+          severity: { gte: minSeverity },
+          alerts: { none: {} },
+        },
+        orderBy: { firstSignalCreatedAt: "asc" },
+        take,
+        ...(include ? { include } : {}),
+      });
+    },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireContentReader(context);
       // Only include the event's own translation row eagerly. Field
