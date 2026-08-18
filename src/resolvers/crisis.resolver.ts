@@ -227,7 +227,7 @@ export const crisisResolvers = {
       args: { first?: number | null },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "pipeline"]);
       const take = Math.min(Math.max(args.first ?? 100, 1), 500);
       return context.prisma.crises.findMany({
         where: { enrichmentStatus: "PENDING" },
@@ -247,7 +247,7 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "pipeline"]);
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
         select: { id: true },

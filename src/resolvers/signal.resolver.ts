@@ -198,11 +198,12 @@ export const signalResolvers = {
       args: { first?: number | null; source?: string | null },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "pipeline"]);
       const take = Math.min(Math.max(args.first ?? 100, 1), 500);
       return context.prisma.signals.findMany({
         where: {
           status: "NEW",
+          isDummy: false,
           ...(args.source ? { source: { name: args.source } } : {}),
         },
         orderBy: { publishedAt: "asc" },
@@ -313,11 +314,19 @@ export const signalResolvers = {
     // an already-processed signal is a harmless no-op update.
     markSignalsProcessed: async (
       _parent: unknown,
-      args: { ids: string[]; status?: "PROCESSED" | "FAILED" | null },
+      args: { ids: string[]; status?: "NEW" | "PROCESSED" | "FAILED" | null },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "pipeline"]);
       if (args.ids.length === 0) return 0;
+      // The SDL exposes the full SignalStatus enum, but NEW would produce a
+      // contradictory row (status=NEW alongside a processedAt). Reject it.
+      if (args.status === "NEW") {
+        throw new GraphQLError(
+          "markSignalsProcessed only accepts PROCESSED or FAILED",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
       const status = args.status ?? "PROCESSED";
       const result = await context.prisma.signals.updateMany({
         where: { id: { in: args.ids } },

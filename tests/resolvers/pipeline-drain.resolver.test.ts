@@ -38,7 +38,7 @@ describe("pendingSignals", () => {
     await signalResolvers.Query.pendingSignals({}, { first: 9999, source: "dataminr" }, context);
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { status: "NEW", source: { name: "dataminr" } },
+      where: { status: "NEW", isDummy: false, source: { name: "dataminr" } },
       orderBy: { publishedAt: "asc" },
       take: 500, // clamped down from 9999
     });
@@ -48,18 +48,24 @@ describe("pendingSignals", () => {
     const findMany = vi.fn(async () => []);
     await signalResolvers.Query.pendingSignals({}, {}, ctx({ signals: { findMany } }));
     expect(findMany).toHaveBeenCalledWith({
-      where: { status: "NEW" },
+      where: { status: "NEW", isDummy: false },
       orderBy: { publishedAt: "asc" },
       take: 100,
     });
   });
 
-  it("rejects a viewer (admin/analyst only)", async () => {
+  it("rejects a viewer (admin/pipeline only)", async () => {
     const findMany = vi.fn();
     await expect(
       signalResolvers.Query.pendingSignals({}, {}, ctx({ signals: { findMany } }, "viewer")),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pipeline-role user", async () => {
+    const findMany = vi.fn(async () => []);
+    await signalResolvers.Query.pendingSignals({}, {}, ctx({ signals: { findMany } }, "pipeline"));
+    expect(findMany).toHaveBeenCalled();
   });
 });
 
@@ -91,6 +97,32 @@ describe("markSignalsProcessed", () => {
     expect(n).toBe(0);
     expect(updateMany).not.toHaveBeenCalled();
   });
+
+  it("rejects status=NEW (would produce a NEW row with a processedAt)", async () => {
+    const updateMany = vi.fn();
+    await expect(
+      signalResolvers.Mutation.markSignalsProcessed(
+        {}, { ids: ["a"], status: "NEW" }, ctx({ signals: { updateMany } }),
+      ),
+    ).rejects.toBeInstanceOf(GraphQLError);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pipeline-role user", async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    await signalResolvers.Mutation.markSignalsProcessed(
+      {}, { ids: ["a"] }, ctx({ signals: { updateMany } }, "pipeline"),
+    );
+    expect(updateMany).toHaveBeenCalled();
+  });
+
+  it("rejects a viewer (admin/pipeline only)", async () => {
+    const updateMany = vi.fn();
+    await expect(
+      signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a"] }, ctx({ signals: { updateMany } }, "viewer")),
+    ).rejects.toBeInstanceOf(GraphQLError);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
 });
 
 // ─── A2. Event (alert-stage queue) ───────────────────────────────────────────
@@ -103,7 +135,7 @@ describe("eventsPendingAlert", () => {
     await eventResolvers.Query.eventsPendingAlert({}, { first: 9999, minSeverity: 3 }, context);
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { severity: { gte: 3 }, alerts: { none: {} } },
+      where: { severity: { gte: 3 }, alerts: { none: {} }, isDummy: false },
       orderBy: { firstSignalCreatedAt: "asc" },
       take: 500, // clamped down from 9999
     });
@@ -113,18 +145,24 @@ describe("eventsPendingAlert", () => {
     const findMany = vi.fn(async () => []);
     await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }));
     expect(findMany).toHaveBeenCalledWith({
-      where: { severity: { gte: 4 }, alerts: { none: {} } },
+      where: { severity: { gte: 4 }, alerts: { none: {} }, isDummy: false },
       orderBy: { firstSignalCreatedAt: "asc" },
       take: 100,
     });
   });
 
-  it("rejects a viewer (admin/analyst only)", async () => {
+  it("rejects a viewer (admin/pipeline only)", async () => {
     const findMany = vi.fn();
     await expect(
       eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }, "viewer")),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pipeline-role user", async () => {
+    const findMany = vi.fn(async () => []);
+    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }, "pipeline"));
+    expect(findMany).toHaveBeenCalled();
   });
 });
 
@@ -139,6 +177,20 @@ describe("pendingCrises", () => {
       orderBy: { updatedAt: "asc" },
       take: 1, // clamped up from 0
     });
+  });
+
+  it("rejects a viewer (admin/pipeline only)", async () => {
+    const findMany = vi.fn();
+    await expect(
+      crisisResolvers.Query.pendingCrises({}, {}, ctx({ crises: { findMany } }, "viewer")),
+    ).rejects.toBeInstanceOf(GraphQLError);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pipeline-role user", async () => {
+    const findMany = vi.fn(async () => []);
+    await crisisResolvers.Query.pendingCrises({}, {}, ctx({ crises: { findMany } }, "pipeline"));
+    expect(findMany).toHaveBeenCalled();
   });
 });
 
@@ -163,6 +215,24 @@ describe("markCrisisEnriched", () => {
       crisisResolvers.Mutation.markCrisisEnriched({}, { id: "nope" }, ctx({ crises: { findUnique, update } })),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a viewer (admin/pipeline only)", async () => {
+    const findUnique = vi.fn();
+    const update = vi.fn();
+    await expect(
+      crisisResolvers.Mutation.markCrisisEnriched({}, { id: "c1" }, ctx({ crises: { findUnique, update } }, "viewer")),
+    ).rejects.toBeInstanceOf(GraphQLError);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pipeline-role user", async () => {
+    const findUnique = vi.fn(async () => ({ id: "c1" }));
+    const update = vi.fn(async () => ({ id: "c1", enrichmentStatus: "ENRICHED" }));
+    await crisisResolvers.Mutation.markCrisisEnriched(
+      {}, { id: "c1" }, ctx({ crises: { findUnique, update } }, "pipeline"),
+    );
+    expect(update).toHaveBeenCalled();
   });
 });
 

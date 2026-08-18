@@ -132,7 +132,7 @@ export const eventResolvers = {
       args: { first?: number | null; minSeverity?: number | null },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin", "pipeline"]);
       const take = Math.min(Math.max(args.first ?? 100, 1), 500);
       const minSeverity = args.minSeverity ?? 4;
       const include = eventTranslationsInclude(context.locale);
@@ -140,6 +140,7 @@ export const eventResolvers = {
         where: {
           severity: { gte: minSeverity },
           alerts: { none: {} },
+          isDummy: false,
         },
         orderBy: { firstSignalCreatedAt: "asc" },
         take,
