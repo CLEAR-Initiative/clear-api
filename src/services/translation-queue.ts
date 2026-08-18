@@ -60,20 +60,31 @@ export function enqueueTranslationDurable(
   const key = `${entityType}:${entityId}:${locale}`;
   if (!shouldEnqueue(key)) return;
 
-  void prisma.translationQueue
-    .upsert({
-      where: {
-        entityType_entityId_locale: { entityType, entityId, locale },
-      },
-      create: { entityType, entityId, locale },
-      update: {}, // idempotent — keep the original enqueuedAt
-    })
-    .catch((err: unknown) => {
-      // Drop the dedup entry so a later read can retry the enqueue.
-      recentlyEnqueued.delete(key);
-      console.warn(
-        `[translation-queue] enqueue failed for ${key}:`,
-        err instanceof Error ? err.message : err,
-      );
-    });
+  // Wrapped so this is truly fire-and-forget: neither a synchronous throw
+  // (e.g. a misconfigured client) nor an async rejection can propagate into
+  // the calling resolver — a failed enqueue only leaves the entity English.
+  try {
+    void prisma.translationQueue
+      .upsert({
+        where: {
+          entityType_entityId_locale: { entityType, entityId, locale },
+        },
+        create: { entityType, entityId, locale },
+        update: {}, // idempotent — keep the original enqueuedAt
+      })
+      .catch((err: unknown) => {
+        // Drop the dedup entry so a later read can retry the enqueue.
+        recentlyEnqueued.delete(key);
+        console.warn(
+          `[translation-queue] enqueue failed for ${key}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+  } catch (err: unknown) {
+    recentlyEnqueued.delete(key);
+    console.warn(
+      `[translation-queue] enqueue threw for ${key}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }

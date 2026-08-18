@@ -7,7 +7,7 @@
  *   - `../../src/utils/geo-resolve.js`     (PostGIS / location resolution)
  *   - `../../src/utils/location-scope.js`  (team location filter builder)
  *   - `../../src/utils/activity-log.js`    (audit-log writes)
- *   - `../../src/services/celery.js`       (translation enqueue → Redis broker)
+ *   - `../../src/services/translation-queue.js` (durable translation enqueue)
  *   - `../../src/services/messaging/registry.js` + `.../templates.js` (email)
  *   - `../../src/utils/alert-email-helpers.js` (localization helpers)
  *
@@ -58,8 +58,8 @@ vi.mock("../../src/utils/location-scope.js", () => ({
 vi.mock("../../src/utils/activity-log.js", () => ({
   logActivity: vi.fn(),
 }));
-vi.mock("../../src/services/celery.js", () => ({
-  bufferTranslationRequest: vi.fn(),
+vi.mock("../../src/services/translation-queue.js", () => ({
+  enqueueTranslationDurable: vi.fn(),
 }));
 vi.mock("../../src/services/messaging/registry.js", () => ({
   getEmailProvider: vi.fn(async () => ({ sendBulk: vi.fn() })),
@@ -88,7 +88,7 @@ import {
 } from "../../src/utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../../src/utils/location-scope.js";
 import { logActivity } from "../../src/utils/activity-log.js";
-import { bufferTranslationRequest } from "../../src/services/celery.js";
+import { enqueueTranslationDurable } from "../../src/services/translation-queue.js";
 
 type User = { id: string; role: string } | null;
 
@@ -499,14 +499,14 @@ describe("Event.title (locale overlay)", () => {
     const ctx = buildContext(VIEWER, {}, "ar");
     const parent = { id: "e1", title: "Canonical", translations: [{ data: { title: "مترجم" } }] };
     await expect(eventResolvers.Event.title(parent, {}, ctx)).resolves.toBe("مترجم");
-    expect(bufferTranslationRequest).not.toHaveBeenCalled();
+    expect(enqueueTranslationDurable).not.toHaveBeenCalled();
   });
 
   it("falls back to canonical and enqueues a translation when the included row is empty", async () => {
     const ctx = buildContext(VIEWER, {}, "ar");
     const parent = { id: "e1", title: "Canonical", translations: [] };
     await expect(eventResolvers.Event.title(parent, {}, ctx)).resolves.toBe("Canonical");
-    expect(bufferTranslationRequest).toHaveBeenCalledWith("event", "e1");
+    expect(enqueueTranslationDurable).toHaveBeenCalledWith(ctx.prisma, "event", "e1", "ar");
   });
 
   it("uses the per-request translationLoader when translations were not pre-included", async () => {

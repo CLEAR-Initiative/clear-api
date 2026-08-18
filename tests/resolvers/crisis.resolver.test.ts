@@ -55,7 +55,9 @@ import { GraphQLError } from "graphql";
 
 vi.mock("../../src/services/celery.js", () => ({
   sendCeleryTask: vi.fn().mockResolvedValue(undefined),
-  bufferTranslationRequest: vi.fn(),
+}));
+vi.mock("../../src/services/translation-queue.js", () => ({
+  enqueueTranslationDurable: vi.fn(),
 }));
 vi.mock("../../src/utils/geo-resolve.js", () => ({
   getLocationIdsWithDescendants: vi.fn().mockResolvedValue([]),
