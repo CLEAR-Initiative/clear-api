@@ -42,7 +42,7 @@ type User = { id: string; role: string } | null;
 /** Build a Context with an arbitrary prisma stub shape. */
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: prisma as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -52,6 +52,21 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
 const admin: User = { id: "a1", role: "admin" };
 const pipeline: User = { id: "p1", role: "pipeline" };
 const viewer: User = { id: "v1", role: "viewer" };
+
+/** Shape of the single argument passed to the mocked `translations.upsert`,
+ *  used to narrow `upsert.mock.calls[i][0]` (typed `unknown` by the vi.fn stub)
+ *  when asserting on the where/create/update payloads below. */
+type UpsertArg = {
+  where: {
+    entityType_entityId_locale: {
+      entityType: string;
+      entityId: string;
+      locale: string;
+    };
+  };
+  create: Record<string, unknown>;
+  update: Record<string, unknown>;
+};
 
 const { translations, entitiesMissingTranslation, translationCoverage } =
   translationResolvers.Query;
@@ -475,7 +490,7 @@ describe("Mutation.upsertTranslations", () => {
     expect($transaction).toHaveBeenCalledOnce();
     expect(upsert).toHaveBeenCalledTimes(2);
 
-    const first = upsert.mock.calls[0][0];
+    const first = upsert.mock.calls[0]![0] as UpsertArg;
     expect(first.where).toEqual({
       entityType_entityId_locale: { entityType: "event", entityId: "e1", locale: "ar" },
     });
@@ -492,7 +507,7 @@ describe("Mutation.upsertTranslations", () => {
     expect(first.create.locationId).toBeUndefined();
     expect(first.update).toMatchObject({ eventId: "e1", data: { t: "a" } });
 
-    const second = upsert.mock.calls[1][0];
+    const second = upsert.mock.calls[1]![0] as UpsertArg;
     expect(second.where.entityType_entityId_locale.locale).toBe("fr");
 
     expect(result).toEqual({
@@ -509,7 +524,7 @@ describe("Mutation.upsertTranslations", () => {
       { input: { entityType: "crisis", entityId: "c1", translations: [goodLocaleEntry] } },
       ctx,
     );
-    const arg = upsert.mock.calls[0][0];
+    const arg = upsert.mock.calls[0]![0] as UpsertArg;
     expect(arg.create.crisisId).toBe("c1");
     expect(arg.create.eventId).toBeUndefined();
     expect(arg.create.locationId).toBeUndefined();
@@ -522,7 +537,7 @@ describe("Mutation.upsertTranslations", () => {
       { input: { entityType: "location", entityId: "l1", translations: [goodLocaleEntry] } },
       ctx,
     );
-    const arg = upsert.mock.calls[0][0];
+    const arg = upsert.mock.calls[0]![0] as UpsertArg;
     expect(arg.create.locationId).toBe("l1");
     expect(arg.create.eventId).toBeUndefined();
     expect(arg.create.crisisId).toBeUndefined();
