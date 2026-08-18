@@ -217,17 +217,20 @@ describe("Query.translationCoverage", () => {
       eventCount?: number;
       crisisCount?: number;
       locationCount?: number;
+      situationCount?: number;
     } = {},
   ) {
     const groupBy = vi.fn().mockResolvedValue(opts.grouped ?? []);
     const eventsCount = vi.fn().mockResolvedValue(opts.eventCount ?? 0);
     const crisesCount = vi.fn().mockResolvedValue(opts.crisisCount ?? 0);
     const locationsCount = vi.fn().mockResolvedValue(opts.locationCount ?? 0);
+    const situationCount = vi.fn().mockResolvedValue(opts.situationCount ?? 0);
     const ctx = buildContext(user, {
       translations: { groupBy },
       events: { count: eventsCount },
       crises: { count: crisesCount },
       locations: { count: locationsCount },
+      situationAnalysis: { count: situationCount },
     });
     return { ctx, groupBy };
   }
@@ -239,11 +242,12 @@ describe("Query.translationCoverage", () => {
     });
   });
 
-  it("builds the full (event,crisis,location) x (target locale) matrix, skipping 'en'", async () => {
+  it("builds the full (event,crisis,location,situationAnalysis) x (target locale) matrix, skipping 'en'", async () => {
     const { ctx } = buildCtx(admin, {
       eventCount: 5,
       crisisCount: 2,
       locationCount: 9,
+      situationCount: 4,
       grouped: [{ entityType: "event", locale: "ar", _count: { entityId: 3 } }],
     });
     const out = (await translationCoverage(null, {}, ctx)) as Array<{
@@ -253,8 +257,8 @@ describe("Query.translationCoverage", () => {
       translatedCount: number;
     }>;
 
-    // 3 entity types x 2 target locales (ar, fr — 'en' excluded) = 6 rows.
-    expect(out).toHaveLength(6);
+    // 4 entity types x 2 target locales (ar, fr — 'en' excluded) = 8 rows.
+    expect(out).toHaveLength(8);
     expect(out.some((r) => r.locale === "en")).toBe(false);
 
     // The one grouped row is reflected; every other cell zero-filled.
@@ -271,6 +275,10 @@ describe("Query.translationCoverage", () => {
     expect(crisisAr).toMatchObject({ canonicalCount: 2, translatedCount: 0 });
     const locationFr = out.find((r) => r.entityType === "location" && r.locale === "fr");
     expect(locationFr).toMatchObject({ canonicalCount: 9, translatedCount: 0 });
+    const situationAr = out.find(
+      (r) => r.entityType === "situationAnalysis" && r.locale === "ar",
+    );
+    expect(situationAr).toMatchObject({ canonicalCount: 4, translatedCount: 0 });
   });
 });
 

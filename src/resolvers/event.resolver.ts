@@ -9,7 +9,7 @@ import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
-import { bufferTranslationRequest } from "../services/celery.js";
+import { enqueueTranslationDurable } from "../services/translation-queue.js";
 
 /**
  * Build the Prisma `include` clause that folds the active-locale
@@ -705,7 +705,7 @@ export const eventResolvers = {
         const localized = data?.title;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("event", parent.id);
+          enqueueTranslationDurable(context.prisma, "event", parent.id, context.locale);
         }
         return parent.title;
       }
@@ -730,7 +730,7 @@ export const eventResolvers = {
         const localized = data?.description;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("event", parent.id);
+          enqueueTranslationDurable(context.prisma, "event", parent.id, context.locale);
         }
         return parent.description;
       }

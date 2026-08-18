@@ -566,6 +566,16 @@ version. Requires any authenticated content reader.<div class="field-args"><span
 country's most recently written version. Pass an older one to
 chart a historical payload shape.</span></div></td>
   </tr><tr>
+    <td><code>situationAnalysisById</code></td>
+    <td><code>SituationAnalysis</code></td>
+    <td>Read one situation-analysis snapshot by its row id, including
+superseded history rows (the bucket-keyed `situationAnalysis` query
+only returns the current row). Used by the translation pipeline to
+fetch a specific generation's canonical prose. `data` is overlaid
+with the caller's locale translation like every other read — the
+pipeline calls it as `en` and gets canonical text back. Requires any
+authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
     <td><code>hasAggregatedDatapoints</code></td>
     <td><code>Boolean!</code></td>
     <td>True when at least one current `aggregated_datapoints` row

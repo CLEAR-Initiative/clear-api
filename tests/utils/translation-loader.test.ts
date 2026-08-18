@@ -64,7 +64,7 @@ describe("createTranslationLoader — load + FK column selection", () => {
     await loader.load("crisis", "c1");
     expect(findMany).toHaveBeenCalledWith({
       where: { crisisId: { in: ["c1"] }, locale: "ar" },
-      select: { eventId: true, crisisId: true, locationId: true, data: true },
+      select: { eventId: true, crisisId: true, locationId: true, situationAnalysisId: true, data: true },
     });
   });
 
@@ -75,7 +75,7 @@ describe("createTranslationLoader — load + FK column selection", () => {
     await loader.load("event", "e1");
     expect(findMany).toHaveBeenCalledWith({
       where: { eventId: { in: ["e1"] }, locale: "fr" },
-      select: { eventId: true, crisisId: true, locationId: true, data: true },
+      select: { eventId: true, crisisId: true, locationId: true, situationAnalysisId: true, data: true },
     });
   });
 
@@ -86,7 +86,7 @@ describe("createTranslationLoader — load + FK column selection", () => {
     await loader.load("location", "l1");
     expect(findMany).toHaveBeenCalledWith({
       where: { locationId: { in: ["l1"] }, locale: "fr" },
-      select: { eventId: true, crisisId: true, locationId: true, data: true },
+      select: { eventId: true, crisisId: true, locationId: true, situationAnalysisId: true, data: true },
     });
   });
 

@@ -355,6 +355,15 @@ export const queryTypeDef = gql`
       schemaVersion: String
     ): [SituationAnalysis!]!
 
+    """Read one situation-analysis snapshot by its row id, including
+    superseded history rows (the bucket-keyed \`situationAnalysis\` query
+    only returns the current row). Used by the translation pipeline to
+    fetch a specific generation's canonical prose. \`data\` is overlaid
+    with the caller's locale translation like every other read — the
+    pipeline calls it as \`en\` and gets canonical text back. Requires any
+    authenticated content reader."""
+    situationAnalysisById(id: String!): SituationAnalysis
+
     """True when at least one current \`aggregated_datapoints\` row
     exists for the given schema version. Used by the Dagster
     aggregation asset to distinguish first-run backfill (wide
