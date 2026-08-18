@@ -272,8 +272,8 @@ describe("Query.translationCoverage", () => {
       translatedCount: number;
     }>;
 
-    // 4 entity types x 2 target locales (ar, fr — 'en' excluded) = 8 rows.
-    expect(out).toHaveLength(8);
+    // 4 entity types x 3 target locales (ar, fr, es — 'en' excluded) = 12 rows.
+    expect(out).toHaveLength(12);
     expect(out.some((r) => r.locale === "en")).toBe(false);
 
     // The one grouped row is reflected; every other cell zero-filled.

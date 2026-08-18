@@ -44,7 +44,7 @@ describe("isSupportedLocale", () => {
 
   it("returns false for an unsupported but plausible code", () => {
     expect(isSupportedLocale("de")).toBe(false);
-    expect(isSupportedLocale("es")).toBe(false);
+    expect(isSupportedLocale("pt")).toBe(false);
   });
 
   it("is case-sensitive (locales are stored lowercased)", () => {
@@ -107,7 +107,7 @@ describe("pickAcceptLanguage", () => {
   });
 
   it("skips unsupported languages and returns the first supported one", () => {
-    expect(pickAcceptLanguage("de-DE,es,en-GB")).toBe("en");
+    expect(pickAcceptLanguage("de-DE,pt,en-GB")).toBe("en");
   });
 
   it("ignores q-value parameters when extracting the tag", () => {
@@ -115,7 +115,7 @@ describe("pickAcceptLanguage", () => {
   });
 
   it("returns null when no token matches a supported locale", () => {
-    expect(pickAcceptLanguage("de,es,it")).toBeNull();
+    expect(pickAcceptLanguage("de,pt,it")).toBeNull();
     expect(pickAcceptLanguage("zh-CN")).toBeNull();
   });
 
