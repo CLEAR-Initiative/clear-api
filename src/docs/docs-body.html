@@ -267,10 +267,13 @@ are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</co
   </tr><tr>
     <td><code>eventsPendingAlert</code></td>
     <td><code>[Event!]!</code></td>
-    <td>Events awaiting an alert (severity &gt;= minSeverity AND no alert row yet),
-oldest-first by the event's earliest-signal timestamp — the Dagster
-alert-stage queue. `first` caps the batch (default 100, max 500);
-`minSeverity` floors the severity (default 4). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>minSeverity: Int</code></span></div></td>
+    <td>Events awaiting an alert (severity &gt;= minSeverity AND no alert row yet AND
+a signal within the last `maxAgeHours`), oldest-first by the event's
+earliest-signal timestamp — the Dagster alert-stage queue. `first` caps the
+batch (default 100, max 500); `minSeverity` floors the severity (default 4);
+`maxAgeHours` bounds staleness on the latest signal's real-world time so the
+historical backlog / backdated backfill never alerts (default 48; 0 disables).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>minSeverity: Int</code></span><span class="arg"><code>maxAgeHours: Int</code></span></div></td>
   </tr><tr>
     <td><code>eventsByLocation</code></td>
     <td><code>[Event!]!</code></td>

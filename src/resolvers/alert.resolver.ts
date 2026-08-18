@@ -141,6 +141,13 @@ export const alertResolvers = {
         });
       }
 
+      // Only PUBLISHED alerts notify. draft/archived are deliberately silent —
+      // the pipeline creates archived alerts to record a suppressed (stale /
+      // backdated) event without emailing anyone. Fanning out on any status
+      // caused a cutover alert storm (40+ emails for weeks-old backfilled events).
+      // The activity log above still records the create regardless of status.
+      if (alert.status !== "published") return alert;
+
       // Fan out notifications to immediate subscribers
       const eventLocationIds = [
         event.originId,
