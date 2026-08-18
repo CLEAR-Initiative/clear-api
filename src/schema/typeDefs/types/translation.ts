@@ -2,6 +2,22 @@ import { gql } from "graphql-tag";
 
 export const translationTypeDef = gql`
   """
+  A pending (re)translation request — the durable replacement for the
+  lazy-on-read Celery enqueue. Drained by the Dagster translation consumer,
+  which translates the entity at \`locale\` and writes it back via
+  upsertTranslations (which clears the queue row).
+  """
+  type TranslationQueueItem {
+    id: String!
+    """'event' | 'crisis' | 'location'."""
+    entityType: String!
+    entityId: String!
+    """BCP-47 locale (lowercased) to translate into."""
+    locale: String!
+    enqueuedAt: DateTime!
+  }
+
+  """
   A single translation row, returned by the admin/pipeline-only
   translations(entityType, entityId) query so the pipeline can compare
   stored source-hashes against the canonical row and decide which fields

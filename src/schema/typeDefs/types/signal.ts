@@ -1,11 +1,26 @@
 import { gql } from "graphql-tag";
 
 export const signalTypeDef = gql`
+  """Durable processing status for the Dagster event-driven drain.
+  NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
+  alert done; FAILED = terminal failure."""
+  enum SignalStatus {
+    NEW
+    PROCESSED
+    FAILED
+  }
+
   """A signal derived from a data source."""
   type Signal {
     id: String!
     """The data source this signal was collected from."""
     source: DataSource!
+    """Processing status for the pipeline drain (NEW until downstream runs)."""
+    status: SignalStatus!
+    """When the downstream pipeline finished processing this signal (null while NEW)."""
+    processedAt: DateTime
+    """Pointer to the raw payload blob in the S3 data lake, when landed there."""
+    rawS3Key: String
     """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
     deduplicate ingestion — (source, externalId) is unique."""
     externalId: String

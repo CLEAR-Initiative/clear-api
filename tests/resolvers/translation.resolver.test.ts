@@ -294,11 +294,15 @@ describe("Mutation.upsertTranslations", () => {
     // return values of the mocked upsert calls). Resolve them as-is.
     const $transaction = vi.fn(async (ops: unknown[]) => ops);
 
+    // upsertTranslations clears any queued (re)translation rows after writing —
+    // stub the queue delete so the resolver's drain-completion step is a no-op.
+    const queueDeleteMany = vi.fn(async () => ({ count: 0 }));
     const ctx = buildContext(user, {
       events: { findUnique: eventsFind },
       crises: { findUnique: crisesFind },
       locations: { findUnique: locationsFind },
       translations: { upsert },
+      translationQueue: { deleteMany: queueDeleteMany },
       $transaction,
     });
     return { ctx, upsert, $transaction, eventsFind, crisesFind, locationsFind, findUnique };

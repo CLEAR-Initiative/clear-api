@@ -219,9 +219,50 @@ export const crisisResolvers = {
       }
       return crisis;
     },
+
+    // The Dagster enrichment drain: crises needing (re)enrichment
+    // (enrichmentStatus = PENDING), oldest-first. Admin/pipeline only.
+    pendingCrises: async (
+      _parent: unknown,
+      args: { first?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      return context.prisma.crises.findMany({
+        where: { enrichmentStatus: "PENDING" },
+        orderBy: { updatedAt: "asc" },
+        take,
+      });
+    },
   },
 
   Mutation: {
+    // Drain completion: the enrichment consumer marks a crisis ENRICHED once
+    // narrative/scenarios/needs-analysis are current. Admin/pipeline only.
+    // Idempotent. (setCrisisNeedsAnalysis also flips ENRICHED for the current
+    // Celery path; this is the explicit signal for the Dagster consumer.)
+    markCrisisEnriched: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const existing = await context.prisma.crises.findUnique({
+        where: { id: args.id },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Crisis not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      return context.prisma.crises.update({
+        where: { id: args.id },
+        data: { enrichmentStatus: "ENRICHED" },
+      });
+    },
+
     /**
      * Create a new crisis from a list of event IDs.
      * Validates that all event IDs exist, then creates the crisis and
@@ -374,7 +415,8 @@ export const crisisResolvers = {
       );
       await context.prisma.crises.update({
         where: { id: crisisId },
-        data: { populationAffected },
+        // Event set changed → enrichment is stale; flag it for the drain.
+        data: { populationAffected, enrichmentStatus: "PENDING" },
       });
 
       const districtIds = await collectDistrictIds(context.prisma, allEventIds);
@@ -452,7 +494,8 @@ export const crisisResolvers = {
       );
       const updated = await context.prisma.crises.update({
         where: { id: crisisId },
-        data: { populationAffected },
+        // Event set changed → enrichment is stale; flag it for the drain.
+        data: { populationAffected, enrichmentStatus: "PENDING" },
       });
 
       // Regenerate the narrative so title/summary reflect the new event set.
@@ -543,13 +586,17 @@ export const crisisResolvers = {
       // cast to jsonb so the array round-trips losslessly through SQL.
       const generalSummaryJson = JSON.stringify(generalSummary);
       const sectorJson = JSON.stringify(sector);
+      // The SAF needs analysis is the terminal enrichment writeback, so clear
+      // the drain marker (ENRICHED) in the same statement. The explicit
+      // markCrisisEnriched mutation covers the Dagster consumer's own signal.
       await context.prisma.$executeRaw`
         UPDATE "crises"
         SET "needs" = COALESCE("needs", '{}'::jsonb)
           || jsonb_build_object(
             'generalSummary', ${generalSummaryJson}::jsonb,
             'sector', ${sectorJson}::jsonb
-          )
+          ),
+          "enrichment_status" = 'ENRICHED'
         WHERE "id" = ${id}
       `;
 
