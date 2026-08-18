@@ -62,11 +62,14 @@ export const queryTypeDef = gql`
     """
     existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
 
-    """Events awaiting an alert (severity >= minSeverity AND no alert row yet),
-    oldest-first by the event's earliest-signal timestamp — the Dagster
-    alert-stage queue. \`first\` caps the batch (default 100, max 500);
-    \`minSeverity\` floors the severity (default 4). Admin/pipeline only."""
-    eventsPendingAlert(first: Int = 100, minSeverity: Int = 4): [Event!]!
+    """Events awaiting an alert (severity >= minSeverity AND no alert row yet AND
+    a signal within the last \`maxAgeHours\`), oldest-first by the event's
+    earliest-signal timestamp — the Dagster alert-stage queue. \`first\` caps the
+    batch (default 100, max 500); \`minSeverity\` floors the severity (default 4);
+    \`maxAgeHours\` bounds staleness on the latest signal's real-world time so the
+    historical backlog / backdated backfill never alerts (default 48; 0 disables).
+    Admin/pipeline only."""
+    eventsPendingAlert(first: Int = 100, minSeverity: Int = 4, maxAgeHours: Int = 48): [Event!]!
 
     """List events by location. Returns all events whose origin, destination, or general location is within the given location (including descendants)."""
     eventsByLocation(locationId: String!): [Event!]!

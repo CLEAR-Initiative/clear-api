@@ -129,18 +129,37 @@ export const eventResolvers = {
     // only.
     eventsPendingAlert: async (
       _parent: unknown,
-      args: { first?: number | null; minSeverity?: number | null },
+      args: {
+        first?: number | null;
+        minSeverity?: number | null;
+        maxAgeHours?: number | null;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
       const take = Math.min(Math.max(args.first ?? 100, 1), 500);
       const minSeverity = args.minSeverity ?? 4;
+      // Age bound on the LATEST signal's real-world time: only events that are
+      // recently active surface for alerting. This keeps the historical backlog
+      // and backdated backfill (e.g. weeks-old ACLED events replayed on ingest)
+      // out — such signals are grouped into their event but must NOT alert. 0
+      // disables the bound. Default 48h.
+      const maxAgeHours = args.maxAgeHours ?? 48;
+      const recentOnly =
+        maxAgeHours > 0
+          ? {
+              lastSignalCreatedAt: {
+                gte: new Date(Date.now() - maxAgeHours * 3_600_000),
+              },
+            }
+          : {};
       const include = eventTranslationsInclude(context.locale);
       return context.prisma.events.findMany({
         where: {
           severity: { gte: minSeverity },
           alerts: { none: {} },
           isDummy: false,
+          ...recentOnly,
         },
         orderBy: { firstSignalCreatedAt: "asc" },
         take,

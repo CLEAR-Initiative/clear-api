@@ -135,15 +135,35 @@ describe("eventsPendingAlert", () => {
     await eventResolvers.Query.eventsPendingAlert({}, { first: 9999, minSeverity: 3 }, context);
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { severity: { gte: 3 }, alerts: { none: {} }, isDummy: false },
+      where: {
+        severity: { gte: 3 },
+        alerts: { none: {} },
+        isDummy: false,
+        lastSignalCreatedAt: { gte: expect.any(Date) }, // 48h age bound (default)
+      },
       orderBy: { firstSignalCreatedAt: "asc" },
       take: 500, // clamped down from 9999
     });
   });
 
-  it("defaults minSeverity to 4 and `first` to 100", async () => {
+  it("defaults minSeverity to 4 and `first` to 100 and applies the 48h age bound", async () => {
     const findMany = vi.fn(async () => []);
     await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }));
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        severity: { gte: 4 },
+        alerts: { none: {} },
+        isDummy: false,
+        lastSignalCreatedAt: { gte: expect.any(Date) },
+      },
+      orderBy: { firstSignalCreatedAt: "asc" },
+      take: 100,
+    });
+  });
+
+  it("omits the age bound when maxAgeHours is 0", async () => {
+    const findMany = vi.fn(async () => []);
+    await eventResolvers.Query.eventsPendingAlert({}, { maxAgeHours: 0 }, ctx({ events: { findMany } }));
     expect(findMany).toHaveBeenCalledWith({
       where: { severity: { gte: 4 }, alerts: { none: {} }, isDummy: false },
       orderBy: { firstSignalCreatedAt: "asc" },
