@@ -12,13 +12,12 @@ import {
 import {
   createTranslationLoader,
   type TranslationLoader,
-  type TranslatableEntityType,
 } from "./utils/translation-loader.js";
 import {
   createRepresentativePointLoader,
   type RepresentativePointLoader,
 } from "./utils/representative-point-loader.js";
-import { bufferTranslationRequest } from "./services/celery.js";
+import { enqueueTranslationDurable } from "./services/translation-queue.js";
 
 export interface Context {
   prisma: PrismaClient;
@@ -89,29 +88,6 @@ function readCookie(rawHeader: string | string[] | undefined, name: string): str
   return null;
 }
 
-/**
- * Lazy-on-read enqueue hook. When a resolver discovers an entity has
- * no translation for the active locale yet, this routes the miss into
- * the per-process batch buffer (see services/celery.ts). The buffer
- * flushes every 500ms as ONE Celery task carrying every miss the
- * process saw in that window, instead of firing N independent Redis
- * round-trips per request — the IIFE-per-miss pattern saturated the
- * event loop at non-English locales when a single /detection load
- * surfaced 100+ misses across nested signal locations.
- *
- * Dedup happens inside the buffer (same entity from two concurrent
- * requests collapses to one entry). Across flush windows the worker's
- * staleness-diff keeps repeats idempotent. The function returns
- * synchronously — the user's current request still gets canonical
- * English and is never blocked on broker I/O.
- */
-function enqueueTranslation(
-  entityType: TranslatableEntityType,
-  entityId: string,
-): void {
-  bufferTranslationRequest(entityType, entityId);
-}
-
 export async function createContext(
   args: ExpressContextFunctionArgument,
 ): Promise<Context> {
@@ -151,11 +127,15 @@ export async function createContext(
     translationLoader: createTranslationLoader(
       prisma,
       locale,
-      // Skip the lazy enqueue entirely for the canonical locale — the
-      // loader short-circuits for "en" too, but being explicit here
-      // matches the resolver semantic and saves a function call on
-      // every English read.
-      locale === DEFAULT_LOCALE ? undefined : enqueueTranslation,
+      // On a translation miss, drop a row into the durable translation_queue
+      // (the Dagster drain path) for the active locale. Fire-and-forget: the
+      // current request still returns canonical English immediately. Skipped
+      // entirely for the canonical locale — the loader short-circuits for "en"
+      // too, but being explicit here saves a closure alloc on every English read.
+      locale === DEFAULT_LOCALE
+        ? undefined
+        : (entityType, entityId) =>
+            enqueueTranslationDurable(prisma, entityType, entityId, locale),
     ),
     representativePointLoader: createRepresentativePointLoader(prisma, locale),
   };

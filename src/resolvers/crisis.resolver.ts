@@ -5,7 +5,8 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
 import { isPlatformAdmin, requireAuth, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
-import { bufferTranslationRequest, sendCeleryTask } from "../services/celery.js";
+import { sendCeleryTask } from "../services/celery.js";
+import { enqueueTranslationDurable } from "../services/translation-queue.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
 
 /**
@@ -868,7 +869,7 @@ export const crisisResolvers = {
         const localized = data?.title;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("crisis", parent.id);
+          enqueueTranslationDurable(context.prisma, "crisis", parent.id, context.locale);
         }
         return parent.title;
       }
@@ -893,7 +894,7 @@ export const crisisResolvers = {
         const localized = data?.summary;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("crisis", parent.id);
+          enqueueTranslationDurable(context.prisma, "crisis", parent.id, context.locale);
         }
         return parent.summary;
       }
@@ -918,7 +919,7 @@ export const crisisResolvers = {
         const localized = data?.scenarios;
         if (localized != null) return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("crisis", parent.id);
+          enqueueTranslationDurable(context.prisma, "crisis", parent.id, context.locale);
         }
         return parent.scenarios;
       }
@@ -943,7 +944,7 @@ export const crisisResolvers = {
         const localized = data?.needs;
         if (localized != null) return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("crisis", parent.id);
+          enqueueTranslationDurable(context.prisma, "crisis", parent.id, context.locale);
         }
         return parent.needs;
       }

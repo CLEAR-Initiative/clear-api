@@ -5,7 +5,7 @@ import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { computeAncestorIds, findOrCreateLandmarkL4 } from "../utils/geo-resolve.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
-import { bufferTranslationRequest } from "../services/celery.js";
+import { enqueueTranslationDurable } from "../services/translation-queue.js";
 
 interface CreateLocationInput {
   geoId?: number;
@@ -333,7 +333,7 @@ export const locationResolvers = {
         const localized = data?.name;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("location", parent.id);
+          enqueueTranslationDurable(context.prisma, "location", parent.id, context.locale);
         }
         return parent.name;
       }

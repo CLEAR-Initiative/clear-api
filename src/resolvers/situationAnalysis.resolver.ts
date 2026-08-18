@@ -18,6 +18,8 @@ import type { Prisma } from "../generated/prisma/client.js";
 
 import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { DEFAULT_LOCALE } from "../utils/locales.js";
+import { deepMergeTranslation } from "../utils/translation-merge.js";
 
 // Reads resolve the schema version from the data rather than pinning a
 // constant. The pipeline
@@ -176,6 +178,44 @@ export const situationAnalysisResolvers = {
         orderBy: { windowStart: "desc" },
         take: limit,
       });
+    },
+
+    // By-id read, including superseded history rows (the bucket-keyed
+    // `situationAnalysis` query only ever returns the current row). The
+    // translation pipeline uses this to fetch a specific generation's
+    // canonical prose; `data` is overlaid per-locale by the field resolver
+    // below, so the pipeline (locale=en) receives canonical text.
+    situationAnalysisById: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      return context.prisma.situationAnalysis.findUnique({
+        where: { id: args.id },
+      });
+    },
+  },
+
+  // Overlay the active-locale translation onto the analysis `data` blob.
+  // The pipeline writes one translation row per locale carrying only the
+  // translated prose leaves in the same nested positions; deepMergeTranslation
+  // splices them over canonical so numbers / ids / enums stay authoritative.
+  // Short-circuits to canonical for `en` and when no translation exists yet
+  // (the loader's miss also enqueues a durable (re)translation request).
+  SituationAnalysis: {
+    data: async (
+      parent: { id: string; data: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.locale === DEFAULT_LOCALE) return parent.data;
+      const tr = await context.translationLoader.load(
+        "situationAnalysis",
+        parent.id,
+      );
+      if (!tr) return parent.data;
+      return deepMergeTranslation(parent.data, tr);
     },
   },
 

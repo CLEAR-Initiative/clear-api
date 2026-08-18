@@ -184,13 +184,15 @@ model translations {
   /// `findMany`, and at non-English locales the additional roundtrip plus
   /// the lazy-on-read enqueue side-effect saturated the resolver fan-out
   /// for list views (see 2026-06-17 incident).
-  eventId    String? @map("event_id")
-  crisisId   String? @map("crisis_id")
-  locationId String? @map("location_id")
+  eventId             String? @map("event_id")
+  crisisId            String? @map("crisis_id")
+  locationId          String? @map("location_id")
+  situationAnalysisId String? @map("situation_analysis_id")
 
-  event    events?    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  crisis   crises?    @relation(fields: [crisisId], references: [id], onDelete: Cascade)
-  location locations? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  event             events?            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  crisis            crises?            @relation(fields: [crisisId], references: [id], onDelete: Cascade)
+  location          locations?         @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  situationAnalysis situationAnalysis? @relation(fields: [situationAnalysisId], references: [id], onDelete: Cascade)
 
   /// BCP-47 code (lowercased) — 'ar', 'fr', etc. Matches the
   /// `user.language` field; the resolver context derives locale from there.
@@ -211,6 +213,7 @@ model translations {
   @@unique([eventId, locale])
   @@unique([crisisId, locale])
   @@unique([locationId, locale])
+  @@unique([situationAnalysisId, locale])
   /// Secondary admin queries ("what's covered in Arabic?") use this.
   @@index([entityType, locale])
   @@map("translations")
@@ -1552,6 +1555,13 @@ model situationAnalysis {
   /// changes. Rows of different schema versions never mix on trend
   /// views; a version bump triggers full regeneration.
   schemaVersion          String   @map("schema_version")
+
+  /// Per-locale translation overlays of the prose in `data`. The pipeline
+  /// writes one row per target locale carrying only the translated prose
+  /// leaves; the resolver deep-merges them over canonical `data` at read
+  /// time. Each regeneration is a new row, so its translations are fetched
+  /// fresh (old history rows keep their own). Cascade-deletes with the row.
+  translations           translations[]
 
   /// Partial unique index in the migration SQL:
   ///   UNIQUE (country_location_id, window_start, window_end, schema_version)

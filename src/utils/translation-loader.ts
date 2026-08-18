@@ -6,7 +6,11 @@ import type { Locale } from "./locales.js";
  * here when a new model becomes translatable — the loader and resolvers
  * fan out automatically.
  */
-export type TranslatableEntityType = "event" | "crisis" | "location";
+export type TranslatableEntityType =
+  | "event"
+  | "crisis"
+  | "location"
+  | "situationAnalysis";
 
 /**
  * Shape stored in `translations.data`. Mirrors the canonical entity's
@@ -116,13 +120,21 @@ export function createTranslationLoader(
             ? "eventId"
             : entityType === "crisis"
               ? "crisisId"
-              : "locationId";
+              : entityType === "location"
+                ? "locationId"
+                : "situationAnalysisId";
         const rows = await prisma.translations.findMany({
           where: {
             [fkColumn]: { in: uniqueIds },
             locale,
           },
-          select: { eventId: true, crisisId: true, locationId: true, data: true },
+          select: {
+            eventId: true,
+            crisisId: true,
+            locationId: true,
+            situationAnalysisId: true,
+            data: true,
+          },
         });
 
         const byId = new Map<string, TranslationData>();
@@ -135,7 +147,9 @@ export function createTranslationLoader(
               ? row.eventId
               : entityType === "crisis"
                 ? row.crisisId
-                : row.locationId;
+                : entityType === "location"
+                  ? row.locationId
+                  : row.situationAnalysisId;
           if (!id) continue;
           // Prisma types `data` as JsonValue which is wider than what we
           // know the pipeline writes. Cast at the loader boundary so
