@@ -219,6 +219,23 @@ describe("aggregateReports — additive count (killed_total)", () => {
     // both reports are recorded, and the suppression is counted.
     expect(field.contributing_report_ids.sort()).toEqual(["r1", "r2"]);
     expect(field.suppressed_count).toBe(1);
+    // Per-figure provenance: every figure (winner + suppressed) traces back to
+    // its report / value / page / chunk / quote, with is_winner marking which
+    // reached the aggregate.
+    const figs = [...field.contributing_figures].sort((a, b) =>
+      (a.report_id ?? "").localeCompare(b.report_id ?? ""),
+    );
+    // Report figures: reportId + page/chunk/quote populated; API fields null.
+    expect(figs).toEqual([
+      {
+        report_id: "r1", value: 3, page_number: 1, chunk_index: 0, source_quote: "…",
+        is_winner: true, source: null, location_metadata_id: null, metadata_type: null, as_of: null,
+      },
+      {
+        report_id: "r2", value: 5, page_number: 1, chunk_index: 0, source_quote: "…",
+        is_winner: false, source: null, location_metadata_id: null, metadata_type: null, as_of: null,
+      },
+    ]);
   });
 
   it("dedupes same-day competing reports — bias-selected winner, not summed", () => {
@@ -1241,6 +1258,7 @@ describe("buildApiMentions — DTM → idp_stock adapter (ADR-0006 §3/§8/§9)"
 
   it("adapts a DTM blob into an idp_stock mention with the deterministic profile", () => {
     const rows: LocationMetadataRow[] = [{
+      id: "lm-dtm-1",
       type: "iom_dtm_displacement",
       validFrom: new Date("2026-07-05T00:00:00Z"),
       data: { population_displaced: 52000, reporting_date: "2026-07-01T00:00:00Z" },
@@ -1251,6 +1269,7 @@ describe("buildApiMentions — DTM → idp_stock adapter (ADR-0006 §3/§8/§9)"
     const m = idp[0]! as unknown as {
       value: number; reliability: number; confidence: string; locationId: string;
       intrinsicCredibility: number; publishedAt: Date; incidentDate: Date; reportId: string;
+      source: string | null; metadataId: string | null; metadataType: string | null;
     };
     expect(m.value).toBe(52000);
     expect(m.reliability).toBe(3); // from the org map
@@ -1261,12 +1280,17 @@ describe("buildApiMentions — DTM → idp_stock adapter (ADR-0006 §3/§8/§9)"
     expect(m.publishedAt.toISOString()).toBe("2026-07-05T00:00:00.000Z"); // recency = valid_from (§9)
     expect(m.incidentDate.toISOString()).toBe("2026-07-01T00:00:00.000Z"); // T₀ = reporting_date
     expect(m.reportId).toContain("api:src-dtm"); // synthetic provenance/dedup id
+    // API provenance trail: the location_metadata row id + its type + the source org.
+    expect(m.metadataId).toBe("lm-dtm-1");
+    expect(m.metadataType).toBe("iom_dtm_displacement");
+    expect(typeof m.source).toBe("string");
+    expect(m.source!.length).toBeGreaterThan(0);
   });
 
   it("ignores context-overlay types and unknown reliabilities → 1", () => {
     const rows: LocationMetadataRow[] = [
-      { type: "ocha_3w", validFrom: new Date("2026-07-05T00:00:00Z"), data: {} }, // overlay, no adapter
-      { type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
+      { id: "lm-3w", type: "ocha_3w", validFrom: new Date("2026-07-05T00:00:00Z"), data: {} }, // overlay, no adapter
+      { id: "lm-dtm", type: "iom_dtm_displacement", validFrom: new Date("2026-07-05T00:00:00Z"),
         data: { population_displaced: 10, reporting_date: "2026-07-01T00:00:00Z" } },
     ];
     const byLabel = buildApiMentions(rows, "SD01", new Map()); // no org → reliability 1
@@ -1279,7 +1303,7 @@ describe("aggregateReports — reconciliation (ADR-0006 §2)", () => {
   const orgMap = new Map([["iom dtm", { id: "src-dtm", reliability: 3 }]]);
   const dtm = (value: number, validFrom: string, refDate: string) =>
     buildApiMentions(
-      [{ type: "iom_dtm_displacement", validFrom: new Date(validFrom),
+      [{ id: "lm-dtm-recon", type: "iom_dtm_displacement", validFrom: new Date(validFrom),
          data: { population_displaced: value, reporting_date: refDate } }],
       "SD01", orgMap,
     );
@@ -1302,6 +1326,23 @@ describe("aggregateReports — reconciliation (ADR-0006 §2)", () => {
     if (!f || !("value" in f)) throw new Error("expected numeric field");
     expect(f.value).toBe(52000); // idp_stock is latest-wins → freshest (API) wins
     expect(f.contributing_report_ids.some((id) => id.startsWith("api:"))).toBe(true);
+    // The API contributor's provenance trail: no report id, but the source org +
+    // the location_metadata row id + type + as-of date to trace it back.
+    const apiFig = f.contributing_figures.find((c) => c.report_id === null);
+    expect(apiFig).toBeDefined();
+    expect(apiFig!.value).toBe(52000);
+    expect(apiFig!.is_winner).toBe(true);
+    expect(apiFig!.location_metadata_id).toBe("lm-dtm-recon");
+    expect(apiFig!.metadata_type).toBe("iom_dtm_displacement");
+    expect(typeof apiFig!.source).toBe("string");
+    expect(apiFig!.as_of).toBe("2026-07-05T00:00:00.000Z");
+    expect(apiFig!.page_number).toBeNull();
+    expect(apiFig!.source_quote).toBeNull();
+    // The stale report figure is still listed (suppressed), with its report trail.
+    const reportFig = f.contributing_figures.find((c) => c.report_id === "r1");
+    expect(reportFig).toBeDefined();
+    expect(reportFig!.is_winner).toBe(false);
+    expect(reportFig!.source).toBeNull();
   });
 });
 
@@ -1312,7 +1353,7 @@ describe("buildApiMentions — HAPI adapters (ADR-0006 §3)", () => {
     ["ipc", { id: "src-ipc", reliability: 3 }],
   ]);
   const lmv = (type: string, data: Record<string, unknown>): LocationMetadataRow =>
-    ({ type, data, validFrom: new Date("2026-07-08T00:00:00Z") });
+    ({ id: `lm-${type}`, type, data, validFrom: new Date("2026-07-08T00:00:00Z") });
   const val = (m: Map<string, unknown[]>, label: string) =>
     (m.get(label)?.[0] as { value: number } | undefined)?.value;
 

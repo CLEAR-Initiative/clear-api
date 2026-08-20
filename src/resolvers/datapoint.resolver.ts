@@ -245,9 +245,10 @@ async function loadApiMentions(
   if (!locationId) return buildApiMentions([], "", apiReliabilityByOrg);
   const rows = await prisma.locationMetadata.findMany({
     where: { locationId, validTo: null, type: { in: API_RECONCILING_TYPES } },
-    select: { type: true, data: true, validFrom: true },
+    select: { id: true, type: true, data: true, validFrom: true },
   });
   const lmRows: LocationMetadataRow[] = rows.map((r) => ({
+    id: r.id,
     type: r.type,
     data: r.data,
     validFrom: r.validFrom,
@@ -270,12 +271,12 @@ async function loadApiMentionsByLocation(
   if (locationIds.length === 0) return map;
   const rows = await prisma.locationMetadata.findMany({
     where: { locationId: { in: locationIds }, validTo: null, type: { in: API_RECONCILING_TYPES } },
-    select: { locationId: true, type: true, data: true, validFrom: true },
+    select: { id: true, locationId: true, type: true, data: true, validFrom: true },
   });
   const byLoc = new Map<string, LocationMetadataRow[]>();
   for (const r of rows) {
     const list = byLoc.get(r.locationId) ?? [];
-    list.push({ type: r.type, data: r.data, validFrom: r.validFrom });
+    list.push({ id: r.id, type: r.type, data: r.data, validFrom: r.validFrom });
     byLoc.set(r.locationId, list);
   }
   for (const [loc, lmRows] of byLoc) {
