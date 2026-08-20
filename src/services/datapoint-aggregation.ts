@@ -496,6 +496,12 @@ export interface QualityEnvelope {
   newest_report_at: string;
   oldest_report_at: string;
   contributing_report_ids: string[];
+  /** Per-figure provenance for EVERY contributing figure (winners + deduped
+   *  losers): the report id, the specific value, its 1-indexed page, matched
+   *  chunk, and source quote — so an aggregate traces back to the exact figures
+   *  that produced it. `contributing_report_ids` is the deduped id list; this is
+   *  the figure-level detail behind it. */
+  contributing_figures: ContributingFigure[];
   /** Figures deduped away as within-group losers (0 when nothing collapsed).
    *  Surfaces the otherwise-silent suppression the week bucket makes routine —
    *  a spike here flags reports whose values didn't reach the aggregate. */
@@ -511,6 +517,43 @@ export interface QualityEnvelope {
     /** Signed % difference of the report vs the API figure. */
     pctDiff: number;
   } | null;
+}
+
+/** One figure that fed a numeric aggregate, with enough provenance to trace it
+ *  back to its exact origin for debugging. Two origins:
+ *
+ *   - a REPORT figure → `report_id` + `page_number` / `chunk_index` / `source_quote`
+ *     locate the exact PDF page and line; the API fields are null.
+ *   - a location_metadata (API) figure → `source` (org), `location_metadata_id`
+ *     (look it up for the raw source record), `metadata_type`, and `as_of` (the
+ *     value's valid-from date); the report fields are null.
+ *
+ *  `is_winner` is false for figures deduped away as within-group losers — still
+ *  listed so the otherwise-silent suppression is visible. */
+export interface ContributingFigure {
+  /** The specific value this contributor supplied. */
+  value: number;
+  /** Whether this value reached the aggregate, or was deduped as a loser. */
+  is_winner: boolean;
+
+  // ── Report-figure provenance (null for API figures) ──
+  report_id: string | null;
+  /** 1-indexed PDF page — the durable citation handle. */
+  page_number: number | null;
+  /** The report chunk the figure's quote matched (backfilled). Null when unmatched. */
+  chunk_index: number | null;
+  /** The exact quoted line the figure was extracted from (length-capped). */
+  source_quote: string | null;
+
+  // ── location_metadata (API) provenance (null for report figures) ──
+  /** Authoritative source org (e.g. "IOM DTM", "OCHA HAPI"). */
+  source: string | null;
+  /** The `location_metadata` row id — look it up for the raw source record. */
+  location_metadata_id: string | null;
+  /** The metric type of that row (e.g. "iom_dtm_displacement"). */
+  metadata_type: string | null;
+  /** The value's as-of date (the row's valid_from), ISO. */
+  as_of: string | null;
 }
 
 /** Set-union output for label-type fields (event_types, clusters). */
@@ -650,7 +693,27 @@ interface Mention {
   // incidents and must not collapse into one. Empty string when the
   // report carries no event types. See eventKeyFor().
   eventKey: string;
+  /** Per-figure provenance for traceback (clear-context-pipeline datapoints
+   *  schema): the 1-indexed PDF page (the durable citation handle), the chunk the
+   *  figure's quote matched, and the source quote itself. All null for an API
+   *  (`location_metadata`) contributor — it doesn't come from a report chunk. */
+  chunkIndex: number | null;
+  pageNumber: number | null;
+  sourceQuote: string | null;
+  /** API (location_metadata) provenance — the authoritative source org, the
+   *  `location_metadata` row id (trace-back handle), and its metric type. All
+   *  null for a report figure, whose trail is reportId + page/chunk/quote above.
+   *  (An API figure's as-of date is its `publishedAt`, which is the row's
+   *  `valid_from`.) */
+  source: string | null;
+  metadataId: string | null;
+  metadataType: string | null;
 }
+
+/** Cap on the per-figure `source_quote` carried into an aggregate's
+ *  `contributing_figures`, so provenance can't bloat the stored data blob. The
+ *  full quote always remains on the source `report_datapoints` row. */
+const SOURCE_QUOTE_MAX = 280;
 
 /** Canonicalise a report's `event_types` into one incident-key
  *  component. Lowercased, trimmed, de-duplicated, and sorted so
@@ -733,6 +796,9 @@ function extractNumericMentions(
     scope_location_id?: unknown;
     source_id?: unknown;
     credibility?: unknown;
+    chunk_index?: unknown;
+    page_number?: unknown;
+    source_quote?: unknown;
   };
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
@@ -786,6 +852,18 @@ function extractNumericMentions(
   const docCredibility = dig(row.data, "narrative_and_confidence.information_credibility");
   const intrinsicCredibility = intrinsicCredibilityOf(confidence, docCredibility, nf.credibility);
 
+  // Per-figure provenance handles (clear-context-pipeline datapoints schema):
+  // page_number is the durable citation; chunk_index is the backfilled chunk;
+  // source_quote is the exact line. Carried through so the aggregate can be
+  // traced back to the figures that produced it. source_quote is length-capped
+  // to bound the aggregated blob (the full quote lives on report_datapoints).
+  const chunkIndex = typeof nf.chunk_index === "number" ? nf.chunk_index : null;
+  const pageNumber = typeof nf.page_number === "number" ? nf.page_number : null;
+  const sourceQuote =
+    typeof nf.source_quote === "string" && nf.source_quote.trim()
+      ? nf.source_quote.trim().slice(0, SOURCE_QUOTE_MAX)
+      : null;
+
   return [
     {
       reportId: row.reportId,
@@ -806,6 +884,13 @@ function extractNumericMentions(
       sourceId: figureSourceId ?? row.sourceId ?? null,
       isApi: false,
       eventKey,
+      chunkIndex,
+      pageNumber,
+      sourceQuote,
+      // Report figure — its trail is reportId + page/chunk/quote, not an API source.
+      source: null,
+      metadataId: null,
+      metadataType: null,
     },
   ];
 }
@@ -1590,6 +1675,9 @@ function aggregateNumericField(
   // override picks a non-freshest winner.
   const { qualityScore, confidenceMix } = computeQuality(winners, scoped);
   const contributing = Array.from(new Set(scoped.map((m) => m.reportId)));
+  // Winner set by reference — `winners` are the same Mention objects held in
+  // `scoped`, so identity membership marks which figures reached the value.
+  const winnerSet = new Set(winners);
   const publishedAts = scoped.map((m) => m.publishedAt.getTime());
   const unit = winners.find((w) => w.unit)?.unit ?? null;
   // Representative reliability + intrinsic credibility for the aggregate: mean
@@ -1643,6 +1731,20 @@ function aggregateNumericField(
     newest_report_at: new Date(Math.max(...publishedAts)).toISOString(),
     oldest_report_at: new Date(Math.min(...publishedAts)).toISOString(),
     contributing_report_ids: contributing,
+    contributing_figures: scoped.map((m) => ({
+      value: m.value,
+      is_winner: winnerSet.has(m),
+      // Report figures carry reportId + page/chunk/quote; API figures carry the
+      // source org + location_metadata row id + type + as-of instead.
+      report_id: m.isApi ? null : m.reportId,
+      page_number: m.pageNumber,
+      chunk_index: m.chunkIndex,
+      source_quote: m.sourceQuote,
+      source: m.source,
+      location_metadata_id: m.metadataId,
+      metadata_type: m.metadataType,
+      as_of: m.isApi ? m.publishedAt.toISOString() : null,
+    })),
     suppressed_count: scoped.length - winners.length,
     divergence,
   };
@@ -1689,6 +1791,9 @@ function aggregateSetUnionField(rows: ReportRow[], rule: FieldRule): SetUnionEnv
 
 /** One current `location_metadata` row for a scope location (`validTo IS NULL`). */
 export interface LocationMetadataRow {
+  /** The `location_metadata` row id — the durable trace-back handle for an API
+   *  figure's provenance (look it up for the raw source record). */
+  id: string;
   /** e.g. "iom_dtm_displacement". */
   type: string;
   /** The source blob (shape is source-specific; adapters below read it). */
@@ -2047,6 +2152,15 @@ export function buildApiMentions(
         sourceId,
         isApi: true,
         eventKey: "",
+        // API (location_metadata) figures have no report chunk/page/quote; their
+        // trail is the source org + the location_metadata row id (+ type + the
+        // as-of date carried on `publishedAt` = valid_from).
+        chunkIndex: null,
+        pageNumber: null,
+        sourceQuote: null,
+        source: adapter.org,
+        metadataId: row.id,
+        metadataType: row.type,
       };
       const list = byLabel.get(fig.label);
       if (list) list.push(mention);
