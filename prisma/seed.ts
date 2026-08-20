@@ -415,7 +415,7 @@ async function seed() {
   const nyala = loc.nyala!;
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
-  const [dataminr, acled, gdacs, dtm] = await Promise.all([
+  const [dataminr, acled, gdacs, dtm, idmc] = await Promise.all([
     prisma.dataSources.create({
       data: {
         name: "dataminr",
@@ -452,6 +452,15 @@ async function seed() {
         infoUrl: "https://dtm.iom.int/",
       },
     }),
+    prisma.dataSources.create({
+      data: {
+        name: "idmc",
+        type: "api",
+        isActive: true,
+        baseUrl: "https://helix-tools-api.idmcdb.org/",
+        infoUrl: "https://www.internal-displacement.org/",
+      },
+    }),
   ]);
 
   // Manual-entry source for signals filed through the UI. The Create Signal
@@ -462,7 +471,7 @@ async function seed() {
     data: { name: "field_officer", type: "manual", isActive: true },
   });
 
-  console.log("Created 4 data sources + 1 manual source");
+  console.log("Created 5 data sources + 1 manual source");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
