@@ -38,9 +38,61 @@ Scores are 0–100 with five labels — **Minimal / Stressed / Severe / Extreme 
 
 ## 2. What an MSNA actually is (and whether there's a template)
 
-> *This section summarises external research; sources are listed inline.*
+> *This section summarises external research; sources inline. Glossary at the end of the section.*
 
-<!-- RESEARCH_SECTION -->
+### 2.1 The instrument
+
+An MSNA is a coordinated, usually **annual household survey** measuring needs across all humanitarian sectors at once, for defined population groups (IDPs, returnees, non-displaced) at an agreed admin level. It exists to feed the annual **Humanitarian Programme Cycle**: MSNA indicators → per-sector composites → cluster People-in-Need (PiN) and severity per admin unit → the intersectoral **HNO/HNRP** ([FSC handbook §6.5.2](https://handbook.fscluster.org/docs/652-multi-sector-needs-assessment)). Two families dominate:
+
+- **REACH / IMPACT Initiatives** — 100+ MSNAs in 20+ crises since 2016 ([programme page](https://www.impact-initiatives.org/programmes/multi-sectoral-needs-assessment-msna/)).
+- **IOM DTM** — leads in Sudan and several other countries, sampling on its own population baselines ([DTM MSNA series](https://dtm.iom.int/data-product-series/multi-sectoral-needs-assessment)).
+
+Both run under OCHA/inter-cluster governance (in Sudan: the AAWG's MSNA Technical Working Group, chaired by OCHA — [Shelter Cluster Sudan](https://www.sheltercluster.org/sudan/pages/msna-2024)). Fieldwork is typically mid-year so results land for Q4 HNO/HNRP drafting — which is precisely why the figures are stale for most of the plan year.
+
+### 2.2 Yes, there are templates — and they're machine-readable
+
+| Artifact | Where | Why it matters to us |
+|---|---|---|
+| **MSNA global indicator bank + Kobo (XLSForm) template** | IMPACT's open-source R packages [`humind`](https://github.com/impact-initiatives-hppu/humind) ([docs](https://impact-initiatives-hppu.github.io/humind/)) and [`humind.data`](https://github.com/impact-initiatives-hppu/humind.data) (dummy data from the 2024 global template) | **The canonical questions, response options, and scoring in code** — FCS, rCSI, HHS, LCSI, JMP WASH ladders, Washington Group set, every sectoral LSG, and the MSNI composition. The right source to replace `process_msna.py`'s prototype weights with validated formulas. |
+| **Research ToR + Data Analysis Plan (DAP)** per country | [IMPACT Resource Centre](https://repository.impact-initiatives.org/) (e.g. [Ukraine MSNA 2023 ToR](https://repository.impact-initiatives.org/document/impact/0e63330d/REACH_UKR_MSNA_ToR_Ext_July_2023.pdf)) | The indicator ↔ sector ↔ severity mapping spreadsheet each MSNA publishes. |
+| **JIAF 2.0 Technical Manual** | [jiaf.info](https://www.jiaf.info/wp-content/uploads/2023/09/JIAF-2.0-Technical-Manual-v03_Aug-31.pdf) / [OCHA July 2024 edition](https://www.unocha.org/publications/report/world/joint-and-intersectoral-analysis-framework-jiaf-2-technical-manual-july-2024) | The IASC-endorsed method behind HNO PiN/severity: Module 1 context/shock/impact scoping → Module 2 interoperable **sectoral** PiN + severity per unit → Module 3 intersectoral consolidation (preliminary intersectoral severity = **highest sectoral figure** per unit, then expert adjustment). Reference tables 2A (PiN) / 2B (Severity) are the output shapes to be compatible with. |
+| **MSNA datasets + questionnaires** | HDX ([Sudan MSNA 2024](https://data.humdata.org/dataset/sudan-multisector-needs-assessment-msna-2024) + [analysis tables](https://data.humdata.org/dataset/sudan-2024-multisector-needs-assessment-msna-analysis-data)) | Microdata + codebooks for calibration/backtesting. |
+
+The analytical core of a REACH-style MSNA is the **MSNI (Multi-Sector Needs Index)**: per sector, a household gets a **Living Standard Gap (LSG)** severity score (1–4+) composed from scored indicators; the household's MSNI is the **maximum** LSG across sectors; **≥3 = "in need"** ([Lebanon MSNI methodological note](https://reliefweb.int/report/lebanon/msna-2021-multi-sectoral-needs-index-methodological-note-june-2022)). Alongside LSGs sit **Capacity Gaps** (negative coping masking need) and pre-existing vulnerability.
+
+### 2.3 The canonical severity scales (and where ours fits)
+
+| Class | JIAF / HNO (area) | IPC food security (area) | MSNI/LSG (household) | Our MSNA import labels |
+|---|---|---|---|---|
+| 1 | None/Minimal | Minimal | 1 None/minimal | Minimal |
+| 2 | Stress | Stressed | 2 Stress | Stressed |
+| 3 | **Severe** (PiN threshold) | **Crisis** | **3 Severe (= has LSG)** | Severe |
+| 4 | Extreme | Emergency | 4 / 4+ Extreme | Extreme |
+| 5 | Catastrophic | Catastrophe/Famine | — | Catastrophic |
+
+Our 0–100 score with five labels maps cleanly onto the 5-class convention; a nowcast layer should keep that mapping (and treat class 3+ as "in need") so it stays comparable with HNO severity maps and IPC phases.
+
+### 2.4 How the sector updates needs *between* annual rounds today
+
+There is **no standard intra-year refresh of admin-2, per-sector severity** — the HNRP figures typically stand for the whole plan year. What exists is a patchwork, which is both the gap and the design precedent:
+
+- **Displacement**: IOM **DTM Mobility Tracking** (monthly rounds; ~13,000 locations in Sudan) and **Emergency Event Tracking** — event-triggered KI reports with 24–72h turnaround carrying cause, origin/arrival and priority needs ([DTM Sudan components](https://reliefweb.int/report/sudan/about-dtm-sudan-active-methodological-components-2024)); IDMC's **daily** Internal Displacement Updates compiled from public event reporting ([IDU](https://www.internal-displacement.org/internal-displacement-updates/)).
+- **KI monitoring**: REACH **Humanitarian Situation Monitoring** — monthly key-informant panels (Area-of-Knowledge method) keeping a settlement-level needs picture alive between surveys ([HSM factsheet](https://www.impact-initiatives.org/wp-content/uploads/2021/01/REACH_HSM-SAO-ETH.pdf)); OCHA/cluster **IRNA** rapid assessments after shocks; cluster **5W** response monitoring for the capacity side.
+- **Food security — the one sector with institutionalised updating**: **IPC** analyses ~2×/year plus projection updates and Famine Review verdicts ([Sudan IPC](https://www.ipcinfo.org/ipc-country-analysis/details-map/en/c/1159787/)); **FEWS NET** scenario-based outlooks with monthly updates; **WFP HungerMap LIVE** — daily remote surveys fused with conflict/climate/market data and **ML nowcasts for unsurveyed areas** ([hungermap.wfp.org](https://hungermap.wfp.org/)). HungerMap is the strongest operating precedent for exactly what we propose (survey anchor + live signals + model interpolation), albeit single-sector.
+- **Cross-sector severity**: the **ACAPS/JRC INFORM Severity Index** — ~31 indicators, 1–5 per crisis, **updated monthly** by analysts from public sources *explicitly including ACLED fatality data* ([methodology](https://drmkc.jrc.ec.europa.eu/inform-index/Portals/0/InfoRM/Severity/INFORM%20Severity%20Methodology%20%2020201019%20online.pdf), [data manual](https://www.acaps.org/fileadmin/Dataset/Methodology_files/20240930_ACAPS_Severity_index_data_collection_manual.pdf)). Unit is the *crisis*, not the admin area — CLEAR can go finer.
+- **Model-based inference precedents**: DRC **Foresight** displacement forecasts from 148 indicators incl. ACLED, peer-reviewed by OCHA's Centre for Humanitarian Data ([AI Magazine paper](https://onlinelibrary.wiley.com/doi/full/10.1002/aaai.12133)); UNHCR **Project Jetson**; ML forecasting of **IPC phase transitions** with conflict features ([STOTEN 2021](https://www.sciencedirect.com/science/article/pii/S0048969721024372)); famine prediction from **news text** ([Balashankar et al.](https://arxiv.org/pdf/2111.15602)) — directly analogous to our sitrep corpus; and **DEEP/HumSet** (~47k sitrep excerpts tagged to humanitarian analysis frameworks — [paper](https://arxiv.org/pdf/2210.04573)), the closest existing artifact to our knowledgebase sector-tagging, and a candidate calibration corpus. OCHA/CERF **anticipatory action** frameworks are the institutional precedent for *acting* on model output between assessments.
+- **Honesty precedent**: the Grand Bargain workstream on needs assessment exists because analysis lags events ([IASC](https://interagencystandingcommittee.org/improve-joint-and-impartial-needs-assessments)); UNHCR's [Needs Assessment Handbook](https://www.unhcr.org/handbooks/assessment/sites/assessment/files/2023-10/UNHCR%20Needs%20Assessment%20Handbook.pdf) prescribes assessment **plus** continuous situation monitoring as distinct things — which is exactly the baseline-vs-nowcast split in §5.
+
+### 2.5 Sudan specifics (our current dataset)
+
+- DTM has led the national MSNA annually since 2021 (2020 was REACH-led). The 2025 round — the one in `scripts/msna/` — collected data in **August 2025**, locality-representative across all 18 states, and feeds the **HNRP 2026** (33.7M PiN, the largest globally; [OCHA summary](https://www.unocha.org/publications/report/sudan/sudan-humanitarian-needs-and-response-plan-2026-summary)). Published artifacts: [report](https://reliefweb.int/report/sudan/sudan-multisector-needs-assessment-msna-august-2025), [dashboard](https://reliefweb.int/report/sudan/dtm-sudan-multi-sector-needs-assessment-2025-dashboard-16-october-2025), [dataset entry](https://dtm.iom.int/datasets/multi-sectoral-needs-assessment-msna-2025-hnrp-2026).
+- Our "188 localities" is not incidental: **188 localities (Sudan minus Abyei) is the JIAF unit-of-analysis grid for the Sudan HNO/HNRP** ([humanitarianaction.info](https://humanitarianaction.info/article/12-analysis-shocks-risks-and-humanitarian-needs)) — i.e. the admin-2 grid our `locationMetadata` rows already live on is the same grid the official severity analysis uses.
+- Don't confuse the national DTM MSNA with the **UNHCR refugee MSNA 2025** (12 states, 3,254 households, feeds the Refugee Response Plan) that appears on HDX/microdata catalogs under a similar name.
+- Between-round machinery already live in Sudan that we can anchor/validate against: DTM monthly mobility updates + EET, IPC projection updates and famine reviews, OCHA IRNAs, REACH hard-to-reach rapid assessments, ACAPS Sudan Analysis Hub + monthly INFORM Severity.
+
+### 2.6 Glossary
+
+**MSNA** Multi-Sector Needs Assessment (annual HH survey) · **MSNI** Multi-Sector Needs Index (household max-of-LSG severity, 1–4+) · **LSG** Living Standard Gap (per-sector household composite) · **DAP** Data Analysis Plan (indicator↔sector↔severity mapping) · **JIAF** Joint and Intersectoral Analysis Framework (IASC method behind HNO PiN/severity; 2.0 = three modules) · **PiN** People in Need (severity class 3+) · **HNO/HNRP** Humanitarian Needs Overview / Needs and Response Plan (annual, OCHA) · **HPC** Humanitarian Programme Cycle · **IPC** Integrated Food Security Phase Classification (5 phases, area-level) · **INFORM Severity** ACAPS/JRC monthly crisis severity index (1–5) · **DTM/EET** IOM Displacement Tracking Matrix / Emergency Event Tracking · **HSM/AoK** REACH Humanitarian Situation Monitoring / Area of Knowledge · **5W** Who does What Where When for Whom (cluster response monitoring) · **ICCG/AAWG** Inter-Cluster Coordination Group / Assessment & Analysis Working Group.
 
 ---
 
@@ -150,6 +202,8 @@ Grounded in the `disasterTypeHierarchy` the corpus already uses:
 
 (▲ = weight tier, not a score; weights are a prototype design choice pending expert validation — the same honest framing `process_msna.py` already uses for its formulas.)
 
+**Sector asymmetry (from §2.4):** food security is the one sector with institutionalised intra-year updating — IPC analyses/projection updates, FEWS NET outlooks, WFP HungerMap. For **FSL, ingest those area-level products directly** (a new `locationMetadata` type, e.g. `ipc_phase`, per locality) instead of inferring from events; reserve event-driven inference for the sectors that genuinely go stale between MSNAs (Shelter, WASH, Protection, Education, Health), where no incumbent update mechanism exists. That's also where CLEAR adds something the sector doesn't have.
+
 ### 5.3 Serving it: three options
 
 **Option A — new `locationMetadata` type (recommended start).** A pipeline job writes `type = "needs_nowcast_v1"` rows per admin-2, weekly (and on-demand when a severe event lands). Zero schema migration; the tab already knows how to read `allLocationMetadata`; bitemporal history gives the trend view for free; `msna_severity_082025` remains untouched as the auditable baseline.
@@ -198,7 +252,7 @@ Phase 0 requires **no new backend at all**: the tab can already render baseline 
 | Phase | Deliverable | New machinery |
 |---|---|---|
 | 0 | Tab shows MSNA baseline + since-baseline event activity + latest sector-tagged report evidence per area | none — existing queries |
-| 1 | Deterministic nowcast rows (`needs_nowcast_v1`), weekly + event-triggered, with drivers/confidence | one pipeline job + mapping table |
+| 1 | Deterministic nowcast rows (`needs_nowcast_v1`), weekly + event-triggered, with drivers/confidence; IPC phase ingested per locality as the FSL anchor | one pipeline job + mapping table + IPC importer |
 | 2 | LLM sector narrative for hotspot areas (reuse crisis-needs / situation-analysis sector component at admin level) | prompt + drain, same pattern as `setCrisisNeedsAnalysis` |
 | 3 | Validation: when the next MSNA round lands, score the nowcast against it per (area × sector); recalibrate weights | evaluation script |
 
@@ -213,3 +267,4 @@ Phase 3 is what makes this defensible: the annual MSNA stops being "the data" an
 3. **Low information ≠ low need.** Dark areas get an explicit information-coverage flag; decay toward "unknown", not toward "fine".
 4. **Provenance all the way down** — every score decomposes into drivers that link to real events/reports; the `NumericField`/quality-envelope pattern (clear-context-pipeline ADR-0004/0005) is the house style for this and should be reused, not reinvented.
 5. **Prototype weights are labelled as such** and versioned (`scoring_version`, `schemaVersion`) so recalibration against MSNA 2026 is a version bump, not a silent change — the discipline `process_msna.py` and the datapoints pipeline already follow.
+6. **This is not the official PiN.** HNO/HNRP People-in-Need and severity are inter-agency negotiated products (JIAF Module 3 + HCT sign-off); only the ICCG/HCT can revise them. CLEAR's nowcast is decision-support *alongside* the official figures — label it that way, and align its scale/grid (5 classes, 188-locality JIAF grid) so the two are comparable rather than confusable.
