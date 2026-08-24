@@ -391,6 +391,31 @@ export function renderPortalShellStyles(): string {
       border-color: var(--color-border-2);
       color: var(--color-text);
     }
+    a.signin-link {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--color-accent);
+      border: 1px solid var(--color-accent-border);
+      border-radius: 6px;
+      color: var(--on-accent);
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    a.signin-link:hover {
+      background: var(--color-accent-hover);
+      color: var(--on-accent);
+      text-decoration: none;
+    }
+    .portal-shell.sidebar-collapsed a.signin-link .signin-label {
+      opacity: 0;
+      position: absolute;
+      pointer-events: none;
+    }
     .portal-shell.sidebar-collapsed .signout-btn {
       padding: 8px;
       width: 40px;
@@ -710,8 +735,10 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     </a>
   ` : "";
   
-  // Account footer (only when account is provided)
-  const footerHtml = account ? `
+  // Account footer when signed in; Sign in CTA when anonymous so home/docs/portal
+  // are not a dead end for existing accounts.
+  const footerHtml = account
+    ? `
     <div class="sidebar-footer">
       <div class="user-card">
         ${generateAvatarHtml(account.email)}
@@ -725,7 +752,14 @@ export function renderPortalShell(opts: PortalShellOptions): string {
         <span class="signout-label">Sign Out</span>
       </button>
     </div>
-  ` : "";
+  `
+    : `
+    <div class="sidebar-footer">
+      <a href="/portal/login" class="signin-link" title="Sign in">
+        <span class="signin-label">Sign in</span>
+      </a>
+    </div>
+  `;
   
   return `
     <button type="button" class="mobile-menu-btn" onclick="toggleMobileDrawer()" aria-label="Toggle menu">

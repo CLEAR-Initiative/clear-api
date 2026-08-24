@@ -417,8 +417,13 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
     </div>
 
     <div class="getting-started-ctas">
-      <a href="/docs" class="btn-cta-secondary">Read documentation</a>
-      <button type="button" class="btn-cta-primary" onclick="showTab('api-keys')">Manage API Keys &rarr;</button>
+      ${
+        authed
+          ? `<a href="/docs" class="btn-cta-secondary">Read documentation</a>
+      <button type="button" class="btn-cta-primary" onclick="showTab('api-keys')">Manage API Keys &rarr;</button>`
+          : `<a href="/portal/login" class="btn-cta-primary">Sign in</a>
+      <a href="/docs" class="btn-cta-secondary">Read documentation</a>`
+      }
     </div>
   </div>
 
@@ -1510,7 +1515,7 @@ export interface AdminMetrics {
   };
 }
 
-export type AdminTab = "dashboard" | "pending" | "organisations" | "webhooks";
+export type AdminTab = "dashboard" | "users" | "organisations" | "webhooks";
 
 interface AdminShellOptions {
   currentUserEmail: string;
@@ -1672,6 +1677,24 @@ function renderAdminShell(opts: AdminShellOptions): string {
         grid-template-columns: 1fr !important;
       }
     }
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      border: 1px solid transparent;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-family: var(--font);
+      background: var(--color-surface-2);
+      color: var(--color-text);
+    }
+    .btn-primary {
+      background: var(--color-accent);
+      color: var(--on-accent);
+      border-color: var(--color-accent-border);
+    }
+    .btn-primary:hover { background: var(--color-accent-hover); }
+    .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.75rem; }
     h1 { 
       font-size: 1.4rem; 
       margin-bottom: 0.4rem; 
@@ -1809,6 +1832,60 @@ function renderAdminShell(opts: AdminShellOptions): string {
       color: var(--color-muted); 
       margin: 0.75rem 0 0; 
     }
+    .admin-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      background: var(--color-surface);
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    .table th {
+      text-align: left;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-muted);
+      font-weight: 600;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--color-border);
+      white-space: nowrap;
+    }
+    .table td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--color-border);
+      vertical-align: middle;
+    }
+    .table tbody tr:last-child td { border-bottom: none; }
+    .table tbody tr:hover { background: var(--color-surface-2); }
+    .badge-role {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge-role-pending { background: #2a1f0a; color: var(--color-warning); }
+    .badge-role-viewer { background: #1c1f26; color: var(--color-muted); }
+    .badge-role-analyst { background: #0d2818; color: var(--color-success); }
+    .badge-role-admin { background: var(--color-accent-soft); color: var(--color-accent); }
+    /* 6px radius — short .btn uses --radius (12px) which reads as a pill
+       next to the 999px role badges. Keep this a rounded rectangle. */
+    .btn-approve {
+      border-radius: 6px;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      min-width: 5.5rem;
+    }
     .org-link { 
       font-weight: 600; 
     }
@@ -1838,7 +1915,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
       <div class="admin-tabs">
         ${tabLink("dashboard", "Dashboard")}
         ${tabLink("organisations", "Organisations")}
-        ${tabLink("pending", "Pending Users", pendingCount > 0 ? String(pendingCount) : undefined)}
+        ${tabLink("users", "Users", pendingCount > 0 ? String(pendingCount) : undefined)}
         ${tabLink("webhooks", "Error Alerts")}
       </div>
       <main class="wrap">
@@ -1866,9 +1943,18 @@ function teamRoleSelectOptions(selected: string): string {
     .join("");
 }
 
-interface RenderAdminPendingOptions {
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  role: string | null;
+  createdAt: Date;
+  organisations: string[];
+}
+
+interface RenderAdminUsersOptions {
   currentUserEmail: string;
-  pendingUsers: AdminPendingUser[];
+  users: AdminUserRow[];
   pendingCount: number;
   flash?:
     | { kind: "success"; message: string }
@@ -1876,49 +1962,102 @@ interface RenderAdminPendingOptions {
     | null;
 }
 
-/**
- * "Pending Users" tab — the original admin page, now embedded in the
- * shared tab shell.
- */
-export function renderAdminPending(opts: RenderAdminPendingOptions): string {
-  const { currentUserEmail, pendingUsers, pendingCount, flash } = opts;
-  const rows = pendingUsers.length === 0
-    ? `<tr><td colspan="4" style="text-align: center; padding: 2rem; color: var(--color-muted);">No pending users — every signup has been approved.</td></tr>`
-    : pendingUsers
-        .map((u) => `
-        <tr>
-          <td>${escapeHtml(u.name)}</td>
-          <td><code>${escapeHtml(u.email)}</code></td>
-          <td><span class="badge" style="background: #2a1f0a; color: var(--color-warning);">PENDING</span></td>
-          <td style="text-align: right;">
-            <form method="POST" action="/portal/admin/approve" style="display: inline;">
-              <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
-              <button type="submit" class="btn btn-primary btn-sm">Approve</button>
-            </form>
-          </td>
-        </tr>`)
-        .join("");
+function roleBadge(role: string | null): string {
+  const r = (role ?? "viewer").toLowerCase();
+  const cls =
+    r === "pending"
+      ? "badge-role badge-role-pending"
+      : r === "admin"
+        ? "badge-role badge-role-admin"
+        : r === "analyst"
+          ? "badge-role badge-role-analyst"
+          : "badge-role badge-role-viewer";
+  return `<span class="${cls}">${escapeHtml(r)}</span>`;
+}
 
-  const content = `<table class="table">
+/**
+ * Users tab — every signup (pending and approved). Approving a pending
+ * row flips role to viewer.
+ */
+export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
+  const { currentUserEmail, users, pendingCount, flash } = opts;
+  const rows =
+    users.length === 0
+      ? `<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--color-muted);">No users yet.</td></tr>`
+      : users
+          .map((u) => {
+            const orgs =
+              u.organisations.length === 0
+                ? `<span style="color:var(--color-muted);">—</span>`
+                : escapeHtml(u.organisations.join(", "));
+            const action =
+              u.role === "pending"
+                ? `<form method="POST" action="/portal/admin/approve" style="display:inline;">
+              <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
+              <button type="submit" class="btn btn-primary btn-approve">Approve</button>
+            </form>`
+                : `<span style="color:var(--color-muted);">—</span>`;
+            return `
+        <tr>
+          <td>${escapeHtml(u.name || "—")}</td>
+          <td><code>${escapeHtml(u.email)}</code></td>
+          <td>${roleBadge(u.role)}</td>
+          <td>${escapeHtml(u.createdAt.toISOString().slice(0, 10))}</td>
+          <td>${orgs}</td>
+          <td style="text-align:right;">${action}</td>
+        </tr>`;
+          })
+          .join("");
+
+  const content = `<div class="admin-table-wrap">
+    <table class="table">
       <thead>
         <tr>
           <th>Name</th>
           <th>Email</th>
-          <th>Status</th>
-          <th style="text-align: right;">Action</th>
+          <th>Role</th>
+          <th>Signed up</th>
+          <th>Organisation</th>
+          <th style="text-align:right;">Action</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>
+  </div>`;
 
   return renderAdminShell({
     currentUserEmail,
-    activeTab: "pending",
+    activeTab: "users",
     pendingCount,
     flash,
     content,
-    title: "Pending user approvals",
-    subtitle: `${pendingUsers.length} user${pendingUsers.length === 1 ? "" : "s"} waiting for approval. Approving flips the user's role to <code>viewer</code> and moves their CRM contact from the prospects collection to the approved collection (firing the welcome email automation).`,
+    title: "Users",
+    subtitle:
+      pendingCount > 0
+        ? `${pendingCount} waiting for approval. Approving grants viewer access.`
+        : `${users.length} registered account${users.length === 1 ? "" : "s"}.`,
+  });
+}
+
+/** @deprecated alias — old pending-only tab now renders the full users list. */
+export function renderAdminPending(opts: {
+  currentUserEmail: string;
+  pendingUsers: Array<{ id: string; email: string; name: string; createdAt: Date }>;
+  pendingCount: number;
+  flash?:
+    | { kind: "success"; message: string }
+    | { kind: "error"; message: string }
+    | null;
+}): string {
+  return renderAdminUsers({
+    currentUserEmail: opts.currentUserEmail,
+    pendingCount: opts.pendingCount,
+    flash: opts.flash,
+    users: opts.pendingUsers.map((u) => ({
+      ...u,
+      role: "pending",
+      organisations: [],
+    })),
   });
 }
 
@@ -1998,6 +2137,7 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
       ${card("Monthly active users", engagement.mau, "Distinct users active in the last 30 days.")}
       ${card("Total users", engagement.totalUsers, "All registered accounts.", { breakdownHtml: usersBreakdown })}
     </div>
+    <p class="note" style="margin-top:-1rem;margin-bottom:2rem;"><a href="/portal/admin?tab=users">View all signups →</a></p>
 
     <h2>Content</h2>
     <div class="metric-grid">
@@ -2097,6 +2237,7 @@ export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions):
           .join("");
 
   const content = `
+    <div class="admin-table-wrap">
     <table class="table">
       <thead>
         <tr>
@@ -2109,6 +2250,7 @@ export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions):
       </thead>
       <tbody>${rows}</tbody>
     </table>
+    </div>
 
     <h2>Create organisation</h2>
     <div class="form-card">
@@ -2126,7 +2268,7 @@ export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions):
             <button type="submit" class="btn btn-primary btn-sm">Create</button>
           </div>
         </div>
-        <p class="note">A default team with the same name and slug is created automatically. The first member you invite or add becomes <code>org_admin</code> (portal convention — see backend gaps doc).</p>
+        <p class="note">A default team with the same name and slug is created automatically. The first member you invite or add becomes the organisation admin.</p>
       </form>
     </div>`;
 

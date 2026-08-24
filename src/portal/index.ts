@@ -40,7 +40,7 @@ import {
   renderLoginPage,
   safePortalNext,
   renderResetPasswordPage,
-  renderAdminPending,
+  renderAdminUsers,
   renderAdminMetrics,
   renderAdminOrganisations,
   renderAdminOrgDetail,
@@ -48,7 +48,7 @@ import {
   renderAdminWebhooksList,
   renderAdminWebhookNew,
   renderAdminWebhookDetail,
-  type AdminPendingUser,
+  type AdminUserRow,
   type AdminMetrics,
   type AdminTab,
   type AdminWebhookRow,
@@ -225,7 +225,8 @@ async function requireAdminSession(req: Request, res: Response) {
 }
 
 function parseAdminTab(raw: unknown): AdminTab {
-  if (raw === "pending" || raw === "organisations" || raw === "webhooks") return raw;
+  if (raw === "users" || raw === "pending") return "users";
+  if (raw === "organisations" || raw === "webhooks") return raw;
   return "dashboard";
 }
 
@@ -259,16 +260,39 @@ portalRouter.get("/admin", async (req, res) => {
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
 
-  if (tab === "pending") {
-    const pending = await prisma.user.findMany({
-      where: { role: "pending" },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, email: true, name: true, createdAt: true },
+  if (tab === "users") {
+    const rows = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+        organisations: {
+          select: { organisation: { select: { name: true } } },
+        },
+      },
     });
+    const users: AdminUserRow[] = rows
+      .map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        createdAt: u.createdAt,
+        organisations: u.organisations.map((m) => m.organisation.name),
+      }))
+      .sort((a, b) => {
+        const ap = a.role === "pending" ? 0 : 1;
+        const bp = b.role === "pending" ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
     res.send(
-      renderAdminPending({
+      renderAdminUsers({
         currentUserEmail: admin.email,
-        pendingUsers: pending as AdminPendingUser[],
+        users,
         flash,
         pendingCount,
       }),
@@ -418,7 +442,7 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
 
   const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
   if (!userId) {
-    adminRedirect(res, "pending", { kind: "error", message: "Missing userId" });
+    adminRedirect(res, "users", { kind: "error", message: "Missing userId" });
     return;
   }
 
@@ -429,14 +453,14 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
       : result.crmWarnings.length > 0
         ? `Approved locally. CRM sync issues: ${result.crmWarnings.join(", ")}`
         : "Approved locally.";
-    adminRedirect(res, "pending", {
+    adminRedirect(res, "users", {
       kind: "success",
       message: `${result.user.email}: ${detail}`,
     });
   } catch (err) {
     const message =
       err instanceof GraphQLError ? err.message : portalActionError(err);
-    adminRedirect(res, "pending", { kind: "error", message });
+    adminRedirect(res, "users", { kind: "error", message });
   }
 });
 

@@ -21,7 +21,8 @@ describe("Docs Composer", () => {
       });
 
       expect(html).toContain("Test content");
-      expect(html).not.toContain('class="sidebar-footer"');
+      expect(html).toContain("Sign in");
+      expect(html).toContain("/portal/login");
       expect(html).not.toContain("Sign Out");
     });
 

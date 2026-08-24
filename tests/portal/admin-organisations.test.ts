@@ -46,8 +46,9 @@ describe("renderAdminOrganisations", () => {
     expect(html).toContain("Acme");
     expect(html).toContain('tab=organisations&amp;org=org_1');
     expect(html).toContain('action="/portal/admin/orgs/create"');
-    expect(html).toContain("Pending Users");
+    expect(html).toContain("Users");
     expect(html).toContain(">2<");
+    expect(html).not.toContain("backend gaps");
   });
 });
 

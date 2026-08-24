@@ -46,13 +46,15 @@ describe("Portal Shell", () => {
       expect(html).toContain("Sign Out");
     });
 
-    it("does not render Account footer when account is null", () => {
+    it("renders a Sign in CTA when account is null", () => {
       const html = renderPortalShell({
         surface: "docs",
         account: null,
       });
 
-      expect(html).not.toContain("sidebar-footer");
+      expect(html).toContain("sidebar-footer");
+      expect(html).toContain('href="/portal/login"');
+      expect(html).toContain("Sign in");
       expect(html).not.toContain("Sign Out");
     });
 
