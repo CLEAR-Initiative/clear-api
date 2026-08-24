@@ -291,7 +291,7 @@ portalRouter.get("/admin", async (req, res) => {
         role: true,
         createdAt: true,
         organisations: {
-          select: { organisation: { select: { name: true } } },
+          select: { organisation: { select: { id: true, name: true } } },
         },
       },
     });
@@ -302,7 +302,10 @@ portalRouter.get("/admin", async (req, res) => {
         name: u.name,
         role: u.role,
         createdAt: u.createdAt,
-        organisations: u.organisations.map((m) => m.organisation.name),
+        organisations: u.organisations.map((m) => ({
+          id: m.organisation.id,
+          name: m.organisation.name,
+        })),
       }))
       .sort((a, b) => {
         const ap = a.role === "pending" ? 0 : 1;

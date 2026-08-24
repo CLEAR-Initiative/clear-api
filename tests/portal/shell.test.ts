@@ -98,14 +98,45 @@ describe("Portal Shell", () => {
       expect(html).toContain("toggleMobileDrawer");
     });
 
-    it("keeps system status markup for the mobile menu", () => {
+    it("keeps system status markup inline with the version", () => {
       const html = renderPortalShell({
         surface: "portal",
         account: null,
       });
 
+      expect(html).toContain("sidebar-meta");
       expect(html).toContain("system-status-inline");
       expect(html).toContain("System Operational");
+      expect(html).toMatch(
+        /sidebar-meta[\s\S]*system-status-inline[\s\S]*version-indicator/,
+      );
+    });
+
+    it("nests admin destinations under Admin Panel for mobile", () => {
+      const admin = renderPortalShell({
+        surface: "admin",
+        account: { email: "admin@example.com", role: "admin" },
+        activeHref: "/portal/admin",
+        adminTab: "users",
+        pendingCount: 3,
+      });
+
+      expect(admin).toContain("nav-sub--admin");
+      expect(admin).toContain('href="/portal/admin?tab=dashboard"');
+      expect(admin).toContain('href="/portal/admin?tab=organisations"');
+      expect(admin).toContain('href="/portal/admin?tab=users"');
+      expect(admin).toContain('href="/portal/admin?tab=webhooks"');
+      expect(admin).toContain("nav-sub-badge");
+      expect(admin).toMatch(
+        /href="\/portal\/admin\?tab=users"[^>]*nav-item--sub active/,
+      );
+
+      const viewer = renderPortalShell({
+        surface: "portal",
+        account: { email: "viewer@example.com", role: "viewer" },
+      });
+      expect(viewer).not.toContain("nav-sub--admin");
+      expect(viewer).not.toContain("Admin Panel");
     });
   });
 
@@ -143,6 +174,29 @@ describe("Portal Shell", () => {
   });
 
   describe("renderPortalShellStyles", () => {
+    it("shows compact status and admin sub-nav only on mobile", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toContain(".sidebar-meta");
+      expect(css).toMatch(/\.system-status-inline \{[^}]*border:\s*none/);
+      expect(css).toMatch(/\.status-text \{[^}]*font-size:\s*0\.65rem/);
+      expect(css).not.toMatch(/\.status-text \{[^}]*clip:/);
+      expect(css).toMatch(/\.nav-sub \{[^}]*display:\s*none/);
+      expect(css).toMatch(
+        /@media \(max-width: 768px\) \{[\s\S]*?\.nav-sub \{[\s\S]*?display:\s*flex/,
+      );
+    });
+
+    it("keeps the closed mobile overlay from eating clicks", () => {
+      const css = renderPortalShellStyles();
+      expect(css).toMatch(
+        /\.mobile-drawer-overlay \{[^}]*pointer-events:\s*none/,
+      );
+      expect(css).toMatch(
+        /\.mobile-drawer-overlay\.active \{[^}]*pointer-events:\s*auto/,
+      );
+    });
+
     it("lets the collapsed sidebar chevron overflow above main content", () => {
       const css = renderPortalShellStyles();
 

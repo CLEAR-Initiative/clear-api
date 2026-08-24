@@ -51,6 +51,17 @@ describe("renderAdminOrganisations", () => {
     expect(html).toContain("Users");
     expect(html).toContain(">2<");
     expect(html).not.toContain("backend gaps");
+    expect(html).toContain('class="org-card"');
+    expect(html).toContain('class="org-card-stats"');
+    expect(html).toContain("org-stat-value");
+    expect(html).not.toContain("<table");
+    expect(html).toContain('title="Open Acme"');
+    expect(html).toContain("text-overflow: ellipsis");
+    expect(html).toMatch(
+      /@media \(max-width: 768px\) \{[\s\S]*?\.admin-tabs \{[\s\S]*?display:\s*none/,
+    );
+    expect(html).toContain("nav-sub--admin");
+    expect(html).toContain("/portal/admin?tab=organisations");
   });
 
   it("renders flash as a bottom-right toast instead of a page banner", () => {
@@ -64,6 +75,8 @@ describe("renderAdminOrganisations", () => {
     expect(html).toContain('class="portal-toast portal-toast--success"');
     expect(html).toContain("Created &quot;Acme&quot;.");
     expect(html).not.toContain("margin: 0 0 1.5rem");
+    expect(html).toContain("org-card--empty");
+    expect(html).not.toContain("<table");
   });
 });
 
@@ -129,6 +142,9 @@ describe("renderAdminOrgDetail", () => {
     expect(html).toContain('<label for="edit-name">Organisation name</label>');
     expect(html).toContain("org-edit-grid");
     expect(html).toContain('class="field-affix-prefix"');
+    expect(html).toContain(".members-card > .members-head");
+    expect(html).toContain('content: "Org role"');
+    expect(html).toContain("text-overflow: ellipsis");
     expect(html).toContain("admin-page-heading--end");
     expect(html).toContain("Save changes");
     expect(html).toContain("Send invite");

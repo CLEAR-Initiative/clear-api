@@ -1523,6 +1523,8 @@ function renderAdminShell(opts: AdminShellOptions): string {
     surface: "admin",
     account: { email: currentUserEmail, role: "admin" },
     activeHref: "/portal/admin",
+    adminTab: activeTab,
+    pendingCount,
   };
   const sidebar = renderPortalShell(shellOpts);
 
@@ -1593,21 +1595,10 @@ function renderAdminShell(opts: AdminShellOptions): string {
     /* Admin panel mobile optimizations */
     @media (max-width: 768px) {
       .admin-tabs {
-        padding: 0 1rem;
-        gap: 0.25rem;
-        overflow-x: auto;
-        scrollbar-width: none;
-      }
-      .admin-tabs::-webkit-scrollbar {
         display: none;
       }
-      .admin-tab {
-        padding: 0.65rem 0.9rem;
-        font-size: 0.8rem;
-        white-space: nowrap;
-      }
       .wrap {
-        padding: 1.5rem 1rem !important;
+        padding: 3.5rem 1rem 1.5rem !important;
       }
       .wrap form {
         max-width: 100% !important;
@@ -1998,8 +1989,154 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-transform: none;
       min-width: 5.5rem;
     }
-    .org-link { 
-      font-weight: 600; 
+    .org-card-list {
+      display: grid;
+      gap: 0.75rem;
+      margin-bottom: 0.25rem;
+    }
+    .org-card {
+      display: block;
+      min-width: 0;
+      padding: 0.9rem 1rem 1rem;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      color: inherit;
+      text-decoration: none;
+    }
+    .org-card:hover {
+      border-color: var(--color-border-2);
+      text-decoration: none;
+    }
+    .org-card:hover .org-card-name {
+      color: var(--color-accent);
+    }
+    .org-card:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+    .org-card--empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--color-muted);
+      font-size: 0.875rem;
+    }
+    .org-card-name {
+      display: block;
+      min-width: 0;
+      margin-bottom: 0.75rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      line-height: 1.3;
+      color: var(--color-text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .org-card-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .org-stat {
+      min-width: 0;
+      padding: 0.5rem 0.65rem;
+      background: var(--color-surface-2);
+      border-radius: var(--radius-sm);
+    }
+    .org-stat-label {
+      display: block;
+      margin-bottom: 0.2rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    .org-stat-value {
+      display: block;
+      min-width: 0;
+      font-size: 0.85rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--color-text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .org-stat-value code {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--color-muted);
+    }
+    @media (min-width: 900px) {
+      .org-card-list {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    .users-card-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .users-card {
+      min-width: 0;
+      padding: 0.9rem 1rem 1rem;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+    }
+    .users-card--empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--color-muted);
+      font-size: 0.875rem;
+    }
+    .users-card-stats {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 0.5rem;
+    }
+    .users-stat--row {
+      grid-column: 1 / -1;
+    }
+    .users-card .org-stat-value,
+    .users-card .org-stat-value code {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
+      word-break: break-word;
+    }
+    .users-card-action {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 0.75rem;
+    }
+    .users-org-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.6rem;
+    }
+    a.users-org-link {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--color-accent-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-accent-soft);
+      color: var(--color-accent);
+      font-weight: 600;
+      text-decoration: none;
+      word-break: break-word;
+    }
+    a.users-org-link:hover {
+      text-decoration: none;
+      border-color: var(--color-accent);
     }
     .swipe-delete {
       --swipe-delete-tab-width: 4.5rem;
@@ -2351,6 +2488,96 @@ function renderAdminShell(opts: AdminShellOptions): string {
         width: 100%;
       }
     }
+    @media (max-width: 899px) {
+      .members-card > .members-head,
+      .team-members > .team-members-head {
+        display: none;
+      }
+      .admin-table-wrap.members-card {
+        overflow: visible;
+        border: none;
+        background: transparent;
+      }
+      .members-card .swipe-delete--row,
+      .team-members .swipe-delete--row {
+        margin-bottom: 0.65rem;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--color-surface);
+      }
+      .members-card .swipe-delete--row:last-child,
+      .team-members .swipe-delete--row:last-child {
+        margin-bottom: 0;
+        border-bottom: 1px solid var(--color-border);
+      }
+      .members-card .swipe-delete--row .swipe-delete__front,
+      .team-members .swipe-delete--row .swipe-delete__front {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+        align-items: start;
+        padding: 0.85rem 0.9rem;
+      }
+      .members-card .swipe-delete__front > div,
+      .team-members .swipe-delete__front > div {
+        min-width: 0;
+        padding: 0.5rem 0.65rem;
+        background: var(--color-surface-2);
+        border-radius: var(--radius-sm);
+      }
+      .members-card .swipe-delete__front > div:nth-child(1)::before,
+      .members-card .swipe-delete__front > div:nth-child(2)::before,
+      .members-card .swipe-delete__front > div:nth-child(3)::before,
+      .members-card .swipe-delete__front > div:nth-child(4)::before,
+      .team-members .swipe-delete__front > div:nth-child(1)::before,
+      .team-members .swipe-delete__front > div:nth-child(2)::before,
+      .team-members .swipe-delete__front > div:nth-child(3)::before {
+        display: block;
+        margin-bottom: 0.2rem;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--color-muted);
+      }
+      .members-card .swipe-delete__front > div:nth-child(1)::before,
+      .team-members .swipe-delete__front > div:nth-child(1)::before { content: "Name"; }
+      .members-card .swipe-delete__front > div:nth-child(2)::before,
+      .team-members .swipe-delete__front > div:nth-child(2)::before { content: "Email"; }
+      .members-card .swipe-delete__front > div:nth-child(3)::before { content: "Global role"; }
+      .members-card .swipe-delete__front > div:nth-child(4)::before { content: "Org role"; }
+      .team-members .swipe-delete__front > div:nth-child(3)::before { content: "Team role"; }
+      .members-card .swipe-delete__front > div:nth-child(1),
+      .members-card .swipe-delete__front > div:nth-child(2),
+      .team-members .swipe-delete__front > div:nth-child(1),
+      .team-members .swipe-delete__front > div:nth-child(2) {
+        grid-column: 1 / -1;
+      }
+      .members-card .swipe-delete__front > :last-child,
+      .team-members .swipe-delete__front > :last-child {
+        grid-column: 1 / -1;
+        padding: 0.1rem 0 0;
+        background: transparent;
+        text-align: right;
+      }
+      .members-card .swipe-delete__front code,
+      .team-members .swipe-delete__front code {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .members-card .inline-form,
+      .team-members .inline-form {
+        min-width: 0;
+      }
+      .members-card .inline-form .field,
+      .members-card .inline-form .field-select,
+      .team-members .inline-form .field-select {
+        max-width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -2402,7 +2629,7 @@ export interface AdminUserRow {
   name: string;
   role: string | null;
   createdAt: Date;
-  organisations: string[];
+  organisations: { id: string; name: string }[];
 }
 
 interface RenderAdminUsersOptions {
@@ -2434,49 +2661,53 @@ function roleBadge(role: string | null): string {
  */
 export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
   const { currentUserEmail, users, pendingCount, flash } = opts;
-  const rows =
+  const stat = (label: string, value: string, extraClass = ""): string =>
+    `<div class="org-stat${extraClass}">
+      <span class="org-stat-label">${escapeHtml(label)}</span>
+      <span class="org-stat-value">${value}</span>
+    </div>`;
+
+  const cards =
     users.length === 0
-      ? `<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--color-muted);">No users yet.</td></tr>`
+      ? `<div class="users-card users-card--empty">No users yet.</div>`
       : users
           .map((u) => {
+            const name = escapeHtml(u.name || "—");
+            const email = escapeHtml(u.email);
             const orgs =
               u.organisations.length === 0
                 ? `<span style="color:var(--color-muted);">—</span>`
-                : escapeHtml(u.organisations.join(", "));
+                : `<span class="users-org-list">${u.organisations
+                    .map((o) => {
+                      const name = escapeHtml(o.name);
+                      const href = `/portal/admin?tab=organisations&amp;org=${escapeHtml(o.id)}`;
+                      return `<a class="users-org-link" href="${href}" title="Open ${name}">${name}</a>`;
+                    })
+                    .join("")}</span>`;
             const action =
               u.role === "pending"
-                ? `<form method="POST" action="/portal/admin/approve" style="display:inline;">
-              <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
-              <button type="submit" class="btn btn-primary btn-approve">Approve</button>
-            </form>`
-                : `<span style="color:var(--color-muted);">—</span>`;
+                ? `<div class="users-card-action">
+              <form method="POST" action="/portal/admin/approve">
+                <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
+                <button type="submit" class="btn btn-primary btn-approve">Approve</button>
+              </form>
+            </div>`
+                : "";
             return `
-        <tr>
-          <td>${escapeHtml(u.name || "—")}</td>
-          <td><code>${escapeHtml(u.email)}</code></td>
-          <td>${roleBadge(u.role)}</td>
-          <td>${escapeHtml(u.createdAt.toISOString().slice(0, 10))}</td>
-          <td>${orgs}</td>
-          <td style="text-align:right;">${action}</td>
-        </tr>`;
+        <article class="users-card">
+          <div class="users-card-stats">
+            ${stat("Name", `<span title="${name}">${name}</span>`)}
+            ${stat("Email", `<code title="${email}">${email}</code>`)}
+            ${stat("Organisation", orgs, " users-stat--row")}
+            ${stat("Role", roleBadge(u.role))}
+            ${stat("Signed up", escapeHtml(u.createdAt.toISOString().slice(0, 10)))}
+          </div>
+          ${action}
+        </article>`;
           })
           .join("");
 
-  const content = `<div class="admin-table-wrap">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Role</th>
-          <th>Signed up</th>
-          <th>Organisation</th>
-          <th style="text-align:right;">Action</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>`;
+  const content = `<div class="users-card-list">${cards}</div>`;
 
   return renderAdminShell({
     currentUserEmail,
@@ -2673,36 +2904,42 @@ interface RenderAdminOrganisationsOptions {
 export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions): string {
   const { currentUserEmail, pendingCount, organisations, flash } = opts;
 
-  const rows =
+  const cards =
     organisations.length === 0
-      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No organisations yet. Create one below.</td></tr>`
+      ? `<div class="org-card org-card--empty">No organisations yet. Create one below.</div>`
       : organisations
-          .map(
-            (o) => `
-        <tr>
-          <td><a class="org-link" href="/portal/admin?tab=organisations&amp;org=${escapeHtml(o.id)}">${escapeHtml(o.name)}</a></td>
-          <td><code>${escapeHtml(o.slug)}</code></td>
-          <td>${formatNumber(o.memberCount)}</td>
-          <td>${formatNumber(o.teamCount)}</td>
-          <td style="color:var(--color-muted);font-size:0.8rem;">${escapeHtml(o.createdAt.toISOString().slice(0, 10))}</td>
-        </tr>`,
-          )
+          .map((o) => {
+            const href = `/portal/admin?tab=organisations&amp;org=${escapeHtml(o.id)}`;
+            const name = escapeHtml(o.name);
+            const slug = escapeHtml(o.slug);
+            const created = escapeHtml(o.createdAt.toISOString().slice(0, 10));
+            return `
+        <a class="org-card" href="${href}" title="Open ${name}">
+          <span class="org-card-name" title="${name}">${name}</span>
+          <div class="org-card-stats">
+            <div class="org-stat">
+              <span class="org-stat-label">Slug</span>
+              <span class="org-stat-value" title="${slug}"><code>${slug}</code></span>
+            </div>
+            <div class="org-stat">
+              <span class="org-stat-label">Members</span>
+              <span class="org-stat-value">${formatNumber(o.memberCount)}</span>
+            </div>
+            <div class="org-stat">
+              <span class="org-stat-label">Teams</span>
+              <span class="org-stat-value">${formatNumber(o.teamCount)}</span>
+            </div>
+            <div class="org-stat">
+              <span class="org-stat-label">Created</span>
+              <span class="org-stat-value" title="${created}">${created}</span>
+            </div>
+          </div>
+        </a>`;
+          })
           .join("");
 
   const content = `
-    <div class="admin-table-wrap">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Slug</th>
-          <th>Members</th>
-          <th>Teams</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="org-card-list">${cards}
     </div>
 
     <h2>Create organisation</h2>

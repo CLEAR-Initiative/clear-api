@@ -103,6 +103,10 @@ export interface PortalShellOptions {
   account: { email: string; role?: string | null } | null;
   /** Optional href to mark as active (for docs/admin link highlighting) */
   activeHref?: string;
+  /** Admin tab currently shown — drives mobile sidebar sub-nav. */
+  adminTab?: "dashboard" | "users" | "organisations" | "webhooks";
+  /** Pending signups, shown as a badge on Users in the mobile admin sub-nav. */
+  pendingCount?: number;
 }
 
 /**
@@ -332,6 +336,7 @@ ${renderThemeCustomProperties("portal")}
       flex-direction: column;
       gap: 12px;
       flex-shrink: 0;
+      margin-top: auto;
       transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .sidebar-footer {
@@ -452,68 +457,85 @@ ${renderThemeCustomProperties("portal")}
       background: var(--color-surface-2);
     }
     
-    /* System status in sidebar — mobile menu only (desktop uses main-header pill) */
-    .system-status-inline {
+    .nav-sub {
       display: none;
-      padding: 8px 16px;
-      margin: auto 16px 8px 16px;
-      background: transparent;
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      border-radius: 20px;
-      font-size: 0.75rem;
-      color: rgba(34, 197, 94, 1);
-      align-items: center;
-      gap: 8px;
-      justify-content: center;
+      flex-direction: column;
+      gap: 2px;
+      padding: 2px 0 6px 28px;
     }
-    
+    .nav-item--sub {
+      min-height: 0;
+      padding: 6px 10px;
+      font-size: 13px;
+      gap: 8px;
+    }
+    .nav-sub-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.1rem;
+      height: 1.1rem;
+      padding: 0 0.3rem;
+      margin-left: auto;
+      border-radius: 999px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: var(--color-border);
+      color: var(--color-muted);
+    }
+    .nav-item--sub.active .nav-sub-badge {
+      background: var(--color-accent);
+      color: var(--on-accent);
+    }
+
+    /* Status + version: one compact row at the bottom of the sidebar. */
+    .sidebar-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      margin: 0 16px 10px;
+      padding: 0;
+      border: none;
+      background: none;
+    }
+    .system-status-inline {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: none;
+      border-radius: 0;
+    }
     .status-dot {
-      width: 6px;
-      height: 6px;
-      background: rgba(34, 197, 94, 1);
+      display: block;
+      width: 5px;
+      height: 5px;
+      background: var(--color-success);
       border-radius: 50%;
-      display: inline-block;
-      animation: pulse 2s infinite;
       flex-shrink: 0;
     }
-    
     .status-text {
-      transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    /* When sidebar is collapsed, hide text and show only dot */
-    .portal-shell.sidebar-collapsed .system-status-inline {
-      justify-content: center;
-      padding: 8px;
-      gap: 0;
-    }
-    
-    .portal-shell.sidebar-collapsed .status-text {
-      opacity: 0;
-      position: absolute;
-      pointer-events: none;
-    }
-    
-    /* Version indicator */
-    .version-indicator {
-      text-align: center;
       font-size: 0.65rem;
+      line-height: 1;
       color: var(--color-muted);
-      margin: 2px 16px 12px 16px;
+      white-space: nowrap;
+    }
+    .version-indicator {
+      font-size: 0.65rem;
+      line-height: 1;
+      color: var(--color-muted);
+      margin: 0;
       padding: 0;
     }
-    
-    .portal-shell.sidebar-collapsed .version-indicator {
+    .portal-shell.sidebar-collapsed .sidebar-meta {
       opacity: 0;
       position: absolute;
       pointer-events: none;
     }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-    
+
     /* Mobile drawer overlay */
     .mobile-drawer-overlay {
       display: none;
@@ -525,15 +547,17 @@ ${renderThemeCustomProperties("portal")}
       background: rgba(0, 0, 0, 0.7);
       z-index: 150;
       opacity: 0;
+      pointer-events: none;
       transition: opacity 0.25s ease;
     }
     .mobile-drawer-overlay.active {
       opacity: 1;
+      pointer-events: auto;
     }
 
     /* Mobile: drawer overlay mode */
     @media (max-width: 768px) {
-      .system-status-inline {
+      .nav-sub {
         display: flex;
       }
       .mobile-menu-btn {
@@ -583,7 +607,8 @@ ${renderThemeCustomProperties("portal")}
       .portal-shell.sidebar-collapsed .brand-text,
       .portal-shell.sidebar-collapsed .nav-label,
       .portal-shell.sidebar-collapsed .user-details,
-      .portal-shell.sidebar-collapsed .signout-label {
+      .portal-shell.sidebar-collapsed .signout-label,
+      .portal-shell.sidebar-collapsed .sidebar-meta {
         opacity: 1;
         pointer-events: auto;
         position: static;
@@ -777,7 +802,7 @@ export function renderPortalShellScript(): string {
  * Render the Portal Shell sidebar HTML
  */
 export function renderPortalShell(opts: PortalShellOptions): string {
-  const { surface, account, activeHref } = opts;
+  const { surface, account, activeHref, adminTab, pendingCount = 0 } = opts;
   const isAdmin = account?.role === "admin";
   
   // Determine nav rendering mode
@@ -810,13 +835,32 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart", activeHref === "/portal#usage-analytics")}
   `;
 
-  // Admin nav (only if admin role)
+  const adminSubLink = (
+    tab: "dashboard" | "users" | "organisations" | "webhooks",
+    label: string,
+    badge?: number,
+  ): string => {
+    const active = adminTab === tab;
+    const badgeHtml =
+      badge && badge > 0
+        ? `<span class="nav-sub-badge">${escapeHtml(String(badge))}</span>`
+        : "";
+    return `<a href="/portal/admin?tab=${tab}" class="nav-item nav-item--link nav-item--sub${active ? " active" : ""}">${escapeHtml(label)}${badgeHtml}</a>`;
+  };
+
+  // Admin nav (only if admin role). Sub-options are mobile-only CSS.
   const adminNav = isAdmin ? `
     <div class="nav-section">Admin</div>
     <a href="/portal/admin" class="nav-item nav-item--link${activeHref === "/portal/admin" ? " active" : ""}" title="Admin Panel">
       ${PORTAL_SVGS.shield}
       <span class="nav-label">Admin Panel</span>
     </a>
+    <div class="nav-sub nav-sub--admin">
+      ${adminSubLink("dashboard", "Dashboard")}
+      ${adminSubLink("organisations", "Organisations")}
+      ${adminSubLink("users", "Users", pendingCount)}
+      ${adminSubLink("webhooks", "Error Alerts")}
+    </div>
   ` : "";
   
   // Account footer when signed in; Sign in CTA when anonymous so home/docs/portal
@@ -870,14 +914,15 @@ export function renderPortalShell(opts: PortalShellOptions): string {
         </nav>
       </div>
 
-      <div class="system-status-inline">
-        <span class="status-dot"></span>
-        <span class="status-text">System Operational</span>
-      </div>
-
       ${footerHtml}
 
-      <div class="version-indicator">v${escapeHtml(PORTAL_VERSION)}</div>
+      <div class="sidebar-meta">
+        <div class="system-status-inline" title="System Operational">
+          <span class="status-dot"></span>
+          <span class="status-text">System Operational</span>
+        </div>
+        <div class="version-indicator">v${escapeHtml(PORTAL_VERSION)}</div>
+      </div>
     </aside>
   `;
 }
