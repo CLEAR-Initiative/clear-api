@@ -7,6 +7,11 @@
  */
 
 import { createRequire } from "node:module";
+import { renderThemeCustomProperties } from "../ui/theme.js";
+import {
+  renderPortalControlScript,
+  renderPortalControlStyles,
+} from "./controls.js";
 
 const require = createRequire(import.meta.url);
 const PORTAL_VERSION = (require("../../package.json") as { version: string }).version;
@@ -17,6 +22,14 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+export function renderPortalToast(flash: {
+  kind: "success" | "error";
+  message: string;
+}): string {
+  const kind = flash.kind === "error" ? "error" : "success";
+  return `<div class="portal-toast portal-toast--${kind}" role="status" aria-live="polite">${escapeHtml(flash.message)}</div>`;
 }
 
 const PORTAL_ICON_BASE = "/portal/icons";
@@ -44,7 +57,7 @@ export const PORTAL_SVGS = {
 } as const;
 
 const PORTAL_ASSETS = {
-  logo: "logo.png",
+  logo: "clearapi_logo.png",
 } as const;
 
 function generateAvatarHtml(email: string): string {
@@ -98,32 +111,10 @@ export interface PortalShellOptions {
 export function renderPortalShellStyles(): string {
   return `  <style>
     :root {
-      --color-bg: #0a0a0a;
-      --color-surface: #0d0d0d;
-      --color-surface-2: #111111;
-      --color-surface-3: #141414;
-      --color-border: #1f1f1f;
-      --color-border-2: #222222;
-      /* Darker burnt orange — legible on white labels; border is a deeper hue */
-      --color-accent: #c2410c;
-      --color-accent-hover: #d14a12;
-      --color-accent-border: #7c2d12;
-      --color-accent-soft: rgba(194, 65, 12, 0.12);
-      --color-text: #ffffff;
-      --color-muted: #999999;
-      --color-label: #666666;
-      --color-section: #444444;
-      --on-accent: #fff7ed;
-      --color-success: #22c55e;
-      --color-danger: #ef4444;
-      --color-warning: #f59e0b;
-      --color-code-bg: #0e0e10;
-      --radius: 12px;
-      --radius-sm: 6px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
+${renderThemeCustomProperties("portal")}
       --sidebar-width: 288px;
       --sidebar-width-collapsed: 72px;
+      --control-height: 2.5rem;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,7 +139,11 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .sidebar { 
       width: var(--sidebar-width-collapsed); 
-      justify-content: flex-start; 
+      justify-content: flex-start;
+      /* Let the edge chevron paint into main content. overflow:hidden
+         on .sidebar/.sidebar-top clips it regardless of z-index. */
+      overflow: visible;
+      z-index: 200;
     }
     
     .sidebar-top {
@@ -180,9 +175,11 @@ export function renderPortalShellStyles(): string {
     .sidebar-top:hover::-webkit-scrollbar-thumb {
       background: var(--color-border);
     }
-    .portal-shell.sidebar-collapsed .sidebar-top { 
-      padding: 20px 12px 0; 
-      gap: 24px; 
+    .portal-shell.sidebar-collapsed .sidebar-top {
+      /* Tighter left inset than expanded (32px → 12px). Icons stay
+         flex-start so they ease left with padding, not with width. */
+      padding: 32px 12px 0;
+      overflow: visible;
     }
     
     .sidebar-brand {
@@ -191,16 +188,19 @@ export function renderPortalShellStyles(): string {
       gap: 12px;
       flex-shrink: 0;
       position: relative;
+      /* Two-line brand text is taller than the 36px logo; lock the
+         row so taking .brand-text out of flow does not lift the nav. */
+      min-height: 44px;
     }
     .brand-logo-img {
       flex-shrink: 0;
       border-radius: 8px;
     }
     .portal-shell.sidebar-collapsed .sidebar-brand {
-      justify-content: center;
-    }
-    .portal-shell.sidebar-collapsed .brand-logo-img {
-      margin: 0 auto;
+      /* Toggle is position:absolute; keep the brand from becoming its
+         containing block so right is relative to the sidebar edge.
+         Stay left-aligned so the logo does not slide as width animates. */
+      position: static;
     }
     .brand-text {
       display: flex;
@@ -248,12 +248,14 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .sidebar-toggle {
       position: absolute;
-      right: -20px;
+      top: 24px;
+      right: -14px;
       margin-left: 0;
       transform: rotate(180deg);
       background: var(--color-surface);
       border: 1px solid var(--color-border);
-      z-index: 10;
+      /* Above .main / admin tabs (later in the DOM); below modals (300). */
+      z-index: 250;
     }
     .nav-section + .nav-section,
     .nav-list .nav-section:not(:first-child) {
@@ -275,15 +277,18 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .nav-section {
       opacity: 0;
-      height: 0;
-      padding: 0;
+      pointer-events: none;
       overflow: hidden;
+      white-space: nowrap;
     }
     .nav-item {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 10px 12px;
+      /* 10px+10px padding + 14px label line-height (1.6 × 14px). Keeps
+         the row from shrinking when .nav-label is taken out of flow. */
+      min-height: calc(20px + 1.6em);
       border-radius: 8px;
       color: var(--color-muted);
       background: transparent;
@@ -305,12 +310,11 @@ export function renderPortalShellStyles(): string {
       background: var(--color-accent-soft);
       color: var(--color-accent);
     }
-    .portal-shell.sidebar-collapsed .nav-item {
-      justify-content: center;
-      padding: 12px;
-    }
     .nav-icon-img {
       flex-shrink: 0;
+      display: block;
+      width: 14px;
+      height: 14px;
     }
     .nav-label {
       white-space: nowrap;
@@ -328,10 +332,10 @@ export function renderPortalShellStyles(): string {
       flex-direction: column;
       gap: 12px;
       flex-shrink: 0;
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .sidebar-footer {
       padding: 16px 12px 6px;
-      align-items: center;
     }
     .user-card {
       display: flex;
@@ -569,6 +573,8 @@ export function renderPortalShellStyles(): string {
       .portal-shell.sidebar-collapsed .sidebar {
         width: 280px;
         transform: translateX(-100%);
+        overflow: hidden;
+        z-index: 160;
       }
       .portal-shell.sidebar-collapsed .sidebar.mobile-open {
         transform: translateX(0);
@@ -582,6 +588,10 @@ export function renderPortalShellStyles(): string {
         pointer-events: auto;
         position: static;
       }
+      .portal-shell.sidebar-collapsed .sidebar-top {
+        padding: 20px;
+        gap: 16px;
+      }
       .portal-shell.sidebar-collapsed .nav-item {
         justify-content: flex-start;
         padding: 10px 12px;
@@ -593,14 +603,58 @@ export function renderPortalShellStyles(): string {
       }
       .portal-shell.sidebar-collapsed .nav-section {
         opacity: 1;
-        height: auto;
-        padding: 8px 12px 4px;
+        pointer-events: auto;
+        overflow: visible;
       }
       .portal-shell.sidebar-collapsed .sidebar-footer {
         padding: 16px 20px 6px;
         align-items: stretch;
       }
     }
+
+    .portal-toast {
+      position: fixed;
+      right: max(1.25rem, env(safe-area-inset-right));
+      bottom: max(1.25rem, env(safe-area-inset-bottom));
+      z-index: 400;
+      max-width: min(22rem, calc(100vw - 2rem));
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      font-weight: 500;
+      line-height: 1.4;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      animation: portal-toast-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-toast--success {
+      background: #0d2818;
+      border: 1px solid var(--color-success);
+      color: var(--color-success);
+    }
+    .portal-toast--error {
+      background: #2a0c0c;
+      border: 1px solid var(--color-danger);
+      color: var(--color-danger);
+    }
+    .portal-toast.is-leaving {
+      animation: portal-toast-out 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    @keyframes portal-toast-in {
+      from { opacity: 0; transform: translate3d(12px, 16px, 0); }
+      to { opacity: 1; transform: translate3d(0, 0, 0); }
+    }
+    @keyframes portal-toast-out {
+      from { opacity: 1; transform: translate3d(0, 0, 0); }
+      to { opacity: 0; transform: translate3d(8px, 12px, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .portal-toast,
+      .portal-toast.is-leaving {
+        animation: none;
+      }
+    }
+    ${renderPortalControlStyles()}
   </style>`;
 }
 
@@ -686,6 +740,25 @@ export function renderPortalShellScript(): string {
       } catch (e) {}
       window.location.href = '/portal';
     }
+
+    (function dismissPortalToast() {
+      var toast = document.querySelector('.portal-toast');
+      if (!toast) return;
+      var params = new URLSearchParams(window.location.search);
+      if (params.has('flash') || params.has('msg')) {
+        params.delete('flash');
+        params.delete('msg');
+        var qs = params.toString();
+        history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+      }
+      window.setTimeout(function () {
+        toast.classList.add('is-leaving');
+        window.setTimeout(function () {
+          if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 280);
+      }, 2000);
+    })();
+    ${renderPortalControlScript()}
   </script>`;
 }
 

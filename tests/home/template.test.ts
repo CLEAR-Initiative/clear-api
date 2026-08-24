@@ -8,6 +8,8 @@ describe("renderHomePage", () => {
     expect(html).toContain("Sign in");
     expect(html).toContain('href="https://github.com/CLEAR-Initiative"');
     expect(html).toContain("curl https://api.clearinitiative.io/graphql");
+    expect(html).toContain('href="/favicon.ico"');
+    expect(html).not.toContain("favicon.svg");
     expect(html).not.toContain("Access raw data items");
     expect(html).not.toContain("A single raw observation");
   });

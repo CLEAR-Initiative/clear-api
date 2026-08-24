@@ -1,3 +1,6 @@
+import { renderApisecThemeProperties, renderFontLinks, renderThemeRoot } from "../ui/theme.js";
+import { renderIconLinks } from "../ui/icons.js";
+
 export function renderHomePage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -6,32 +9,11 @@ export function renderHomePage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CLEAR API — by NRC</title>
   <meta name="description" content="CLEAR API — the developer interface to the CLEAR humanitarian data commons. One GraphQL endpoint for verified crisis signals, events, alerts, and the geography they happen in. Built and operated by NRC.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderFontLinks()}
   <style>
-    :root {
-      --bg: #0a0a0b;
-      --surface: #141417;
-      --surface-2: #1b1b1f;
-      --border: #26262b;
-      --border-hover: #3a3a42;
-      --accent: #f2612a;
-      --accent-hover: #ff6a33;
-      --on-accent: #0a0a0b;
-      --text: #f5f5f6;
-      --muted: #9a9ca3;
-      --label: #75777e;
-      --code-bg: #0e0e10;
-      --green: #4ade80;
-      --yellow: #fbbf24;
-      --red: #f87171;
-      --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
-    }
+    ${renderThemeRoot("marketing")}
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
@@ -199,11 +181,7 @@ export function renderHomePage(): string {
     <!-- ============ THE CLEAR API · three-tier master/detail (ported from ClearApiSection) ============ -->
     <style>
     .apisec{
-      --bg:#0a0a0a; --bg-2:#111111; --bg-3:#161616;
-      --line:#212121; --line-2:#2c2c2c;
-      --ink:#f4f4f3; --ink-2:#b8b8b6; --ink-3:#7a7a78; --ink-4:#4a4a48;
-      --orange:#f2612a; --orange-2:#ff6a33;
-      --orange-dim:rgba(242,97,42,.13); --orange-line:rgba(242,97,42,.4);
+      ${renderApisecThemeProperties()}
       border-top:1px solid var(--line); padding:104px 0 108px; background:var(--bg); color:var(--ink);
     }
     .apisec *{ box-sizing:border-box; }

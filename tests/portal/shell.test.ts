@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { renderPortalShell, renderPortalShellScript } from "../../src/portal/shell.js";
+import {
+  renderPortalShell,
+  renderPortalShellScript,
+  renderPortalShellStyles,
+  renderPortalToast,
+} from "../../src/portal/shell.js";
 
 describe("Portal Shell", () => {
   describe("renderPortalShell", () => {
@@ -44,6 +49,8 @@ describe("Portal Shell", () => {
       expect(html).toContain("admin@example.com");
       expect(html).toContain("Admin Account");
       expect(html).toContain("Sign Out");
+      expect(html).toContain("/portal/icons/clearapi_logo.png");
+      expect(html).not.toContain("/portal/icons/logo.png");
     });
 
     it("renders a Sign in CTA when account is null", () => {
@@ -116,11 +123,96 @@ describe("Portal Shell", () => {
       expect(script).toContain("function closeMobileDrawer()");
     });
 
-    it("uses sidebar-collapsed localStorage key", () => {
+    it("includes custom select enhancement", () => {
       const script = renderPortalShellScript();
 
-      expect(script).toContain("localStorage.getItem('sidebar-collapsed')");
-      expect(script).toContain("localStorage.setItem('sidebar-collapsed'");
+      expect(script).toContain("enhancePortalSelects");
+      expect(script).toContain("select.field-select");
+    });
+
+    it("dismisses a portal toast after 2 seconds", () => {
+      const script = renderPortalShellScript();
+
+      expect(script).toContain("dismissPortalToast");
+      expect(script).toContain(".portal-toast");
+      expect(script).toContain("2000");
+      expect(script).toContain("is-leaving");
+    });
+  });
+
+  describe("renderPortalShellStyles", () => {
+    it("lets the collapsed sidebar chevron overflow above main content", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toContain(
+        ".portal-shell.sidebar-collapsed .sidebar-toggle",
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-toggle[\s\S]*?z-index:\s*250/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar \{[\s\S]*?overflow:\s*visible/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-top \{[\s\S]*?overflow:\s*visible/,
+      );
+    });
+
+    it("keeps nav icons left-aligned with a tighter collapsed inset", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-top \{[^}]*padding:\s*32px 12px 0;/,
+      );
+      expect(css).not.toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-top \{[^}]*gap:\s*24px/,
+      );
+      expect(css).not.toMatch(
+        /\.portal-shell\.sidebar-collapsed \.nav-section \{[^}]*height:\s*0/,
+      );
+      expect(css).not.toMatch(
+        /\.portal-shell\.sidebar-collapsed \.nav-item \{[^}]*justify-content:\s*center/,
+      );
+      expect(css).not.toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-brand \{[^}]*justify-content:\s*center/,
+      );
+      expect(css).not.toMatch(
+        /\.portal-shell\.sidebar-collapsed \.brand-logo-img \{[^}]*margin:\s*0 auto/,
+      );
+      expect(css).toMatch(/\.nav-item \{[^}]*min-height:\s*calc\(20px \+ 1\.6em\)/);
+      expect(css).toMatch(/\.sidebar-brand \{[^}]*min-height:\s*44px/);
+    });
+
+    it("includes shared field and custom-select control styles", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toContain("--control-height: 2.5rem");
+      expect(css).toContain(".field-select");
+      expect(css).toContain(".select-menu");
+      expect(css).toContain("z-index: 280");
+    });
+
+    it("styles a bottom-right toast that animates in and out", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toContain(".portal-toast");
+      expect(css).toContain("bottom: max(1.25rem, env(safe-area-inset-bottom))");
+      expect(css).toContain("right: max(1.25rem, env(safe-area-inset-right))");
+      expect(css).toContain("portal-toast-in");
+      expect(css).toContain("portal-toast-out");
+    });
+  });
+
+  describe("renderPortalToast", () => {
+    it("renders an escaped success toast", () => {
+      const html = renderPortalToast({
+        kind: "success",
+        message: 'Created "Acme".',
+      });
+
+      expect(html).toContain('class="portal-toast portal-toast--success"');
+      expect(html).toContain("Created &quot;Acme&quot;.");
+      expect(html).toContain('role="status"');
     });
   });
 });

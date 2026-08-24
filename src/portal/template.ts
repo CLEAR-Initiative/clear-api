@@ -2,8 +2,12 @@ import {
   renderPortalShell,
   renderPortalShellStyles,
   renderPortalShellScript,
+  renderPortalToast,
   type PortalShellOptions,
 } from "./shell.js";
+import { renderAuthPageHead, renderWaitingPageStyles } from "../ui/auth-page.js";
+import { renderFontLinks } from "../ui/theme.js";
+import { renderIconLinks } from "../ui/icons.js";
 
 export interface PortalOptions {
   /** Null/undefined for anonymous Developers — public tabs only. */
@@ -28,6 +32,8 @@ const PORTAL_SVGS = {
     '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path fill="currentColor" d="M5.6 10.15 2.85 7.4l.95-.95 1.8 1.8 4.55-4.55.95.95-5.5 5.5Z"/></svg>',
   modalCheckWatermark:
     '<svg width="136" height="136" viewBox="0 0 136 136" aria-hidden="true"><path fill="#22c55e" d="M48 68 62 82 88 54" stroke="#22c55e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+  trash:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
 } as const;
 
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
@@ -43,7 +49,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Portal</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1109,32 +1115,7 @@ export function renderLoginPage(opts?: { next?: string }): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Developer Portal &mdash; Create Account</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#0a0a0b">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0a0a0b; color: #f5f5f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { background: #141417; border: 1px solid #26262b; border-radius: 12px; padding: 2rem; width: 380px; }
-    .card h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
-    .card p { font-size: 0.85rem; color: #9a9ca3; margin-bottom: 1.5rem; }
-    label { display: block; font-size: 0.8rem; color: #9a9ca3; margin-bottom: 0.25rem; }
-    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid #26262b; background: #0e0e10; color: #f5f5f6; font-size: 0.875rem; margin-bottom: 1rem; font-family: inherit; }
-    input:focus { outline: none; border-color: #f2612a; }
-    button { width: 100%; padding: 0.6rem; background: #f2612a; color: #0a0a0b; border: none; border-radius: 8px; font-size: 0.875rem; cursor: pointer; font-family: inherit; font-weight: 600; }
-    button:hover { background: #ff6a33; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
-    .notice { color: #4ade80; font-size: 0.8rem; margin-top: 0.25rem; line-height: 1.4; }
-    .toggle { text-align: center; font-size: 0.8rem; color: #9a9ca3; margin-top: 1.25rem; }
-    .toggle a { color: #f2612a; text-decoration: none; }
-    .toggle a:hover { text-decoration: underline; }
-  </style>
+  ${renderAuthPageHead({ title: "Developer Portal &mdash; Create Account" })}
 </head>
 <body>
   <div class="card">
@@ -1368,33 +1349,11 @@ export function renderResetPasswordPage({
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Developer Portal &mdash; ${escapeHtml(heading)}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#0a0a0b">
-  <meta name="referrer" content="no-referrer">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0a0a0b; color: #f5f5f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { background: #141417; border: 1px solid #26262b; border-radius: 12px; padding: 2rem; width: 380px; }
-    .card h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
-    .card p { font-size: 0.85rem; color: #9a9ca3; margin-bottom: 1.5rem; line-height: 1.5; }
-    label { display: block; font-size: 0.8rem; color: #9a9ca3; margin-bottom: 0.25rem; }
-    input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid #26262b; background: #0e0e10; color: #f5f5f6; font-size: 0.875rem; margin-bottom: 1rem; font-family: inherit; }
-    input:focus { outline: none; border-color: #f2612a; }
-    button { width: 100%; padding: 0.6rem; background: #f2612a; color: #0a0a0b; border: none; border-radius: 8px; font-size: 0.875rem; cursor: pointer; font-family: inherit; font-weight: 600; }
-    button:hover { background: #ff6a33; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .error { color: #ef4444; font-size: 0.8rem; margin-top: 0.75rem; min-height: 1.2em; }
-    .notice { color: #4ade80; font-size: 0.8rem; margin-top: 0.25rem; line-height: 1.4; }
-    .toggle { text-align: center; font-size: 0.8rem; color: #9a9ca3; margin-top: 1.25rem; }
-    .toggle a { color: #f2612a; text-decoration: none; }
-    .toggle a:hover { text-decoration: underline; }
-  </style>
+  ${renderAuthPageHead({
+    title: `Developer Portal &mdash; ${escapeHtml(heading)}`,
+    extraMeta: `<meta name="referrer" content="no-referrer">`,
+    prose: true,
+  })}
 </head>
 <body>
   <div class="card">
@@ -1473,6 +1432,23 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function renderSwipeDeleteTab(opts: {
+  id: string;
+  action: string;
+  fields: string;
+  label: string;
+  ariaLabel: string;
+  title: string;
+}): string {
+  return `<form id="${opts.id}" class="swipe-delete__tab" method="POST" action="${opts.action}" aria-hidden="true" inert>
+      ${opts.fields}
+      <button type="submit" class="swipe-delete__tab-btn" title="${opts.title}" aria-label="${opts.ariaLabel}">
+        ${PORTAL_SVGS.trash}
+        <span>${opts.label}</span>
+      </button>
+    </form>`;
+}
+
 // ─── Admin dashboard ──────────────────────────────────────────────────────
 
 export interface AdminPendingUser {
@@ -1531,6 +1507,10 @@ interface AdminShellOptions {
   subtitle: string;
   /** Page title shown in the H1. */
   title: string;
+  /** Optional back link rendered above the title. */
+  backLink?: { href: string; label: string };
+  /** Right-align the page title and subtitle (org detail). */
+  headingAlign?: "start" | "end";
 }
 
 /**
@@ -1540,7 +1520,7 @@ interface AdminShellOptions {
  * required.
  */
 function renderAdminShell(opts: AdminShellOptions): string {
-  const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title } = opts;
+  const { currentUserEmail, activeTab, pendingCount, flash, content, subtitle, title, backLink, headingAlign } = opts;
   const shellOpts: PortalShellOptions = {
     surface: "admin",
     account: { email: currentUserEmail, role: "admin" },
@@ -1548,17 +1528,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
   };
   const sidebar = renderPortalShell(shellOpts);
 
-  const flashHtml = !flash
-    ? ""
-    : `<div style="
-        margin: 0 0 1.5rem;
-        padding: 0.75rem 1rem;
-        border-radius: var(--radius);
-        background: ${flash.kind === "success" ? "#0d2818" : "#2a0c0c"};
-        border: 1px solid ${flash.kind === "success" ? "var(--color-success)" : "var(--color-danger)"};
-        color: ${flash.kind === "success" ? "var(--color-success)" : "var(--color-danger)"};
-        font-size: 0.875rem;
-      ">${escapeHtml(flash.message)}</div>`;
+  const flashHtml = flash ? renderPortalToast(flash) : "";
 
   const tabLink = (tab: AdminTab, label: string, badge?: string) => {
     const active = tab === activeTab;
@@ -1574,7 +1544,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin · ${escapeHtml(title)}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${renderIconLinks()}
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   ${renderPortalShellStyles()}
   <style>
@@ -1619,6 +1589,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
       padding: 2.5rem 2rem;
       flex: 1;
       box-sizing: border-box;
+      --control-height: 2.5rem;
     }
     
     /* Admin panel mobile optimizations */
@@ -1694,10 +1665,18 @@ function renderAdminShell(opts: AdminShellOptions): string {
       border-color: var(--color-accent-border);
     }
     .btn-primary:hover { background: var(--color-accent-hover); }
+    .btn-primary:disabled,
+    .btn-primary:disabled:hover {
+      background: var(--color-border);
+      color: var(--color-muted);
+      border-color: transparent;
+      cursor: default;
+      opacity: 1;
+    }
     .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.75rem; }
     h1 { 
       font-size: 1.4rem; 
-      margin-bottom: 0.4rem; 
+      margin-bottom: 0.35rem; 
     }
     h2 { 
       font-size: 1rem; 
@@ -1706,6 +1685,22 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-transform: uppercase; 
       letter-spacing: 0.05em; 
       font-weight: 600; 
+    }
+    .admin-back {
+      margin: 0 0 1rem;
+      font-size: 0.875rem;
+    }
+    .admin-page-heading {
+      margin-bottom: 1.5rem;
+    }
+    .admin-page-heading h1 {
+      margin-bottom: 0.35rem;
+    }
+    .admin-page-heading .subtitle {
+      margin-bottom: 0;
+    }
+    .admin-page-heading--end {
+      text-align: right;
     }
     .subtitle { 
       color: var(--color-muted); 
@@ -1797,21 +1792,82 @@ function renderAdminShell(opts: AdminShellOptions): string {
       margin-bottom: 0.35rem; 
       font-weight: 600; 
     }
-    .form-field input, .form-field select { 
-      width: 100%; 
-      padding: 0.55rem 0.7rem; 
-      border-radius: var(--radius); 
-      border: 1px solid var(--color-border); 
-      background: var(--color-bg); 
-      color: var(--color-text); 
-      font-family: var(--font); 
-      font-size: 0.875rem; 
-    }
     .form-actions { 
       display: flex; 
       gap: 0.5rem; 
       flex-wrap: wrap; 
-      align-items: center; 
+      align-items: stretch;
+      align-self: end;
+      min-width: max-content;
+    }
+    .form-grid.org-edit-grid {
+      grid-template-columns: minmax(12rem, 1.4fr) minmax(11rem, 1.1fr) auto;
+    }
+    .form-grid.org-edit-grid > .form-actions {
+      justify-content: flex-end;
+      justify-self: end;
+    }
+    .field-affix {
+      display: flex;
+      align-items: stretch;
+      width: 100%;
+      height: var(--control-height);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      background-color: var(--color-bg);
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    .field-affix:focus-within {
+      border-color: var(--color-accent);
+    }
+    .field-affix-prefix {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2rem;
+      padding: 0 0.55rem;
+      color: var(--color-label);
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-weight: 500;
+      user-select: none;
+      pointer-events: none;
+      background: var(--color-surface-2);
+      border-right: 1px solid var(--color-border);
+    }
+    .form-field .field-affix input {
+      border: none;
+      border-radius: 0;
+      height: 100%;
+      background: transparent;
+      min-width: 0;
+    }
+    .form-field .field-affix input:focus {
+      border-color: transparent;
+    }
+    .form-grid > .form-actions .btn-primary,
+    .team-form-grid > .form-actions .btn-primary {
+      height: var(--control-height);
+      padding-top: 0;
+      padding-bottom: 0;
+      padding-left: 1rem;
+      padding-right: 1rem;
+      font-size: 0.875rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+      box-sizing: border-box;
+    }
+    .team-form-grid > .form-actions {
+      min-width: 0;
+      width: 100%;
+    }
+    .team-form-grid > .form-actions .btn-primary {
+      width: 100%;
     }
     .btn-danger { 
       background: transparent; 
@@ -1826,6 +1882,52 @@ function renderAdminShell(opts: AdminShellOptions): string {
       gap: 0.35rem; 
       align-items: center; 
       flex-wrap: wrap; 
+    }
+    .btn-row-action {
+      background: var(--color-border);
+      color: var(--color-muted);
+      border: 1px solid transparent;
+      cursor: default;
+    }
+    .btn-row-action:disabled {
+      opacity: 1;
+      color: var(--color-muted);
+      cursor: default;
+    }
+    .btn-row-action.is-dirty {
+      background: #333;
+      color: var(--color-text);
+      border-color: #3f3f3f;
+      cursor: pointer;
+    }
+    .btn-row-action.is-dirty:hover {
+      background: #3d3d3d;
+    }
+    .table-row-end {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .table-row-end form {
+      display: inline-flex;
+      vertical-align: middle;
+    }
+    .row-save-check {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.35rem;
+      height: 1.35rem;
+      margin-left: 0.4rem;
+      color: var(--color-success);
+      opacity: 0;
+      transform: scale(0.85);
+      pointer-events: none;
+      vertical-align: middle;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .row-save-check.is-visible {
+      opacity: 1;
+      transform: scale(1);
     }
     .note { 
       font-size: 0.8rem; 
@@ -1859,7 +1961,19 @@ function renderAdminShell(opts: AdminShellOptions): string {
       border-bottom: 1px solid var(--color-border);
       vertical-align: middle;
     }
-    .table tbody tr:last-child td { border-bottom: none; }
+    .team-card .table-row-end {
+      position: relative;
+    }
+    .team-card .row-save-check {
+      position: absolute;
+      right: 2.5rem;
+      top: 50%;
+      margin-left: 0;
+      transform: translateY(-50%) scale(0.85);
+    }
+    .team-card .row-save-check.is-visible {
+      transform: translateY(-50%) scale(1);
+    }
     .table tbody tr:hover { background: var(--color-surface-2); }
     .badge-role {
       display: inline-flex;
@@ -1889,8 +2003,166 @@ function renderAdminShell(opts: AdminShellOptions): string {
     .org-link { 
       font-weight: 600; 
     }
+    .swipe-delete {
+      --swipe-delete-tab-width: 4.5rem;
+      --swipe-delete-gap: 10px;
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+    }
+    .swipe-delete__front {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      overflow: hidden;
+      background: var(--color-surface);
+      transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .swipe-delete.is-armed .swipe-delete__front {
+      width: calc(100% - var(--swipe-delete-tab-width) - var(--swipe-delete-gap));
+    }
+    .swipe-delete__tab {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 0;
+      display: flex;
+      width: var(--swipe-delete-tab-width);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .swipe-delete.is-armed .swipe-delete__tab {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .swipe-delete__tab-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      width: 100%;
+      height: 100%;
+      padding: 0.75rem 0.35rem;
+      border: none;
+      border-radius: var(--radius);
+      background: var(--color-danger);
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .swipe-delete__tab-btn:hover {
+      background: #dc2626;
+    }
+    .swipe-delete__tab-btn:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: -4px;
+    }
+    .swipe-delete__tab-btn svg {
+      display: block;
+      width: 16px;
+      height: 16px;
+    }
+    .swipe-delete--card {
+      margin-bottom: 1.5rem;
+      border-radius: var(--radius);
+    }
+    .swipe-delete--card .swipe-delete__front {
+      margin-bottom: 0;
+    }
     .team-card { 
-      margin-bottom: 1.5rem; 
+      margin-bottom: 0; 
+    }
+    .members-card {
+      --members-cols: minmax(11rem, 1.3fr) minmax(10rem, 1.1fr) minmax(6.5rem, 0.7fr) minmax(11rem, 1.2fr) auto;
+    }
+    .members-head,
+    .members-card .swipe-delete--row .swipe-delete__front {
+      display: grid;
+      grid-template-columns: var(--members-cols);
+      gap: 0 1rem;
+      align-items: center;
+      padding: 0.85rem 1.25rem;
+    }
+    .members-head {
+      border-bottom: 1px solid var(--color-border);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-muted);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .members-head > :last-child,
+    .team-members-head > :last-child {
+      text-align: right;
+      justify-self: end;
+    }
+    .members-card .table-row-end {
+      position: relative;
+      justify-self: end;
+    }
+    .members-card .row-save-check {
+      position: absolute;
+      right: calc(100% + 0.4rem);
+      top: 50%;
+      margin-left: 0;
+      transform: translateY(-50%) scale(0.85);
+    }
+    .members-card .row-save-check.is-visible {
+      transform: translateY(-50%) scale(1);
+    }
+    .team-members {
+      --team-members-cols: minmax(7rem, 1.1fr) minmax(9rem, 1.3fr) minmax(10rem, 1.2fr) 2.5rem;
+      margin-bottom: 1rem;
+    }
+    .team-members-head,
+    .team-members .swipe-delete--row .swipe-delete__front {
+      display: grid;
+      grid-template-columns: var(--team-members-cols);
+      gap: 0 1rem;
+      align-items: center;
+      padding: 0.85rem 0;
+    }
+    .team-members-head {
+      border-bottom: 1px solid var(--color-border);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-muted);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .team-members .table-row-end {
+      text-align: right;
+      padding-right: 0;
+    }
+    .swipe-delete--row {
+      border-bottom: 1px solid var(--color-border);
+    }
+    .swipe-delete--row:last-child {
+      border-bottom: none;
+    }
+    .swipe-delete--row .swipe-delete__front:hover {
+      background: var(--color-surface-2);
+    }
+    .swipe-delete--row .swipe-delete__tab-btn {
+      border-radius: 0;
+    }
+    .members-empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--color-muted);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .swipe-delete__front {
+        transition: none;
+      }
     }
     .team-card h3 { 
       font-size: 0.95rem; 
@@ -1903,7 +2175,183 @@ function renderAdminShell(opts: AdminShellOptions): string {
     .team-meta { 
       font-size: 0.78rem; 
       color: var(--color-muted); 
-      margin-bottom: 0.75rem; 
+      margin: 0; 
+    }
+    .team-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .team-card-header h3 {
+      margin: 0 0 0.25rem;
+    }
+    .team-user-forms {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .team-form-grid {
+      display: grid;
+      grid-template-columns: minmax(10rem, 1.4fr) minmax(8rem, 0.9fr) minmax(8.75rem, 0.9fr) 10.5rem;
+      gap: 0.85rem;
+      align-items: end;
+    }
+    .team-form-grid .team-form-email-wide {
+      grid-column: 1 / 3;
+    }
+    .team-form-grid .team-form-span-fields {
+      grid-column: 1 / 4;
+    }
+    .btn-icon-danger {
+      width: var(--control-height);
+      height: var(--control-height);
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: transparent;
+      color: var(--color-danger);
+      border: 1px solid var(--color-danger);
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .btn-icon-danger:hover {
+      background: #2a0c0c;
+    }
+    .btn-icon-danger svg {
+      display: block;
+    }
+    .btn-icon-danger-sm {
+      width: 2rem;
+      height: 2rem;
+      border-radius: var(--radius-sm);
+    }
+    .btn-icon-danger-sm svg {
+      width: 14px;
+      height: 14px;
+    }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 300;
+    }
+    .modal.modal--confirm {
+      width: 100%;
+      max-width: 440px;
+      padding: 0;
+      background: #111;
+      border: 1px solid #1f1f1f;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    }
+    .confirm-modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px 24px 0;
+    }
+    .confirm-modal-header h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.4;
+      color: var(--color-text);
+      margin: 0;
+      text-transform: none;
+    }
+    .confirm-modal-body { padding: 16px 24px 0; }
+    .confirm-modal-body p {
+      font-size: 0.875rem;
+      line-height: 1.45;
+      color: var(--color-muted);
+      margin: 0;
+    }
+    .confirm-modal-body strong { color: var(--color-text); font-weight: 600; }
+    .confirm-modal-warning {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 12px;
+      background: rgba(239, 68, 68, 0.05);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      line-height: 1.45;
+    }
+    .confirm-modal-footer {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      padding: 24px;
+    }
+    .btn-ghost {
+      padding: 10px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border);
+      background: transparent;
+      color: var(--color-muted);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .btn-ghost:hover { color: var(--color-text); border-color: var(--color-border-2); }
+    .btn-danger-solid {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      background: #ef4444;
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .btn-danger-solid:hover { background: #dc2626; }
+    .modal-close-btn {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: transparent;
+      color: var(--color-label);
+      cursor: pointer;
+      padding: 0;
+      border-radius: 6px;
+    }
+    .modal-close-btn:hover { color: var(--color-text); }
+    @media (max-width: 768px) {
+      .team-form-grid {
+        grid-template-columns: 1fr;
+      }
+      .team-form-grid .team-form-email-wide,
+      .team-form-grid .team-form-span-fields {
+        grid-column: auto;
+      }
+      .form-grid.org-edit-grid {
+        grid-template-columns: 1fr;
+      }
+      .form-grid.org-edit-grid > .form-actions {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -1919,12 +2367,19 @@ function renderAdminShell(opts: AdminShellOptions): string {
         ${tabLink("webhooks", "Error Alerts")}
       </div>
       <main class="wrap">
-        <h1>${escapeHtml(title)}</h1>
-        <p class="subtitle">${subtitle}</p>
-        ${flashHtml}
+        ${
+          backLink
+            ? `<p class="admin-back"><a href="${escapeHtml(backLink.href)}">${escapeHtml(backLink.label)}</a></p>`
+            : ""
+        }
+        <div class="admin-page-heading${headingAlign === "end" ? " admin-page-heading--end" : ""}">
+          <h1>${escapeHtml(title)}</h1>
+          <p class="subtitle">${subtitle}</p>
+        </div>
         ${content}
       </main>
     </div>
+    ${flashHtml}
   ${renderPortalShellScript()}
 </body>
 </html>`;
@@ -2255,14 +2710,17 @@ export function renderAdminOrganisations(opts: RenderAdminOrganisationsOptions):
     <h2>Create organisation</h2>
     <div class="form-card">
       <form method="POST" action="/portal/admin/orgs/create">
-        <div class="form-grid">
+        <div class="form-grid org-edit-grid">
           <div class="form-field">
-            <label for="org-name">Name</label>
+            <label for="org-name">Organisation name</label>
             <input id="org-name" name="name" required placeholder="Acme Response" />
           </div>
           <div class="form-field">
             <label for="org-slug">Slug</label>
-            <input id="org-slug" name="slug" required placeholder="acme-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+            <div class="field-affix">
+              <span class="field-affix-prefix" aria-hidden="true">/</span>
+              <input id="org-slug" name="slug" required placeholder="acme-response" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+            </div>
           </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary btn-sm">Create</button>
@@ -2328,67 +2786,79 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
       const teamParam = escapeHtml(team.id);
       const memberRows =
         team.members.length === 0
-          ? `<tr><td colspan="4" style="text-align:center;padding:1.25rem;color:var(--color-muted);font-size:0.85rem;">No members in this team yet.</td></tr>`
+          ? `<div class="members-empty" style="padding:1.25rem 0;font-size:0.85rem;">No members in this team yet.</div>`
           : team.members
-              .map((m) => `
-        <tr>
-          <td>${escapeHtml(m.name)}</td>
-          <td><code>${escapeHtml(m.email)}</code></td>
-          <td>
-            <form class="inline-form" method="POST" action="/portal/admin/orgs/teams/members/role">
+              .map((m) => {
+                const soleTeam = teamCountByUser.get(m.userId) === 1;
+                const tabId = `team-member-delete-tab-${teamParam}-${escapeHtml(m.userId)}`;
+                return `
+    <div class="swipe-delete swipe-delete--row">
+      <div class="swipe-delete__front">
+        <div>${escapeHtml(m.name)}</div>
+        <div><code>${escapeHtml(m.email)}</code></div>
+        <div>
+            <form class="inline-form js-role-form" method="POST" action="/portal/admin/orgs/teams/members/role">
               <input type="hidden" name="orgId" value="${orgParam}" />
               <input type="hidden" name="teamId" value="${teamParam}" />
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <select name="teamRole">${teamRoleSelectOptions(m.teamRole)}</select>
-              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+              <select class="field-select" name="teamRole">${teamRoleSelectOptions(m.teamRole)}</select>
+              <button type="submit" class="btn btn-sm btn-row-action">Update</button>
             </form>
-          </td>
-          <td style="text-align:right;">
-            <form method="POST" action="${teamCountByUser.get(m.userId) === 1 ? "/portal/admin/orgs/members/remove" : "/portal/admin/orgs/teams/members/remove"}" onsubmit="return confirm('${teamCountByUser.get(m.userId) === 1 ? "User will be removed from the organisation if removed from this team. Do you want to proceed?" : "Remove this user from the team?"}');">
-              <input type="hidden" name="orgId" value="${orgParam}" />
-              ${teamCountByUser.get(m.userId) === 1 ? "" : `<input type="hidden" name="teamId" value="${teamParam}" />`}
-              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
-            </form>
-          </td>
-        </tr>`)
+        </div>
+        <div class="table-row-end">
+              <button type="button" class="btn-icon-danger btn-icon-danger-sm js-swipe-delete-arm" aria-expanded="false" aria-controls="${tabId}" aria-label="Remove from team" title="Remove">${PORTAL_SVGS.trash}</button>
+            <span class="row-save-check" aria-hidden="true">${PORTAL_SVGS.modalCheck}</span>
+        </div>
+      </div>
+      ${renderSwipeDeleteTab({
+        id: tabId,
+        action: soleTeam ? "/portal/admin/orgs/members/remove" : "/portal/admin/orgs/teams/members/remove",
+        fields: `<input type="hidden" name="orgId" value="${orgParam}" />${soleTeam ? "" : `<input type="hidden" name="teamId" value="${teamParam}" />`}<input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />`,
+        label: "Remove",
+        ariaLabel: `Confirm remove ${escapeHtml(m.name)} from the team`,
+        title: soleTeam
+          ? "User will be removed from the organisation if removed from this team. Do you want to proceed?"
+          : "Remove this user from the team?",
+      })}
+    </div>`;
+              })
               .join("");
 
+      const tabId = `team-delete-tab-${teamParam}`;
       return `
-    <div class="form-card team-card">
-      <h3>${escapeHtml(team.name)}</h3>
-      <p class="team-meta"><code>${escapeHtml(team.slug)}</code>${team.description ? ` · ${escapeHtml(team.description)}` : ""} · ${team.members.length} member${team.members.length === 1 ? "" : "s"}</p>
-      <form method="POST" action="/portal/admin/orgs/teams/delete" style="margin-bottom:1rem;" onsubmit="return confirm('Delete this team? Members stay in the organisation.');">
-        <input type="hidden" name="orgId" value="${orgParam}" />
-        <input type="hidden" name="teamId" value="${teamParam}" />
-        <button type="submit" class="btn btn-danger btn-sm">Delete team</button>
-      </form>
-      <table class="table" style="margin-bottom:1rem;">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Team role</th>
-            <th style="text-align:right;">Actions</th>
-          </tr>
-        </thead>
-        <tbody>${memberRows}</tbody>
-      </table>
-      <div class="form-grid">
-        <div class="form-field" style="grid-column: 1 / -1;">
+    <div class="swipe-delete swipe-delete--card">
+    <div class="form-card team-card swipe-delete__front">
+      <div class="team-card-header">
+        <div>
+          <h3>${escapeHtml(team.name)}</h3>
+          <p class="team-meta"><code>${escapeHtml(team.slug)}</code>${team.description ? ` · ${escapeHtml(team.description)}` : ""} · ${team.members.length} member${team.members.length === 1 ? "" : "s"}</p>
+        </div>
+        <button type="button" class="btn btn-danger btn-sm js-swipe-delete-arm" data-arm-label="Delete team" data-cancel-label="Cancel" aria-expanded="false" aria-controls="${tabId}">Delete team</button>
+      </div>
+      <div class="team-members">
+        <div class="team-members-head">
+          <span>Name</span>
+          <span>Email</span>
+          <span>Team role</span>
+          <span>Actions</span>
+        </div>
+        ${memberRows}
+      </div>
+      <div class="team-user-forms">
+        <div class="form-field">
           <label>Invite to this team</label>
           <form method="POST" action="/portal/admin/orgs/invite">
             <input type="hidden" name="orgId" value="${orgParam}" />
             <input type="hidden" name="teamId" value="${teamParam}" />
-            <div class="form-grid">
+            <div class="team-form-grid">
               <div class="form-field">
                 <input name="email" type="email" required placeholder="user@example.com" />
               </div>
               <div class="form-field">
-                <select name="orgRole">${inviteOrgRoleOptions}</select>
+                <select class="field-select" name="orgRole">${inviteOrgRoleOptions}</select>
               </div>
               <div class="form-field">
-                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+                <select class="field-select" name="teamRole">${teamRoleSelectOptions("team_member")}</select>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Send invite</button>
@@ -2396,17 +2866,17 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
             </div>
           </form>
         </div>
-        <div class="form-field" style="grid-column: 1 / -1;">
+        <div class="form-field">
           <label>Add existing user to this team</label>
           <form method="POST" action="/portal/admin/orgs/teams/members/add">
             <input type="hidden" name="orgId" value="${orgParam}" />
             <input type="hidden" name="teamId" value="${teamParam}" />
-            <div class="form-grid">
-              <div class="form-field">
+            <div class="team-form-grid">
+              <div class="form-field team-form-email-wide">
                 <input name="email" type="email" required placeholder="existing-user@example.com" />
               </div>
               <div class="form-field">
-                <select name="teamRole">${teamRoleSelectOptions("team_member")}</select>
+                <select class="field-select" name="teamRole">${teamRoleSelectOptions("team_member")}</select>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Add to team</button>
@@ -2415,13 +2885,22 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
           </form>
         </div>
       </div>
+    </div>
+    ${renderSwipeDeleteTab({
+      id: tabId,
+      action: "/portal/admin/orgs/teams/delete",
+      fields: `<input type="hidden" name="orgId" value="${orgParam}" /><input type="hidden" name="teamId" value="${teamParam}" />`,
+      label: "Delete",
+      ariaLabel: `Confirm delete team ${escapeHtml(team.name)}`,
+      title: "Members stay in the organisation.",
+    })}
     </div>`;
     })
     .join("");
 
   const memberRows =
     org.members.length === 0
-      ? `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--color-muted);">No org members yet. Invite or add a user to a team below — the first member should be the org admin.</td></tr>`
+      ? `<div class="members-empty">No org members yet. Invite or add a user to a team below — the first member should be the org admin.</div>`
       : org.members
           .map((m) => {
             const roleOptions = ["org_admin", "member"]
@@ -2430,62 +2909,94 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
                   `<option value="${r}"${m.orgRole === r ? " selected" : ""}>${r}</option>`,
               )
               .join("");
+            const tabId = `member-delete-tab-${escapeHtml(m.userId)}`;
             return `
-        <tr>
-          <td>
+    <div class="swipe-delete swipe-delete--row">
+      <div class="swipe-delete__front">
+          <div>
             <form class="inline-form" method="POST" action="/portal/admin/orgs/members/name">
               <input type="hidden" name="orgId" value="${orgParam}" />
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <input name="name" value="${escapeHtml(m.name)}" size="18" />
+              <input class="field" name="name" value="${escapeHtml(m.name)}" autocomplete="name" />
               <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Save</button>
             </form>
-          </td>
-          <td><code>${escapeHtml(m.email)}</code></td>
-          <td><span class="badge" style="background:#1a1a22;color:var(--color-muted);">${escapeHtml(m.globalRole ?? "—")}</span></td>
-          <td>
-            <form class="inline-form" method="POST" action="/portal/admin/orgs/members/role">
+          </div>
+          <div><code>${escapeHtml(m.email)}</code></div>
+          <div><span class="badge" style="background:#1a1a22;color:var(--color-muted);">${escapeHtml(m.globalRole ?? "—")}</span></div>
+          <div>
+            <form class="inline-form js-role-form" method="POST" action="/portal/admin/orgs/members/role">
               <input type="hidden" name="orgId" value="${orgParam}" />
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <select name="role">${roleOptions}</select>
-              <button type="submit" class="btn btn-sm" style="background:var(--color-border);color:var(--color-text);">Update</button>
+              <select class="field-select" name="role">${roleOptions}</select>
+              <button type="submit" class="btn btn-sm btn-row-action">Update</button>
             </form>
-          </td>
-          <td style="text-align:right;">
-            <form method="POST" action="/portal/admin/orgs/members/remove" onsubmit="return confirm('Remove this member from the organisation?');">
-              <input type="hidden" name="orgId" value="${orgParam}" />
-              <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
-            </form>
-          </td>
-        </tr>`;
+          </div>
+          <div class="table-row-end">
+            <button type="button" class="btn btn-danger btn-sm js-swipe-delete-arm" data-arm-label="Remove" data-cancel-label="Cancel" aria-expanded="false" aria-controls="${tabId}">Remove</button>
+            <span class="row-save-check" aria-hidden="true">${PORTAL_SVGS.modalCheck}</span>
+          </div>
+      </div>
+      ${renderSwipeDeleteTab({
+        id: tabId,
+        action: "/portal/admin/orgs/members/remove",
+        fields: `<input type="hidden" name="orgId" value="${orgParam}" /><input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />`,
+        label: "Remove",
+        ariaLabel: `Confirm remove ${escapeHtml(m.name)} from the organisation`,
+        title: "Remove this member from the organisation.",
+      })}
+    </div>`;
           })
           .join("");
 
-  const content = `
-    <p style="margin-bottom:1.25rem;"><a href="/portal/admin?tab=organisations">← All organisations</a></p>
+  const memberNoun = org.members.length === 1 ? "member" : "members";
+  const teamNoun = org.teams.length === 1 ? "team" : "teams";
 
-    <div class="form-card">
-      <form method="POST" action="/portal/admin/orgs/update">
+  const content = `
+    <div class="swipe-delete swipe-delete--card">
+    <div class="form-card swipe-delete__front">
+      <form class="js-dirty-form" method="POST" action="/portal/admin/orgs/update">
         <input type="hidden" name="orgId" value="${orgParam}" />
-        <div class="form-grid">
+        <div class="form-grid org-edit-grid">
           <div class="form-field">
-            <label for="edit-name">Name</label>
+            <label for="edit-name">Organisation name</label>
             <input id="edit-name" name="name" value="${escapeHtml(org.name)}" required />
           </div>
           <div class="form-field">
             <label for="edit-slug">Slug</label>
-            <input id="edit-slug" name="slug" value="${escapeHtml(org.slug)}" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+            <div class="field-affix">
+              <span class="field-affix-prefix" aria-hidden="true">/</span>
+              <input id="edit-slug" name="slug" value="${escapeHtml(org.slug)}" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+            </div>
           </div>
           <div class="form-actions">
+            <button type="button" class="btn-icon-danger js-swipe-delete-arm" aria-expanded="false" aria-controls="org-delete-tab" aria-label="Delete organisation" title="Delete organisation">${PORTAL_SVGS.trash}</button>
             <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
           </div>
         </div>
       </form>
-      <form method="POST" action="/portal/admin/orgs/delete" style="margin-top:1rem;" onsubmit="return confirm('Delete this organisation and all its teams, members, and invitations?');">
-        <input type="hidden" name="orgId" value="${orgParam}" />
-        <button type="submit" class="btn btn-danger btn-sm">Delete organisation</button>
-      </form>
     </div>
+    ${renderSwipeDeleteTab({
+      id: "org-delete-tab",
+      action: "/portal/admin/orgs/delete",
+      fields: `<input type="hidden" name="orgId" value="${orgParam}" />`,
+      label: "Delete",
+      ariaLabel: `Confirm delete organisation ${escapeHtml(org.name)}`,
+      title: "This will permanently delete this organisation and all of its teams, members, and invitations.",
+    })}
+    </div>
+
+    <h2>Organisation members</h2>
+    <div class="admin-table-wrap members-card">
+      <div class="members-head">
+        <span>Name</span>
+        <span>Email</span>
+        <span>Global role</span>
+        <span>Org role</span>
+        <span>Actions</span>
+      </div>
+      ${memberRows}
+    </div>
+    <p class="note">Org roles apply across all teams. Use the team sections below to add users to specific teams or send invites.</p>
 
     <h2>Teams</h2>
     ${teamSections || `<p class="note">No teams yet.</p>`}
@@ -2494,7 +3005,7 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
     <div class="form-card">
       <form method="POST" action="/portal/admin/orgs/teams/create">
         <input type="hidden" name="orgId" value="${orgParam}" />
-        <div class="form-grid">
+        <div class="team-form-grid">
           <div class="form-field">
             <label for="team-name">Name</label>
             <input id="team-name" name="name" required placeholder="Field response" />
@@ -2511,7 +3022,7 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
             <button type="submit" class="btn btn-primary btn-sm">Create empty team</button>
           </div>
         </div>
-        <p class="note">New teams start with no members. Add or invite users per team below.</p>
+        <p class="note">New teams start with no members. Add or invite users per team above.</p>
       </form>
     </div>
 
@@ -2519,33 +3030,174 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
     <div class="form-card">
       <form method="POST" action="/portal/admin/orgs/teams/import">
         <input type="hidden" name="orgId" value="${orgParam}" />
-        <div class="form-grid">
-          <div class="form-field">
+        <div class="team-form-grid">
+          <div class="form-field team-form-span-fields">
             <label for="import-team">Team from another organisation</label>
-            <select id="import-team" name="sourceTeamId" required ${org.importableTeams.length === 0 ? "disabled" : ""}>${importOptions}</select>
+            <select class="field-select" id="import-team" name="sourceTeamId" required ${org.importableTeams.length === 0 ? "disabled" : ""}>${importOptions}</select>
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-sm" ${org.importableTeams.length === 0 ? "disabled" : ""}>Import team &amp; members</button>
+            <button type="submit" class="btn btn-primary btn-sm" ${org.importableTeams.length === 0 ? "disabled" : ""}>Import team</button>
           </div>
         </div>
         <p class="note">Copies the team into this organisation and adds all of its current members (creating org memberships when needed).</p>
       </form>
     </div>
 
-    <h2>Organisation members</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Global role</th>
-          <th>Org role</th>
-          <th style="text-align:right;">Actions</th>
-        </tr>
-      </thead>
-      <tbody>${memberRows}</tbody>
-    </table>
-    <p class="note">Org roles apply across all teams. Use the team sections above to add users to specific teams or send invites.</p>`;
+    <script>
+      (function bindDirtyOrgForm() {
+        var form = document.querySelector('form.js-dirty-form');
+        if (!form) return;
+        var btn = form.querySelector('button[type="submit"]');
+        var name = form.querySelector('#edit-name');
+        var slug = form.querySelector('#edit-slug');
+        if (!btn || !name || !slug) return;
+        var savedName = name.value;
+        var savedSlug = slug.value;
+        function sync() {
+          btn.disabled = name.value === savedName && slug.value === savedSlug;
+        }
+        name.addEventListener('input', sync);
+        slug.addEventListener('input', sync);
+        sync();
+      })();
+
+      (function bindRoleForms() {
+        document.querySelectorAll('form.js-role-form').forEach(function (form) {
+          var select = form.querySelector('select');
+          var btn = form.querySelector('.btn-row-action');
+          if (!select || !btn) return;
+          var saved = select.value;
+
+          function setDirty() {
+            var dirty = select.value !== saved;
+            btn.classList.toggle('is-dirty', dirty);
+            btn.disabled = !dirty;
+            if (dirty) hideCheck();
+          }
+
+          function checkEl() {
+            var row = form.closest('.swipe-delete') || form.closest('tr');
+            return row ? row.querySelector('.row-save-check') : null;
+          }
+
+          function hideCheck() {
+            var check = checkEl();
+            if (!check) return;
+            check.classList.remove('is-visible');
+            check.setAttribute('aria-hidden', 'true');
+            check.removeAttribute('aria-label');
+          }
+
+          function showCheck() {
+            var check = checkEl();
+            if (!check) return;
+            check.classList.add('is-visible');
+            check.setAttribute('aria-hidden', 'false');
+            check.setAttribute('aria-label', 'Saved');
+          }
+
+          select.addEventListener('change', setDirty);
+          setDirty();
+
+          form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (select.value === saved) return;
+            btn.disabled = true;
+            var body = new URLSearchParams(new FormData(form));
+            fetch(form.action, {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: body.toString(),
+              credentials: 'same-origin',
+            })
+              .then(function (res) {
+                return res.json().then(
+                  function (data) {
+                    return { ok: !!(data && data.ok), message: data && data.message };
+                  },
+                  function () {
+                    return { ok: false, message: 'Could not update role.' };
+                  },
+                );
+              })
+              .then(function (result) {
+                if (result.ok) {
+                  saved = select.value;
+                  setDirty();
+                  showCheck();
+                } else {
+                  setDirty();
+                  btn.title = result.message || 'Could not update role.';
+                }
+              })
+              .catch(function () {
+                setDirty();
+              });
+          });
+        });
+      })();
+
+      (function bindSwipeDelete() {
+        var shells = document.querySelectorAll('.swipe-delete');
+        if (!shells.length) return;
+
+        function setArmed(shell, armed) {
+          var btn = shell.querySelector(':scope > .swipe-delete__front .js-swipe-delete-arm');
+          var tab = shell.querySelector(':scope > .swipe-delete__tab');
+          shell.classList.toggle('is-armed', armed);
+          if (btn) {
+            btn.setAttribute('aria-expanded', armed ? 'true' : 'false');
+            if (btn.hasAttribute('data-arm-label')) {
+              btn.textContent = armed
+                ? (btn.getAttribute('data-cancel-label') || 'Cancel')
+                : btn.getAttribute('data-arm-label');
+            }
+          }
+          if (tab) {
+            tab.setAttribute('aria-hidden', armed ? 'false' : 'true');
+            tab.inert = !armed;
+          }
+          if (armed && tab) {
+            var confirmBtn = tab.querySelector('.swipe-delete__tab-btn');
+            if (confirmBtn) confirmBtn.focus();
+          }
+        }
+
+        function closeAll(except) {
+          shells.forEach(function (shell) {
+            if (shell !== except) setArmed(shell, false);
+          });
+        }
+
+        shells.forEach(function (shell) {
+          var arm = shell.querySelector(':scope > .swipe-delete__front .js-swipe-delete-arm');
+          if (!arm) return;
+          arm.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var willArm = !shell.classList.contains('is-armed');
+            closeAll(willArm ? shell : null);
+            setArmed(shell, willArm);
+          });
+        });
+
+        document.addEventListener('click', function (e) {
+          var clicked = e.target.closest ? e.target.closest('.swipe-delete') : null;
+          closeAll(clicked);
+        });
+
+        document.addEventListener('keydown', function (e) {
+          if (e.key !== 'Escape') return;
+          var armed = document.querySelector('.swipe-delete.is-armed');
+          if (!armed) return;
+          var armBtn = armed.querySelector(':scope > .swipe-delete__front .js-swipe-delete-arm');
+          setArmed(armed, false);
+          if (armBtn) armBtn.focus();
+        });
+      })();
+    </script>`;
 
   return renderAdminShell({
     currentUserEmail,
@@ -2554,7 +3206,9 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
     flash,
     content,
     title: org.name,
-    subtitle: `Organisation · <code>${escapeHtml(org.slug)}</code> · ${org.members.length} member${org.members.length === 1 ? "" : "s"} · ${org.teams.length} team${org.teams.length === 1 ? "" : "s"}`,
+    subtitle: `${org.members.length} ${memberNoun} · ${org.teams.length} ${teamNoun}`,
+    backLink: { href: "/portal/admin?tab=organisations", label: "← All organisations" },
+    headingAlign: "end",
   });
 }
 
@@ -2576,27 +3230,9 @@ export function renderWaitingForApproval(opts: WaitingForApprovalOptions): strin
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pending approval · CLEAR API</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --color-bg: #0a0a0b; --color-surface: #141417; --color-border: #26262b;
-      --color-accent: #f2612a; --color-text: #f5f5f6; --color-muted: #9a9ca3;
-      --color-warning: #f59e0b; --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-    .card { max-width: 480px; width: 100%; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 2.5rem; text-align: center; }
-    .badge { display: inline-block; padding: 0.3rem 0.75rem; border-radius: 999px; background: #2a1f0a; color: var(--color-warning); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 1.25rem; }
-    h1 { font-size: 1.4rem; margin-bottom: 0.75rem; }
-    p { color: var(--color-muted); font-size: 0.95rem; margin-bottom: 1rem; }
-    .email { color: var(--color-text); font-weight: 500; }
-    .signout { margin-top: 1.5rem; display: inline-block; color: var(--color-muted); font-size: 0.85rem; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: var(--font); }
-    .signout:hover { color: var(--color-text); }
-    .docs-link { color: var(--color-accent); text-decoration: underline; }
-    .docs-link:hover { color: var(--color-text); }
-  </style>
+  ${renderIconLinks()}
+  ${renderFontLinks({ mono: false })}
+  ${renderWaitingPageStyles()}
 </head>
 <body>
   <div class="card">

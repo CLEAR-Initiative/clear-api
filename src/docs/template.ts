@@ -11,6 +11,7 @@ import {
   renderOnThisPageScript,
   renderOnThisPageStyles,
 } from "./on-this-page.js";
+import { renderIconLinks } from "../ui/icons.js";
 
 function escapeHtml(str: string): string {
   return str
@@ -345,7 +346,7 @@ export function composeDocsPage(opts: ComposeDocsPageOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CLEAR API — Documentation</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
   ${renderPortalShellStyles()}
   <style>

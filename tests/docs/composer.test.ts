@@ -24,6 +24,8 @@ describe("Docs Composer", () => {
       expect(html).toContain("Sign in");
       expect(html).toContain("/portal/login");
       expect(html).not.toContain("Sign Out");
+      expect(html).toContain('href="/favicon.ico"');
+      expect(html).not.toContain("favicon.svg");
     });
 
     it("does not include old top marketing nav", () => {

@@ -250,6 +250,27 @@ function adminRedirect(
   res.redirect(303, `/portal/admin?${params.toString()}`);
 }
 
+function wantsJson(req: Request): boolean {
+  return (req.get("accept") ?? "").includes("application/json");
+}
+
+function adminRespond(
+  req: Request,
+  res: Response,
+  tab: AdminTab,
+  flash: { kind: "success" | "error"; message: string },
+  orgId?: string,
+) {
+  if (wantsJson(req)) {
+    res.status(flash.kind === "error" ? 400 : 200).json({
+      ok: flash.kind === "success",
+      message: flash.message,
+    });
+    return;
+  }
+  adminRedirect(res, tab, flash, orgId);
+}
+
 portalRouter.get("/admin", async (req, res) => {
   const admin = await requireAdminSession(req, res);
   if (!admin) return;
@@ -573,9 +594,10 @@ portalRouter.post("/admin/orgs/members/role", urlencoded, async (req, res) => {
   try {
     if (!orgId || !userId || !role) throw new Error("Missing fields.");
     await portalUpdateOrgMemberRole(orgId, userId, role);
-    adminRedirect(res, "organisations", { kind: "success", message: "Org role updated." }, orgId);
+    adminRespond(req, res, "organisations", { kind: "success", message: "Org role updated." }, orgId);
   } catch (err) {
-    adminRedirect(
+    adminRespond(
+      req,
       res,
       "organisations",
       { kind: "error", message: portalActionError(err) },
@@ -1153,9 +1175,10 @@ portalRouter.post("/admin/orgs/teams/members/role", urlencoded, async (req, res)
   try {
     if (!orgId || !teamId || !userId || !teamRole) throw new Error("Missing fields.");
     await portalUpdateTeamMemberRole(orgId, teamId, userId, teamRole);
-    adminRedirect(res, "organisations", { kind: "success", message: "Team role updated." }, orgId);
+    adminRespond(req, res, "organisations", { kind: "success", message: "Team role updated." }, orgId);
   } catch (err) {
-    adminRedirect(
+    adminRespond(
+      req,
       res,
       "organisations",
       { kind: "error", message: portalActionError(err) },
