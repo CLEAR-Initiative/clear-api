@@ -853,7 +853,7 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     <aside class="sidebar">
       <div class="sidebar-top">
         <div class="sidebar-brand">
-          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}?v=${encodeURIComponent(PORTAL_VERSION)}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
           <div class="brand-text">
             <div class="brand-title">Clear API</div>
             <div class="brand-sub">Developer Portal</div>

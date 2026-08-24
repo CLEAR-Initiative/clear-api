@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { composeDocsPage } from "../../src/docs/template.js";
@@ -63,6 +63,10 @@ describe("UI polish smoke", () => {
         expect(existsSync(join(root, rel)), rel).toBe(true);
       }
       expect(existsSync(join(root, "public/favicon.svg"))).toBe(false);
+      // Sidebar logo is 36px CSS; keep the raster at 128px / a few KB.
+      expect(statSync(join(root, "public/portal/icons/clearapi_logo.png")).size).toBeLessThan(
+        20_000,
+      );
     });
   });
 
