@@ -1,7 +1,7 @@
 import type { SchemaData, SchemaField, SchemaType } from "./schema-introspect.js";
 import {
   renderPortalShell,
-  renderPortalShellStyles,
+  renderPortalShellStylesheetLink,
   renderPortalShellScript,
   type PortalShellOptions,
 } from "../portal/shell.js";
@@ -348,7 +348,7 @@ export function composeDocsPage(opts: ComposeDocsPageOptions): string {
   <title>CLEAR API — Documentation</title>
   ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
-  ${renderPortalShellStyles()}
+  ${renderPortalShellStylesheetLink()}
   <style>
     /* Docs-specific layout: Portal Shell | content | On This Page */
     ${renderOnThisPageStyles()}

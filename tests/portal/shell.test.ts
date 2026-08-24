@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  portalShellCss,
   renderPortalShell,
   renderPortalShellScript,
   renderPortalShellStyles,
+  renderPortalShellStylesheetLink,
   renderPortalToast,
 } from "../../src/portal/shell.js";
 
@@ -200,6 +202,15 @@ describe("Portal Shell", () => {
       expect(css).toContain("right: max(1.25rem, env(safe-area-inset-right))");
       expect(css).toContain("portal-toast-in");
       expect(css).toContain("portal-toast-out");
+    });
+
+    it("exposes a cache-busted stylesheet link instead of requiring inline CSS", () => {
+      const link = renderPortalShellStylesheetLink();
+      expect(link).toMatch(
+        /<link rel="stylesheet" href="\/css\/portal-shell\.css\?v=/,
+      );
+      expect(portalShellCss()).toContain("--sidebar-width: 288px");
+      expect(portalShellCss()).not.toContain("<style>");
     });
   });
 

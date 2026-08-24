@@ -215,6 +215,7 @@ describe("UI polish smoke", () => {
       expect(html).toContain('target="_blank"');
       expect(html).toContain("Sign Out");
       expect(html).toContain("/portal/icons/clearapi_logo.png");
+      expect(html).toContain("/css/portal-shell.css");
     });
   });
 
@@ -254,7 +255,8 @@ describe("UI polish smoke", () => {
 
       for (const html of pages) {
         assertSharedChrome(html);
-        expect(html).toContain("portal-toast");
+        expect(html).toContain("/css/portal-shell.css");
+        expect(html).not.toContain("--sidebar-width: 288px");
         expect(html).toContain("toggleSidebar");
         expect(html).toContain("/portal/admin?tab=dashboard");
         expect(html).toContain("/portal/admin?tab=users");

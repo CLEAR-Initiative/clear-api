@@ -1,6 +1,6 @@
 import {
   renderPortalShell,
-  renderPortalShellStyles,
+  renderPortalShellStylesheetLink,
   renderPortalShellScript,
   renderPortalToast,
   type PortalShellOptions,
@@ -51,10 +51,8 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <title>Developer Portal</title>
   ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  ${renderPortalShellStyles()}
+  ${renderFontLinks()}
+  ${renderPortalShellStylesheetLink()}
   <style>
     /* Portal-specific styles */
     .main {
@@ -1545,8 +1543,8 @@ function renderAdminShell(opts: AdminShellOptions): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin · ${escapeHtml(title)}</title>
   ${renderIconLinks()}
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  ${renderPortalShellStyles()}
+  ${renderFontLinks()}
+  ${renderPortalShellStylesheetLink()}
   <style>
     /* Admin-specific tabs */
     .admin-tabs {

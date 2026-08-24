@@ -20,6 +20,7 @@ import { env } from "./utils/env.js";
 import { portalRouter } from "./portal/index.js";
 import { homeRouter } from "./home/index.js";
 import { createDocsRouter } from "./docs/index.js";
+import { cssRouter } from "./ui/css-routes.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { groundUploadRouter } from "./routes/ground-upload.js";
@@ -48,7 +49,14 @@ app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
 // Static assets (favicon, icons), served from <cwd>/public. cwd is the repo
 // root in dev and /app in the production image (WORKDIR /app) — the Dockerfile
 // copies public/ there so this resolves in both environments.
+// Static assets (favicon, icons), served from <cwd>/public. cwd is the repo
+// root in dev and /app in the production image (WORKDIR /app) — the Dockerfile
+// copies public/ there so this resolves in both environments.
+// Shared portal chrome CSS is a TS-generated stylesheet (not a file in
+// public/) so tokens stay the source of truth and the browser can cache
+// it across /portal, /docs, and /portal/admin.
 app.use(express.static(join(process.cwd(), "public"), { maxAge: "1d" }));
+app.use("/css", cssRouter);
 
 // Better Auth handler — MUST be before express.json()
 app.all("/api/auth/*splat", toNodeHandler(auth));

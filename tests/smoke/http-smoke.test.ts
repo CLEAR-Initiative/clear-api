@@ -72,9 +72,15 @@ describe.skipIf(!live && !REQUIRE_LIVE)(`HTTP smoke (${BASE})`, () => {
     expect(portal.body).toContain("toggleSidebar");
     expect(portal.body).toContain("getting-started");
     expect(portal.body).toContain('href="/portal/login"');
-    expect(portal.body).toContain("padding: 32px 12px 0");
-    expect(portal.body).toContain("portal-toast");
-    expect(portal.body).not.toMatch(
+    expect(portal.body).toContain("/css/portal-shell.css");
+    expect(portal.body).not.toContain("--sidebar-width: 288px");
+
+    const css = await get("/css/portal-shell.css");
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type") ?? "").toMatch(/text\/css/);
+    expect(css.body).toContain("padding: 32px 12px 0");
+    expect(css.body).toContain(".portal-toast");
+    expect(css.body).not.toMatch(
       /\.portal-shell\.sidebar-collapsed \.nav-item \{[^}]*justify-content:\s*center/,
     );
   });

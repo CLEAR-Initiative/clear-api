@@ -106,11 +106,11 @@ export interface PortalShellOptions {
 }
 
 /**
- * Render shared Portal Shell styles (CSS variables + sidebar + mobile drawer)
+ * Shared chrome CSS (tokens, sidebar, toast, form controls). Served as a
+ * cacheable `/css/portal-shell.css` so portal/docs/admin HTML stays small.
  */
-export function renderPortalShellStyles(): string {
-  return `  <style>
-    :root {
+export function portalShellCss(): string {
+  return `:root {
 ${renderThemeCustomProperties("portal")}
       --sidebar-width: 288px;
       --sidebar-width-collapsed: 72px;
@@ -655,7 +655,18 @@ ${renderThemeCustomProperties("portal")}
       }
     }
     ${renderPortalControlStyles()}
-  </style>`;
+`;
+}
+
+/** Cache-busted stylesheet link. Prefer this over inlining `portalShellCss()`. */
+export function renderPortalShellStylesheetLink(): string {
+  return `<link rel="stylesheet" href="/css/portal-shell.css?v=${encodeURIComponent(PORTAL_VERSION)}">`;
+}
+
+/** Inline `<style>` wrapper — tests and one-off pages. HTML surfaces use the link. */
+export function renderPortalShellStyles(): string {
+  return `  <style>
+${portalShellCss()}  </style>`;
 }
 
 /**

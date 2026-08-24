@@ -63,6 +63,7 @@ describe("Docs Composer", () => {
       expect(html).toContain("portal-shell");
       expect(html).toContain('class="sidebar"');
       expect(html).toContain("docs-layout");
+      expect(html).toContain("/css/portal-shell.css");
     });
 
     it("includes On This Page", () => {
