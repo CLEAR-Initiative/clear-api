@@ -42,7 +42,7 @@ type User = { id: string; role: string } | null;
 /** Build a Context with an arbitrary prisma stub shape. */
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: prisma as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -52,6 +52,21 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
 const admin: User = { id: "a1", role: "admin" };
 const pipeline: User = { id: "p1", role: "pipeline" };
 const viewer: User = { id: "v1", role: "viewer" };
+
+/** Shape of the single argument passed to the mocked `translations.upsert`,
+ *  used to narrow `upsert.mock.calls[i][0]` (typed `unknown` by the vi.fn stub)
+ *  when asserting on the where/create/update payloads below. */
+type UpsertArg = {
+  where: {
+    entityType_entityId_locale: {
+      entityType: string;
+      entityId: string;
+      locale: string;
+    };
+  };
+  create: Record<string, unknown>;
+  update: Record<string, unknown>;
+};
 
 const { translations, entitiesMissingTranslation, translationCoverage } =
   translationResolvers.Query;
@@ -217,17 +232,20 @@ describe("Query.translationCoverage", () => {
       eventCount?: number;
       crisisCount?: number;
       locationCount?: number;
+      situationCount?: number;
     } = {},
   ) {
     const groupBy = vi.fn().mockResolvedValue(opts.grouped ?? []);
     const eventsCount = vi.fn().mockResolvedValue(opts.eventCount ?? 0);
     const crisesCount = vi.fn().mockResolvedValue(opts.crisisCount ?? 0);
     const locationsCount = vi.fn().mockResolvedValue(opts.locationCount ?? 0);
+    const situationCount = vi.fn().mockResolvedValue(opts.situationCount ?? 0);
     const ctx = buildContext(user, {
       translations: { groupBy },
       events: { count: eventsCount },
       crises: { count: crisesCount },
       locations: { count: locationsCount },
+      situationAnalysis: { count: situationCount },
     });
     return { ctx, groupBy };
   }
@@ -239,11 +257,12 @@ describe("Query.translationCoverage", () => {
     });
   });
 
-  it("builds the full (event,crisis,location) x (target locale) matrix, skipping 'en'", async () => {
+  it("builds the full (event,crisis,location,situationAnalysis) x (target locale) matrix, skipping 'en'", async () => {
     const { ctx } = buildCtx(admin, {
       eventCount: 5,
       crisisCount: 2,
       locationCount: 9,
+      situationCount: 4,
       grouped: [{ entityType: "event", locale: "ar", _count: { entityId: 3 } }],
     });
     const out = (await translationCoverage(null, {}, ctx)) as Array<{
@@ -253,8 +272,8 @@ describe("Query.translationCoverage", () => {
       translatedCount: number;
     }>;
 
-    // 3 entity types x 2 target locales (ar, fr — 'en' excluded) = 6 rows.
-    expect(out).toHaveLength(6);
+    // 4 entity types x 3 target locales (ar, fr, es — 'en' excluded) = 12 rows.
+    expect(out).toHaveLength(12);
     expect(out.some((r) => r.locale === "en")).toBe(false);
 
     // The one grouped row is reflected; every other cell zero-filled.
@@ -271,6 +290,10 @@ describe("Query.translationCoverage", () => {
     expect(crisisAr).toMatchObject({ canonicalCount: 2, translatedCount: 0 });
     const locationFr = out.find((r) => r.entityType === "location" && r.locale === "fr");
     expect(locationFr).toMatchObject({ canonicalCount: 9, translatedCount: 0 });
+    const situationAr = out.find(
+      (r) => r.entityType === "situationAnalysis" && r.locale === "ar",
+    );
+    expect(situationAr).toMatchObject({ canonicalCount: 4, translatedCount: 0 });
   });
 });
 
@@ -294,11 +317,15 @@ describe("Mutation.upsertTranslations", () => {
     // return values of the mocked upsert calls). Resolve them as-is.
     const $transaction = vi.fn(async (ops: unknown[]) => ops);
 
+    // upsertTranslations clears any queued (re)translation rows after writing —
+    // stub the queue delete so the resolver's drain-completion step is a no-op.
+    const queueDeleteMany = vi.fn(async () => ({ count: 0 }));
     const ctx = buildContext(user, {
       events: { findUnique: eventsFind },
       crises: { findUnique: crisesFind },
       locations: { findUnique: locationsFind },
       translations: { upsert },
+      translationQueue: { deleteMany: queueDeleteMany },
       $transaction,
     });
     return { ctx, upsert, $transaction, eventsFind, crisesFind, locationsFind, findUnique };
@@ -463,7 +490,7 @@ describe("Mutation.upsertTranslations", () => {
     expect($transaction).toHaveBeenCalledOnce();
     expect(upsert).toHaveBeenCalledTimes(2);
 
-    const first = upsert.mock.calls[0][0];
+    const first = upsert.mock.calls[0]![0] as UpsertArg;
     expect(first.where).toEqual({
       entityType_entityId_locale: { entityType: "event", entityId: "e1", locale: "ar" },
     });
@@ -480,7 +507,7 @@ describe("Mutation.upsertTranslations", () => {
     expect(first.create.locationId).toBeUndefined();
     expect(first.update).toMatchObject({ eventId: "e1", data: { t: "a" } });
 
-    const second = upsert.mock.calls[1][0];
+    const second = upsert.mock.calls[1]![0] as UpsertArg;
     expect(second.where.entityType_entityId_locale.locale).toBe("fr");
 
     expect(result).toEqual({
@@ -497,7 +524,7 @@ describe("Mutation.upsertTranslations", () => {
       { input: { entityType: "crisis", entityId: "c1", translations: [goodLocaleEntry] } },
       ctx,
     );
-    const arg = upsert.mock.calls[0][0];
+    const arg = upsert.mock.calls[0]![0] as UpsertArg;
     expect(arg.create.crisisId).toBe("c1");
     expect(arg.create.eventId).toBeUndefined();
     expect(arg.create.locationId).toBeUndefined();
@@ -510,7 +537,7 @@ describe("Mutation.upsertTranslations", () => {
       { input: { entityType: "location", entityId: "l1", translations: [goodLocaleEntry] } },
       ctx,
     );
-    const arg = upsert.mock.calls[0][0];
+    const arg = upsert.mock.calls[0]![0] as UpsertArg;
     expect(arg.create.locationId).toBe("l1");
     expect(arg.create.eventId).toBeUndefined();
     expect(arg.create.crisisId).toBeUndefined();

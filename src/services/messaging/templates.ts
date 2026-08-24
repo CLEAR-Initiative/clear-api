@@ -118,6 +118,27 @@ const STRINGS: Record<Locale, AlertStrings> = {
       MINIMAL: "MINIMAL",
     },
   },
+  es: {
+    greeting: (n) => `Hola ${n},`,
+    newAlertPrefix: "Nueva alerta",
+    districtLabel: "Distrito",
+    locationsLabel: "Ubicaciones",
+    summaryLabel: "Resumen",
+    populationLabel: (t) => `Población${t ? ` de ${t}` : ""}`,
+    viewAlertTextLine: (u) => `Ver alerta: ${u}`,
+    viewAlertCta: "Ver alerta",
+    signoff: "- El equipo de la plataforma CLEAR",
+    subject: (t) => `Alerta: ${t} - Plataforma CLEAR`,
+    moreSuffix: (n) => ` +${n} más`,
+    footerCopy: "© CLEAR - Aprendizaje, alerta temprana, anticipación y respuesta ante crisis",
+    severityLabels: {
+      CRITICAL: "CRÍTICO",
+      HIGH: "ALTO",
+      MEDIUM: "MEDIO",
+      LOW: "BAJO",
+      MINIMAL: "MÍNIMO",
+    },
+  },
 };
 
 /**

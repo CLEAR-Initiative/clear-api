@@ -48,6 +48,8 @@ interface CreateSignalInput {
    *  the same (sourceId, externalId) exists, the existing row is returned. */
   externalId?: string;
   rawData: Record<string, unknown>;
+  /** Pointer to the raw payload blob in the S3 data lake (Dagster ingest). */
+  rawS3Key?: string;
   publishedAt: string;
   collectedAt?: string;
   url?: string;
@@ -186,6 +188,28 @@ export const signalResolvers = {
         orderBy: { createdAt: "desc" },
       });
     },
+
+    // The Dagster event-driven drain: signals awaiting downstream processing
+    // (status = NEW), oldest-first so ingestion order is preserved. `source`
+    // filters by DataSource name (e.g. "dataminr") so a per-source consumer can
+    // drain just its own backlog. Admin/pipeline only.
+    pendingSignals: async (
+      _parent: unknown,
+      args: { first?: number | null; source?: string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      return context.prisma.signals.findMany({
+        where: {
+          status: "NEW",
+          isDummy: false,
+          ...(args.source ? { source: { name: args.source } } : {}),
+        },
+        orderBy: { publishedAt: "asc" },
+        take,
+      });
+    },
   },
   Mutation: {
     createSignal: async (
@@ -247,6 +271,7 @@ export const signalResolvers = {
             sourceId: input.sourceId,
             externalId: input.externalId,
             rawData: input.rawData as InputJsonValue,
+            rawS3Key: input.rawS3Key,
             publishedAt: new Date(input.publishedAt),
             collectedAt: input.collectedAt ? new Date(input.collectedAt) : new Date(),
             url: input.url,
@@ -281,6 +306,33 @@ export const signalResolvers = {
         }
         throw err;
       }
+    },
+
+    // Drain completion: the Dagster downstream marks signals PROCESSED (or
+    // FAILED on terminal failure) once classify→group→alert has run. Returns
+    // the number of rows updated. Admin/pipeline only. Idempotent — re-marking
+    // an already-processed signal is a harmless no-op update.
+    markSignalsProcessed: async (
+      _parent: unknown,
+      args: { ids: string[]; status?: "NEW" | "PROCESSED" | "FAILED" | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      if (args.ids.length === 0) return 0;
+      // The SDL exposes the full SignalStatus enum, but NEW would produce a
+      // contradictory row (status=NEW alongside a processedAt). Reject it.
+      if (args.status === "NEW") {
+        throw new GraphQLError(
+          "markSignalsProcessed only accepts PROCESSED or FAILED",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      const status = args.status ?? "PROCESSED";
+      const result = await context.prisma.signals.updateMany({
+        where: { id: { in: args.ids } },
+        data: { status, processedAt: new Date() },
+      });
+      return result.count;
     },
 
     createManualSignal: async (

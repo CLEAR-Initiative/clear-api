@@ -64,6 +64,20 @@ const HASH_FIELDS: Record<TranslatableEntityType, readonly string[]> = {
   event:    ["title", "description"],
   crisis:   ["title", "summary", "scenarios", "needs"],
   location: ["name"],
+  // Situation-analysis prose components. clear-api never recomputes these
+  // hashes on the read path (the overlay is presence-only) — the pipeline
+  // owns situation prose extraction + hashing. This entry exists to satisfy
+  // the exhaustive Record and to document the translatable component set;
+  // keep it aligned with HASH_FIELDS["situationAnalysis"] in the pipeline's
+  // providers/translation_hash.py.
+  situationAnalysis: [
+    "ai_summary",
+    "context_risks",
+    "hazards_and_vulnerabilities",
+    "displacement",
+    "sectors",
+    "changes",
+  ],
 };
 
 /**

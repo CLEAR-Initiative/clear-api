@@ -251,6 +251,37 @@ describe("Mutation.createAlert", () => {
     expect(create).toHaveBeenCalledWith({ data: { eventId: "e1", status: "active" } });
   });
 
+  it("does NOT fan out for a non-published (archived) alert, even with locations + types", async () => {
+    // The cutover storm: the pipeline creates archived alerts to suppress stale
+    // events — those must never email. Activity is still logged.
+    const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
+    const locFindMany = vi.fn();
+    const subFindMany = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 2, status: "archived" }) },
+      locations: { findMany: locFindMany },
+      userAlertSubscriptions: { findMany: subFindMany },
+    });
+    await createAlert(null, { input: { eventId: "e1", status: "archived" as never } }, ctx);
+    expect(locFindMany).not.toHaveBeenCalled();  // fan-out skipped before subscriber lookup
+    expect(subFindMany).not.toHaveBeenCalled();
+    expect(logActivity).toHaveBeenCalledTimes(1); // but the create is still recorded
+  });
+
+  it("fans out for a PUBLISHED alert with locations + types", async () => {
+    const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
+    const subFindMany = vi.fn().mockResolvedValue([]); // no subscribers → short path after lookup
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 3, status: "published" }) },
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "l1", ancestorIds: [] }]) },
+      userAlertSubscriptions: { findMany: subFindMany },
+    });
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+    expect(subFindMany).toHaveBeenCalled(); // fan-out reached the subscriber lookup
+  });
+
   it("is idempotent: returns the existing alert and skips fan-out + activity log when status matches", async () => {
     const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
     const existing = { id: 7, status: "draft", eventId: "e1" };

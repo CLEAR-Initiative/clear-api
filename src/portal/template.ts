@@ -2452,6 +2452,8 @@ export function renderWaitingForApproval(opts: WaitingForApprovalOptions): strin
     .email { color: var(--color-text); font-weight: 500; }
     .signout { margin-top: 1.5rem; display: inline-block; color: var(--color-muted); font-size: 0.85rem; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: var(--font); }
     .signout:hover { color: var(--color-text); }
+    .docs-link { color: var(--color-accent); text-decoration: underline; }
+    .docs-link:hover { color: var(--color-text); }
   </style>
 </head>
 <body>
@@ -2459,7 +2461,7 @@ export function renderWaitingForApproval(opts: WaitingForApprovalOptions): strin
     <div class="badge">Pending approval</div>
     <h1>Thanks for registering</h1>
     <p>You're signed in as <span class="email">${escapeHtml(opts.userEmail)}</span>. An admin will review your application and reach out by email once approved. You'll be able to access the developer dashboard at that point.</p>
-    <p style="font-size: 0.85rem;">No action needed from you for now.</p>
+    <p style="font-size: 0.85rem;">No action needed from you for now. In the meantime, you can explore the <a class="docs-link" href="/docs">API documentation</a>.</p>
     <button type="button" class="signout" onclick="signOut()">Sign out</button>
   </div>
   <script>

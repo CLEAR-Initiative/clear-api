@@ -9,7 +9,7 @@ import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
-import { bufferTranslationRequest } from "../services/celery.js";
+import { enqueueTranslationDurable } from "../services/translation-queue.js";
 
 /**
  * Build the Prisma `include` clause that folds the active-locale
@@ -118,6 +118,51 @@ export const eventResolvers = {
             { locationId: { in: locationIds } },
           ],
         },
+        ...(include ? { include } : {}),
+      });
+    },
+    // The Dagster alert-stage queue: events that need an alert but don't have
+    // one yet — severity at or above `minSeverity` (default 4) AND no alert row
+    // (`alerts: { none: {} }`). Ordered oldest-first by the event's
+    // earliest-signal timestamp so the alert worker drains in ingestion order.
+    // `first` caps the batch (default 100, clamped to [1, 500]). Admin/pipeline
+    // only.
+    eventsPendingAlert: async (
+      _parent: unknown,
+      args: {
+        first?: number | null;
+        minSeverity?: number | null;
+        maxAgeHours?: number | null;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      const minSeverity = args.minSeverity ?? 4;
+      // Age bound on the LATEST signal's real-world time: only events that are
+      // recently active surface for alerting. This keeps the historical backlog
+      // and backdated backfill (e.g. weeks-old ACLED events replayed on ingest)
+      // out — such signals are grouped into their event but must NOT alert. 0
+      // disables the bound. Default 48h.
+      const maxAgeHours = args.maxAgeHours ?? 48;
+      const recentOnly =
+        maxAgeHours > 0
+          ? {
+              lastSignalCreatedAt: {
+                gte: new Date(Date.now() - maxAgeHours * 3_600_000),
+              },
+            }
+          : {};
+      const include = eventTranslationsInclude(context.locale);
+      return context.prisma.events.findMany({
+        where: {
+          severity: { gte: minSeverity },
+          alerts: { none: {} },
+          isDummy: false,
+          ...recentOnly,
+        },
+        orderBy: { firstSignalCreatedAt: "asc" },
+        take,
         ...(include ? { include } : {}),
       });
     },
@@ -660,7 +705,7 @@ export const eventResolvers = {
         const localized = data?.title;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("event", parent.id);
+          enqueueTranslationDurable(context.prisma, "event", parent.id, context.locale);
         }
         return parent.title;
       }
@@ -685,7 +730,7 @@ export const eventResolvers = {
         const localized = data?.description;
         if (typeof localized === "string") return localized;
         if (parent.translations.length === 0) {
-          bufferTranslationRequest("event", parent.id);
+          enqueueTranslationDurable(context.prisma, "event", parent.id, context.locale);
         }
         return parent.description;
       }

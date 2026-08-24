@@ -55,7 +55,9 @@ import { GraphQLError } from "graphql";
 
 vi.mock("../../src/services/celery.js", () => ({
   sendCeleryTask: vi.fn().mockResolvedValue(undefined),
-  bufferTranslationRequest: vi.fn(),
+}));
+vi.mock("../../src/services/translation-queue.js", () => ({
+  enqueueTranslationDurable: vi.fn(),
 }));
 vi.mock("../../src/utils/geo-resolve.js", () => ({
   getLocationIdsWithDescendants: vi.fn().mockResolvedValue([]),
@@ -331,7 +333,7 @@ describe("Mutation.addEventToCrisis", () => {
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
     await Promise.resolve();
     expect(sendCeleryTask).toHaveBeenCalled();
   });
@@ -399,7 +401,7 @@ describe("Mutation.removeEventFromCrisis", () => {
     expect(await removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(updated);
     expect(del).not.toHaveBeenCalled();
     expect(deleteMany).toHaveBeenCalledWith({ where: { crisisId: "c1", eventId: "e1" } });
-    expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 7n } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 7n, enrichmentStatus: "PENDING" } });
   });
 });
 

@@ -25,7 +25,25 @@ const VALID_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
   "event",
   "crisis",
   "location",
+  "situationAnalysis",
 ]);
+
+const ENTITY_TYPE_LIST = [...VALID_ENTITY_TYPES].join(", ");
+
+/**
+ * Case-insensitively resolve a caller-supplied entity type to its canonical
+ * `TranslatableEntityType` (e.g. "situationanalysis" -> "situationAnalysis"),
+ * or null if unknown. Callers used to `.toLowerCase()` inline, which was safe
+ * while every type was already lowercase but silently breaks camelCase types
+ * like `situationAnalysis` — always normalize through here instead.
+ */
+function normalizeEntityType(raw: string): TranslatableEntityType | null {
+  const lower = raw.toLowerCase();
+  for (const t of VALID_ENTITY_TYPES) {
+    if (t.toLowerCase() === lower) return t;
+  }
+  return null;
+}
 
 /**
  * Confirm the entity row exists before writing a translation for it.
@@ -49,8 +67,13 @@ async function assertEntityExists(
       where: { id: entityId },
       select: { id: true },
     });
-  } else {
+  } else if (entityType === "location") {
     found = await ctx.prisma.locations.findUnique({
+      where: { id: entityId },
+      select: { id: true },
+    });
+  } else {
+    found = await ctx.prisma.situationAnalysis.findUnique({
       where: { id: entityId },
       select: { id: true },
     });
@@ -77,10 +100,10 @@ export const translationResolvers = {
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
-      const entityType = args.entityType.toLowerCase() as TranslatableEntityType;
-      if (!VALID_ENTITY_TYPES.has(entityType)) {
+      const entityType = normalizeEntityType(args.entityType);
+      if (!entityType) {
         throw new GraphQLError(
-          `Invalid entityType "${args.entityType}". Must be one of: event, crisis, location.`,
+          `Invalid entityType "${args.entityType}". Must be one of: ${ENTITY_TYPE_LIST}.`,
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
@@ -106,10 +129,10 @@ export const translationResolvers = {
       context: Context,
     ): Promise<string[]> => {
       requireRole(context, ["admin", "pipeline"]);
-      const entityType = args.entityType.toLowerCase() as TranslatableEntityType;
-      if (!VALID_ENTITY_TYPES.has(entityType)) {
+      const entityType = normalizeEntityType(args.entityType);
+      if (!entityType) {
         throw new GraphQLError(
-          `Invalid entityType "${args.entityType}". Must be one of: event, crisis, location.`,
+          `Invalid entityType "${args.entityType}". Must be one of: ${ENTITY_TYPE_LIST}.`,
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
@@ -134,8 +157,12 @@ export const translationResolvers = {
         allRows = await context.prisma.events.findMany({ select: { id: true } });
       } else if (entityType === "crisis") {
         allRows = await context.prisma.crises.findMany({ select: { id: true } });
-      } else {
+      } else if (entityType === "location") {
         allRows = await context.prisma.locations.findMany({ select: { id: true } });
+      } else {
+        allRows = await context.prisma.situationAnalysis.findMany({
+          select: { id: true },
+        });
       }
       const translatedRows = await context.prisma.translations.findMany({
         where: { entityType, locale },
@@ -154,20 +181,23 @@ export const translationResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const [grouped, eventCount, crisisCount, locationCount] = await Promise.all([
-        context.prisma.translations.groupBy({
-          by: ["entityType", "locale"],
-          _count: { entityId: true },
-        }),
-        context.prisma.events.count(),
-        context.prisma.crises.count(),
-        context.prisma.locations.count(),
-      ]);
+      const [grouped, eventCount, crisisCount, locationCount, situationCount] =
+        await Promise.all([
+          context.prisma.translations.groupBy({
+            by: ["entityType", "locale"],
+            _count: { entityId: true },
+          }),
+          context.prisma.events.count(),
+          context.prisma.crises.count(),
+          context.prisma.locations.count(),
+          context.prisma.situationAnalysis.count(),
+        ]);
 
       const canonical: Record<TranslatableEntityType, number> = {
         event: eventCount,
         crisis: crisisCount,
         location: locationCount,
+        situationAnalysis: situationCount,
       };
 
       // Build (translatedCount) lookup keyed by `${type}:${locale}`.
@@ -182,7 +212,7 @@ export const translationResolvers = {
         canonicalCount: number;
         translatedCount: number;
       }> = [];
-      for (const entityType of ["event", "crisis", "location"] as TranslatableEntityType[]) {
+      for (const entityType of [...VALID_ENTITY_TYPES] as TranslatableEntityType[]) {
         for (const locale of COVERAGE_LOCALES) {
           out.push({
             entityType,
@@ -194,9 +224,93 @@ export const translationResolvers = {
       }
       return out;
     },
+
+    // The Dagster translation drain: entities enqueued for (re)translation,
+    // oldest-first. This is the durable replacement for the lazy-on-read Celery
+    // broker enqueue. Optional entityType/locale filters let a per-locale
+    // consumer drain just its slice. Admin/pipeline only.
+    pendingTranslations: async (
+      _parent: unknown,
+      args: { first?: number | null; entityType?: string | null; locale?: string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      const where: { entityType?: string; locale?: string } = {};
+      if (args.entityType) where.entityType = args.entityType.toLowerCase();
+      if (args.locale) where.locale = args.locale.toLowerCase();
+      return context.prisma.translationQueue.findMany({
+        where,
+        orderBy: { enqueuedAt: "asc" },
+        take,
+      });
+    },
   },
 
   Mutation: {
+    // Durable replacement for the lazy-on-read Celery enqueue: mark an entity as
+    // needing (re)translation at a locale so the Dagster drain picks it up. One
+    // row per (entityType, entityId, locale) — a re-enqueue keeps the original
+    // enqueuedAt (idempotent). Admin/pipeline only.
+    enqueueTranslation: async (
+      _parent: unknown,
+      args: { entityType: string; entityId: string; locale: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const entityType = normalizeEntityType(args.entityType);
+      if (!entityType) {
+        throw new GraphQLError(
+          `Invalid entityType "${args.entityType}". Must be one of: ${ENTITY_TYPE_LIST}.`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      const locale = args.locale.toLowerCase();
+      if (locale === DEFAULT_LOCALE) {
+        throw new GraphQLError(
+          "locale 'en' is canonical and is never translated.",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      if (!isSupportedLocale(locale)) {
+        throw new GraphQLError(`Unsupported locale "${locale}".`, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      await assertEntityExists(context, entityType, args.entityId);
+      return context.prisma.translationQueue.upsert({
+        where: {
+          entityType_entityId_locale: { entityType, entityId: args.entityId, locale },
+        },
+        create: { entityType, entityId: args.entityId, locale },
+        update: {}, // idempotent — keep the original enqueuedAt
+      });
+    },
+
+    // Explicit drain completion: remove an entity/locale from the queue. Returns
+    // true when a queued row was actually removed. `upsertTranslations` clears
+    // the queue itself, so consumers writing via that path need not call this.
+    // Admin/pipeline only.
+    markTranslated: async (
+      _parent: unknown,
+      args: { entityType: string; entityId: string; locale: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      // Normalize so a camelCase type (situationAnalysis) matches the stored
+      // canonical value; fall back to the raw lowercase for forward-compat.
+      const entityType =
+        normalizeEntityType(args.entityType) ?? args.entityType.toLowerCase();
+      const result = await context.prisma.translationQueue.deleteMany({
+        where: {
+          entityType,
+          entityId: args.entityId,
+          locale: args.locale.toLowerCase(),
+        },
+      });
+      return result.count > 0;
+    },
+
     upsertTranslations: async (
       _parent: unknown,
       args: { input: UpsertTranslationsInput },
@@ -205,13 +319,13 @@ export const translationResolvers = {
       requireRole(context, ["admin", "pipeline"]);
       const { input } = args;
 
-      // Entity-type validation. Lowercased for forgiveness; the storage
-      // value is canonical so admin/pipeline callers never accidentally
-      // create 'Event' / 'event' partitions of the same data.
-      const entityType = input.entityType.toLowerCase() as TranslatableEntityType;
-      if (!VALID_ENTITY_TYPES.has(entityType)) {
+      // Entity-type validation. Normalized case-insensitively to the canonical
+      // value so admin/pipeline callers never accidentally create
+      // 'Event' / 'event' partitions of the same data.
+      const entityType = normalizeEntityType(input.entityType);
+      if (!entityType) {
         throw new GraphQLError(
-          `Invalid entityType "${input.entityType}". Must be one of: event, crisis, location.`,
+          `Invalid entityType "${input.entityType}". Must be one of: ${ENTITY_TYPE_LIST}.`,
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
@@ -278,12 +392,15 @@ export const translationResolvers = {
             eventId?: string;
             crisisId?: string;
             locationId?: string;
+            situationAnalysisId?: string;
           } =
             entityType === "event"
               ? { eventId: input.entityId }
               : entityType === "crisis"
                 ? { crisisId: input.entityId }
-                : { locationId: input.entityId };
+                : entityType === "location"
+                  ? { locationId: input.entityId }
+                  : { situationAnalysisId: input.entityId };
           return context.prisma.translations.upsert({
             where: {
               entityType_entityId_locale: {
@@ -311,6 +428,17 @@ export const translationResolvers = {
           });
         }),
       );
+
+      // The write IS the drain-completion signal: clear any queued
+      // (re)translation requests for the locales we just wrote. Best-effort —
+      // a leftover queue row would only cause a harmless re-drain.
+      await context.prisma.translationQueue.deleteMany({
+        where: {
+          entityType,
+          entityId: input.entityId,
+          locale: { in: input.translations.map((t) => t.locale.toLowerCase()) },
+        },
+      });
 
       return {
         entityType,

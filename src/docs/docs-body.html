@@ -232,6 +232,12 @@ const data = await fetch('/graphql', {
     <td>Open Signal Location challenges (for map dual-pin rendering). Team-scoped
 like signals when teamId is given; status defaults to &quot;consideration&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
   </tr><tr>
+    <td><code>pendingSignals</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>Signals awaiting downstream processing (status = NEW), oldest-first — the
+Dagster event-driven drain. `source` filters by DataSource name (e.g.
+&quot;dataminr&quot;); `first` caps the batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
+  </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
     <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
@@ -258,6 +264,16 @@ token every time. Returns null when no live link exists - the
 caller then mints one via `createPublicEventLink`. Requires
 `requireContentReader` (admin / analyst / viewer); pending users
 are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>eventsPendingAlert</code></td>
+    <td><code>[Event!]!</code></td>
+    <td>Events awaiting an alert (severity &gt;= minSeverity AND no alert row yet AND
+a signal within the last `maxAgeHours`), oldest-first by the event's
+earliest-signal timestamp — the Dagster alert-stage queue. `first` caps the
+batch (default 100, max 500); `minSeverity` floors the severity (default 4);
+`maxAgeHours` bounds staleness on the latest signal's real-world time so the
+historical backlog / backdated backfill never alerts (default 48; 0 disables).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>minSeverity: Int</code></span><span class="arg"><code>maxAgeHours: Int</code></span></div></td>
   </tr><tr>
     <td><code>eventsByLocation</code></td>
     <td><code>[Event!]!</code></td>
@@ -371,6 +387,12 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
     <td><code>Crisis</code></td>
     <td>Look up a crisis by ID.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>pendingCrises</code></td>
+    <td><code>[Crisis!]!</code></td>
+    <td>Crises awaiting enrichment (enrichmentStatus = PENDING), oldest-first — the
+Dagster enrichment drain. `first` caps the batch (default 100, max 500).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span></div></td>
+  </tr><tr>
     <td><code>alertsPage</code></td>
     <td><code>AlertsPage!</code></td>
     <td>Paginated alerts feed with severity / location / type / date filters and
@@ -435,6 +457,13 @@ countries to run. Requires authentication.</td>
     <td>Translation rows currently stored for an entity, one per locale.
 Admin/pipeline only. Used by clear-pipeline to compare stored source
 hashes against the canonical row and decide which fields to re-translate.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>entityId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>pendingTranslations</code></td>
+    <td><code>[TranslationQueueItem!]!</code></td>
+    <td>Entities enqueued for (re)translation, oldest-first — the Dagster
+translation drain (durable replacement for the lazy-on-read Celery enqueue).
+Optional entityType/locale filters; `first` caps the batch (default 100, max
+500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>entityType: String</code></span><span class="arg"><code>locale: String</code></span></div></td>
   </tr><tr>
     <td><code>translationCoverage</code></td>
     <td><code>[TranslationCoverage!]!</code></td>
@@ -536,6 +565,16 @@ bump changes what the numbers mean, so one series is always one
 version. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>countryLocationId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>schemaVersion: String</code> — Pin the trend to a payload schema version. Defaults to the
 country's most recently written version. Pass an older one to
 chart a historical payload shape.</span></div></td>
+  </tr><tr>
+    <td><code>situationAnalysisById</code></td>
+    <td><code>SituationAnalysis</code></td>
+    <td>Read one situation-analysis snapshot by its row id, including
+superseded history rows (the bucket-keyed `situationAnalysis` query
+only returns the current row). Used by the translation pipeline to
+fetch a specific generation's canonical prose. `data` is overlaid
+with the caller's locale translation like every other read — the
+pipeline calls it as `en` and gets canonical text back. Requires any
+authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
     <td><code>hasAggregatedDatapoints</code></td>
     <td><code>Boolean!</code></td>
@@ -697,6 +736,12 @@ pipeline only. Returns the number of rows affected.<div class="field-args"><span
     <td><code>createSignal</code></td>
     <td><code>Signal!</code></td>
     <td>Create a signal from a data source.<div class="field-args"><span class="arg"><code>input: CreateSignalInput!</code></span></div></td>
+  </tr><tr id="mutation-marksignalsprocessed">
+    <td><code>markSignalsProcessed</code></td>
+    <td><code>Int!</code></td>
+    <td>Mark signals as done for the Dagster drain — the downstream pipeline calls
+this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
+and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
   </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>
@@ -999,6 +1044,11 @@ Returns the list of created subscriptions. Duplicates are skipped silently.<div 
     <td><code>createCrisisFromEvents</code></td>
     <td><code>Crisis!</code></td>
     <td>Create a new crisis from a list of event IDs. Links all provided events to the new crisis.<div class="field-args"><span class="arg"><code>input: CreateCrisisFromEventsInput!</code></span></div></td>
+  </tr><tr id="mutation-markcrisisenriched">
+    <td><code>markCrisisEnriched</code></td>
+    <td><code>Crisis!</code></td>
+    <td>Mark a crisis ENRICHED for the Dagster drain — the enrichment consumer calls
+this once narrative/scenarios/needs-analysis are current. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-addeventtocrisis">
     <td><code>addEventToCrisis</code></td>
     <td><code>EventCrisis!</code></td>
@@ -1053,7 +1103,21 @@ object so other keys on needs are preserved. Admin/pipeline only.<div class="fie
     <td><code>UpsertTranslationsResult!</code></td>
     <td>Upsert one or more per-locale translation rows for an event,
 crisis, or location. The translated data blob mirrors the canonical
-entity's JSON shape per locale. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertTranslationsInput!</code></span></div></td>
+entity's JSON shape per locale. Admin/pipeline only. Clears any matching
+rows from the translation queue (the write is the drain-completion signal).<div class="field-args"><span class="arg"><code>input: UpsertTranslationsInput!</code></span></div></td>
+  </tr><tr id="mutation-enqueuetranslation">
+    <td><code>enqueueTranslation</code></td>
+    <td><code>TranslationQueueItem!</code></td>
+    <td>Enqueue an entity for (re)translation at a locale — the durable replacement
+for the lazy-on-read Celery enqueue. Idempotent (one row per entity+locale).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>entityId: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
+  </tr><tr id="mutation-marktranslated">
+    <td><code>markTranslated</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Remove an entity/locale from the translation queue (explicit drain
+completion). Returns true when a queued row was removed. upsertTranslations
+clears the queue itself, so this is only for consumers not writing via it.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>entityType: String!</code></span><span class="arg"><code>entityId: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr id="mutation-upsertknowledgebasechunks">
     <td><code>upsertKnowledgebaseChunks</code></td>
     <td><code>UpsertKnowledgebaseResult!</code></td>
@@ -1210,10 +1274,14 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
+(re)enrichment (set on crisis create / event add / event remove);
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
-is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
+is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
+NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
+alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
 `YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -1724,6 +1792,12 @@ existing row instead of creating a duplicate. Recommended prefix scheme:
     <td><code>rawData</code></td>
     <td><code>JSON!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>rawS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Pointer to the raw payload blob in the S3 data lake (bronze layer),
+written by the Dagster ingest asset. Optional — rawData carries the payload
+for sources not yet landing in the lake.</td>
   </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>String!</code></td>
@@ -3070,6 +3144,10 @@ from Redis (assuming it isn't evicted earlier or revoked).</td>
     <td><code>summary</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>enrichmentStatus</code></td>
+    <td><code>CrisisEnrichmentStatus!</code></td>
+    <td>Enrichment status for the pipeline drain (PENDING until enrichment runs).</td>
   </tr><tr>
     <td><code>scenarios</code></td>
     <td><code>JSON</code></td>
@@ -4476,6 +4554,18 @@ not the publisher, so it is a label of last resort.</td>
     <td><code>DataSource!</code></td>
     <td>The data source this signal was collected from.</td>
   </tr><tr>
+    <td><code>status</code></td>
+    <td><code>SignalStatus!</code></td>
+    <td>Processing status for the pipeline drain (NEW until downstream runs).</td>
+  </tr><tr>
+    <td><code>processedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the downstream pipeline finished processing this signal (null while NEW).</td>
+  </tr><tr>
+    <td><code>rawS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Pointer to the raw payload blob in the S3 data lake, when landed there.</td>
+  </tr><tr>
     <td><code>externalId</code></td>
     <td><code>String</code></td>
     <td>Stable upstream identifier (e.g. &quot;dataminr:{alertId}&quot;). Used to
@@ -4790,6 +4880,29 @@ utils/translation-loader.ts).</p><table class="ref-table"><thead><tr><th>Field</
   </tr><tr>
     <td><code>translatedCount</code></td>
     <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-translationqueueitem"><code>TranslationQueueItem</code> <span class="type-badge">object</span></h3><p>A pending (re)translation request — the durable replacement for the
+lazy-on-read Celery enqueue. Drained by the Dagster translation consumer,
+which translates the entity at `locale` and writes it back via
+upsertTranslations (which clears the queue row).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>entityType</code></td>
+    <td><code>String!</code></td>
+    <td>'event' | 'crisis' | 'location'.</td>
+  </tr><tr>
+    <td><code>entityId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locale</code></td>
+    <td><code>String!</code></td>
+    <td>BCP-47 locale (lowercased) to translate into.</td>
+  </tr><tr>
+    <td><code>enqueuedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-translationrow"><code>TranslationRow</code> <span class="type-badge">object</span></h3><p>A single translation row, returned by the admin/pipeline-only
 translations(entityType, entityId) query so the pipeline can compare
