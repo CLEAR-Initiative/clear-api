@@ -397,5 +397,85 @@ export function renderPortalControlScript(): string {
       document.addEventListener('DOMContentLoaded', boot);
       if (document.readyState !== 'loading') boot();
     })();
+
+    (function bindRoleForms() {
+      document.querySelectorAll('form.js-role-form').forEach(function (form) {
+        var select = form.querySelector('select');
+        var btn = form.querySelector('.btn-row-action');
+        if (!select || !btn) return;
+        var saved = select.getAttribute('data-stored') || select.value;
+
+        function setDirty() {
+          var dirty = select.value !== saved;
+          btn.classList.toggle('is-dirty', dirty);
+          btn.disabled = !dirty;
+          if (dirty) hideCheck();
+        }
+
+        function checkEl() {
+          var row = form.closest('.swipe-delete') || form.closest('tr') || form.closest('article');
+          return row ? row.querySelector('.row-save-check') : null;
+        }
+
+        function hideCheck() {
+          var check = checkEl();
+          if (!check) return;
+          check.classList.remove('is-visible');
+          check.setAttribute('aria-hidden', 'true');
+          check.removeAttribute('aria-label');
+        }
+
+        function showCheck() {
+          var check = checkEl();
+          if (!check) return;
+          check.classList.add('is-visible');
+          check.setAttribute('aria-hidden', 'false');
+          check.setAttribute('aria-label', 'Saved');
+        }
+
+        select.addEventListener('change', setDirty);
+        setDirty();
+
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          if (select.value === saved) return;
+          btn.disabled = true;
+          var body = new URLSearchParams(new FormData(form));
+          fetch(form.action, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+            credentials: 'same-origin',
+          })
+            .then(function (res) {
+              return res.json().then(
+                function (data) {
+                  return { ok: !!(data && data.ok), message: data && data.message };
+                },
+                function () {
+                  return { ok: false, message: 'Could not update role.' };
+                },
+              );
+            })
+            .then(function (result) {
+              if (result.ok) {
+                saved = select.value;
+                select.removeAttribute('data-stored');
+                setDirty();
+                showCheck();
+              } else {
+                setDirty();
+                btn.title = result.message || 'Could not update role.';
+              }
+            })
+            .catch(function () {
+              setDirty();
+            });
+        });
+      });
+    })();
 `;
 }

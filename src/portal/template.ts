@@ -8,6 +8,11 @@ import {
 import { renderAuthPageHead, renderWaitingPageStyles } from "../ui/auth-page.js";
 import { renderFontLinks } from "../ui/theme.js";
 import { renderIconLinks } from "../ui/icons.js";
+import {
+  canonicalOrgRole,
+  canonicalTeamRole,
+  GLOBAL_ROLES,
+} from "./roles.js";
 
 export interface PortalOptions {
   /** Null/undefined for anonymous Developers — public tabs only. */
@@ -2111,6 +2116,9 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-overflow: unset;
       word-break: break-word;
     }
+    .users-card .inline-form {
+      width: 100%;
+    }
     .users-card-action {
       display: flex;
       justify-content: flex-end;
@@ -2616,11 +2624,19 @@ function formatNumber(n: number): string {
 }
 
 function teamRoleSelectOptions(selected: string): string {
+  const canonical = canonicalTeamRole(selected);
   return ["team_member", "field_coordinator", "team_admin"]
     .map(
-      (r) => `<option value="${r}"${selected === r ? " selected" : ""}>${r}</option>`,
+      (r) => `<option value="${r}"${canonical === r ? " selected" : ""}>${r}</option>`,
     )
     .join("");
+}
+
+function globalRoleSelectOptions(selected: string | null): string {
+  const current = (selected ?? "viewer").toLowerCase();
+  return GLOBAL_ROLES.map(
+    (r) => `<option value="${r}"${current === r ? " selected" : ""}>${r}</option>`,
+  ).join("");
 }
 
 export interface AdminUserRow {
@@ -2684,6 +2700,20 @@ export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
                       return `<a class="users-org-link" href="${href}" title="Open ${name}">${name}</a>`;
                     })
                     .join("")}</span>`;
+            const isSelf = u.email === currentUserEmail;
+            const roleControl =
+              u.role === "pending"
+                ? roleBadge(u.role)
+                : `<form class="inline-form js-role-form" method="POST" action="/portal/admin/users/role">
+              <input type="hidden" name="userId" value="${escapeHtml(u.id)}" />
+              <select class="field-select" name="role" data-stored="${escapeHtml(u.role ?? "")}"${isSelf ? " disabled" : ""}>${globalRoleSelectOptions(u.role)}</select>
+              ${
+                isSelf
+                  ? ""
+                  : `<button type="submit" class="btn btn-sm btn-row-action">Update</button>`
+              }
+              <span class="row-save-check" aria-hidden="true">${PORTAL_SVGS.modalCheck}</span>
+            </form>`;
             const action =
               u.role === "pending"
                 ? `<div class="users-card-action">
@@ -2699,7 +2729,7 @@ export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
             ${stat("Name", `<span title="${name}">${name}</span>`)}
             ${stat("Email", `<code title="${email}">${email}</code>`)}
             ${stat("Organisation", orgs, " users-stat--row")}
-            ${stat("Role", roleBadge(u.role))}
+            ${stat("Role", roleControl)}
             ${stat("Signed up", escapeHtml(u.createdAt.toISOString().slice(0, 10)))}
           </div>
           ${action}
@@ -2718,8 +2748,8 @@ export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
     title: "Users",
     subtitle:
       pendingCount > 0
-        ? `${pendingCount} waiting for approval. Approving grants viewer access.`
-        : `${users.length} registered account${users.length === 1 ? "" : "s"}.`,
+        ? `${pendingCount} waiting for approval. Approving grants viewer access; use the role dropdown to promote further.`
+        : `${users.length} registered account${users.length === 1 ? "" : "s"}. Change a role, then Update.`,
   });
 }
 
@@ -3036,7 +3066,7 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
               <input type="hidden" name="orgId" value="${orgParam}" />
               <input type="hidden" name="teamId" value="${teamParam}" />
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <select class="field-select" name="teamRole">${teamRoleSelectOptions(m.teamRole)}</select>
+              <select class="field-select" name="teamRole" data-stored="${escapeHtml(m.teamRole)}">${teamRoleSelectOptions(m.teamRole)}</select>
               <button type="submit" class="btn btn-sm btn-row-action">Update</button>
             </form>
         </div>
@@ -3138,10 +3168,11 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
       ? `<div class="members-empty">No org members yet. Invite or add a user to a team below — the first member should be the org admin.</div>`
       : org.members
           .map((m) => {
+            const displayRole = canonicalOrgRole(m.orgRole);
             const roleOptions = ["org_admin", "member"]
               .map(
                 (r) =>
-                  `<option value="${r}"${m.orgRole === r ? " selected" : ""}>${r}</option>`,
+                  `<option value="${r}"${displayRole === r ? " selected" : ""}>${r}</option>`,
               )
               .join("");
             const tabId = `member-delete-tab-${escapeHtml(m.userId)}`;
@@ -3162,7 +3193,7 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
             <form class="inline-form js-role-form" method="POST" action="/portal/admin/orgs/members/role">
               <input type="hidden" name="orgId" value="${orgParam}" />
               <input type="hidden" name="userId" value="${escapeHtml(m.userId)}" />
-              <select class="field-select" name="role">${roleOptions}</select>
+              <select class="field-select" name="role" data-stored="${escapeHtml(m.orgRole)}">${roleOptions}</select>
               <button type="submit" class="btn btn-sm btn-row-action">Update</button>
             </form>
           </div>
@@ -3294,85 +3325,6 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
         name.addEventListener('input', sync);
         slug.addEventListener('input', sync);
         sync();
-      })();
-
-      (function bindRoleForms() {
-        document.querySelectorAll('form.js-role-form').forEach(function (form) {
-          var select = form.querySelector('select');
-          var btn = form.querySelector('.btn-row-action');
-          if (!select || !btn) return;
-          var saved = select.value;
-
-          function setDirty() {
-            var dirty = select.value !== saved;
-            btn.classList.toggle('is-dirty', dirty);
-            btn.disabled = !dirty;
-            if (dirty) hideCheck();
-          }
-
-          function checkEl() {
-            var row = form.closest('.swipe-delete') || form.closest('tr');
-            return row ? row.querySelector('.row-save-check') : null;
-          }
-
-          function hideCheck() {
-            var check = checkEl();
-            if (!check) return;
-            check.classList.remove('is-visible');
-            check.setAttribute('aria-hidden', 'true');
-            check.removeAttribute('aria-label');
-          }
-
-          function showCheck() {
-            var check = checkEl();
-            if (!check) return;
-            check.classList.add('is-visible');
-            check.setAttribute('aria-hidden', 'false');
-            check.setAttribute('aria-label', 'Saved');
-          }
-
-          select.addEventListener('change', setDirty);
-          setDirty();
-
-          form.addEventListener('submit', function (e) {
-            e.preventDefault();
-            if (select.value === saved) return;
-            btn.disabled = true;
-            var body = new URLSearchParams(new FormData(form));
-            fetch(form.action, {
-              method: 'POST',
-              headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: body.toString(),
-              credentials: 'same-origin',
-            })
-              .then(function (res) {
-                return res.json().then(
-                  function (data) {
-                    return { ok: !!(data && data.ok), message: data && data.message };
-                  },
-                  function () {
-                    return { ok: false, message: 'Could not update role.' };
-                  },
-                );
-              })
-              .then(function (result) {
-                if (result.ok) {
-                  saved = select.value;
-                  setDirty();
-                  showCheck();
-                } else {
-                  setDirty();
-                  btn.title = result.message || 'Could not update role.';
-                }
-              })
-              .catch(function () {
-                setDirty();
-              });
-          });
-        });
       })();
 
       (function bindSwipeDelete() {

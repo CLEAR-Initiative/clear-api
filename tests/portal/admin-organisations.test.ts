@@ -220,6 +220,38 @@ describe("renderAdminOrgDetail", () => {
     expect(html).not.toContain('class="btn btn-danger btn-sm">Delete organisation');
   });
 
+  it("marks the current org role selected so Update can detect a change", () => {
+    const html = renderAdminOrgDetail({
+      currentUserEmail: "admin@clear.dev",
+      pendingCount: 0,
+      defaultInviteOrgRole: "member",
+      org: {
+        id: "org_1",
+        name: "Acme",
+        slug: "acme",
+        isActive: true,
+        createdAt: new Date("2026-01-15"),
+        importableTeams: [],
+        teams: [],
+        members: [
+          {
+            userId: "user_legacy",
+            email: "legacy@acme.dev",
+            name: "Legacy Admin",
+            globalRole: "viewer",
+            orgRole: "admin",
+            joinedAt: new Date("2026-01-16"),
+          },
+        ],
+      },
+    });
+
+    const roleSelect = html.match(
+      /<select class="field-select" name="role" data-stored="admin">([\s\S]*?)<\/select>/,
+    );
+    expect(roleSelect?.[1]).toMatch(/value="org_admin" selected/);
+  });
+
   it("sole-team member removal shows org-removal warning", () => {
     const html = renderAdminOrgDetail({
       currentUserEmail: "admin@clear.dev",

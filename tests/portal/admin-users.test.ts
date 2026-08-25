@@ -37,13 +37,21 @@ describe("renderAdminUsers", () => {
     );
     expect(html).toMatch(/users-org-link/);
     expect(html).toMatch(/btn-approve/);
-    expect(html).toMatch(/value="u-pending"/);
-    expect(html).not.toMatch(/value="u-viewer"/);
+    expect(html).toMatch(
+      /<form method="POST" action="\/portal\/admin\/approve">\s*<input type="hidden" name="userId" value="u-pending"/,
+    );
+    expect(html).not.toMatch(
+      /<form method="POST" action="\/portal\/admin\/approve">\s*<input type="hidden" name="userId" value="u-viewer"/,
+    );
     expect(html).toMatch(/org-stat-label">Name</);
     expect(html).toMatch(/org-stat-label">Email</);
     expect(html).toMatch(/org-stat-label">Organisation</);
     expect(html).toMatch(/org-stat-label">Role</);
     expect(html).toMatch(/org-stat-label">Signed up</);
+    expect(html).toContain("/portal/admin/users/role");
+    expect(html).toMatch(/<select class="field-select" name="role"/);
+    expect(html).toContain("js-role-form");
+    expect(html).toMatch(/value="u-viewer"/);
     expect(html).toMatch(/1 waiting for approval/);
     expect(html).toMatch(/\.btn-approve\s*\{[^}]*border-radius:\s*6px/);
     expect(html).toMatch(

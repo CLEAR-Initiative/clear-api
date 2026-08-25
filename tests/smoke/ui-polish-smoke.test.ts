@@ -289,6 +289,24 @@ describe("UI polish smoke", () => {
       expect(html).toContain("btn-approve");
     });
 
+    it("users role posts to the admin users role action", () => {
+      const html = renderAdminUsers({
+        currentUserEmail: "admin@clear.dev",
+        pendingCount: 0,
+        users: [
+          {
+            id: "u-viewer",
+            name: "Approved",
+            email: "ok@example.com",
+            role: "viewer",
+            createdAt: new Date("2026-08-01"),
+            organisations: [],
+          },
+        ],
+      });
+      expect(html).toContain('action="/portal/admin/users/role"');
+    });
+
     it("org list and detail expose every mutating form action", () => {
       const list = renderAdminOrganisations({
         currentUserEmail: "admin@clear.dev",

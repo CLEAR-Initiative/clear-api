@@ -23,6 +23,12 @@ import {
   teamInviteNotification,
 } from "../services/messaging/templates.js";
 import { env } from "../utils/env.js";
+import {
+  canonicalOrgRole,
+  canonicalTeamRole,
+  isOrgRole,
+  TEAM_ROLES,
+} from "./roles.js";
 
 function generateToken(): string {
   return randomBytes(32).toString("hex");
@@ -324,13 +330,14 @@ export async function portalUpdateOrgMemberRole(
   userId: string,
   role: string,
 ) {
-  if (!["org_admin", "member"].includes(role)) {
+  const nextRole = isOrgRole(role) ? role : canonicalOrgRole(role);
+  if (!isOrgRole(role) && nextRole === "member" && role !== "member") {
     throw new Error(`Invalid org role "${role}". Must be org_admin or member.`);
   }
   try {
     return await prisma.organisationUsers.update({
       where: { userId_organisationId: { userId, organisationId: orgId } },
-      data: { role },
+      data: { role: nextRole },
     });
   } catch {
     throw new Error("Member not found in this organisation.");
@@ -491,13 +498,14 @@ async function uniqueTeamSlugInOrg(orgId: string, baseSlug: string): Promise<str
   return slug;
 }
 
-const TEAM_ROLES = ["team_admin", "field_coordinator", "team_member"] as const;
-
 function assertTeamRole(role: string): string {
-  if (!TEAM_ROLES.includes(role as (typeof TEAM_ROLES)[number])) {
-    throw new Error(`Invalid team role "${role}".`);
-  }
-  return role;
+  const known =
+    (TEAM_ROLES as readonly string[]).includes(role) ||
+    role === "lead" ||
+    role === "analyst" ||
+    role === "viewer";
+  if (!known) throw new Error(`Invalid team role "${role}".`);
+  return canonicalTeamRole(role);
 }
 
 /** Create an empty team in the organisation (SuperAdmin — no auto-added members). */
