@@ -34,6 +34,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
       update: prismaUserUpdate,
       count: prismaUserCount,
     },
+    activityLogs: { create: vi.fn().mockResolvedValue({ id: "log" }) },
   },
 }));
 
@@ -193,7 +194,11 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
       email: "ok@example.com",
       role: "viewer",
     });
-    prismaUserUpdate.mockResolvedValue({ id: "user_1", role: "admin" });
+    prismaUserUpdate.mockResolvedValue({
+      id: "user_1",
+      email: "ok@example.com",
+      role: "admin",
+    });
 
     const res = await postRole("/portal/admin/users/role", {
       userId: "user_1",
@@ -221,6 +226,27 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
     await expect(res.json()).resolves.toEqual({
       ok: false,
       message: "You cannot change your own role.",
+    });
+    expect(prismaUserUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to demote the last admin", async () => {
+    prismaUserFindUnique.mockResolvedValue({
+      id: "other-admin",
+      email: "other@example.com",
+      role: "admin",
+    });
+    prismaUserCount.mockResolvedValue(1);
+
+    const res = await postRole("/portal/admin/users/role", {
+      userId: "other-admin",
+      role: "viewer",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      message: "Cannot demote the last admin.",
     });
     expect(prismaUserUpdate).not.toHaveBeenCalled();
   });
