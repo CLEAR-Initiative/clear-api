@@ -126,6 +126,9 @@ interface KnowledgebaseChunkInput {
   timeRangeEnd: Date | null;
   eventTypes: string[];
   needSectors: string[];
+  // Infographic capture: present only on figure-transcription chunks.
+  figureS3Key?: string | null;
+  figureKind?: string | null;
 }
 
 interface UpsertKnowledgebaseArgs {
@@ -164,6 +167,8 @@ interface KnowledgebaseHitRow {
   locationIds: string[];
   eventTypes: string[];
   needSectors: string[];
+  figureS3Key: string | null;
+  figureKind: string | null;
 }
 
 /**
@@ -338,7 +343,9 @@ export const knowledgebaseResolvers = {
           "chunk_text"      AS "chunkText",
           "location_ids"    AS "locationIds",
           "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors"
+          "need_sectors"    AS "needSectors",
+          "figure_s3_key"   AS "figureS3Key",
+          "figure_kind"     AS "figureKind"
         FROM "knowledgebase"
         ${denseWhere}
         ORDER BY "embedding" <=> $${denseParams.length + 1}::vector(1024)
@@ -363,7 +370,9 @@ export const knowledgebaseResolvers = {
           "chunk_text"      AS "chunkText",
           "location_ids"    AS "locationIds",
           "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors"
+          "need_sectors"    AS "needSectors",
+          "figure_s3_key"   AS "figureS3Key",
+          "figure_kind"     AS "figureKind"
         FROM "knowledgebase"
         ${sparseWhere ? `${sparseWhere} AND` : "WHERE"}
           "lexical_tsv" @@ plainto_tsquery('english', $${sparseParams.length + 1})
@@ -462,7 +471,7 @@ export const knowledgebaseResolvers = {
         // pooled connection across the whole DELETE + N INSERTs (up to the
         // 60s transaction timeout); batching returns the connection to the
         // pool far sooner, which is what keeps a concurrent pipeline run from
-        // starving the pool. 20 params/row × KB_MAX_CHUNKS_PER_REPORT stays
+        // starving the pool. 22 params/row × KB_MAX_CHUNKS_PER_REPORT stays
         // well under Postgres's 65535-parameter cap.
         const rows: string[] = [];
         const params: unknown[] = [];
@@ -472,7 +481,7 @@ export const knowledgebaseResolvers = {
             `(gen_random_uuid()::text, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}::vector(1024), $${p++}::text[], $${p++}::text[], ` +
-              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[])`,
+              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[], $${p++}, $${p++})`,
           );
           params.push(
             args.reportId,
@@ -495,6 +504,8 @@ export const knowledgebaseResolvers = {
             chunk.timeRangeEnd,
             chunk.eventTypes,
             chunk.needSectors,
+            chunk.figureS3Key ?? null,
+            chunk.figureKind ?? null,
           );
         }
 
@@ -508,7 +519,8 @@ export const knowledgebaseResolvers = {
               "embedding_provider", "embedding_model", "embedding",
               "location_ids", "location_pcodes",
               "time_range_start", "time_range_end",
-              "event_types", "need_sectors"
+              "event_types", "need_sectors",
+              "figure_s3_key", "figure_kind"
             ) VALUES ${rows.join(", ")}
           `,
           ...params,

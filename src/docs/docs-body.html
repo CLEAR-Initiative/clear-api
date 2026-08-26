@@ -576,6 +576,14 @@ with the caller's locale translation like every other read — the
 pipeline calls it as `en` and gets canonical text back. Requires any
 authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>reportFigures</code></td>
+    <td><code>[ReportFigure!]!</code></td>
+    <td>Captured infographics (charts/maps/tables/composite panels) filtered by the
+SAME params as text — location / event type / need sector / time / kind — so a
+figure can be attached to an answer scoped to a place + topic + period. Powers
+figure attachment + on-demand infographic generation. Array filters match ANY
+tag; time overlaps the window. Any authenticated content reader.<div class="field-args"><span class="arg"><code>reportId: String</code></span><span class="arg"><code>locationIds: [String!]</code></span><span class="arg"><code>eventTypes: [String!]</code></span><span class="arg"><code>needSectors: [String!]</code></span><span class="arg"><code>kinds: [String!]</code></span><span class="arg"><code>timeRangeStart: DateTime</code></span><span class="arg"><code>timeRangeEnd: DateTime</code></span><span class="arg"><code>first: Int</code></span></div></td>
+  </tr><tr>
     <td><code>hasAggregatedDatapoints</code></td>
     <td><code>Boolean!</code></td>
     <td>True when at least one current `aggregated_datapoints` row
@@ -1145,6 +1153,11 @@ previous current row for the same bucket in the same
 transaction. History rows are preserved. Admin / pipeline only —
 the Dagster `weekly_situation_analyses` asset is the primary
 caller.<div class="field-args"><span class="arg"><code>input: UpsertSituationAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertreportfigures">
+    <td><code>upsertReportFigures</code></td>
+    <td><code>UpsertReportFiguresResult!</code></td>
+    <td>Replace a report's captured infographics (image asset store). Pipeline-only;
+delete-then-insert like `upsertReportDatapoints`.<div class="field-args"><span class="arg"><code>input: UpsertReportFiguresInput!</code></span></div></td>
   </tr><tr id="mutation-refreshaggregateddatapoints">
     <td><code>refreshAggregatedDatapoints</code></td>
     <td><code>RefreshAggregatedDatapointsResult!</code></td>
@@ -2152,6 +2165,17 @@ later re-embed backfill can filter by (provider, model).</td>
     <td><code>[String!]!</code></td>
     <td>NRC SAF sectors: Shelter, WASH, Protection, Health,
 Food Security, Education.</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Infographic capture: set only when this chunk is a figure
+transcription merged into the KB. `figureS3Key` is the cropped
+image's S3 key (join key to `report_figures`); `figureKind` is
+that figure's kind. Both null for ordinary text chunks.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-knowledgebasefilters"><code>KnowledgebaseFilters</code> <span class="type-badge">input</span></h3><p>Optional filters applied BEFORE the retrieval step — array
 filters use overlap semantics (any-of), the time range uses
 inclusive intersection. Leave a field null to skip that filter.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -2205,6 +2229,66 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
     <td><code>tagUserIds</code></td>
     <td><code>[String!]</code></td>
     <td>User IDs to tag in the reply.</td>
+  </tr></tbody></table><h3 id="type-reportfigureinput"><code>ReportFigureInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bbox</code></td>
+    <td><code>[Float!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isFullPage</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -2691,6 +2775,26 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td>The report's publisher source (a `data_sources` id), resolved by the
 pipeline via `resolveDataSource`. Null until source attribution backfills;
 a figure's own cited source lives per-figure inside `data`. See clear-context-pipeline ADR-0004.</td>
+  </tr></tbody></table><h3 id="type-upsertreportfiguresinput"><code>UpsertReportFiguresInput</code> <span class="type-badge">input</span></h3><p>Replace-on-reingest payload for one report's figures (pipeline-only).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>[ReportFigureInput!]!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisinput"><code>UpsertSituationAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>countryLocationId</code></td>
     <td><code>String!</code></td>
@@ -3974,6 +4078,18 @@ to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032.</td>
     <td><code>needSectors</code></td>
     <td><code>[String!]!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String</code></td>
+    <td>When this hit is a figure transcription, the cropped image's S3 key
+and its kind (chart/map/table/infographic/photo) — null for text hits.
+A consumer generating an infographic fetches this image and attaches it
+to the LLM call; plain Q&amp;A ignores it. Kept as a lightweight REFERENCE
+(no bytes) so retrieval never pays S3 cost.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-knowledgebaseingestjob"><code>KnowledgebaseIngestJob</code> <span class="type-badge">object</span></h3><p>One Dagster run kicked off by `uploadKnowledgebaseDocument`.
 Returned by both the mutation (initial launch) and the polling
 query. `reportId` / `reportTitle` / `s3Key` are populated from
@@ -4533,6 +4649,90 @@ ADR-0004.</td>
 Those were never re-extracted, so clients must keep a fallback - deriving a
 publisher from the `sourceUrl` host yields the aggregator (&quot;reliefweb.int&quot;),
 not the publisher, so it is a label of last resort.</td>
+  </tr></tbody></table><h3 id="type-reportfigure"><code>ReportFigure</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>1-indexed source page.</td>
+  </tr><tr>
+    <td><code>bbox</code></td>
+    <td><code>[Float!]!</code></td>
+    <td>Source-page bounding box [x0, top, x1, bottom] in PDF points; empty on full-page fallback.</td>
+  </tr><tr>
+    <td><code>isFullPage</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>S3 key of the cropped image.</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>chart | map | table | infographic | photo (logos are dropped, not stored).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>Structured transcription (rows / nested groups / callouts) from the vision pass.</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>Publishing source (data_sources id) for attribution.</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-rotatedevuserapikeyresult"><code>RotateDevUserApiKeyResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `rotateDevUserApiKey` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -4954,6 +5154,14 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>Boolean!</code></td>
     <td>`true` when the mutation replaced a previously extracted row,
 `false` when it created the first row for the report.</td>
+  </tr></tbody></table><h3 id="type-upsertreportfiguresresult"><code>UpsertReportFiguresResult</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of figures written.</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisresult"><code>UpsertSituationAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertSituationAnalysis` mutation — reports
 whether the write superseded a previously-current row.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>situationAnalysisId</code></td>

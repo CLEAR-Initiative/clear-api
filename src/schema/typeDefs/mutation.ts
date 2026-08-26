@@ -445,6 +445,12 @@ export const mutationTypeDef = gql`
       input: UpsertSituationAnalysisInput!
     ): UpsertSituationAnalysisResult!
 
+    """Replace a report's captured infographics (image asset store). Pipeline-only;
+    delete-then-insert like \`upsertReportDatapoints\`."""
+    upsertReportFigures(
+      input: UpsertReportFiguresInput!
+    ): UpsertReportFiguresResult!
+
     """Pre-compute all four aggregation tiers (weekly × A2, monthly × A1,
     yearly × country, all-time × country) for reports whose
     \`reportingPeriodEnd\` falls in \`[from, to]\`. Each computed
