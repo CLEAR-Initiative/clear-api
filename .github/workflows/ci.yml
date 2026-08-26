@@ -22,8 +22,9 @@ jobs:
       # Fail if the committed generated docs drifted from its source template.
       - name: Docs HTML is in sync with template
         run: bun run build:docs && git diff --exit-code src/docs/docs-body.html
-      # Same compile path as Dockerfile (`bun run build`). Catches Bun/tsx
-      # and docs-asset regressions before Build & deploy runs on merge.
+      # Same compile path as Dockerfile (`bun run build`). This runner has
+      # Node, so `tsx` would still succeed here — the bun-vs-tsx gate is
+      # tests/docs/build-docs-runtime.test.ts.
       - run: bun run build
 
       # Run the DB-free test suite WITH coverage, and gate on the thresholds in
