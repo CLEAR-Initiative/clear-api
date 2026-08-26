@@ -156,11 +156,13 @@ describe("Portal Shell", () => {
       expect(script).toContain("function closeMobileDrawer()");
     });
 
-    it("includes custom select enhancement", () => {
+    it("includes custom select enhancement and role-form save", () => {
       const script = renderPortalShellScript();
 
       expect(script).toContain("enhancePortalSelects");
       expect(script).toContain("select.field-select");
+      expect(script).toContain("bindRoleForms");
+      expect(script).toContain("data-stored");
     });
 
     it("dismisses a portal toast after 2 seconds", () => {

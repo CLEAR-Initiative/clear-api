@@ -34,6 +34,7 @@ import {
 } from "../services/password-reset.js";
 import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
 import { env } from "../utils/env.js";
+import { isGlobalRole } from "./roles.js";
 import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 import {
   renderPortal,
@@ -485,6 +486,43 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
     const message =
       err instanceof GraphQLError ? err.message : portalActionError(err);
     adminRedirect(res, "users", { kind: "error", message });
+  }
+});
+
+portalRouter.post("/admin/users/role", urlencoded, async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+  const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+
+  try {
+    if (!userId || !role) throw new Error("Missing fields.");
+    if (!isGlobalRole(role)) {
+      throw new Error(`Invalid role "${role}". Must be viewer, analyst, or admin.`);
+    }
+    if (userId === admin.id && role !== "admin") {
+      throw new Error("You cannot change your own role.");
+    }
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new Error("User not found.");
+    if (target.role === "pending") {
+      throw new Error("Approve pending users first.");
+    }
+    if (target.role === "admin" && role !== "admin") {
+      const adminCount = await prisma.user.count({ where: { role: "admin" } });
+      if (adminCount <= 1) throw new Error("Cannot demote the last admin.");
+    }
+    await prisma.user.update({ where: { id: userId }, data: { role } });
+    adminRespond(req, res, "users", {
+      kind: "success",
+      message: `${target.email}: role updated to ${role}.`,
+    });
+  } catch (err) {
+    adminRespond(req, res, "users", {
+      kind: "error",
+      message: portalActionError(err),
+    });
   }
 });
 
