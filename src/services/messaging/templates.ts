@@ -444,6 +444,51 @@ If you did not request this, you can safely ignore this email. Your password wil
 }
 
 /**
+ * Acknowledgement sent immediately after self-signup on the Developer
+ * Portal. CLEAR-branded (not Exponential). Access stays locked until an
+ * admin approves the account.
+ */
+export function signupAcknowledgement(
+  userName: string,
+  portalLoginUrl: string,
+): EmailContent {
+  const displayName = userName?.trim() || "there";
+
+  return {
+    subject: "Thanks — we've received your CLEAR API signup",
+
+    textBody: `Hi ${displayName},
+
+Thanks for signing up for the CLEAR API. We've received your details and an administrator will review your access shortly. You'll get another email when your account is approved.
+
+You can sign in at ${portalLoginUrl}, but API data stays locked until approval.
+
+Best,
+The CLEAR team`,
+
+    htmlBody: wrapHtml(
+      "Signup received",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${displayName},
+      </p>
+      <p style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5;">
+        Thanks for signing up for the CLEAR API. We've received your details and an administrator will review your access shortly. You'll get another email when your account is approved.
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        You can sign in now, but API data stays locked until approval.
+      </p>
+      ${ctaButton("Sign in to the Developer Portal", portalLoginUrl)}
+      <p style="margin: 0; font-size: 12px; color: #737373; word-break: break-all; line-height: 1.4;">
+        ${portalLoginUrl}
+      </p>
+      <p style="margin: 24px 0 0; font-size: 15px; color: #171717; line-height: 1.5;">
+        Best,<br />The CLEAR team
+      </p>`,
+    ),
+  };
+}
+
+/**
  * Welcome email sent to a developer whose waitlist application has been
  * approved by an admin. Carries the plaintext API key (one-time delivery
  * — never stored again) and a long-lived magic link the dev can use to

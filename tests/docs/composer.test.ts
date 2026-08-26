@@ -21,8 +21,11 @@ describe("Docs Composer", () => {
       });
 
       expect(html).toContain("Test content");
-      expect(html).not.toContain('class="sidebar-footer"');
+      expect(html).toContain("Sign in");
+      expect(html).toContain("/portal/login");
       expect(html).not.toContain("Sign Out");
+      expect(html).toContain('href="/favicon.ico"');
+      expect(html).not.toContain("favicon.svg");
     });
 
     it("does not include old top marketing nav", () => {
@@ -60,6 +63,7 @@ describe("Docs Composer", () => {
       expect(html).toContain("portal-shell");
       expect(html).toContain('class="sidebar"');
       expect(html).toContain("docs-layout");
+      expect(html).toContain("/css/portal-shell.css");
     });
 
     it("includes On This Page", () => {

@@ -654,6 +654,7 @@ export const mutationTypeDef = gql`
     existing row instead of creating a duplicate. Recommended prefix scheme:
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
+    """Write-only ingest payload stored internally. Not exposed on Signal queries."""
     rawData: JSON!
     """Pointer to the raw payload blob in the S3 data lake (bronze layer),
     written by the Dagster ingest asset. Optional — rawData carries the payload

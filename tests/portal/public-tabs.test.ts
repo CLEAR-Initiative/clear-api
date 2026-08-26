@@ -20,6 +20,10 @@ describe("Portal public vs auth-gated tabs", () => {
     expect(html).toContain("getting-started");
     expect(html).toContain("PORTAL_AUTHED ? 'api-keys' : 'getting-started'");
     expect(html).not.toContain("Sign Out");
+    expect(html).toContain('href="/portal/login"');
+    expect(html).toContain("Sign in");
+    expect(html).toMatch(/getting-started-ctas[\s\S]*Sign in/);
+    expect(html).not.toContain("Manage API Keys");
   });
 
   it("renders signed-in portal without login redirect in showTab", () => {
@@ -31,6 +35,7 @@ describe("Portal public vs auth-gated tabs", () => {
     expect(html).toContain("var PORTAL_AUTHED = true");
     expect(html).toContain("dev@example.com");
     expect(html).toContain("Sign Out");
+    expect(html).toContain("Manage API Keys");
   });
 
   it("honours allowlisted portal/docs next paths after login", () => {

@@ -7,6 +7,11 @@
  */
 
 import { createRequire } from "node:module";
+import { renderThemeCustomProperties } from "../ui/theme.js";
+import {
+  renderPortalControlScript,
+  renderPortalControlStyles,
+} from "./controls.js";
 
 const require = createRequire(import.meta.url);
 const PORTAL_VERSION = (require("../../package.json") as { version: string }).version;
@@ -17,6 +22,14 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+export function renderPortalToast(flash: {
+  kind: "success" | "error";
+  message: string;
+}): string {
+  const kind = flash.kind === "error" ? "error" : "success";
+  return `<div class="portal-toast portal-toast--${kind}" role="status" aria-live="polite">${escapeHtml(flash.message)}</div>`;
 }
 
 const PORTAL_ICON_BASE = "/portal/icons";
@@ -44,7 +57,7 @@ export const PORTAL_SVGS = {
 } as const;
 
 const PORTAL_ASSETS = {
-  logo: "logo.png",
+  logo: "clearapi_logo.png",
 } as const;
 
 function generateAvatarHtml(email: string): string {
@@ -90,40 +103,22 @@ export interface PortalShellOptions {
   account: { email: string; role?: string | null } | null;
   /** Optional href to mark as active (for docs/admin link highlighting) */
   activeHref?: string;
+  /** Admin tab currently shown — drives mobile sidebar sub-nav. */
+  adminTab?: "dashboard" | "users" | "organisations" | "webhooks";
+  /** Pending signups, shown as a badge on Users in the mobile admin sub-nav. */
+  pendingCount?: number;
 }
 
 /**
- * Render shared Portal Shell styles (CSS variables + sidebar + mobile drawer)
+ * Shared chrome CSS (tokens, sidebar, toast, form controls). Served as a
+ * cacheable `/css/portal-shell.css` so portal/docs/admin HTML stays small.
  */
-export function renderPortalShellStyles(): string {
-  return `  <style>
-    :root {
-      --color-bg: #0a0a0a;
-      --color-surface: #0d0d0d;
-      --color-surface-2: #111111;
-      --color-surface-3: #141414;
-      --color-border: #1f1f1f;
-      --color-border-2: #222222;
-      /* Darker burnt orange — legible on white labels; border is a deeper hue */
-      --color-accent: #c2410c;
-      --color-accent-hover: #d14a12;
-      --color-accent-border: #7c2d12;
-      --color-accent-soft: rgba(194, 65, 12, 0.12);
-      --color-text: #ffffff;
-      --color-muted: #999999;
-      --color-label: #666666;
-      --color-section: #444444;
-      --on-accent: #fff7ed;
-      --color-success: #22c55e;
-      --color-danger: #ef4444;
-      --color-warning: #f59e0b;
-      --color-code-bg: #0e0e10;
-      --radius: 12px;
-      --radius-sm: 6px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
+export function portalShellCss(): string {
+  return `:root {
+${renderThemeCustomProperties("portal")}
       --sidebar-width: 288px;
       --sidebar-width-collapsed: 72px;
+      --control-height: 2.5rem;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,7 +143,11 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .sidebar { 
       width: var(--sidebar-width-collapsed); 
-      justify-content: flex-start; 
+      justify-content: flex-start;
+      /* Let the edge chevron paint into main content. overflow:hidden
+         on .sidebar/.sidebar-top clips it regardless of z-index. */
+      overflow: visible;
+      z-index: 200;
     }
     
     .sidebar-top {
@@ -180,9 +179,11 @@ export function renderPortalShellStyles(): string {
     .sidebar-top:hover::-webkit-scrollbar-thumb {
       background: var(--color-border);
     }
-    .portal-shell.sidebar-collapsed .sidebar-top { 
-      padding: 20px 12px 0; 
-      gap: 24px; 
+    .portal-shell.sidebar-collapsed .sidebar-top {
+      /* Tighter left inset than expanded (32px → 12px). Icons stay
+         flex-start so they ease left with padding, not with width. */
+      padding: 32px 12px 0;
+      overflow: visible;
     }
     
     .sidebar-brand {
@@ -191,16 +192,19 @@ export function renderPortalShellStyles(): string {
       gap: 12px;
       flex-shrink: 0;
       position: relative;
+      /* Two-line brand text is taller than the 36px logo; lock the
+         row so taking .brand-text out of flow does not lift the nav. */
+      min-height: 44px;
     }
     .brand-logo-img {
       flex-shrink: 0;
       border-radius: 8px;
     }
     .portal-shell.sidebar-collapsed .sidebar-brand {
-      justify-content: center;
-    }
-    .portal-shell.sidebar-collapsed .brand-logo-img {
-      margin: 0 auto;
+      /* Toggle is position:absolute; keep the brand from becoming its
+         containing block so right is relative to the sidebar edge.
+         Stay left-aligned so the logo does not slide as width animates. */
+      position: static;
     }
     .brand-text {
       display: flex;
@@ -248,12 +252,14 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .sidebar-toggle {
       position: absolute;
-      right: -20px;
+      top: 24px;
+      right: -14px;
       margin-left: 0;
       transform: rotate(180deg);
       background: var(--color-surface);
       border: 1px solid var(--color-border);
-      z-index: 10;
+      /* Above .main / admin tabs (later in the DOM); below modals (300). */
+      z-index: 250;
     }
     .nav-section + .nav-section,
     .nav-list .nav-section:not(:first-child) {
@@ -275,15 +281,18 @@ export function renderPortalShellStyles(): string {
     }
     .portal-shell.sidebar-collapsed .nav-section {
       opacity: 0;
-      height: 0;
-      padding: 0;
+      pointer-events: none;
       overflow: hidden;
+      white-space: nowrap;
     }
     .nav-item {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 10px 12px;
+      /* 10px+10px padding + 14px label line-height (1.6 × 14px). Keeps
+         the row from shrinking when .nav-label is taken out of flow. */
+      min-height: calc(20px + 1.6em);
       border-radius: 8px;
       color: var(--color-muted);
       background: transparent;
@@ -305,12 +314,11 @@ export function renderPortalShellStyles(): string {
       background: var(--color-accent-soft);
       color: var(--color-accent);
     }
-    .portal-shell.sidebar-collapsed .nav-item {
-      justify-content: center;
-      padding: 12px;
-    }
     .nav-icon-img {
       flex-shrink: 0;
+      display: block;
+      width: 14px;
+      height: 14px;
     }
     .nav-label {
       white-space: nowrap;
@@ -328,10 +336,11 @@ export function renderPortalShellStyles(): string {
       flex-direction: column;
       gap: 12px;
       flex-shrink: 0;
+      margin-top: auto;
+      transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .sidebar-footer {
       padding: 16px 12px 6px;
-      align-items: center;
     }
     .user-card {
       display: flex;
@@ -391,6 +400,31 @@ export function renderPortalShellStyles(): string {
       border-color: var(--color-border-2);
       color: var(--color-text);
     }
+    a.signin-link {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--color-accent);
+      border: 1px solid var(--color-accent-border);
+      border-radius: 6px;
+      color: var(--on-accent);
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    a.signin-link:hover {
+      background: var(--color-accent-hover);
+      color: var(--on-accent);
+      text-decoration: none;
+    }
+    .portal-shell.sidebar-collapsed a.signin-link .signin-label {
+      opacity: 0;
+      position: absolute;
+      pointer-events: none;
+    }
     .portal-shell.sidebar-collapsed .signout-btn {
       padding: 8px;
       width: 40px;
@@ -423,68 +457,85 @@ export function renderPortalShellStyles(): string {
       background: var(--color-surface-2);
     }
     
-    /* System status in sidebar — mobile menu only (desktop uses main-header pill) */
-    .system-status-inline {
+    .nav-sub {
       display: none;
-      padding: 8px 16px;
-      margin: auto 16px 8px 16px;
-      background: transparent;
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      border-radius: 20px;
-      font-size: 0.75rem;
-      color: rgba(34, 197, 94, 1);
-      align-items: center;
-      gap: 8px;
-      justify-content: center;
+      flex-direction: column;
+      gap: 2px;
+      padding: 2px 0 6px 28px;
     }
-    
+    .nav-item--sub {
+      min-height: 0;
+      padding: 6px 10px;
+      font-size: 13px;
+      gap: 8px;
+    }
+    .nav-sub-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.1rem;
+      height: 1.1rem;
+      padding: 0 0.3rem;
+      margin-left: auto;
+      border-radius: 999px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: var(--color-border);
+      color: var(--color-muted);
+    }
+    .nav-item--sub.active .nav-sub-badge {
+      background: var(--color-accent);
+      color: var(--on-accent);
+    }
+
+    /* Status + version: one compact row at the bottom of the sidebar. */
+    .sidebar-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      margin: 0 16px 10px;
+      padding: 0;
+      border: none;
+      background: none;
+    }
+    .system-status-inline {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: none;
+      border-radius: 0;
+    }
     .status-dot {
-      width: 6px;
-      height: 6px;
-      background: rgba(34, 197, 94, 1);
+      display: block;
+      width: 5px;
+      height: 5px;
+      background: var(--color-success);
       border-radius: 50%;
-      display: inline-block;
-      animation: pulse 2s infinite;
       flex-shrink: 0;
     }
-    
     .status-text {
-      transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    /* When sidebar is collapsed, hide text and show only dot */
-    .portal-shell.sidebar-collapsed .system-status-inline {
-      justify-content: center;
-      padding: 8px;
-      gap: 0;
-    }
-    
-    .portal-shell.sidebar-collapsed .status-text {
-      opacity: 0;
-      position: absolute;
-      pointer-events: none;
-    }
-    
-    /* Version indicator */
-    .version-indicator {
-      text-align: center;
       font-size: 0.65rem;
+      line-height: 1;
       color: var(--color-muted);
-      margin: 2px 16px 12px 16px;
+      white-space: nowrap;
+    }
+    .version-indicator {
+      font-size: 0.65rem;
+      line-height: 1;
+      color: var(--color-muted);
+      margin: 0;
       padding: 0;
     }
-    
-    .portal-shell.sidebar-collapsed .version-indicator {
+    .portal-shell.sidebar-collapsed .sidebar-meta {
       opacity: 0;
       position: absolute;
       pointer-events: none;
     }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-    
+
     /* Mobile drawer overlay */
     .mobile-drawer-overlay {
       display: none;
@@ -496,15 +547,17 @@ export function renderPortalShellStyles(): string {
       background: rgba(0, 0, 0, 0.7);
       z-index: 150;
       opacity: 0;
+      pointer-events: none;
       transition: opacity 0.25s ease;
     }
     .mobile-drawer-overlay.active {
       opacity: 1;
+      pointer-events: auto;
     }
 
     /* Mobile: drawer overlay mode */
     @media (max-width: 768px) {
-      .system-status-inline {
+      .nav-sub {
         display: flex;
       }
       .mobile-menu-btn {
@@ -544,6 +597,8 @@ export function renderPortalShellStyles(): string {
       .portal-shell.sidebar-collapsed .sidebar {
         width: 280px;
         transform: translateX(-100%);
+        overflow: hidden;
+        z-index: 160;
       }
       .portal-shell.sidebar-collapsed .sidebar.mobile-open {
         transform: translateX(0);
@@ -552,10 +607,15 @@ export function renderPortalShellStyles(): string {
       .portal-shell.sidebar-collapsed .brand-text,
       .portal-shell.sidebar-collapsed .nav-label,
       .portal-shell.sidebar-collapsed .user-details,
-      .portal-shell.sidebar-collapsed .signout-label {
+      .portal-shell.sidebar-collapsed .signout-label,
+      .portal-shell.sidebar-collapsed .sidebar-meta {
         opacity: 1;
         pointer-events: auto;
         position: static;
+      }
+      .portal-shell.sidebar-collapsed .sidebar-top {
+        padding: 20px;
+        gap: 16px;
       }
       .portal-shell.sidebar-collapsed .nav-item {
         justify-content: flex-start;
@@ -568,15 +628,70 @@ export function renderPortalShellStyles(): string {
       }
       .portal-shell.sidebar-collapsed .nav-section {
         opacity: 1;
-        height: auto;
-        padding: 8px 12px 4px;
+        pointer-events: auto;
+        overflow: visible;
       }
       .portal-shell.sidebar-collapsed .sidebar-footer {
         padding: 16px 20px 6px;
         align-items: stretch;
       }
     }
-  </style>`;
+
+    .portal-toast {
+      position: fixed;
+      right: max(1.25rem, env(safe-area-inset-right));
+      bottom: max(1.25rem, env(safe-area-inset-bottom));
+      z-index: 400;
+      max-width: min(22rem, calc(100vw - 2rem));
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      font-weight: 500;
+      line-height: 1.4;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      animation: portal-toast-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .portal-toast--success {
+      background: #0d2818;
+      border: 1px solid var(--color-success);
+      color: var(--color-success);
+    }
+    .portal-toast--error {
+      background: #2a0c0c;
+      border: 1px solid var(--color-danger);
+      color: var(--color-danger);
+    }
+    .portal-toast.is-leaving {
+      animation: portal-toast-out 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    @keyframes portal-toast-in {
+      from { opacity: 0; transform: translate3d(12px, 16px, 0); }
+      to { opacity: 1; transform: translate3d(0, 0, 0); }
+    }
+    @keyframes portal-toast-out {
+      from { opacity: 1; transform: translate3d(0, 0, 0); }
+      to { opacity: 0; transform: translate3d(8px, 12px, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .portal-toast,
+      .portal-toast.is-leaving {
+        animation: none;
+      }
+    }
+    ${renderPortalControlStyles()}
+`;
+}
+
+/** Cache-busted stylesheet link. Prefer this over inlining `portalShellCss()`. */
+export function renderPortalShellStylesheetLink(): string {
+  return `<link rel="stylesheet" href="/css/portal-shell.css?v=${encodeURIComponent(PORTAL_VERSION)}">`;
+}
+
+/** Inline `<style>` wrapper — tests and one-off pages. HTML surfaces use the link. */
+export function renderPortalShellStyles(): string {
+  return `  <style>
+${portalShellCss()}  </style>`;
 }
 
 /**
@@ -661,6 +776,25 @@ export function renderPortalShellScript(): string {
       } catch (e) {}
       window.location.href = '/portal';
     }
+
+    (function dismissPortalToast() {
+      var toast = document.querySelector('.portal-toast');
+      if (!toast) return;
+      var params = new URLSearchParams(window.location.search);
+      if (params.has('flash') || params.has('msg')) {
+        params.delete('flash');
+        params.delete('msg');
+        var qs = params.toString();
+        history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+      }
+      window.setTimeout(function () {
+        toast.classList.add('is-leaving');
+        window.setTimeout(function () {
+          if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 280);
+      }, 2000);
+    })();
+    ${renderPortalControlScript()}
   </script>`;
 }
 
@@ -668,7 +802,7 @@ export function renderPortalShellScript(): string {
  * Render the Portal Shell sidebar HTML
  */
 export function renderPortalShell(opts: PortalShellOptions): string {
-  const { surface, account, activeHref } = opts;
+  const { surface, account, activeHref, adminTab, pendingCount = 0 } = opts;
   const isAdmin = account?.role === "admin";
   
   // Determine nav rendering mode
@@ -701,17 +835,38 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart", activeHref === "/portal#usage-analytics")}
   `;
 
-  // Admin nav (only if admin role)
+  const adminSubLink = (
+    tab: "dashboard" | "users" | "organisations" | "webhooks",
+    label: string,
+    badge?: number,
+  ): string => {
+    const active = adminTab === tab;
+    const badgeHtml =
+      badge && badge > 0
+        ? `<span class="nav-sub-badge">${escapeHtml(String(badge))}</span>`
+        : "";
+    return `<a href="/portal/admin?tab=${tab}" class="nav-item nav-item--link nav-item--sub${active ? " active" : ""}">${escapeHtml(label)}${badgeHtml}</a>`;
+  };
+
+  // Admin nav (only if admin role). Sub-options are mobile-only CSS.
   const adminNav = isAdmin ? `
     <div class="nav-section">Admin</div>
     <a href="/portal/admin" class="nav-item nav-item--link${activeHref === "/portal/admin" ? " active" : ""}" title="Admin Panel">
       ${PORTAL_SVGS.shield}
       <span class="nav-label">Admin Panel</span>
     </a>
+    <div class="nav-sub nav-sub--admin">
+      ${adminSubLink("dashboard", "Dashboard")}
+      ${adminSubLink("organisations", "Organisations")}
+      ${adminSubLink("users", "Users", pendingCount)}
+      ${adminSubLink("webhooks", "Error Alerts")}
+    </div>
   ` : "";
   
-  // Account footer (only when account is provided)
-  const footerHtml = account ? `
+  // Account footer when signed in; Sign in CTA when anonymous so home/docs/portal
+  // are not a dead end for existing accounts.
+  const footerHtml = account
+    ? `
     <div class="sidebar-footer">
       <div class="user-card">
         ${generateAvatarHtml(account.email)}
@@ -725,7 +880,14 @@ export function renderPortalShell(opts: PortalShellOptions): string {
         <span class="signout-label">Sign Out</span>
       </button>
     </div>
-  ` : "";
+  `
+    : `
+    <div class="sidebar-footer">
+      <a href="/portal/login" class="signin-link" title="Sign in">
+        <span class="signin-label">Sign in</span>
+      </a>
+    </div>
+  `;
   
   return `
     <button type="button" class="mobile-menu-btn" onclick="toggleMobileDrawer()" aria-label="Toggle menu">
@@ -735,7 +897,7 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     <aside class="sidebar">
       <div class="sidebar-top">
         <div class="sidebar-brand">
-          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
+          <img src="${PORTAL_ICON_BASE}/${PORTAL_ASSETS.logo}?v=${encodeURIComponent(PORTAL_VERSION)}" alt="CLEAR" class="brand-logo-img" width="36" height="36">
           <div class="brand-text">
             <div class="brand-title">Clear API</div>
             <div class="brand-sub">Developer Portal</div>
@@ -752,14 +914,15 @@ export function renderPortalShell(opts: PortalShellOptions): string {
         </nav>
       </div>
 
-      <div class="system-status-inline">
-        <span class="status-dot"></span>
-        <span class="status-text">System Operational</span>
-      </div>
-
       ${footerHtml}
 
-      <div class="version-indicator">v${escapeHtml(PORTAL_VERSION)}</div>
+      <div class="sidebar-meta">
+        <div class="system-status-inline" title="System Operational">
+          <span class="status-dot"></span>
+          <span class="status-text">System Operational</span>
+        </div>
+        <div class="version-indicator">v${escapeHtml(PORTAL_VERSION)}</div>
+      </div>
     </aside>
   `;
 }
