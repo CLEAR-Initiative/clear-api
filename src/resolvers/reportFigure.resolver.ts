@@ -70,9 +70,23 @@ export const reportFigureResolvers = {
       if (args.eventTypes?.length) where.eventTypes = { hasSome: args.eventTypes };
       if (args.needSectors?.length) where.needSectors = { hasSome: args.needSectors };
       if (args.kinds?.length) where.kind = { in: args.kinds };
-      // Overlap: figure's [start,end] intersects the requested window.
-      if (args.timeRangeStart) where.timeRangeEnd = { gte: args.timeRangeStart };
-      if (args.timeRangeEnd) where.timeRangeStart = { lte: args.timeRangeEnd };
+      // Overlap: figure's [start,end] intersects the requested window. A figure
+      // with a NULL bound is treated as open-ended on that side and still matches
+      // — mirroring the text path (knowledgebase.resolver.ts: "time_range_* IS NULL
+      // OR …"), since enrichment routinely leaves a figure's time null (charts are
+      // often undated). Bare {gte}/{lte} would exclude every null-time figure.
+      const timeConds: Prisma.reportFigureWhereInput[] = [];
+      if (args.timeRangeStart) {
+        timeConds.push({
+          OR: [{ timeRangeEnd: null }, { timeRangeEnd: { gte: args.timeRangeStart } }],
+        });
+      }
+      if (args.timeRangeEnd) {
+        timeConds.push({
+          OR: [{ timeRangeStart: null }, { timeRangeStart: { lte: args.timeRangeEnd } }],
+        });
+      }
+      if (timeConds.length) where.AND = timeConds;
 
       return context.prisma.reportFigure.findMany({
         where,
@@ -110,6 +124,10 @@ export const reportFigureResolvers = {
         await tx.reportFigure.deleteMany({ where: { reportId: input.reportId } });
         if (input.figures.length === 0) return 0;
         const result = await tx.reportFigure.createMany({
+          // Two figures colliding on (reportId, pageNumber, s3Key) within one batch
+          // shouldn't abort the whole transaction — the pipeline dedups by content
+          // hash, but skip a stray duplicate rather than drop the report's figures.
+          skipDuplicates: true,
           data: input.figures.map((f) => ({
             reportId: input.reportId,
             reportTitle: input.reportTitle,
