@@ -57,6 +57,17 @@ export const mutationTypeDef = gql`
     """
     approveUser(userId: String!): ApproveUserResult!
 
+    """
+    Set a user's global platform role (\`viewer\`, \`analyst\`, or
+    \`admin\`). Does not approve pending users — call \`approveUser\`
+    first. Requires global \`admin\`. Cannot demote yourself or the
+    last remaining admin. This is the product write path for the
+    Users-tab dropdown on the operator app; the Developer Portal
+    HTML form hits the same service via POST
+    \`/portal/admin/users/role\`.
+    """
+    updateUserRole(userId: String!, role: GlobalRole!): User!
+
     # ─── Auth ──────────────────────────────────────────────────────────────────
     """Request an email verification link for the authenticated user."""
     requestEmailVerification: Boolean!

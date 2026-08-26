@@ -14,8 +14,11 @@ export const TEAM_ROLES = [
 ] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
-export const GLOBAL_ROLES = ["viewer", "analyst", "admin"] as const;
-export type GlobalRole = (typeof GLOBAL_ROLES)[number];
+export {
+  GLOBAL_ROLES,
+  isGlobalRole,
+  type GlobalRole,
+} from "../services/update-user-role.js";
 
 export function canonicalOrgRole(role: string | null | undefined): OrgRole {
   const r = (role ?? "").toLowerCase();
@@ -36,8 +39,4 @@ export function isOrgRole(role: string): role is OrgRole {
 
 export function isTeamRole(role: string): role is TeamRole {
   return (TEAM_ROLES as readonly string[]).includes(role);
-}
-
-export function isGlobalRole(role: string): role is GlobalRole {
-  return (GLOBAL_ROLES as readonly string[]).includes(role);
 }

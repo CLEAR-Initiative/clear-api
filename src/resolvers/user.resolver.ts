@@ -6,6 +6,10 @@ import {
   canSeeUserPii,
   canSeeUserPrivate,
 } from "../utils/auth-guard.js";
+import {
+  updateUserGlobalRole,
+  type GlobalRole,
+} from "../services/update-user-role.js";
 
 interface UpdateProfileInput {
   name?: string;
@@ -29,6 +33,19 @@ export const userResolvers = {
     },
   },
   Mutation: {
+    updateUserRole: async (
+      _parent: unknown,
+      args: { userId: string; role: GlobalRole },
+      context: Context,
+    ) => {
+      const admin = requireRole(context, ["admin"]);
+      return updateUserGlobalRole(
+        context.prisma,
+        admin.id,
+        args.userId,
+        args.role,
+      );
+    },
     updateProfile: async (
       _parent: unknown,
       args: { input: UpdateProfileInput },
