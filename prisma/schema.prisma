@@ -704,10 +704,15 @@ model events {
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
   populationAffected    BigInt?                 @map("population_affected")
-  /// Population displaced by this event. Resolution order in the pipeline:
-  /// (1) max across signal-level displacement data, (2) IOM DTM value cached
-  /// in `locationMetadata(type="iom_dtm_displacement")` for the event's
-  /// admin-2 location, (3) default fallback (1670).
+  /// Population displaced by this event. Resolution order in the pipeline
+  /// (`_resolve_population_displaced`, clear-context-pipeline providers/event.py):
+  /// (1) a source-specific reduction over that source's linked signals, when
+  /// the source's connector defines one (e.g. IDMC IDU's role/location rules,
+  /// via `reduce_source_signals`) — read from each signal's `rawData`, never
+  /// a dedicated signals column; (2) an LLM guess from the event's full text;
+  /// (3) a hardcoded default. No IOM DTM step — deliberately excluded, since
+  /// DTM figures are district-wide/event-agnostic and would misattribute a
+  /// whole district's total to one event.
   populationDisplaced   BigInt?                 @map("population_displaced")
   /// Aggregated casualties for this event (max across constituent signals).
   casualties            Int?
