@@ -56,6 +56,7 @@ export const reportFigureResolvers = {
         timeRangeStart?: Date | null;
         timeRangeEnd?: Date | null;
         first?: number | null;
+        after?: string | null;
       },
       context: Context,
     ) => {
@@ -88,10 +89,15 @@ export const reportFigureResolvers = {
       }
       if (timeConds.length) where.AND = timeConds;
 
+      // Cursor pagination. `id` is appended to the sort so the order is fully
+      // deterministic (extractedAt/pageNumber can tie), which is what makes the
+      // cursor stable. `after` = the last id from the previous page; skip:1 steps
+      // past it. Omitted → first page.
       return context.prisma.reportFigure.findMany({
         where,
-        orderBy: [{ extractedAt: "desc" }, { pageNumber: "asc" }],
+        orderBy: [{ extractedAt: "desc" }, { pageNumber: "asc" }, { id: "asc" }],
         take,
+        ...(args.after ? { cursor: { id: args.after }, skip: 1 } : {}),
       });
     },
   },

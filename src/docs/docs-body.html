@@ -582,7 +582,10 @@ authenticated content reader.<div class="field-args"><span class="arg"><code>id:
 SAME params as text — location / event type / need sector / time / kind — so a
 figure can be attached to an answer scoped to a place + topic + period. Powers
 figure attachment + on-demand infographic generation. Array filters match ANY
-tag; time overlaps the window. Any authenticated content reader.<div class="field-args"><span class="arg"><code>reportId: String</code></span><span class="arg"><code>locationIds: [String!]</code></span><span class="arg"><code>eventTypes: [String!]</code></span><span class="arg"><code>needSectors: [String!]</code></span><span class="arg"><code>kinds: [String!]</code></span><span class="arg"><code>timeRangeStart: DateTime</code></span><span class="arg"><code>timeRangeEnd: DateTime</code></span><span class="arg"><code>first: Int</code></span></div></td>
+tag; time overlaps the window. Any authenticated content reader.<div class="field-args"><span class="arg"><code>reportId: String</code></span><span class="arg"><code>locationIds: [String!]</code></span><span class="arg"><code>eventTypes: [String!]</code></span><span class="arg"><code>needSectors: [String!]</code></span><span class="arg"><code>kinds: [String!]</code></span><span class="arg"><code>timeRangeStart: DateTime</code></span><span class="arg"><code>timeRangeEnd: DateTime</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–200, default 50).</span><span class="arg"><code>after: String</code> — Cursor for pagination: the `id` of the last figure from the previous
+page. Rows after it (in the stable extractedAt/pageNumber/id order) are
+returned. Omit for the first page; a report's figures are capped well
+under 200 so most callers never need this.</span></div></td>
   </tr><tr>
     <td><code>hasAggregatedDatapoints</code></td>
     <td><code>Boolean!</code></td>

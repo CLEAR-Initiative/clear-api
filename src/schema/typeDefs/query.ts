@@ -377,7 +377,13 @@ export const queryTypeDef = gql`
       kinds: [String!]
       timeRangeStart: DateTime
       timeRangeEnd: DateTime
+      """Max rows to return (1–200, default 50)."""
       first: Int = 50
+      """Cursor for pagination: the \`id\` of the last figure from the previous
+      page. Rows after it (in the stable extractedAt/pageNumber/id order) are
+      returned. Omit for the first page; a report's figures are capped well
+      under 200 so most callers never need this."""
+      after: String
     ): [ReportFigure!]!
 
     """True when at least one current \`aggregated_datapoints\` row
