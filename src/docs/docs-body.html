@@ -4600,6 +4600,13 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
 field; for Dataminr, parsed from raw text via regex.</td>
   </tr><tr>
+    <td><code>rawData</code></td>
+    <td><code>JSON</code></td>
+    <td>Raw upstream payload, verbatim as received from the source. Admin/
+pipeline only — may carry source-internal fields (e.g. a manual signal's
+`createdBy` user id) not meant for general viewers. Null for any other
+caller, regardless of whether data actually exists.</td>
+  </tr><tr>
     <td><code>media</code></td>
     <td><code>[String!]!</code></td>
     <td>Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals).</td>

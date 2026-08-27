@@ -698,6 +698,18 @@ export const signalResolvers = {
       }
       return [];
     },
+    // Admin/pipeline only — the raw upstream payload can carry
+    // source-internal fields (e.g. createManualSignal's `createdBy` user
+    // id) never meant for a general viewer. Soft-null rather than throwing,
+    // matching feedbacks/comments above: an unauthorized caller selecting
+    // this field must not null out the whole parent Signal/Event subtree.
+    rawData: (parent: { rawData?: unknown }, _args: unknown, ctx: Context) => {
+      const role = ctx.user?.role ?? "";
+      if (isPlatformAdmin(ctx.user) || role === "pipeline") {
+        return parent.rawData ?? null;
+      }
+      return null;
+    },
     // Convert S3 keys to presigned URLs at read time.
     // External URLs (http/https) are passed through unchanged.
     media: async (parent: { media: string[] }) => {

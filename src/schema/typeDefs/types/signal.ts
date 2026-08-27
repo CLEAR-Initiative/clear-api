@@ -34,6 +34,11 @@ export const signalTypeDef = gql`
     """Reported casualties for the signal. Sourced from ACLED's fatalities
     field; for Dataminr, parsed from raw text via regex."""
     casualties: Int
+    """Raw upstream payload, verbatim as received from the source. Admin/
+    pipeline only — may carry source-internal fields (e.g. a manual signal's
+    \`createdBy\` user id) not meant for general viewers. Null for any other
+    caller, regardless of whether data actually exists."""
+    rawData: JSON
     """Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals)."""
     media: [String!]!
     """Whether this is seed/demo data."""
