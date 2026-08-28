@@ -2197,6 +2197,15 @@ inclusive intersection. Leave a field null to skip that filter.</p><table class=
     <td><code>[String!]</code></td>
     <td>Match rows tagged with ANY of these `locations.id` values.</td>
   </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String</code></td>
+    <td>Scope to one country: keep only chunks tagged with a location in this
+A0's subtree (itself or any descendant admin unit). Chunk locations are
+resolved to leaf admin ids, so a bare `locationIds=[A0]` would miss them —
+this expands the A0 to its subtree server-side via the locations tree. The
+situation-analysis RAG uses this so a country's analysis never cites reports
+about another country.</td>
+  </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
     <td>Match rows tagged with ANY of these event-type tags.</td>

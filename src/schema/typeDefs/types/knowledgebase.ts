@@ -158,6 +158,13 @@ export const knowledgebaseTypeDef = gql`
   input KnowledgebaseFilters {
     """Match rows tagged with ANY of these \`locations.id\` values."""
     locationIds: [String!]
+    """Scope to one country: keep only chunks tagged with a location in this
+    A0's subtree (itself or any descendant admin unit). Chunk locations are
+    resolved to leaf admin ids, so a bare \`locationIds=[A0]\` would miss them —
+    this expands the A0 to its subtree server-side via the locations tree. The
+    situation-analysis RAG uses this so a country's analysis never cites reports
+    about another country."""
+    countryLocationId: String
     """Match rows tagged with ANY of these event-type tags."""
     eventTypes: [String!]
     """Match rows tagged with ANY of these SAF sectors."""

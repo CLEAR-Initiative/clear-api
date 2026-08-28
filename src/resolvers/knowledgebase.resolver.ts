@@ -149,6 +149,7 @@ function vectorLiteral(embedding: number[]): string {
 
 interface KnowledgebaseFilters {
   locationIds?: string[] | null;
+  countryLocationId?: string | null;
   eventTypes?: string[] | null;
   needSectors?: string[] | null;
   timeRange?: { from?: Date | null; to?: Date | null } | null;
@@ -183,7 +184,7 @@ interface KnowledgebaseHitRow {
  *   - currentEmbeddingModelOnly (default true) — pins to the currently
  *     configured provider + model so cross-space vectors never mix.
  */
-function buildFilterClause(
+export function buildFilterClause(
   filters: KnowledgebaseFilters | null | undefined,
   params: unknown[],
 ): string {
@@ -201,6 +202,22 @@ function buildFilterClause(
   if (filters?.locationIds && filters.locationIds.length > 0) {
     params.push(filters.locationIds);
     conditions.push(`"location_ids" && $${params.length}::text[]`);
+  }
+  // Country scope: keep chunks tagged with ANY location in the country's subtree
+  // (the country itself or any descendant admin unit). Chunk `location_ids` are
+  // resolved to leaf admin ids (e.g. Khartoum), never the A0 id, so a bare
+  // `locationIds=[A0]` overlap would miss everything — we expand the A0 to its
+  // subtree here via the locations tree's `ancestor_ids` (GIN-indexed). Chunks
+  // with no resolved location are excluded, which is the intended country scoping
+  // (used by the situation-analysis RAG so a country's sources never pull in
+  // reports about another country).
+  if (filters?.countryLocationId) {
+    params.push(filters.countryLocationId);
+    const p = params.length;
+    conditions.push(
+      `"location_ids" && ARRAY(SELECT "id" FROM "locations" ` +
+        `WHERE "id" = $${p} OR "ancestor_ids" @> ARRAY[$${p}]::text[])`,
+    );
   }
   if (filters?.eventTypes && filters.eventTypes.length > 0) {
     params.push(filters.eventTypes);
