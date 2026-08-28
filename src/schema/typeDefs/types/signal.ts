@@ -10,7 +10,8 @@ export const signalTypeDef = gql`
     FAILED
   }
 
-  """A signal derived from a data source."""
+  """A source observation ingested from a data source or filed manually.
+  Upstream source payloads are stored internally and are not returned on this type."""
   type Signal {
     id: String!
     """The data source this signal was collected from."""

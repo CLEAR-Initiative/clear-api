@@ -12,6 +12,8 @@ FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bunx prisma generate
+# build:docs must stay `bun scripts/build-docs.ts`. tsx dies in this
+# image (`Cannot find module './cjs/index.cjs'`) and skips deploy.
 RUN bun run build
 
 # ---- Production ----

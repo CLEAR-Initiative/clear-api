@@ -34,13 +34,14 @@ import {
 } from "../services/password-reset.js";
 import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
 import { env } from "../utils/env.js";
+import { updateUserGlobalRole } from "../services/update-user-role.js";
 import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 import {
   renderPortal,
   renderLoginPage,
   safePortalNext,
   renderResetPasswordPage,
-  renderAdminPending,
+  renderAdminUsers,
   renderAdminMetrics,
   renderAdminOrganisations,
   renderAdminOrgDetail,
@@ -48,7 +49,7 @@ import {
   renderAdminWebhooksList,
   renderAdminWebhookNew,
   renderAdminWebhookDetail,
-  type AdminPendingUser,
+  type AdminUserRow,
   type AdminMetrics,
   type AdminTab,
   type AdminWebhookRow,
@@ -225,7 +226,8 @@ async function requireAdminSession(req: Request, res: Response) {
 }
 
 function parseAdminTab(raw: unknown): AdminTab {
-  if (raw === "pending" || raw === "organisations" || raw === "webhooks") return raw;
+  if (raw === "users" || raw === "pending") return "users";
+  if (raw === "organisations" || raw === "webhooks") return raw;
   return "dashboard";
 }
 
@@ -249,6 +251,27 @@ function adminRedirect(
   res.redirect(303, `/portal/admin?${params.toString()}`);
 }
 
+function wantsJson(req: Request): boolean {
+  return (req.get("accept") ?? "").includes("application/json");
+}
+
+function adminRespond(
+  req: Request,
+  res: Response,
+  tab: AdminTab,
+  flash: { kind: "success" | "error"; message: string },
+  orgId?: string,
+) {
+  if (wantsJson(req)) {
+    res.status(flash.kind === "error" ? 400 : 200).json({
+      ok: flash.kind === "success",
+      message: flash.message,
+    });
+    return;
+  }
+  adminRedirect(res, tab, flash, orgId);
+}
+
 portalRouter.get("/admin", async (req, res) => {
   const admin = await requireAdminSession(req, res);
   if (!admin) return;
@@ -259,16 +282,42 @@ portalRouter.get("/admin", async (req, res) => {
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
 
-  if (tab === "pending") {
-    const pending = await prisma.user.findMany({
-      where: { role: "pending" },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, email: true, name: true, createdAt: true },
+  if (tab === "users") {
+    const rows = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+        organisations: {
+          select: { organisation: { select: { id: true, name: true } } },
+        },
+      },
     });
+    const users: AdminUserRow[] = rows
+      .map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        createdAt: u.createdAt,
+        organisations: u.organisations.map((m) => ({
+          id: m.organisation.id,
+          name: m.organisation.name,
+        })),
+      }))
+      .sort((a, b) => {
+        const ap = a.role === "pending" ? 0 : 1;
+        const bp = b.role === "pending" ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
     res.send(
-      renderAdminPending({
+      renderAdminUsers({
         currentUserEmail: admin.email,
-        pendingUsers: pending as AdminPendingUser[],
+        users,
         flash,
         pendingCount,
       }),
@@ -418,7 +467,7 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
 
   const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
   if (!userId) {
-    adminRedirect(res, "pending", { kind: "error", message: "Missing userId" });
+    adminRedirect(res, "users", { kind: "error", message: "Missing userId" });
     return;
   }
 
@@ -429,14 +478,37 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
       : result.crmWarnings.length > 0
         ? `Approved locally. CRM sync issues: ${result.crmWarnings.join(", ")}`
         : "Approved locally.";
-    adminRedirect(res, "pending", {
+    adminRedirect(res, "users", {
       kind: "success",
       message: `${result.user.email}: ${detail}`,
     });
   } catch (err) {
     const message =
       err instanceof GraphQLError ? err.message : portalActionError(err);
-    adminRedirect(res, "pending", { kind: "error", message });
+    adminRedirect(res, "users", { kind: "error", message });
+  }
+});
+
+portalRouter.post("/admin/users/role", urlencoded, async (req, res) => {
+  const admin = await requireAdminSession(req, res);
+  if (!admin) return;
+
+  const userId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+  const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+
+  try {
+    const target = await updateUserGlobalRole(prisma, admin.id, userId, role);
+    adminRespond(req, res, "users", {
+      kind: "success",
+      message: `${target.email}: role updated to ${role}.`,
+    });
+  } catch (err) {
+    const message =
+      err instanceof GraphQLError ? err.message : portalActionError(err);
+    adminRespond(req, res, "users", {
+      kind: "error",
+      message,
+    });
   }
 });
 
@@ -549,9 +621,10 @@ portalRouter.post("/admin/orgs/members/role", urlencoded, async (req, res) => {
   try {
     if (!orgId || !userId || !role) throw new Error("Missing fields.");
     await portalUpdateOrgMemberRole(orgId, userId, role);
-    adminRedirect(res, "organisations", { kind: "success", message: "Org role updated." }, orgId);
+    adminRespond(req, res, "organisations", { kind: "success", message: "Org role updated." }, orgId);
   } catch (err) {
-    adminRedirect(
+    adminRespond(
+      req,
       res,
       "organisations",
       { kind: "error", message: portalActionError(err) },
@@ -1129,9 +1202,10 @@ portalRouter.post("/admin/orgs/teams/members/role", urlencoded, async (req, res)
   try {
     if (!orgId || !teamId || !userId || !teamRole) throw new Error("Missing fields.");
     await portalUpdateTeamMemberRole(orgId, teamId, userId, teamRole);
-    adminRedirect(res, "organisations", { kind: "success", message: "Team role updated." }, orgId);
+    adminRespond(req, res, "organisations", { kind: "success", message: "Team role updated." }, orgId);
   } catch (err) {
-    adminRedirect(
+    adminRespond(
+      req,
       res,
       "organisations",
       { kind: "error", message: portalActionError(err) },

@@ -57,6 +57,17 @@ export const mutationTypeDef = gql`
     """
     approveUser(userId: String!): ApproveUserResult!
 
+    """
+    Set a user's global platform role (\`viewer\`, \`analyst\`, or
+    \`admin\`). Does not approve pending users — call \`approveUser\`
+    first. Requires global \`admin\`. Cannot demote yourself or the
+    last remaining admin. This is the product write path for the
+    Users-tab dropdown on the operator app; the Developer Portal
+    HTML form hits the same service via POST
+    \`/portal/admin/users/role\`.
+    """
+    updateUserRole(userId: String!, role: GlobalRole!): User!
+
     # ─── Auth ──────────────────────────────────────────────────────────────────
     """Request an email verification link for the authenticated user."""
     requestEmailVerification: Boolean!
@@ -445,6 +456,12 @@ export const mutationTypeDef = gql`
       input: UpsertSituationAnalysisInput!
     ): UpsertSituationAnalysisResult!
 
+    """Replace a report's captured infographics (image asset store). Pipeline-only;
+    delete-then-insert like \`upsertReportDatapoints\`."""
+    upsertReportFigures(
+      input: UpsertReportFiguresInput!
+    ): UpsertReportFiguresResult!
+
     """Pre-compute all four aggregation tiers (weekly × A2, monthly × A1,
     yearly × country, all-time × country) for reports whose
     \`reportingPeriodEnd\` falls in \`[from, to]\`. Each computed
@@ -654,6 +671,7 @@ export const mutationTypeDef = gql`
     existing row instead of creating a duplicate. Recommended prefix scheme:
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
+    """Write-only ingest payload stored internally. Not exposed on Signal queries."""
     rawData: JSON!
     """Pointer to the raw payload blob in the S3 data lake (bronze layer),
     written by the Dagster ingest asset. Optional — rawData carries the payload

@@ -126,6 +126,9 @@ interface KnowledgebaseChunkInput {
   timeRangeEnd: Date | null;
   eventTypes: string[];
   needSectors: string[];
+  // Infographic capture: present only on figure-transcription chunks.
+  figureS3Key?: string | null;
+  figureKind?: string | null;
 }
 
 interface UpsertKnowledgebaseArgs {
@@ -146,6 +149,7 @@ function vectorLiteral(embedding: number[]): string {
 
 interface KnowledgebaseFilters {
   locationIds?: string[] | null;
+  countryLocationId?: string | null;
   eventTypes?: string[] | null;
   needSectors?: string[] | null;
   timeRange?: { from?: Date | null; to?: Date | null } | null;
@@ -164,6 +168,8 @@ interface KnowledgebaseHitRow {
   locationIds: string[];
   eventTypes: string[];
   needSectors: string[];
+  figureS3Key: string | null;
+  figureKind: string | null;
 }
 
 /**
@@ -178,7 +184,7 @@ interface KnowledgebaseHitRow {
  *   - currentEmbeddingModelOnly (default true) — pins to the currently
  *     configured provider + model so cross-space vectors never mix.
  */
-function buildFilterClause(
+export function buildFilterClause(
   filters: KnowledgebaseFilters | null | undefined,
   params: unknown[],
 ): string {
@@ -196,6 +202,22 @@ function buildFilterClause(
   if (filters?.locationIds && filters.locationIds.length > 0) {
     params.push(filters.locationIds);
     conditions.push(`"location_ids" && $${params.length}::text[]`);
+  }
+  // Country scope: keep chunks tagged with ANY location in the country's subtree
+  // (the country itself or any descendant admin unit). Chunk `location_ids` are
+  // resolved to leaf admin ids (e.g. Khartoum), never the A0 id, so a bare
+  // `locationIds=[A0]` overlap would miss everything — we expand the A0 to its
+  // subtree here via the locations tree's `ancestor_ids` (GIN-indexed). Chunks
+  // with no resolved location are excluded, which is the intended country scoping
+  // (used by the situation-analysis RAG so a country's sources never pull in
+  // reports about another country).
+  if (filters?.countryLocationId) {
+    params.push(filters.countryLocationId);
+    const p = params.length;
+    conditions.push(
+      `"location_ids" && ARRAY(SELECT "id" FROM "locations" ` +
+        `WHERE "id" = $${p} OR "ancestor_ids" @> ARRAY[$${p}]::text[])`,
+    );
   }
   if (filters?.eventTypes && filters.eventTypes.length > 0) {
     params.push(filters.eventTypes);
@@ -338,7 +360,9 @@ export const knowledgebaseResolvers = {
           "chunk_text"      AS "chunkText",
           "location_ids"    AS "locationIds",
           "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors"
+          "need_sectors"    AS "needSectors",
+          "figure_s3_key"   AS "figureS3Key",
+          "figure_kind"     AS "figureKind"
         FROM "knowledgebase"
         ${denseWhere}
         ORDER BY "embedding" <=> $${denseParams.length + 1}::vector(1024)
@@ -363,7 +387,9 @@ export const knowledgebaseResolvers = {
           "chunk_text"      AS "chunkText",
           "location_ids"    AS "locationIds",
           "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors"
+          "need_sectors"    AS "needSectors",
+          "figure_s3_key"   AS "figureS3Key",
+          "figure_kind"     AS "figureKind"
         FROM "knowledgebase"
         ${sparseWhere ? `${sparseWhere} AND` : "WHERE"}
           "lexical_tsv" @@ plainto_tsquery('english', $${sparseParams.length + 1})
@@ -462,7 +488,7 @@ export const knowledgebaseResolvers = {
         // pooled connection across the whole DELETE + N INSERTs (up to the
         // 60s transaction timeout); batching returns the connection to the
         // pool far sooner, which is what keeps a concurrent pipeline run from
-        // starving the pool. 20 params/row × KB_MAX_CHUNKS_PER_REPORT stays
+        // starving the pool. 22 params/row × KB_MAX_CHUNKS_PER_REPORT stays
         // well under Postgres's 65535-parameter cap.
         const rows: string[] = [];
         const params: unknown[] = [];
@@ -472,7 +498,7 @@ export const knowledgebaseResolvers = {
             `(gen_random_uuid()::text, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}::vector(1024), $${p++}::text[], $${p++}::text[], ` +
-              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[])`,
+              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[], $${p++}, $${p++})`,
           );
           params.push(
             args.reportId,
@@ -495,6 +521,8 @@ export const knowledgebaseResolvers = {
             chunk.timeRangeEnd,
             chunk.eventTypes,
             chunk.needSectors,
+            chunk.figureS3Key ?? null,
+            chunk.figureKind ?? null,
           );
         }
 
@@ -508,7 +536,8 @@ export const knowledgebaseResolvers = {
               "embedding_provider", "embedding_model", "embedding",
               "location_ids", "location_pcodes",
               "time_range_start", "time_range_end",
-              "event_types", "need_sectors"
+              "event_types", "need_sectors",
+              "figure_s3_key", "figure_kind"
             ) VALUES ${rows.join(", ")}
           `,
           ...params,
