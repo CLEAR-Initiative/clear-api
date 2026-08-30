@@ -25,6 +25,7 @@ import {
   buildApiMentions,
   estimateCurrentTotalFromRows,
   estimateStockFlowTotal,
+  filterApiMentionsToWindow,
   finaliseReadTimeQuality,
   FIELD_RULES,
   type LocationMetadataRow,
@@ -1955,5 +1956,80 @@ describe("estimateCurrentTotalFromRows — current total from rows (ADR-0006 §4
     expect(est!.t0).toBe("2026-06-30T00:00:00.000Z");
     expect(est!.flowsSince).toBe(3000);
     expect(est!.total).toBe(123000);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// filterApiMentionsToWindow - interval anchors (HNO validity period)
+// ────────────────────────────────────────────────────────────────────
+
+describe("filterApiMentionsToWindow - interval vs point anchors", () => {
+  const orgs = new Map([
+    ["ocha", { id: "src-ocha", reliability: 4 }],
+    ["iom dtm", { id: "src-iom", reliability: 4 }],
+  ]);
+  const lmv = (type: string, data: Record<string, unknown>): LocationMetadataRow =>
+    ({ id: `lm-${type}`, type, data, validFrom: new Date("2026-08-04T00:00:00Z") });
+  const AUG = [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-31T23:59:59.999Z")] as const;
+  const MAY = [new Date("2026-05-01T00:00:00Z"), new Date("2026-05-31T23:59:59.999Z")] as const;
+  const Y2026 = [new Date("2026-01-01T00:00:00Z"), new Date("2026-12-31T23:59:59.999Z")] as const;
+
+  /** One HNO edition as HAPI serves it: a national intersectoral INN row with
+   *  the edition's reference period (live Sudan blob: 2026-01-01..2026-12-31). */
+  const hno = (start: string, end: string, population: number) =>
+    buildApiMentions([lmv("hapi_humanitarian_needs", { records: [
+      { sector_code: "Intersectoral", population_status: "INN", admin_level: 0, category: "",
+        population, reference_period_start: start, reference_period_end: end },
+    ] })], "SDN", orgs);
+  const hno2026 = () => hno("2026-01-01T00:00:00Z", "2026-12-31T23:59:59Z", 33_699_770);
+
+  it("an HNO edition carries its reference period as the mention's basis period; T₀ stays the period end", () => {
+    const m = hno2026().get("overall_pin")![0]!;
+    expect(m.basisPeriodStart).toEqual(new Date("2026-01-01T00:00:00Z"));
+    expect(m.basisPeriodEnd).toEqual(new Date("2026-12-31T23:59:59Z"));
+    expect(m.incidentDate).toEqual(new Date("2026-12-31T23:59:59Z"));
+  });
+
+  it("keeps the HNO figure for a monthly window inside its year (was dropped: T₀ = Dec 31 fell outside)", () => {
+    const kept = filterApiMentionsToWindow(hno2026(), AUG[0], AUG[1]);
+    expect(kept.get("overall_pin")?.[0]?.value).toBe(33_699_770);
+    expect(filterApiMentionsToWindow(hno2026(), Y2026[0], Y2026[1]).get("overall_pin")?.[0]?.value).toBe(33_699_770);
+  });
+
+  it("drops an HNO edition whose year does not overlap the window", () => {
+    const hno2025 = hno("2025-01-01T00:00:00Z", "2025-12-08T23:59:59Z", 30_400_000);
+    expect(filterApiMentionsToWindow(hno2025, AUG[0], AUG[1]).size).toBe(0);
+  });
+
+  it("a point figure (DTM round) is still gated by its T₀ alone - unchanged", () => {
+    const dtm = buildApiMentions([lmv("iom_dtm_displacement", {
+      population_displaced: 8_685_273, reporting_date: "2026-05-31T00:00:00Z",
+    })], "SDN", orgs);
+    expect(filterApiMentionsToWindow(dtm, AUG[0], AUG[1]).size).toBe(0);
+    expect(filterApiMentionsToWindow(dtm, MAY[0], MAY[1]).get("idp_stock")?.[0]?.value).toBe(8_685_273);
+    expect(filterApiMentionsToWindow(dtm, Y2026[0], Y2026[1]).get("idp_stock")?.[0]?.value).toBe(8_685_273);
+  });
+
+  it("end to end: the anchor reaches the monthly bucket, so the divergence guard corrects a mis-extracted PIN", () => {
+    // The Sudan Aug-2026 case. The only Sudan report in the window was a DTM
+    // snapshot whose overall_pin had been extracted as its IDP figure. With the
+    // HNO anchor gated out, latest_wins served that 8.6M as People in Need; the
+    // yearly bucket (anchor inside its window) had already corrected it to 33.7M.
+    const rows = [row("r-dtm", "2026-08-18T00:00:00Z", ["SDN"], {
+      displacement: { idp_stock: nf(8_622_801) },
+      needs_and_funding: { overall_pin: nf(8_622_801) }, // mis-extraction: the IDP figure
+    }, "2026-08-02T00:00:00Z")];
+
+    const unanchored = aggregateReports(rows, "SDN", new Map(), new Map())!.data.overall_pin;
+    if (!unanchored || !("value" in unanchored)) throw new Error("expected numeric field");
+    expect(unanchored.value).toBe(8_622_801);
+    expect(unanchored.divergence).toBeNull();
+
+    const anchored = aggregateReports(
+      rows, "SDN", new Map(), filterApiMentionsToWindow(hno2026(), AUG[0], AUG[1]),
+    )!.data.overall_pin;
+    if (!anchored || !("value" in anchored)) throw new Error("expected numeric field");
+    expect(anchored.value).toBe(33_699_770);
+    expect(anchored.divergence).toEqual({ reportValue: 8_622_801, apiValue: 33_699_770, pctDiff: -74.4 });
   });
 });
