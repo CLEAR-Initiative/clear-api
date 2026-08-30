@@ -357,11 +357,15 @@ export const datapointResolvers = {
       const asOf = args.asOf ?? new Date();
 
       // ── Cache-first path ─────────────────────────────────────────
-      // Returns the version whose validity window covers `asOf`.
+      // Returns the version whose validity window covers `asOf`. Keyed on
+      // (locationId, windowKind, windowStart, schemaVersion) only: the refresh
+      // derives windowEnd from windowStart, so it adds nothing to identity, and
+      // matching it exactly made every pipeline read miss (rows are stored at
+      // 23:59:59.999, the pipeline asks for 23:59:59) and fall through to a
+      // full on-demand aggregation.
       const cached = await context.prisma.aggregatedDatapoint.findFirst({
         where: {
           windowStart: args.windowStart,
-          windowEnd: args.windowEnd,
           windowKind: args.windowKind,
           locationId: args.locationId ?? null,
           schemaVersion,

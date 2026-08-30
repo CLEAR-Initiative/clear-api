@@ -367,6 +367,26 @@ describe("Query.aggregatedDatapoint", () => {
       { validTo: { gt: asOf } },
     ]);
   });
+
+  it("cache lookup ignores windowEnd so a 23:59:59 read hits the .999 row", async () => {
+    // Rows are stored with windowEnd at 23:59:59.999; the pipeline asks with
+    // 23:59:59. Matching windowEnd exactly made every pipeline read miss the
+    // cache and recompute on demand. Identity is (location, kind, start,
+    // schema); the end is derived from the start.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst },
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await aggregatedDatapoint(null, { ...args, windowEnd: new Date("2026-07-12T23:59:59Z") }, ctx);
+    const where = findFirst.mock.calls[0]![0].where;
+    expect(where).not.toHaveProperty("windowEnd");
+    expect(where).toMatchObject({
+      windowStart: args.windowStart,
+      windowKind: args.windowKind,
+      locationId: args.locationId,
+    });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────
