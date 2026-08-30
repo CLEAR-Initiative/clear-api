@@ -1811,6 +1811,11 @@ interface ApiFigure {
   /** T₀ — the figure's own reference/as-of date (round date, period end); the
    *  bucketing + flow-cutoff anchor. Falls back to `valid_from` when absent. */
   referenceDate: Date | null;
+  /** Start of the period the figure is valid FOR, when the source states one
+   *  (an HNO/HRP edition covers a calendar year). Makes the figure an interval
+   *  anchor: it augments every window its validity period overlaps, not only the
+   *  window containing its period end. Absent → a point figure at T₀. */
+  referenceStart?: Date | null;
   /** Interval-and-range measure type (clear-context-pipeline ADR-0007), when the adapter can state it
    *  (most API figures are `stock_as_of` snapshots). Defaults to null. */
   measureType?: string | null;
@@ -2043,6 +2048,12 @@ const API_ADAPTERS: Record<string, ApiAdapter> = {
           out.push({
             label, value, unit: "people",
             referenceDate: parseDate(kept[0]!.reference_period_end) ?? hapiRefDate(d),
+            // An HNO edition states PIN for its whole reference period (a
+            // calendar year), so carry the period start too: the figure then
+            // anchors the monthly buckets inside that year, not only the yearly
+            // one. Without it a monthly read had no authoritative PIN at all and
+            // the divergence guard could not correct a mis-extracted report figure.
+            referenceStart: parseDate(kept[0]!.reference_period_start),
           });
         }
       }
@@ -2143,7 +2154,10 @@ export function buildApiMentions(
         valueHigh: fig.value,
         qualifier: "exact",
         measureType: fig.measureType ?? null,
-        basisPeriodStart: fig.referenceDate ?? row.validFrom,
+        // Interval anchors (an HNO edition's validity year) carry their real
+        // period; point figures collapse to T₀. `filterApiMentionsToWindow`
+        // gates on this basis period.
+        basisPeriodStart: fig.referenceStart ?? fig.referenceDate ?? row.validFrom,
         basisPeriodEnd: fig.referenceDate ?? row.validFrom,
         unit: fig.unit,
         confidence: API_DIRECTNESS,
@@ -2170,10 +2184,16 @@ export function buildApiMentions(
   return byLabel;
 }
 
-/** Keep only API mentions whose reference date (T₀ = `incidentDate`) falls within
- *  the window, so a current authoritative figure augments the window it describes
- *  rather than every historical window for the location. Report rows are already
- *  window-filtered upstream; this applies the same gate to API contributors. */
+/** Keep only API mentions whose basis period overlaps the window, so a current
+ *  authoritative figure augments the window(s) it describes rather than every
+ *  historical window for the location. Report rows are already window-filtered
+ *  upstream; this applies the same gate to API contributors.
+ *
+ *  A point figure (DTM round, basis start = end = T₀) is kept iff T₀ falls inside
+ *  the window, exactly as before. An interval figure (an HNO edition valid for a
+ *  calendar year) is kept by every window inside that year: previously its T₀
+ *  (the period END, Dec 31) fell outside each monthly window, so a monthly
+ *  bucket had no PIN anchor and the divergence guard could not run there. */
 export function filterApiMentionsToWindow(
   byLabel: Map<string, Mention[]>,
   windowStart: Date,
@@ -2184,8 +2204,9 @@ export function filterApiMentionsToWindow(
   const out = new Map<string, Mention[]>();
   for (const [label, list] of byLabel) {
     const kept = list.filter((m) => {
-      const t = m.incidentDate.getTime();
-      return t >= s && t <= e;
+      const start = (m.basisPeriodStart ?? m.incidentDate).getTime();
+      const end = (m.basisPeriodEnd ?? m.incidentDate).getTime();
+      return start <= e && end >= s;
     });
     if (kept.length > 0) out.set(label, kept);
   }

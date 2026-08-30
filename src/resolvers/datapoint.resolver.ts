@@ -357,11 +357,15 @@ export const datapointResolvers = {
       const asOf = args.asOf ?? new Date();
 
       // ── Cache-first path ─────────────────────────────────────────
-      // Returns the version whose validity window covers `asOf`.
+      // Returns the version whose validity window covers `asOf`. Keyed on
+      // (locationId, windowKind, windowStart, schemaVersion) only: the refresh
+      // derives windowEnd from windowStart, so it adds nothing to identity, and
+      // matching it exactly made every pipeline read miss (rows are stored at
+      // 23:59:59.999, the pipeline asks for 23:59:59) and fall through to a
+      // full on-demand aggregation.
       const cached = await context.prisma.aggregatedDatapoint.findFirst({
         where: {
           windowStart: args.windowStart,
-          windowEnd: args.windowEnd,
           windowKind: args.windowKind,
           locationId: args.locationId ?? null,
           schemaVersion,
@@ -395,13 +399,12 @@ export const datapointResolvers = {
 
       // ── On-demand fallback ────────────────────────────────────────
       // Pull the report_datapoints in this window and aggregate here.
-      // Selection is by window only - NOT by the report's mentioned
+      // The DB fetch is by window only - NOT by the report's mentioned
       // `locationIds`. A report is relevant to `locationId` when a FIGURE
       // is scoped there, which needn't coincide with the places the report
-      // names (#273); the aggregator's scope filter keeps only the figures
-      // scoped to `locationId`, so a coarse window fetch + exact scope
-      // filter is both correct and simpler than a JSON scope query.
-      const rows = await context.prisma.reportDatapoint.findMany({
+      // names (#273), so a coarse window fetch + exact figure-scope filter
+      // is both correct and simpler than a JSON scope query.
+      const windowRows = await context.prisma.reportDatapoint.findMany({
         where: {
           schemaVersion,
           reportingPeriodEnd: {
@@ -410,6 +413,21 @@ export const datapointResolvers = {
           },
         },
       });
+      // Apply that figure-scope filter at ROW level, mirroring how the refresh
+      // path routes a report into a bucket (via one of its figure scopes). The
+      // aggregator's own scope filter only protects the field VALUES; the
+      // bucket's report_count, contributing ids and source bounds are derived
+      // from the rows handed in. Handing it every report in the window made a
+      // Sudan monthly read list 33 Venezuela/Afghanistan reports as its sources
+      // and claim "34 reports, freshest <a WHO polio bulletin>" while exactly
+      // one row had a Sudan-scoped figure.
+      const rows = args.locationId
+        ? windowRows.filter((r) => {
+            const scopes = new Set<string>();
+            collectFigureScopeIds(r.data, scopes);
+            return scopes.has(args.locationId!);
+          })
+        : windowRows;
       // Authoritative location_metadata for this scope, gated to the window
       // (ADR-0006). Loaded even when there are no reports - the API figure can
       // gap-fill the bucket on its own.

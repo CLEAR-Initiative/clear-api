@@ -276,6 +276,7 @@ describe("Query.aggregatedDatapoint", () => {
               total: {
                 value: 12, unit: "people", confidence: "reported",
                 source_quote: "twelve killed", chunk_index: 0, page_number: 1,
+                scope_location_id: "sd0201",
               },
             },
           },
@@ -293,6 +294,50 @@ describe("Query.aggregatedDatapoint", () => {
     // for downstream React-key purposes.
     expect(result?.id).toContain("ondemand:");
     expect(result?.reportCount).toBe(1);
+  });
+
+  it("on-demand: only reports with a figure scoped to the bucket count as contributors", async () => {
+    // Mirrors the refresh path's routing: a report joins a bucket via one of
+    // its FIGURE scopes. A window-only fetch otherwise stamped every report in
+    // the window worldwide onto report_count / contributing ids / source
+    // bounds even though the aggregator had dropped all their figures (a
+    // Sudan monthly read listed 33 Venezuela + Afghanistan reports as its
+    // sources and "freshest" pointed at a WHO polio bulletin).
+    const figure = (scope: string) => ({
+      casualties: {
+        killed: {
+          total: {
+            value: 12, unit: "people", confidence: "reported",
+            source_quote: "twelve killed", chunk_index: 0, page_number: 1,
+            scope_location_id: scope,
+          },
+        },
+      },
+    });
+    const inScope = {
+      reportId: "r-sudan",
+      publishedAt: new Date("2026-07-10T00:00:00Z"),
+      reportingPeriodStart: null,
+      reportingPeriodEnd: new Date("2026-07-08T00:00:00Z"),
+      locationIds: ["sd0201"],
+      data: figure("sd0201"),
+    };
+    const foreign = {
+      reportId: "r-venezuela",
+      publishedAt: new Date("2026-07-12T00:00:00Z"), // fresher, but not ours
+      reportingPeriodStart: null,
+      reportingPeriodEnd: new Date("2026-07-09T00:00:00Z"),
+      locationIds: ["ve0001"],
+      data: figure("ve0001"),
+    };
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst: vi.fn().mockResolvedValue(null) },
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([foreign, inScope]) },
+    });
+    const result = await aggregatedDatapoint(null, args, ctx);
+    expect(result?.reportCount).toBe(1);
+    expect(result?.contributingReportIds).toEqual(["r-sudan"]);
+    expect(result?.newestSourceAt).toEqual(inScope.publishedAt);
   });
 
   it("returns null when no cache and no contributing reports", async () => {
@@ -321,6 +366,26 @@ describe("Query.aggregatedDatapoint", () => {
       { validTo: null },
       { validTo: { gt: asOf } },
     ]);
+  });
+
+  it("cache lookup ignores windowEnd so a 23:59:59 read hits the .999 row", async () => {
+    // Rows are stored with windowEnd at 23:59:59.999; the pipeline asks with
+    // 23:59:59. Matching windowEnd exactly made every pipeline read miss the
+    // cache and recompute on demand. Identity is (location, kind, start,
+    // schema); the end is derived from the start.
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(VIEWER, {
+      aggregatedDatapoint: { findFirst },
+      reportDatapoint: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await aggregatedDatapoint(null, { ...args, windowEnd: new Date("2026-07-12T23:59:59Z") }, ctx);
+    const where = findFirst.mock.calls[0]![0].where;
+    expect(where).not.toHaveProperty("windowEnd");
+    expect(where).toMatchObject({
+      windowStart: args.windowStart,
+      windowKind: args.windowKind,
+      locationId: args.locationId,
+    });
   });
 });
 
