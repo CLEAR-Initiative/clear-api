@@ -251,14 +251,32 @@ export const crisisResolvers = {
           })),
         });
 
+        // Preserve a caller-supplied create-time title: write the same
+        // `[title-edit]` audit/lock row `updateCrisisTitle` uses, so the Dagster
+        // enrichment drain's `updateCrisisPopulation` skips overwriting the
+        // human-chosen title (see the title-lock check there). Without this the
+        // drain would clobber it — the old Celery path skipped narrative
+        // regeneration when a title was supplied at create; this reproduces that
+        // guarantee. Summary / scenarios / needs / population are still generated.
+        if (input.title && context.user) {
+          await tx.userFeedbacks.create({
+            data: {
+              userId: context.user.id,
+              crisisId: created.id,
+              rating: 0, // sentinel: system audit entry, not real user feedback
+              text: `[title-edit] (created) → ${input.title}`,
+            },
+          });
+        }
+
         return created;
       });
 
       // Enrichment (populationInArea + narrative/scenarios/needs) is handled
       // asynchronously by the Dagster `enrich_crises` drain: the crisis is born
-      // enrichmentStatus=PENDING (column default) and the drain picks it up.
-      // Any title/summary the caller supplied stays until the drain overwrites
-      // it (the drain always regenerates the narrative).
+      // enrichmentStatus=PENDING (column default) and the drain picks it up. A
+      // caller-supplied title is locked above so the drain preserves it; the
+      // summary and the rest are (re)generated from the linked events.
 
       const actor = context.user;
       if (actor) {
