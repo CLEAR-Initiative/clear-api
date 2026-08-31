@@ -591,6 +591,12 @@ model signals {
   status      SignalStatus @default(NEW)
   processedAt DateTime?    @map("processed_at")
 
+  /// lastRevisedAt marks that the API updated this record in place; contentHash
+  /// is a fingerprint of the source's raw data (rawData), compared against
+  /// incoming data to decide if an update is needed. Driven by IDMC integration.
+  contentHash String? @map("content_hash")
+  lastRevisedAt DateTime? @map("last_revised_at")
+
   url         String?
   title       String?
   description String?
