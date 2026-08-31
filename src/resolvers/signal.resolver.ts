@@ -47,6 +47,10 @@ interface CreateSignalInput {
   /** Stable upstream id for idempotent ingestion. If set and a row with
    *  the same (sourceId, externalId) exists, the existing row is returned. */
   externalId?: string;
+  /** Fingerprint of rawData for a revisable source (e.g. IDMC). Optional —
+   *  seeding it at creation makes an immediate follow-up
+   *  updateSignalContent call (same hash) a correct no-op. */
+  contentHash?: string;
   rawData: Record<string, unknown>;
   /** Pointer to the raw payload blob in the S3 data lake (Dagster ingest). */
   rawS3Key?: string;
@@ -308,6 +312,7 @@ export const signalResolvers = {
           data: {
             sourceId: input.sourceId,
             externalId: input.externalId,
+            contentHash: input.contentHash,
             rawData: input.rawData as InputJsonValue,
             rawS3Key: input.rawS3Key,
             publishedAt: new Date(input.publishedAt),

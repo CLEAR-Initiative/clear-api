@@ -662,6 +662,12 @@ export const mutationTypeDef = gql`
     existing row instead of creating a duplicate. Recommended prefix scheme:
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
+    """Fingerprint of rawData, for sources whose records get revised in
+    place (e.g. IDMC). Optional — most sources never revise a signal after
+    creation, so this stays null for them. Seeding it here means an
+    immediate follow-up updateSignalContent call (same hash) is a correct
+    no-op instead of falsely stamping lastRevisedAt on a brand-new signal."""
+    contentHash: String
     rawData: JSON!
     """Pointer to the raw payload blob in the S3 data lake (bronze layer),
     written by the Dagster ingest asset. Optional — rawData carries the payload

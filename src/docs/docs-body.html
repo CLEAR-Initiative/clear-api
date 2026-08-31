@@ -1798,6 +1798,14 @@ the same (sourceId, externalId) already exists, createSignal returns the
 existing row instead of creating a duplicate. Recommended prefix scheme:
 &quot;dataminr:{alertId}&quot;, &quot;gdacs:{eventid}&quot;, &quot;acled:{event_id_cnty}&quot;.</td>
   </tr><tr>
+    <td><code>contentHash</code></td>
+    <td><code>String</code></td>
+    <td>Fingerprint of rawData, for sources whose records get revised in
+place (e.g. IDMC). Optional — most sources never revise a signal after
+creation, so this stays null for them. Seeding it here means an
+immediate follow-up updateSignalContent call (same hash) is a correct
+no-op instead of falsely stamping lastRevisedAt on a brand-new signal.</td>
+  </tr><tr>
     <td><code>rawData</code></td>
     <td><code>JSON!</code></td>
     <td>—</td>

@@ -171,6 +171,22 @@ describeIfDb("updateSignalContent", () => {
     expect(second.lastRevisedAt).toEqual(first.lastRevisedAt);
   });
 
+  it("does not set lastRevisedAt when createSignal already seeded the matching contentHash", async () => {
+    const created = await createTestSignal({ contentHash: "seeded-hash-1" });
+    const ctx = buildContext({ id: viewerUserId, role: "admin" });
+
+    const updated = await signalResolvers.Mutation.updateSignalContent(
+      null,
+      {
+        input: { id: created.id, contentHash: "seeded-hash-1", rawData: { test: true } },
+      },
+      ctx,
+    );
+
+    expect(updated.lastRevisedAt).toBe(null);
+    expect(updated.contentHash).toBe("seeded-hash-1");
+  });
+
   it("resolves a new locationId from lat/lng when none is explicit, same as createSignal", async () => {
     const created = await createTestSignal();
     const ctx = buildContext({ id: viewerUserId, role: "admin" });
