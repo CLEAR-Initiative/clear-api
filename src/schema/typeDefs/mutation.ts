@@ -718,6 +718,9 @@ export const mutationTypeDef = gql`
     validTo: String!
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
+    """When the real-world event started (onset), parsed from signal text.
+    ISO-8601; null/omitted when no onset could be resolved."""
+    startedAt: String
     originId: String
     destinationId: String
     locationId: String
@@ -751,6 +754,9 @@ export const mutationTypeDef = gql`
     validTo: String
     firstSignalCreatedAt: String
     lastSignalCreatedAt: String
+    """When the real-world event started (onset), parsed from signal text.
+    ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
+    startedAt: String
     originId: String
     destinationId: String
     locationId: String

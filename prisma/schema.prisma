@@ -690,6 +690,11 @@ model events {
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  /// When the real-world event actually STARTED (its onset) — distinct from
+  /// validFrom/firstSignalCreatedAt (record + signal-collection times). Parsed
+  /// from the signal text by the pipeline (regex → LLM fallback); null when no
+  /// onset could be resolved.
+  startedAt            DateTime? @map("started_at")
   isDummy              Boolean  @default(false)
 
   originId       String?    @map("origin_id")

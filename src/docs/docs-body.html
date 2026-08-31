@@ -1591,6 +1591,11 @@ Ignored for platform-level callers.</td>
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>String</code></td>
+    <td>When the real-world event started (onset), parsed from signal text.
+ISO-8601; null/omitted when no onset could be resolved.</td>
+  </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -2526,6 +2531,11 @@ Location correction — one without the other is rejected.</td>
     <td><code>lastSignalCreatedAt</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>String</code></td>
+    <td>When the real-world event started (onset), parsed from signal text.
+ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
@@ -3494,6 +3504,12 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>lastSignalCreatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the real-world event actually STARTED (its onset) — parsed from the
+signal text, distinct from `validFrom`/`firstSignalCreatedAt` (record +
+signal-collection times). Null when no onset could be resolved.</td>
   </tr><tr>
     <td><code>originLocation</code></td>
     <td><code>Location</code></td>

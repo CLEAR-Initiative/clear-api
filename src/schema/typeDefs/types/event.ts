@@ -12,6 +12,10 @@ export const eventTypeDef = gql`
     validTo: DateTime!
     firstSignalCreatedAt: DateTime!
     lastSignalCreatedAt: DateTime!
+    """When the real-world event actually STARTED (its onset) — parsed from the
+    signal text, distinct from \`validFrom\`/\`firstSignalCreatedAt\` (record +
+    signal-collection times). Null when no onset could be resolved."""
+    startedAt: DateTime
     """Origin location of the event."""
     originLocation: Location
     """Destination location of the event."""
