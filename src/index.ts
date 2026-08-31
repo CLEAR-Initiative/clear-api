@@ -28,6 +28,7 @@ import { groundIngestRouter } from "./routes/ground-ingest.js";
 import { groundMediaRouter } from "./routes/ground-media.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { logieRouter } from "./routes/logie.js";
+import { usgsRouter } from "./routes/usgs.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 
 const app = express();
@@ -99,6 +100,7 @@ app.use(
 // LogIE Blockages serve (map-ready slim GeoJSON from persisted metadata).
 // Read-only GET; auth is enforced inside the route (session or API key).
 app.use("/api/logie", logieRouter);
+app.use("/api/usgs", usgsRouter);
 
 // Health check
 app.get("/health", (_req, res) => {
