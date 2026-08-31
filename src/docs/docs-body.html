@@ -768,6 +768,15 @@ the geoparser resolved a landmark, we promote it to an L4 via
 findOrCreateLandmarkL4 and then wire the signal to it so downstream
 event grouping can key on the resolved admin-2 district instead of
 creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+  </tr><tr id="mutation-updatesignalcontent">
+    <td><code>updateSignalContent</code></td>
+    <td><code>Signal!</code></td>
+    <td>Apply an in-place content revision to an existing signal (e.g. IDMC's
+IDU rows being revised upstream — same id, changed figures/role/dates/
+location). Only writes when input.contentHash differs from the stored
+contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
+unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
+only.<div class="field-args"><span class="arg"><code>input: UpdateSignalContentInput!</code></span></div></td>
   </tr><tr id="mutation-deletesignal">
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
@@ -2554,6 +2563,69 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td><code>language</code></td>
     <td><code>String</code></td>
     <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
+  </tr></tbody></table><h3 id="type-updatesignalcontentinput"><code>UpdateSignalContentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>contentHash</code></td>
+    <td><code>String!</code></td>
+    <td>Fingerprint of the incoming raw payload. Compared against the
+signal's stored contentHash; the write (and lastRevisedAt) only
+happens when they differ.</td>
+  </tr><tr>
+    <td><code>rawData</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>casualties</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>originId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>destinationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lat</code></td>
+    <td><code>Float</code></td>
+    <td>Fallback geo-resolution, same as CreateSignalInput's lat/lng — used
+when no explicit originId/destinationId/locationId resolved.</td>
+  </tr><tr>
+    <td><code>lng</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>geoparsedData</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pointName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updateteaminput"><code>UpdateTeamInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>

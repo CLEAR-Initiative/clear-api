@@ -76,6 +76,48 @@ interface CreateSignalInput {
   pointName?: string;
 }
 
+/** In-place content revision for an existing signal (e.g. IDMC IDU
+ *  revisions). `contentHash` gates the write — a no-op retry (unchanged
+ *  data resent) leaves the row and lastRevisedAt untouched. */
+interface UpdateSignalContentInput {
+  id: string;
+  contentHash: string;
+  rawData: Record<string, unknown>;
+  url?: string;
+  title?: string;
+  description?: string;
+  severity?: number;
+  casualties?: number;
+  originId?: string;
+  destinationId?: string;
+  locationId?: string;
+  lat?: number;
+  lng?: number;
+  geoparsedData?: Record<string, unknown>;
+  pointName?: string;
+}
+
+/** Resolve a signal's locationId: pass through an explicit id, or fall back
+ *  to creating an L4 point location from lat/lng. Shared by createSignal and
+ *  updateSignalContent so a revision resolves location the same way a
+ *  fresh signal does. */
+async function resolveLocationId(
+  context: Context,
+  { locationId, lat, lng, pointName }: {
+    locationId?: string;
+    lat?: number;
+    lng?: number;
+    pointName?: string;
+  },
+): Promise<string | undefined> {
+  if (locationId) return locationId;
+  if (lat != null && lng != null) {
+    const pointLoc = await createPointLocation(context.prisma, lat, lng, pointName ?? undefined);
+    return pointLoc.id;
+  }
+  return undefined;
+}
+
 // ─── Signal Location challenge (Location trust v1, clear-mvp #314) ───────────
 // v1 has exactly one open state; a resubmit updates the single open row per
 // signal (enforced by @@unique([signalId, status])).
@@ -254,16 +296,12 @@ export const signalResolvers = {
       // signal titles for some sources (e.g. Dataminr) are full alert
       // paragraphs, so using them as the L4 name pollutes the locations
       // table with non-place strings.
-      let locationId = input.locationId;
-      if (!locationId && input.lat != null && input.lng != null) {
-        const pointLoc = await createPointLocation(
-          context.prisma,
-          input.lat,
-          input.lng,
-          input.pointName ?? undefined,
-        );
-        locationId = pointLoc.id;
-      }
+      const locationId = await resolveLocationId(context, {
+        locationId: input.locationId,
+        lat: input.lat,
+        lng: input.lng,
+        pointName: input.pointName,
+      });
 
       try {
         return await context.prisma.signals.create({
@@ -525,6 +563,56 @@ export const signalResolvers = {
       return context.prisma.signals.update({
         where: { id: args.id },
         data: { locationId: args.locationId },
+      });
+    },
+
+    updateSignalContent: async (
+      _parent: unknown,
+      args: { input: UpdateSignalContentInput },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const { input } = args;
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: input.id },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Not a revision — either an unchanged retry (e.g. the pipeline's Redis
+      // seen-set re-sending after its TTL expired) or the row was never
+      // revised at all. Leave it untouched, including lastRevisedAt.
+      if (existing.contentHash === input.contentHash) {
+        return existing;
+      }
+
+      const locationId = await resolveLocationId(context, {
+        locationId: input.locationId,
+        lat: input.lat,
+        lng: input.lng,
+        pointName: input.pointName,
+      });
+
+      return context.prisma.signals.update({
+        where: { id: input.id },
+        data: {
+          rawData: input.rawData as InputJsonValue,
+          url: input.url,
+          title: input.title,
+          description: input.description,
+          severity: input.severity,
+          casualties: input.casualties,
+          originId: input.originId,
+          destinationId: input.destinationId,
+          locationId,
+          geoparsedData: input.geoparsedData as InputJsonValue | undefined,
+          contentHash: input.contentHash,
+          lastRevisedAt: new Date(),
+        },
       });
     },
 
