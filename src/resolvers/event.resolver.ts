@@ -50,6 +50,7 @@ interface CreateEventInput {
   validTo: string;
   firstSignalCreatedAt: string;
   lastSignalCreatedAt: string;
+  startedAt?: string;
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -79,6 +80,7 @@ interface UpdateEventInput {
   validTo?: string;
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
+  startedAt?: string;
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -286,6 +288,7 @@ export const eventResolvers = {
           validTo: new Date(input.validTo),
           firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
+          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
           originId,
           destinationId,
           locationId,
@@ -390,6 +393,7 @@ export const eventResolvers = {
           lastSignalCreatedAt: input.lastSignalCreatedAt
             ? new Date(input.lastSignalCreatedAt)
             : undefined,
+          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
           originId: input.originId,
           destinationId: input.destinationId,
           locationId: input.locationId,
