@@ -6,7 +6,7 @@
  * no database, no `describeIfDb`. All imported modules that reach external
  * services are `vi.mock(...)`ed BEFORE the resolver import so they never
  * run in CI:
- *   - `../../src/services/celery.js`      (Redis broker — enrichment dispatch + translation buffer)
+ *   - `../../src/services/celery.js`      (Redis broker — mocked to assert the crisis path NEVER dispatches post Celery→Dagster cutover)
  *   - `../../src/utils/geo-resolve.js`    (pulled in transitively by location-scope)
  *   - `../../src/utils/location-scope.js` (DB-walking team location filter)
  *   - `../../src/utils/activity-log.js`   (audit-log writer)
@@ -187,11 +187,10 @@ describe("Mutation.createCrisisFromEvents", () => {
     const create = vi.fn().mockResolvedValue(created);
     const prisma = {
       events: {
-        // findMany is called for validation, then for population sum, then by collectDistrictIds.
+        // findMany is called for validation, then for the population sum.
         findMany: vi.fn().mockImplementation(({ select }: { select: Record<string, boolean> }) => {
           if (select?.id) return Promise.resolve(events);
           if (select?.populationAffected) return Promise.resolve([{ populationAffected: 10n }]);
-          // collectDistrictIds origin/destination/location select
           return Promise.resolve([]);
         }),
       },
@@ -234,20 +233,12 @@ describe("Mutation.createCrisisFromEvents", () => {
     ).rejects.toThrow(/e2/);
   });
 
-  it("dispatches enrichment with generate_narrative=true when title/summary missing", async () => {
-    const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
-    // settle the fire-and-forget dispatch
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalledWith(
-      "src.tasks.crisis.enrich_crisis",
-      expect.objectContaining({ crisis_id: "c-new", generate_narrative: true }),
-    );
-  });
-
-  it("derives generate_narrative=false when both title and summary supplied", async () => {
-    const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
+  it("does NOT dispatch a Celery task — the crisis is born PENDING for the Dagster drain", async () => {
+    // Celery→Dagster cutover: clear-api no longer fire-and-forgets
+    // `enrich_crisis`. The crisis is created enrichmentStatus=PENDING (column
+    // default) and the Dagster `enrich_crises` drain enriches it. This holds
+    // whether or not the caller supplied a title/summary.
+    const { ctx, create } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
       { input: { title: "T", summary: "S", severity: 2, needs: {}, eventIds: ["e1"] } },
@@ -255,10 +246,8 @@ describe("Mutation.createCrisisFromEvents", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalledWith(
-      "src.tasks.crisis.enrich_crisis",
-      expect.objectContaining({ generate_narrative: false }),
-    );
+    expect(create).toHaveBeenCalledOnce();
+    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 
   it("logs the crisis.create activity for the actor", async () => {
@@ -314,7 +303,7 @@ describe("Mutation.addEventToCrisis", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("creates the link, recomputes population, and dispatches enrichment", async () => {
+  it("creates the link, recomputes population, and flags PENDING for the drain (no Celery dispatch)", async () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
@@ -333,9 +322,10 @@ describe("Mutation.addEventToCrisis", () => {
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
+    // Event-set change re-queues the crisis for the Dagster drain via PENDING.
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
     await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalled();
+    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 });
 

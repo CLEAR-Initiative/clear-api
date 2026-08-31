@@ -5,7 +5,6 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
 import { isPlatformAdmin, requireAuth, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
-import { sendCeleryTask } from "../services/celery.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
 
@@ -72,91 +71,15 @@ async function sumEventPopulationAffected(
   return any ? total : null;
 }
 
-/**
- * Collect the most specific usable location IDs for the events.
- *
- * Strategy: prefer level-2 (district), fall back to level-1 (state), then
- * level-0 (country). For events with point locations (level 4), we pick the
- * level-2 ancestor. The pipeline task then further falls back to a parent
- * when the chosen location lacks an areal geometry/cached population.
- */
-async function collectDistrictIds(
-  prisma: Context["prisma"],
-  eventIds: string[],
-): Promise<string[]> {
-  if (eventIds.length === 0) return [];
-
-  const events = await prisma.events.findMany({
-    where: { id: { in: eventIds } },
-    select: { originId: true, destinationId: true, locationId: true },
-  });
-
-  const eventLocationIds = new Set<string>();
-  for (const e of events) {
-    if (e.originId) eventLocationIds.add(e.originId);
-    if (e.destinationId) eventLocationIds.add(e.destinationId);
-    if (e.locationId) eventLocationIds.add(e.locationId);
-  }
-  if (eventLocationIds.size === 0) return [];
-
-  const locations = await prisma.locations.findMany({
-    where: { id: { in: [...eventLocationIds] } },
-    select: { id: true, level: true, ancestorIds: true },
-  });
-
-  // For each event location, pick the most specific ancestor ≤ level 2
-  const candidateIds = new Set<string>();
-  for (const loc of locations) {
-    if (loc.level <= 2) {
-      candidateIds.add(loc.id);
-    } else {
-      // Point or deeper — use ancestors (walk up to find the nearest level-2)
-      for (const aid of loc.ancestorIds) candidateIds.add(aid);
-    }
-  }
-  if (candidateIds.size === 0) return [];
-
-  // Prefer level-2 where available; otherwise fall back to level-1, then 0
-  const candidates = await prisma.locations.findMany({
-    where: { id: { in: [...candidateIds] }, level: { lte: 2 } },
-    select: { id: true, level: true },
-  });
-  if (candidates.length === 0) return [];
-
-  const byLevel2 = candidates.filter((c) => c.level === 2);
-  if (byLevel2.length > 0) return byLevel2.map((c) => c.id);
-
-  const byLevel1 = candidates.filter((c) => c.level === 1);
-  if (byLevel1.length > 0) return byLevel1.map((c) => c.id);
-
-  return candidates.map((c) => c.id);
-}
-
-/**
- * Dispatch the pipeline task that enriches a crisis: computes
- * `populationInArea` from the given districts AND generates a narrative
- * (title + summary) via Claude across the linked events.
- */
-async function dispatchCrisisEnrichmentTask(
-  crisisId: string,
-  eventIds: string[],
-  districtIds: string[],
-  generateNarrative: boolean,
-): Promise<void> {
-  try {
-    await sendCeleryTask("src.tasks.crisis.enrich_crisis", {
-      crisis_id: crisisId,
-      event_ids: eventIds,
-      district_ids: districtIds,
-      generate_narrative: generateNarrative,
-    });
-  } catch (err) {
-    console.error(
-      `[crisis] Failed to dispatch enrichment task for ${crisisId}:`,
-      err,
-    );
-  }
-}
+// Crisis enrichment (populationInArea + narrative/scenarios/needs) is NOT
+// dispatched from here. clear-api's only job is to flag the crisis as needing
+// enrichment: `enrichmentStatus = PENDING` (set on create via the column
+// default, and on every event-set change below). The clear-context-pipeline
+// Dagster drain (`enrich_crises`) consumes `pendingCrises`, derives its own
+// district ids + events, RAG-grounds the overview, writes the results back, and
+// flips the crisis to ENRICHED via `markCrisisEnriched`. This replaces the
+// legacy Celery `src.tasks.crisis.enrich_crisis` fire-and-forget (Celery→Dagster
+// consolidation) — so no task dispatch and no district pre-computation here.
 
 export const crisisResolvers = {
   Query: {
@@ -331,15 +254,11 @@ export const crisisResolvers = {
         return created;
       });
 
-      // Async: dispatch Celery task for populationInArea + narrative (if not provided)
-      const districtIds = await collectDistrictIds(context.prisma, input.eventIds);
-      const generateNarrative = !input.title || !input.summary;
-      void dispatchCrisisEnrichmentTask(
-        crisis.id,
-        input.eventIds,
-        districtIds,
-        generateNarrative,
-      );
+      // Enrichment (populationInArea + narrative/scenarios/needs) is handled
+      // asynchronously by the Dagster `enrich_crises` drain: the crisis is born
+      // enrichmentStatus=PENDING (column default) and the drain picks it up.
+      // Any title/summary the caller supplied stays until the drain overwrites
+      // it (the drain always regenerates the narrative).
 
       const actor = context.user;
       if (actor) {
@@ -420,14 +339,9 @@ export const crisisResolvers = {
         data: { populationAffected, enrichmentStatus: "PENDING" },
       });
 
-      const districtIds = await collectDistrictIds(context.prisma, allEventIds);
-      // Regenerate narrative on add — keeps title/summary coherent as events grow
-      void dispatchCrisisEnrichmentTask(
-        crisisId,
-        allEventIds,
-        districtIds,
-        true,
-      );
+      // Event set changed → enrichment is stale. The PENDING flag above re-queues
+      // the crisis for the Dagster `enrich_crises` drain, which regenerates the
+      // narrative/scenarios/needs + populationInArea across the new event set.
 
       return link;
     },
@@ -499,16 +413,10 @@ export const crisisResolvers = {
         data: { populationAffected, enrichmentStatus: "PENDING" },
       });
 
-      // Regenerate the narrative so title/summary reflect the new event set.
-      // Same fire-and-forget pattern as addEventToCrisis — clients see the
-      // pre-update title/summary until the enrichment task completes.
-      const districtIds = await collectDistrictIds(context.prisma, remainingEventIds);
-      void dispatchCrisisEnrichmentTask(
-        crisisId,
-        remainingEventIds,
-        districtIds,
-        true,
-      );
+      // Event set changed → enrichment is stale. The PENDING flag above re-queues
+      // the crisis for the Dagster `enrich_crises` drain, which regenerates the
+      // narrative/scenarios/needs + populationInArea over the remaining events.
+      // Clients see the pre-update title/summary until the drain overwrites it.
 
       return updated;
     },
