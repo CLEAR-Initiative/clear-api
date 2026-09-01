@@ -26,6 +26,7 @@
  */
 
 import { Router, json } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import type { Prisma } from "../generated/prisma/client.js";
@@ -97,6 +98,13 @@ router.post("/", async (req, res) => {
     }
     const { source: sourceName, events } = parsed.data;
 
+    // The poller shouldn't send empty batches, but if it does: succeed with
+    // zero counts and touch nothing — not even source resolution.
+    if (events.length === 0) {
+      res.json({ created: 0, skipped: 0 });
+      return;
+    }
+
     const source = await prisma.dataSources.findFirst({
       where: { name: sourceName, isActive: true },
     });
@@ -125,5 +133,28 @@ router.post("/", async (req, res) => {
     res.status(500).json({ error: "Ingest failed" });
   }
 });
+
+// Malformed JSON never reaches the handler — body-parser throws before it.
+// Catch it here so callers get a JSON error body, not Express's HTML page.
+router.use(
+  (
+    err: Error & { type?: string; status?: number },
+    _req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    const status = err.status ?? 400;
+    if (status >= 500) {
+      console.error("[x-ingest] Failed:", err);
+      res.status(500).json({ error: "Ingest failed" });
+      return;
+    }
+    res.status(status).json({ error: "Invalid JSON body" });
+  },
+);
 
 export { router as xIngestRouter };

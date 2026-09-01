@@ -161,4 +161,129 @@ describe("POST /api/x/ingest", () => {
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual({ created: 0, skipped: 1 });
   });
+
+  it("401s an unauthenticated caller, persisting nothing", async () => {
+    resolveRequestAuthMock.mockResolvedValue({ user: null, session: null, authMethod: null });
+    const res = await post(SAMPLE_BATCH);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("403s a non-machine role (analyst), persisting nothing", async () => {
+    resolveRequestAuthMock.mockResolvedValue({
+      user: { id: "u1", role: "analyst" },
+      session: null,
+      authMethod: "api-key",
+    });
+    const res = await post(SAMPLE_BATCH);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts an admin caller (manual testing path)", async () => {
+    resolveRequestAuthMock.mockResolvedValue({
+      user: { id: "u2", role: "admin" },
+      session: null,
+      authMethod: "api-key",
+    });
+    const res = await post(SAMPLE_BATCH);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ created: 1, skipped: 0 });
+  });
+
+  it("400s malformed JSON with a JSON error body, persisting nothing", async () => {
+    asPipeline();
+    const res = await post('{"source": "sudan-war-x", not json');
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "Invalid JSON body" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("400s a schema violation (event missing id), persisting nothing", async () => {
+    asPipeline();
+    const { id: _dropped, ...eventWithoutId } = SAMPLE_EVENT;
+    const res = await post({ ...SAMPLE_BATCH, events: [eventWithoutId] });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; details: string[] };
+    expect(body.error).toBe("Invalid payload");
+    expect(body.details.some((d) => d.includes("events.0.id"))).toBe(true);
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("400s an unknown source, persisting nothing", async () => {
+    asPipeline();
+    const res = await post({ ...SAMPLE_BATCH, source: "no-such-feed" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Unknown source" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("400s an inactive source, persisting nothing", async () => {
+    asPipeline();
+    prismaStub.__sources.length = 0;
+    prismaStub.__sources.push({
+      id: "ds_sudan_war_x",
+      name: "sudan-war-x",
+      type: "webhook",
+      isActive: false,
+    });
+    const res = await post(SAMPLE_BATCH);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Unknown source" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("400s a batch over 100 events, persisting nothing", async () => {
+    asPipeline();
+    const events = Array.from({ length: 101 }, (_, i) => ({
+      ...SAMPLE_EVENT,
+      id: `event-${i}`,
+    }));
+    const res = await post({ ...SAMPLE_BATCH, events });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Invalid payload");
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts exactly 100 events (cap is inclusive)", async () => {
+    asPipeline();
+    const events = Array.from({ length: 100 }, (_, i) => ({
+      ...SAMPLE_EVENT,
+      id: `event-${i}`,
+    }));
+    const res = await post({ ...SAMPLE_BATCH, events });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ created: 100, skipped: 0 });
+  });
+
+  it("200s an empty events array with zero counts, touching no tables", async () => {
+    asPipeline();
+    const res = await post({ ...SAMPLE_BATCH, events: [] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ created: 0, skipped: 0 });
+    expect(prismaStub.dataSources.findFirst).not.toHaveBeenCalled();
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("ignores unknown extra fields at every level rather than rejecting", async () => {
+    asPipeline();
+    const res = await post({
+      ...SAMPLE_BATCH,
+      poller_version: "max-1.2",
+      events: [
+        {
+          ...SAMPLE_EVENT,
+          lang: "en",
+          author: { ...SAMPLE_EVENT.author, followers: 12345 },
+          metrics: { ...SAMPLE_EVENT.metrics, views: 999 },
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ created: 1, skipped: 0 });
+  });
 });
