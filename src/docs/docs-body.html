@@ -4882,6 +4882,17 @@ Upstream source payloads are stored internally and are not returned on this type
     <td><code>DateTime</code></td>
     <td>When the downstream pipeline finished processing this signal (null while NEW).</td>
   </tr><tr>
+    <td><code>contentHash</code></td>
+    <td><code>String</code></td>
+    <td>Fingerprint of the source's raw data, for sources whose records get
+revised in place (e.g. IDMC). Null for sources that never revise a signal
+after creation.</td>
+  </tr><tr>
+    <td><code>lastRevisedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the API last applied an in-place content revision to this signal
+(e.g. an IDMC IDU row revised upstream). Null if never revised.</td>
+  </tr><tr>
     <td><code>rawS3Key</code></td>
     <td><code>String</code></td>
     <td>Pointer to the raw payload blob in the S3 data lake, when landed there.</td>
