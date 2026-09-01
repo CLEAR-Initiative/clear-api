@@ -443,6 +443,55 @@ export const FIELD_RULES: FieldRule[] = [
 ];
 
 // ────────────────────────────────────────────────────────────────────
+// SADD cell rules — sex/age disaggregation (clear-context-pipeline ADR-0008)
+// ────────────────────────────────────────────────────────────────────
+//
+// The headline population figures may carry a `breakdown` of sex/age marginal
+// cells (extraction schema v4). Each cell is a NumericField at
+// `<parent path>.breakdown.<cell>`, and the pipeline propagates the parent
+// figure's resolved scope + source into every cell — so a cell shares the
+// parent's incident key and must reduce with the SAME rule as its parent.
+//
+// Rather than hand-list ~30 near-duplicate rules (and risk drift when a
+// parent's kind/bias changes), derive them from the parent rules already
+// registered above: one cell rule per (parent × cell), inheriting everything
+// but `path` + `label`. Everything downstream (aggregateReports,
+// finaliseReadTimeQuality, both read paths) iterates FIELD_RULES, so the cells
+// are picked up automatically.
+const SADD_CELLS = [
+  "female",
+  "male",
+  "sex_unknown",
+  "children_0_17",
+  "adults_18_59",
+  "elderly_60plus",
+] as const;
+
+const SADD_PARENT_LABELS = [
+  "idp_stock",
+  "new_displacements",
+  "refugees",
+  "overall_pin",
+  "overall_affected",
+] as const;
+
+for (const parentLabel of SADD_PARENT_LABELS) {
+  const parent = FIELD_RULES.find((r) => r.label === parentLabel);
+  if (!parent) {
+    throw new Error(
+      `[datapoint-aggregation] SADD parent rule "${parentLabel}" not found in FIELD_RULES`,
+    );
+  }
+  for (const cell of SADD_CELLS) {
+    FIELD_RULES.push({
+      ...parent,
+      path: `${parent.path}.breakdown.${cell}`,
+      label: `${parent.label}_${cell}`,
+    });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // I/O types
 // ────────────────────────────────────────────────────────────────────
 
