@@ -178,10 +178,10 @@ export interface FieldRule {
 
 /**
  * Aggregation registry. The base rules below cover the situation-analysis
- * dashboard's headline tiles; the SADD block after the array derives sex/age
- * cell rules from the population parents (ADR-0008), bringing the total to ~45.
- * Adding new rules is O(1) — append here and the aggregator picks them up next
- * run.
+ * dashboard's headline tiles; the block after the array registers the
+ * response-tracking sector rules and derives the sex/age SADD cell rules from
+ * their population/need/response parents (ADR-0008). Adding new rules is O(1) —
+ * append here and the aggregator picks them up next run.
  *
  * Time buckets. Our source reports are analytical and weekly, and a figure is
  * already a total over a reporting PERIOD ("600 affected between X and Y"), not
@@ -454,8 +454,8 @@ export const FIELD_RULES: FieldRule[] = [
 // figure's resolved scope + source into every cell — so a cell shares the
 // parent's incident key and must reduce with the SAME rule as its parent.
 //
-// Rather than hand-list ~30 near-duplicate rules (and risk drift when a
-// parent's kind/bias changes), derive them from the parent rules already
+// Rather than hand-list the (many) near-duplicate cell rules (and risk drift
+// when a parent's kind/bias changes), derive them from the parent rules already
 // registered above: one cell rule per (parent × cell), inheriting everything
 // but `path` + `label`. Everything downstream (aggregateReports,
 // finaliseReadTimeQuality, both read paths) iterates FIELD_RULES, so the cells
@@ -469,13 +469,53 @@ const SADD_CELLS = [
   "elderly_60plus",
 ] as const;
 
-const SADD_PARENT_LABELS = [
+// Response-tracking sector rules (ADR-0008 Phase 2). `people_targeted` /
+// `people_reached` had NO FieldRule — a gap, not a deliberate exclusion — so the
+// sectors' response figures never aggregated. Register them here so they roll up
+// (and can then be disaggregated): `targeted` = a planning-target snapshot
+// (neutral bias — a plan figure, not an over/under-prone estimate); `reached` =
+// a cumulative-reach snapshot, under-reported. Both `latest_state`, mirroring
+// `pin_<sector>`. Pushed BEFORE the SADD loop so it can find them as parents.
+const NEEDS_SECTORS = [
+  "shelter", "wash", "protection", "health", "food_security", "education",
+] as const;
+for (const sector of NEEDS_SECTORS) {
+  FIELD_RULES.push({
+    path: `needs_and_funding.${sector}.people_targeted`,
+    label: `targeted_${sector}`,
+    kind: "latest_state",
+    timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias: "neutral",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
+  });
+  FIELD_RULES.push({
+    path: `needs_and_funding.${sector}.people_reached`,
+    label: `reached_${sector}`,
+    kind: "latest_state",
+    timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
+  });
+}
+
+// Every disaggregated parent whose cells roll up: the country-wide population
+// totals + returnee stock/flow (Phase 1 + this phase), plus all per-sector need
+// and response figures (Phase 2). The loop below derives one cell rule per
+// (parent × cell), inheriting the parent's kind/bias/bucket.
+const SADD_PARENT_LABELS: string[] = [
   "idp_stock",
   "new_displacements",
   "refugees",
   "overall_pin",
   "overall_affected",
-] as const;
+  "returnee_stock",
+  "new_returns",
+  ...NEEDS_SECTORS.flatMap((s) => [`pin_${s}`, `targeted_${s}`, `reached_${s}`]),
+];
 
 for (const parentLabel of SADD_PARENT_LABELS) {
   const parent = FIELD_RULES.find((r) => r.label === parentLabel);
