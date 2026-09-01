@@ -20,10 +20,17 @@ const { resolveRequestAuthMock, prismaStub } = vi.hoisted(() => {
     __sources: sources,
     __seenExternalIds: seenExternalIds,
     dataSources: {
-      findFirst: vi.fn(
-        async ({ where }: { where: { name: string; isActive: boolean } }) =>
-          sources.find((s) => s.name === where.name && s.isActive === where.isActive) ??
-          null,
+      findMany: vi.fn(
+        async ({
+          where,
+          take,
+        }: {
+          where: { name: string; isActive: boolean };
+          take?: number;
+        }) =>
+          sources
+            .filter((s) => s.name === where.name && s.isActive === where.isActive)
+            .slice(0, take),
       ),
     },
     signals: {
@@ -119,7 +126,7 @@ describe("POST /api/x/ingest", () => {
 
   beforeEach(() => {
     resolveRequestAuthMock.mockReset();
-    prismaStub.dataSources.findFirst.mockClear();
+    prismaStub.dataSources.findMany.mockClear();
     prismaStub.signals.createMany.mockClear();
     prismaStub.__seenExternalIds.clear();
     prismaStub.__sources.length = 0;
@@ -236,6 +243,43 @@ describe("POST /api/x/ingest", () => {
     expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
   });
 
+  it("500s an ambiguous source name (two active rows), persisting nothing", async () => {
+    asPipeline();
+    prismaStub.__sources.push({
+      id: "ds_sudan_war_x_dupe",
+      name: "sudan-war-x",
+      type: "webhook",
+      isActive: true,
+    });
+    const res = await post(SAMPLE_BATCH);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Ingest failed" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("400s a timezone-less created_at rather than reading it as server-local", async () => {
+    asPipeline();
+    const res = await post({
+      ...SAMPLE_BATCH,
+      events: [{ ...SAMPLE_EVENT, created_at: "2026-09-01T10:30:13" }],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Invalid payload");
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
+  it("413s an oversized (>1 MB) but valid JSON body with a distinct message", async () => {
+    asPipeline();
+    const res = await post({
+      ...SAMPLE_BATCH,
+      events: [{ ...SAMPLE_EVENT, text: "x".repeat(1_100_000) }],
+    });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "Payload too large" });
+    expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
+  });
+
   it("400s a batch over 100 events, persisting nothing", async () => {
     asPipeline();
     const events = Array.from({ length: 101 }, (_, i) => ({
@@ -265,7 +309,7 @@ describe("POST /api/x/ingest", () => {
     const res = await post({ ...SAMPLE_BATCH, events: [] });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ created: 0, skipped: 0 });
-    expect(prismaStub.dataSources.findFirst).not.toHaveBeenCalled();
+    expect(prismaStub.dataSources.findMany).not.toHaveBeenCalled();
     expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
   });
 

@@ -52,9 +52,10 @@ export function truncateTitle(text: string, max = MAX_TITLE_LENGTH): string {
   return `${cut.trimEnd()}…`;
 }
 
-const isoDate = z
-  .string()
-  .refine((value) => !Number.isNaN(Date.parse(value)), "must be an ISO 8601 date");
+// Strict ISO 8601 with an explicit Z or numeric offset — Date.parse would
+// accept non-ISO strings and read timezone-less ones in server-local time,
+// silently skewing publishedAt (which orders the drain).
+const isoDate = z.iso.datetime({ offset: true });
 
 // Loose objects: unknown extra fields survive parsing so rawData stays
 // verbatim. Author/metrics sub-fields are lenient (nullish) — only id, url,
@@ -120,9 +121,21 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    const source = await prisma.dataSources.findFirst({
+    // `dataSources.name` carries no unique constraint, and feed resolution
+    // keys on it (ADR 0005) — with two active rows sharing the name, picking
+    // one arbitrarily would split the feed's signals across sourceIds and
+    // defeat [sourceId, externalId] dedup. Fail loudly instead.
+    const matches = await prisma.dataSources.findMany({
       where: { name: sourceName, isActive: true },
+      orderBy: { createdAt: "asc" },
+      take: 2,
     });
+    if (matches.length > 1) {
+      console.error(`[x-ingest] ambiguous source name: ${sourceName}`);
+      res.status(500).json({ error: "Ingest failed" });
+      return;
+    }
+    const source = matches[0];
     if (!source) {
       res.status(400).json({ error: "Unknown source" });
       return;
@@ -168,7 +181,9 @@ router.use(
       res.status(500).json({ error: "Ingest failed" });
       return;
     }
-    res.status(status).json({ error: "Invalid JSON body" });
+    res.status(status).json({
+      error: err.type === "entity.too.large" ? "Payload too large" : "Invalid JSON body",
+    });
   },
 );
 
