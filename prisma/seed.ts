@@ -462,7 +462,19 @@ async function seed() {
     data: { name: "field_officer", type: "manual", isActive: true },
   });
 
-  console.log("Created 4 data sources + 1 manual source");
+  // Push feed for the Sudan-war X watchlist (POST /api/x/ingest). One data
+  // source per feed, not per platform — see docs/adr/0005. Reliability stays
+  // null (ungraded): X posts are never treated as verified reporting.
+  await prisma.dataSources.create({
+    data: {
+      name: "sudan-war-x",
+      type: "webhook",
+      isActive: true,
+      infoUrl: "https://x.com",
+    },
+  });
+
+  console.log("Created 4 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();

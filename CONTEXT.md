@@ -46,6 +46,24 @@ _Avoid_: user (when the actor is specifically this audience); prefer **Account**
 The authenticated identity (email, role, session) shown in the **Portal Shell** footer when signed in (desktop always; on phones inside the **Mobile nav drawer**).
 _Avoid_: user profile (unless talking about profile data)
 
+### Signal ingestion
+
+**Signal**:
+A raw input from an external source — the first tier of the domain model (Signals → Events → Alerts → Crises). Stored with its raw payload and deduplicated per source by external id.
+_Avoid_: post, item, record (as the tier name)
+
+**Data Source**:
+The origin a Signal is attributed to. May be a *platform* polled by CLEAR's own pipelines (`dataminr`, `acled`) or a curated **Push Feed**.
+_Avoid_: provider, channel
+
+**Push Feed**:
+A Data Source whose content is *pushed to* CLEAR by an external poller, scoped to a topic/watchlist rather than a whole platform — e.g. `sudan-war-x` (Sudan-war X watchlist). Each feed is its own Data Source row; the feed relation is how its Signals are tagged and filtered.
+_Avoid_: webhook source (mechanism, not concept), platform source
+
+**X Post Signal**:
+A Signal whose raw input is a single X (Twitter) post from a **Push Feed**. Ungraded reliability by design — never treated as verified reporting.
+_Avoid_: tweet signal (in product copy)
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**
@@ -62,6 +80,10 @@ _Avoid_: user profile (unless talking about profile data)
 - Sign out is one click (no confirmation dialog) from the **Portal Shell** footer on desktop and inside the **Mobile nav drawer** on phones
 - Automated tests cover **Portal Shell**, docs page composition (including session-aware shell), and **On This Page** tree/active-section logic; visual CSS polish may be manual
 - **Sandbox** is a peer resource linked from the **Portal Shell**, not a tab inside the portal
+
+- A **Push Feed** is a **Data Source**; its Signals enter the same enrichment/event-clustering drain as any other Signal — no quarantine tier
+- **X Post Signals** are deduplicated by X post id; a re-delivered post is skipped, never refreshed (engagement metrics are a first-ingest snapshot)
+- Tagging by topic (e.g. Sudan/conflict) is expressed through the Signal→**Push Feed** relation, not a tag field
 
 ## Example dialogue
 
