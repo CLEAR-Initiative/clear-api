@@ -56,7 +56,7 @@ vi.mock("../../src/utils/request-auth.js", () => ({
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: prismaStub }));
 
 import express from "express";
-import { xIngestRouter } from "../../src/routes/x-ingest.js";
+import { xIngestRouter, truncateTitle } from "../../src/routes/x-ingest.js";
 
 const SAMPLE_EVENT = {
   id: "2094734567902953601",
@@ -269,6 +269,48 @@ describe("POST /api/x/ingest", () => {
     expect(prismaStub.signals.createMany).not.toHaveBeenCalled();
   });
 
+  it("maps every Signal column from the event", async () => {
+    asPipeline();
+    const longText =
+      "Reports of renewed shelling near the airport this morning, with residents describing sustained artillery exchanges between rival forces across several districts of the city since dawn prayers.";
+    const extraEvent = {
+      ...SAMPLE_EVENT,
+      text: longText,
+      lang: "en",
+      author: { ...SAMPLE_EVENT.author, followers: 12345 },
+    };
+    const res = await post({ ...SAMPLE_BATCH, events: [extraEvent] });
+    expect(res.status).toBe(200);
+
+    const args = prismaStub.signals.createMany.mock.calls[0]?.[0] as {
+      data: Array<Record<string, unknown>>;
+    };
+    const row = args.data[0]!;
+    expect(row.sourceId).toBe("ds_sudan_war_x");
+    expect(row.externalId).toBe("x:2094734567902953601");
+    // rawData is the event verbatim — unknown extras included, at both the
+    // event and author level.
+    expect(row.rawData).toEqual(extraEvent);
+    expect(row.publishedAt).toEqual(new Date("2026-09-01T10:30:13Z"));
+    expect(row.url).toBe(SAMPLE_EVENT.url);
+    expect(row.description).toBe(longText);
+    // Title is a word-boundary truncation of the text, capped at 100 chars.
+    const title = row.title as string;
+    expect(title.length).toBeLessThanOrEqual(100);
+    expect(title.endsWith("…")).toBe(true);
+    expect(longText.startsWith(title.slice(0, -1))).toBe(true);
+    // Nothing beyond the mapped columns — the drain owns status et al.
+    expect(Object.keys(row).sort()).toEqual([
+      "description",
+      "externalId",
+      "publishedAt",
+      "rawData",
+      "sourceId",
+      "title",
+      "url",
+    ]);
+  });
+
   it("ignores unknown extra fields at every level rather than rejecting", async () => {
     asPipeline();
     const res = await post({
@@ -285,5 +327,37 @@ describe("POST /api/x/ingest", () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ created: 1, skipped: 0 });
+  });
+});
+
+describe("truncateTitle", () => {
+  it("returns short text untouched — no ellipsis", () => {
+    expect(truncateTitle("Shelling reported in Omdurman.")).toBe(
+      "Shelling reported in Omdurman.",
+    );
+  });
+
+  it("returns text of exactly 100 chars untouched", () => {
+    const exact = "a".repeat(100);
+    expect(truncateTitle(exact)).toBe(exact);
+  });
+
+  it("cuts long text on a word boundary, ellipsis included, within 100 chars", () => {
+    const words = "conflict update ".repeat(10).trim(); // 159 chars
+    const title = truncateTitle(words);
+    expect(title.length).toBeLessThanOrEqual(100);
+    expect(title.endsWith("…")).toBe(true);
+    const withoutEllipsis = title.slice(0, -1);
+    // The cut lands after a whole word: what precedes the ellipsis is a
+    // prefix of the text that ends exactly at a word boundary.
+    expect(words.startsWith(withoutEllipsis)).toBe(true);
+    expect([" ", undefined]).toContain(words[withoutEllipsis.length]);
+    expect(withoutEllipsis.endsWith(" ")).toBe(false);
+  });
+
+  it("hard-cuts an unbroken 150-char token to 99 + ellipsis", () => {
+    const unbroken = "x".repeat(150);
+    const title = truncateTitle(unbroken);
+    expect(title).toBe(`${"x".repeat(99)}…`);
   });
 });

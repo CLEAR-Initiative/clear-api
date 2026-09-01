@@ -36,6 +36,21 @@ const router = Router();
 
 const X_INGEST_ROLES = new Set(["admin", "pipeline"]);
 const MAX_BATCH = 100;
+const MAX_TITLE_LENGTH = 100;
+
+/**
+ * Truncate post text to a Signal title of at most `max` characters,
+ * cutting on a word boundary and appending an ellipsis — but only when
+ * something was actually cut. The ellipsis counts toward the budget, so
+ * the result never exceeds `max`.
+ */
+export function truncateTitle(text: string, max = MAX_TITLE_LENGTH): string {
+  if (text.length <= max) return text;
+  const slice = text.slice(0, max);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? slice.slice(0, lastSpace) : slice.slice(0, max - 1);
+  return `${cut.trimEnd()}…`;
+}
 
 const isoDate = z
   .string()
@@ -120,7 +135,7 @@ router.post("/", async (req, res) => {
         rawData: event as Prisma.InputJsonValue,
         publishedAt: new Date(event.created_at),
         url: event.url,
-        title: event.text.length > 100 ? event.text.slice(0, 100) : event.text,
+        title: truncateTitle(event.text),
         description: event.text,
         // status intentionally omitted: defaults to NEW, the drain owns it.
       })),
