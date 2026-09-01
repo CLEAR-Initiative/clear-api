@@ -178,6 +178,58 @@ describe("aggregateReports — SADD breakdown cells (ADR-0008)", () => {
     expect(result!.data.idp_stock).toMatchObject({ value: 1000 });
     expect(result!.data.idp_stock_female).toBeNull();
   });
+
+  it("sums an additive breakdown cell across weeks, like its parent flow", () => {
+    // new_displacements is additive_count (week bucket): two different weeks
+    // sum. The children cell must reduce the same way as its parent total.
+    const rows = [
+      row("w27", "2026-07-03T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(400, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-03T00:00:00Z"),
+      row("w28", "2026-07-10T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1200, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(500, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-10T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.new_displacements).toMatchObject({ value: 2200 });
+    expect(result.data.new_displacements_children_0_17).toMatchObject({ value: 900 });
+  });
+
+  it("takes the max of an affected breakdown cell across months, like its parent", () => {
+    // overall_affected is max (month bucket): a later, narrower report must not
+    // shrink the widest reach — the male cell follows the same rule.
+    const rows = [
+      row("may", "2026-05-20T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(1_000_000, "reported", "people", "SD01"),
+            breakdown: { male: nf(480_000, "reported", "people", "SD01") },
+          },
+        },
+      }, "2026-05-31T00:00:00Z"),
+      row("jul", "2026-07-08T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(600_000, "verified", "people", "SD01"),
+            breakdown: { male: nf(300_000, "verified", "people", "SD01") },
+          },
+        },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.overall_affected).toMatchObject({ value: 1_000_000 });
+    expect(result.data.overall_affected_male).toMatchObject({ value: 480_000 });
+  });
 });
 
 describe("aggregateReports — empty input", () => {

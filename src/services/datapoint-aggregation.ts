@@ -177,9 +177,11 @@ export interface FieldRule {
 }
 
 /**
- * Aggregation registry. Fifteen fields cover the situation-analysis
- * dashboard's headline tiles; adding new rules is O(1) — append here
- * and the aggregator picks them up next run.
+ * Aggregation registry. The base rules below cover the situation-analysis
+ * dashboard's headline tiles; the SADD block after the array derives sex/age
+ * cell rules from the population parents (ADR-0008), bringing the total to ~45.
+ * Adding new rules is O(1) — append here and the aggregator picks them up next
+ * run.
  *
  * Time buckets. Our source reports are analytical and weekly, and a figure is
  * already a total over a reporting PERIOD ("600 affected between X and Y"), not
