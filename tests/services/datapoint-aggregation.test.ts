@@ -232,6 +232,56 @@ describe("aggregateReports — SADD breakdown cells (ADR-0008)", () => {
   });
 });
 
+describe("aggregateReports — response-tracking + sector SADD (ADR-0008 Phase 2)", () => {
+  it("registers targeted/reached parents (were unaggregated) per sector", () => {
+    const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+    // targeted = planning snapshot (neutral); reached = under-reported; both latest_state.
+    expect(byLabel.get("targeted_shelter")).toMatchObject({
+      path: "needs_and_funding.shelter.people_targeted",
+      kind: "latest_state", qualityBias: "neutral",
+    });
+    expect(byLabel.get("reached_health")).toMatchObject({
+      path: "needs_and_funding.health.people_reached",
+      kind: "latest_state", qualityBias: "underreport",
+    });
+    // and their SADD cells + sector-PIN + returnee cells exist
+    for (const label of [
+      "reached_health_female", "targeted_shelter_children_0_17",
+      "pin_wash_male", "returnee_stock_elderly_60plus", "new_returns_female",
+    ]) {
+      expect(byLabel.has(label)).toBe(true);
+    }
+  });
+
+  it("rolls up a reached breakdown cell latest-wins, like its parent", () => {
+    const rows = [
+      row("r-old", "2026-06-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(30_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(16_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-06-30T00:00:00Z"),
+      row("r-new", "2026-07-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(45_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(24_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-07-31T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.reached_health).toMatchObject({ value: 45_000 });      // latest month wins
+    expect(result.data.reached_health_female).toMatchObject({ value: 24_000 });
+  });
+});
+
 describe("aggregateReports — empty input", () => {
   it("returns null when no reports are supplied", () => {
     expect(aggregateReports([], null)).toBeNull();
