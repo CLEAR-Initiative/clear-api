@@ -25,6 +25,7 @@ import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { groundUploadRouter } from "./routes/ground-upload.js";
 import { groundIngestRouter } from "./routes/ground-ingest.js";
+import { xIngestRouter } from "./routes/x-ingest.js";
 import { groundMediaRouter } from "./routes/ground-media.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { logieRouter } from "./routes/logie.js";
@@ -81,6 +82,10 @@ app.use("/api/ground/upload", groundUploadRouter);
 // Live gateway ingest into the ground staging tier (JSON; machine auth,
 // consent-gated per group JID — see routes/ground-ingest.ts)
 app.use("/api/ground/ingest", groundIngestRouter);
+
+// X (Twitter) push-feed ingest into the Signals tier (JSON; machine auth,
+// per-feed data source resolution — see routes/x-ingest.ts)
+app.use("/api/x/ingest", xIngestRouter);
 
 // Live gateway media byte upload into the ground staging tier
 // (multipart/form-data; machine auth, consent-gated — see
