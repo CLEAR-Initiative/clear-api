@@ -364,6 +364,28 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     situationAnalysisById(id: String!): SituationAnalysis
 
+    """Captured infographics (charts/maps/tables/composite panels) filtered by the
+    SAME params as text — location / event type / need sector / time / kind — so a
+    figure can be attached to an answer scoped to a place + topic + period. Powers
+    figure attachment + on-demand infographic generation. Array filters match ANY
+    tag; time overlaps the window. Any authenticated content reader."""
+    reportFigures(
+      reportId: String
+      locationIds: [String!]
+      eventTypes: [String!]
+      needSectors: [String!]
+      kinds: [String!]
+      timeRangeStart: DateTime
+      timeRangeEnd: DateTime
+      """Max rows to return (1–200, default 50)."""
+      first: Int = 50
+      """Cursor for pagination: the \`id\` of the last figure from the previous
+      page. Rows after it (in the stable extractedAt/pageNumber/id order) are
+      returned. Omit for the first page; a report's figures are capped well
+      under 200 so most callers never need this."""
+      after: String
+    ): [ReportFigure!]!
+
     """True when at least one current \`aggregated_datapoints\` row
     exists for the given schema version. Used by the Dagster
     aggregation asset to distinguish first-run backfill (wide

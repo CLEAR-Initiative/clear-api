@@ -30,7 +30,8 @@ export type ActivityAction =
   | "feedback.create"
   | "dev_user.provisioned"
   | "dev_user.api_key_rotated"
-  | "user.approved";
+  | "user.approved"
+  | "user.role_updated";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter

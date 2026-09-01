@@ -27,7 +27,7 @@ try {
 
   if (stats.size === 0) {
     throw new Error(
-      "docs build wrote 0 bytes — run via tsx/node (bun 1.0 writeFileSync drops this payload)",
+      "docs build wrote 0 bytes. Bun 1.0 drops this payload; oven/bun:1 (1.2+) writes it. Keep build:docs on bun — tsx cannot resolve under oven/bun in the deploy image.",
     );
   }
 } catch (error) {

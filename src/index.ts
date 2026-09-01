@@ -20,6 +20,7 @@ import { env } from "./utils/env.js";
 import { portalRouter } from "./portal/index.js";
 import { homeRouter } from "./home/index.js";
 import { createDocsRouter } from "./docs/index.js";
+import { cssRouter } from "./ui/css-routes.js";
 import graphqlUploadExpress from "graphql-upload/graphqlUploadExpress.mjs";
 import { uploadRouter } from "./routes/upload.js";
 import { groundUploadRouter } from "./routes/ground-upload.js";
@@ -27,6 +28,7 @@ import { groundIngestRouter } from "./routes/ground-ingest.js";
 import { groundMediaRouter } from "./routes/ground-media.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { logieRouter } from "./routes/logie.js";
+import { usgsRouter } from "./routes/usgs.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 
 const app = express();
@@ -48,9 +50,14 @@ app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
 // Static assets (favicon, icons), served from <cwd>/public. cwd is the repo
 // root in dev and /app in the production image (WORKDIR /app) — the Dockerfile
 // copies public/ there so this resolves in both environments.
+// Static assets (favicon, icons), served from <cwd>/public. cwd is the repo
+// root in dev and /app in the production image (WORKDIR /app) — the Dockerfile
+// copies public/ there so this resolves in both environments.
+// Shared portal chrome CSS is a TS-generated stylesheet (not a file in
+// public/) so tokens stay the source of truth and the browser can cache
+// it across /portal, /docs, and /portal/admin.
 app.use(express.static(join(process.cwd(), "public"), { maxAge: "1d" }));
-// Satisfy browsers' implicit /favicon.ico request when no .ico file exists.
-app.get("/favicon.ico", (_req, res) => res.redirect(301, "/favicon.svg"));
+app.use("/css", cssRouter);
 
 // Better Auth handler — MUST be before express.json()
 app.all("/api/auth/*splat", toNodeHandler(auth));
@@ -93,6 +100,7 @@ app.use(
 // LogIE Blockages serve (map-ready slim GeoJSON from persisted metadata).
 // Read-only GET; auth is enforced inside the route (session or API key).
 app.use("/api/logie", logieRouter);
+app.use("/api/usgs", usgsRouter);
 
 // Health check
 app.get("/health", (_req, res) => {

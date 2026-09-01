@@ -696,6 +696,11 @@ model events {
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  /// When the real-world event actually STARTED (its onset) — distinct from
+  /// validFrom/firstSignalCreatedAt (record + signal-collection times). Parsed
+  /// from the signal text by the pipeline (regex → LLM fallback); null when no
+  /// onset could be resolved.
+  startedAt            DateTime? @map("started_at")
   isDummy              Boolean  @default(false)
 
   originId       String?    @map("origin_id")
@@ -1188,6 +1193,16 @@ model knowledgebase {
   /// extraction prompt so filter queries don't have to normalise.
   needSectors String[] @map("need_sectors")
 
+  /// Infographic capture — set only when this chunk is a figure
+  /// transcription (chart/map/table) merged into the KB rather than body
+  /// text. `figureS3Key` is the cropped image in S3 (also the join key to
+  /// `report_figures.s3_key`); `figureKind` mirrors that figure's kind. Both
+  /// null for ordinary text chunks. A retrieval hit carries these so an
+  /// on-demand infographic task can fetch + attach the source image; plain
+  /// Q&A ignores them and never touches S3.
+  figureS3Key String? @map("figure_s3_key")
+  figureKind  String? @map("figure_kind")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   /// A given (report, chunk_index) pair is unique per re-ingest — the
@@ -1385,6 +1400,74 @@ model reportDatapoint {
   @@index([schemaVersion])
   @@index([sourceId])
   @@map("report_datapoints")
+}
+
+/// One captured infographic — a chart, map, table, or composite "dashboard"
+/// panel — cropped from a report page. The image asset store behind the
+/// infographic-capture feature (see
+/// `clear-context-pipeline/docs/infographic-capture-spec.md`). Each row is a
+/// cropped image in S3 tagged with the SAME retrieval params as knowledge-base
+/// chunks (location / event type / need sector / time), so figures are
+/// filterable and attachable alongside text. The figure's TRANSCRIPTION (the
+/// numbers read out of it) lives as a normal knowledge-base chunk + report
+/// datapoint; this table holds the visual + its metadata.
+model reportFigure {
+  id String @id @default(cuid())
+
+  /// Report dedup key — matches `knowledgebase.report_id` / `reportDatapoint.report_id`.
+  reportId    String @map("report_id")
+  reportTitle String @map("report_title")
+  sourceUrl   String @map("source_url")
+
+  /// 1-indexed source page (provenance).
+  pageNumber Int @map("page_number")
+  /// Source-page bounding box of the crop as `[x0, top, x1, bottom]` in PDF
+  /// points; empty on the full-page fallback.
+  bbox Float[] @default([])
+  /// True when the whole page was stored because region detection was uncertain.
+  isFullPage Boolean @default(false) @map("is_full_page")
+
+  /// The cropped image in S3 (`kb/figures/<iso3>/<report_id>/<page>-<hash>.png`).
+  s3Key String @map("s3_key")
+
+  /// `chart` | `map` | `table` | `infographic` (composite panel). `photo` is kept
+  /// but tagged non-data; `logo` is dropped and never stored.
+  kind String
+
+  /// From the vision pass.
+  title       String?
+  description String?
+  /// Full structured transcription (rows / nested groups / callouts) as emitted
+  /// by the vision pass — the machine-readable form behind `description`.
+  transcription Json?
+
+  /// The report's PUBLISHER source, resolved to a `data_sources` row id via
+  /// `resolveDataSource` — attribution, mirroring `reportDatapoint.source_id`.
+  /// A plain column (not a Prisma relation) to keep this migration self-contained;
+  /// join to `data_sources` in the resolver when a name/grade is needed.
+  sourceId String? @map("source_id")
+
+  /// Retrieval filters — inherited from the figure's transcription enrichment,
+  /// identical to a knowledge-base chunk's tags.
+  locationIds    String[]  @map("location_ids")
+  locationPcodes String[]  @map("location_pcodes")
+  eventTypes     String[]  @map("event_types")
+  needSectors    String[]  @map("need_sectors")
+  timeRangeStart DateTime? @map("time_range_start")
+  timeRangeEnd   DateTime? @map("time_range_end")
+
+  extractedByModel String   @map("extracted_by_model")
+  extractedAt      DateTime @default(now()) @map("extracted_at")
+
+  /// One row per (report, page, image) — re-ingesting a report replaces its figures.
+  @@unique([reportId, pageNumber, s3Key])
+  @@index([reportId])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([needSectors], type: Gin)
+  @@index([kind])
+  @@index([sourceId])
+  @@map("report_figures")
 }
 
 /// Pre-computed roll-ups of `report_datapoints` grouped by

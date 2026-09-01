@@ -1,3 +1,6 @@
+import { renderApisecThemeProperties, renderFontLinks, renderThemeRoot } from "../ui/theme.js";
+import { renderIconLinks } from "../ui/icons.js";
+
 export function renderHomePage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -6,32 +9,11 @@ export function renderHomePage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CLEAR API — by NRC</title>
   <meta name="description" content="CLEAR API — the developer interface to the CLEAR humanitarian data commons. One GraphQL endpoint for verified crisis signals, events, alerts, and the geography they happen in. Built and operated by NRC.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  ${renderFontLinks()}
   <style>
-    :root {
-      --bg: #0a0a0b;
-      --surface: #141417;
-      --surface-2: #1b1b1f;
-      --border: #26262b;
-      --border-hover: #3a3a42;
-      --accent: #f2612a;
-      --accent-hover: #ff6a33;
-      --on-accent: #0a0a0b;
-      --text: #f5f5f6;
-      --muted: #9a9ca3;
-      --label: #75777e;
-      --code-bg: #0e0e10;
-      --green: #4ade80;
-      --yellow: #fbbf24;
-      --red: #f87171;
-      --radius: 10px;
-      --font: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-      --mono: 'JetBrains Mono', "SF Mono", "Fira Code", ui-monospace, Consolas, monospace;
-    }
+    ${renderThemeRoot("marketing")}
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
@@ -55,6 +37,7 @@ export function renderHomePage(): string {
     .nav-links a:hover { color: var(--text); text-decoration: none; }
     .nav-cta { border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.9rem !important; color: var(--text) !important; }
     .nav-cta:hover { border-color: var(--accent); color: var(--accent) !important; }
+    .nav-signin { color: var(--text) !important; }
 
     /* Layout */
     .wrap { max-width: 1140px; margin: 0 auto; padding: 0 2rem; }
@@ -140,7 +123,7 @@ export function renderHomePage(): string {
       .hero { grid-template-columns: 1fr; gap: 2.5rem; padding: 3.5rem 0 2.5rem; }
       .hero h1 { font-size: 2.5rem; }
       .doors { grid-template-columns: 1fr; }
-      .nav-links a:not(.nav-cta) { display: none; }
+      .nav-links a:not(.nav-cta):not(.nav-signin) { display: none; }
     }
   </style>
 </head>
@@ -151,6 +134,7 @@ export function renderHomePage(): string {
       <a href="/docs">Docs</a>
       <a href="/graphql" target="_blank" rel="noopener noreferrer">Sandbox</a>
       <a href="/portal">Portal</a>
+      <a href="/portal/login" class="nav-signin">Sign in</a>
       <a href="/portal" class="nav-cta">Get an API key</a>
     </div>
   </nav>
@@ -165,7 +149,7 @@ export function renderHomePage(): string {
           <a href="/docs#guide" class="btn btn-primary">Read the Guide &rarr;</a>
           <a href="/graphql" class="btn btn-outline" target="_blank" rel="noopener noreferrer">Open the Sandbox</a>
         </div>
-        <p class="terminal-hint"><span class="prompt">$</span> curl api.clearinitiative.io/graphql</p>
+        <p class="terminal-hint"><span class="prompt">$</span> curl https://api.clearinitiative.io/graphql</p>
       </div>
 
       <div class="panel">
@@ -197,11 +181,7 @@ export function renderHomePage(): string {
     <!-- ============ THE CLEAR API · three-tier master/detail (ported from ClearApiSection) ============ -->
     <style>
     .apisec{
-      --bg:#0a0a0a; --bg-2:#111111; --bg-3:#161616;
-      --line:#212121; --line-2:#2c2c2c;
-      --ink:#f4f4f3; --ink-2:#b8b8b6; --ink-3:#7a7a78; --ink-4:#4a4a48;
-      --orange:#f2612a; --orange-2:#ff6a33;
-      --orange-dim:rgba(242,97,42,.13); --orange-line:rgba(242,97,42,.4);
+      ${renderApisecThemeProperties()}
       border-top:1px solid var(--line); padding:104px 0 108px; background:var(--bg); color:var(--ink);
     }
     .apisec *{ box-sizing:border-box; }
@@ -263,7 +243,7 @@ export function renderHomePage(): string {
         </div>
         <div class="foot">
           <span class="pulse"></span>
-          <span>One GraphQL endpoint touches every tier &middot; <span class="ep">POST api.clearinitiative.io/graphql</span></span>
+          <span>One GraphQL endpoint touches every tier &middot; <span class="ep">POST https://api.clearinitiative.io/graphql</span></span>
           <a href="/docs#guide">Read the guide &rarr;</a>
         </div>
       </div>
@@ -273,13 +253,13 @@ export function renderHomePage(): string {
       var TIERS = [
         {
           ix:"01 · Detection", glyph:"◈", name:"Detection",
-          line:"Raw signals captured and verified into events.",
-          desc:"Crisis signals are captured, deduplicated and verified into structured records — what happened, where, and how severe. This is the bottom of the graph: the raw material everything else is built from.",
+          line:"Source observations captured and verified into events.",
+          desc:"Crisis signals are captured, deduplicated and verified into structured records — what happened, where, and how severe. This is the bottom of the graph: the source material everything else is built from.",
           includes:[
-            ["SIGNAL","A single raw observation — from satellite, field reports, social, or conflict feeds, or filed manually."],
+            ["SIGNAL","A single source observation — from satellite, field reports, social, or conflict feeds, or filed manually."],
             ["EVENT","A cluster of related signals, classified by disaster type and bound to a district."]
           ],
-          graphic:'<svg viewBox="0 0 460 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Raw signals converging into one verified event">'+
+          graphic:'<svg viewBox="0 0 460 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Source observations converging into one verified event">'+
             '<line x1="60" y1="40" x2="230" y2="100" stroke="#2c2c2c"/><line x1="54" y1="96" x2="230" y2="100" stroke="#2c2c2c"/><line x1="72" y1="158" x2="230" y2="100" stroke="#2c2c2c"/><line x1="150" y1="30" x2="230" y2="100" stroke="#2c2c2c"/><line x1="150" y1="170" x2="230" y2="100" stroke="#2c2c2c"/>'+
             '<line x1="230" y1="100" x2="398" y2="100" stroke="#f2612a" stroke-opacity=".5" stroke-dasharray="4 5"/>'+
             '<circle cx="60" cy="40" r="5" fill="#7fb0ff"/><circle cx="54" cy="96" r="5" fill="#7adfa0"/><circle cx="72" cy="158" r="5" fill="#b8b8b6"/><circle cx="150" cy="30" r="5" fill="#7adfa0"/><circle cx="150" cy="170" r="5" fill="#7fb0ff"/>'+
@@ -384,12 +364,12 @@ export function renderHomePage(): string {
         <div class="section-head">
           <span class="eyebrow">02 &middot; The data</span>
           <h2>Five tiers. <span class="dim">One graph.</span></h2>
-          <p>Raw observations flow in at the bottom and are grouped, classified, and escalated into briefings at the top. Almost every query you write touches one of these.</p>
+          <p>Source observations flow in at the bottom and are grouped, classified, and escalated into briefings at the top. Almost every query you write touches one of these.</p>
         </div>
 
         <div class="tiers">
           <div class="tier"><div class="t-label">Location</div><div class="t-desc">The administrative hierarchy &mdash; <strong>country &rarr; state &rarr; district &rarr; point</strong>. Everything else hangs off this tree.</div></div>
-          <div class="tier"><div class="t-label">Signal</div><div class="t-desc">A single <strong>raw observation</strong> from satellite, field reports, social, or conflict feeds &mdash; or filed manually.</div></div>
+          <div class="tier"><div class="t-label">Signal</div><div class="t-desc">A single <strong>source observation</strong> from satellite, field reports, social, or conflict feeds &mdash; or filed manually.</div></div>
           <div class="tier"><div class="t-label">Event</div><div class="t-desc">A <strong>cluster of related signals</strong>, classified by disaster type and bound to a district.</div></div>
           <div class="tier"><div class="t-label">Alert</div><div class="t-desc">A <strong>severe event escalated</strong> for notification and delivered to subscribers.</div></div>
           <div class="tier"><div class="t-label">Crisis</div><div class="t-desc">Curated events <strong>enriched by an LLM</strong> into a summary, forward scenarios, and a needs analysis.</div></div>
@@ -450,10 +430,12 @@ export function renderHomePage(): string {
           <a href="/docs#guide">Guide</a>
           <a href="/graphql" target="_blank" rel="noopener noreferrer">Sandbox</a>
           <a href="/portal">Portal</a>
+          <a href="/portal/login">Sign in</a>
+          <a href="https://github.com/CLEAR-Initiative" target="_blank" rel="noopener">GitHub</a>
           <a href="https://clearinitiative.io" target="_blank" rel="noopener">clearinitiative.io</a>
         </div>
       </div>
-      <p class="footer-meta">Alpha &middot; Live in Sudan &middot; GraphQL &middot; github.com/CLEAR-Initiative &middot; MIT</p>
+      <p class="footer-meta">Alpha &middot; Live in Sudan &middot; GraphQL &middot; <a href="https://github.com/CLEAR-Initiative" target="_blank" rel="noopener">github.com/CLEAR-Initiative</a> &middot; MIT</p>
     </div>
   </footer>
 </body>

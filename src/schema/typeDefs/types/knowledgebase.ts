@@ -61,6 +61,13 @@ export const knowledgebaseTypeDef = gql`
     """NRC SAF sectors: Shelter, WASH, Protection, Health,
     Food Security, Education."""
     needSectors: [String!]!
+
+    """Infographic capture: set only when this chunk is a figure
+    transcription merged into the KB. \`figureS3Key\` is the cropped
+    image's S3 key (join key to \`report_figures\`); \`figureKind\` is
+    that figure's kind. Both null for ordinary text chunks."""
+    figureS3Key: String
+    figureKind: String
   }
 
   """Result of a knowledgebase upsert — summary counts for logging."""
@@ -92,6 +99,13 @@ export const knowledgebaseTypeDef = gql`
     locationIds: [String!]!
     eventTypes: [String!]!
     needSectors: [String!]!
+    """When this hit is a figure transcription, the cropped image's S3 key
+    and its kind (chart/map/table/infographic/photo) — null for text hits.
+    A consumer generating an infographic fetches this image and attaches it
+    to the LLM call; plain Q&A ignores it. Kept as a lightweight REFERENCE
+    (no bytes) so retrieval never pays S3 cost."""
+    figureS3Key: String
+    figureKind: String
   }
 
   """Half-open date window (from inclusive, to exclusive) used to
@@ -144,6 +158,13 @@ export const knowledgebaseTypeDef = gql`
   input KnowledgebaseFilters {
     """Match rows tagged with ANY of these \`locations.id\` values."""
     locationIds: [String!]
+    """Scope to one country: keep only chunks tagged with a location in this
+    A0's subtree (itself or any descendant admin unit). Chunk locations are
+    resolved to leaf admin ids, so a bare \`locationIds=[A0]\` would miss them —
+    this expands the A0 to its subtree server-side via the locations tree. The
+    situation-analysis RAG uses this so a country's analysis never cites reports
+    about another country."""
+    countryLocationId: String
     """Match rows tagged with ANY of these event-type tags."""
     eventTypes: [String!]
     """Match rows tagged with ANY of these SAF sectors."""

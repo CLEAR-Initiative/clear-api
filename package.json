@@ -16,6 +16,8 @@
     "test:coverage": "vitest run --coverage",
     "test:ci": "SKIP_DB_TESTS=1 vitest run",
     "test:ci:coverage": "SKIP_DB_TESTS=1 vitest run --coverage",
+    "smoke": "vitest run tests/smoke",
+    "smoke:http": "SMOKE_HTTP=1 vitest run tests/smoke/http-smoke.test.ts",
     "prepare": "husky"
   },
   "prisma": {

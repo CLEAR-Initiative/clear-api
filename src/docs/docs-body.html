@@ -6,13 +6,13 @@
         <p>This is the front door. If you&rsquo;ve never touched the CLEAR API before, read this page top to bottom. By the end you&rsquo;ll understand how the data is shaped and you&rsquo;ll have pulled real records with your own API key. Everything else in these docs &mdash; the <a href="#queries">Queries</a>, <a href="#mutations">Mutations</a>, and <a href="#types">Types</a> reference &mdash; is there to look things up <em>after</em> you understand the shape of the system.</p>
 
         <h2 id="guide-model">1. The mental model</h2>
-        <p>CLEAR is a five-tier graph. Raw observations flow in at the bottom and are progressively grouped, classified, and escalated into human-readable advisories. Almost every query you write touches one of these five tiers:</p>
+        <p>CLEAR is a five-tier graph. Source observations flow in at the bottom and are progressively grouped, classified, and escalated into human-readable advisories. Almost every query you write touches one of these five tiers:</p>
 
         <table class="feature-table">
           <thead><tr><th>Tier</th><th>What it represents</th></tr></thead>
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
-            <tr><td><a href="#type-signal">Signal</a></td><td>A single raw observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer.</td></tr>
+            <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
             <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
@@ -84,7 +84,7 @@
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
-        <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the raw observations underneath, or its <code>alerts</code> to see what was escalated from it.</p>
+        <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the source observations underneath (title, location, severity &mdash; not the upstream source payload), or its <code>alerts</code> to see what was escalated from it.</p>
         <div class="notice notice-info">
           The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
         </div>
@@ -111,7 +111,7 @@
         <table class="feature-table">
           <thead><tr><th>Feature</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td><a href="#type-signal">Signals</a></td><td>Access raw data items collected from data sources, with location links and metadata.</td></tr>
+            <tr><td><a href="#type-signal">Signals</a></td><td>Query verified source observations with location links and metadata. Upstream source payloads are not returned.</td></tr>
             <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent narratives, with location, population, and type data.</td></tr>
             <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
@@ -576,6 +576,17 @@ with the caller's locale translation like every other read — the
 pipeline calls it as `en` and gets canonical text back. Requires any
 authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>reportFigures</code></td>
+    <td><code>[ReportFigure!]!</code></td>
+    <td>Captured infographics (charts/maps/tables/composite panels) filtered by the
+SAME params as text — location / event type / need sector / time / kind — so a
+figure can be attached to an answer scoped to a place + topic + period. Powers
+figure attachment + on-demand infographic generation. Array filters match ANY
+tag; time overlaps the window. Any authenticated content reader.<div class="field-args"><span class="arg"><code>reportId: String</code></span><span class="arg"><code>locationIds: [String!]</code></span><span class="arg"><code>eventTypes: [String!]</code></span><span class="arg"><code>needSectors: [String!]</code></span><span class="arg"><code>kinds: [String!]</code></span><span class="arg"><code>timeRangeStart: DateTime</code></span><span class="arg"><code>timeRangeEnd: DateTime</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–200, default 50).</span><span class="arg"><code>after: String</code> — Cursor for pagination: the `id` of the last figure from the previous
+page. Rows after it (in the stable extractedAt/pageNumber/id order) are
+returned. Omit for the first page; a report's figures are capped well
+under 200 so most callers never need this.</span></div></td>
+  </tr><tr>
     <td><code>hasAggregatedDatapoints</code></td>
     <td><code>Boolean!</code></td>
     <td>True when at least one current `aggregated_datapoints` row
@@ -702,6 +713,16 @@ into the approved collection — which fires Exponential's welcome
 automation. The local role flip is authoritative; CRM updates are
 best-effort and surface as fields on the result so the admin UI
 can offer a retry. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
+  </tr><tr id="mutation-updateuserrole">
+    <td><code>updateUserRole</code></td>
+    <td><code>User!</code></td>
+    <td>Set a user's global platform role (`viewer`, `analyst`, or
+`admin`). Does not approve pending users — call `approveUser`
+first. Requires global `admin`. Cannot demote yourself or the
+last remaining admin. This is the product write path for the
+Users-tab dropdown on the operator app; the Developer Portal
+HTML form hits the same service via POST
+`/portal/admin/users/role`.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: GlobalRole!</code></span></div></td>
   </tr><tr id="mutation-requestemailverification">
     <td><code>requestEmailVerification</code></td>
     <td><code>Boolean!</code></td>
@@ -1154,6 +1175,11 @@ previous current row for the same bucket in the same
 transaction. History rows are preserved. Admin / pipeline only —
 the Dagster `weekly_situation_analyses` asset is the primary
 caller.<div class="field-args"><span class="arg"><code>input: UpsertSituationAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertreportfigures">
+    <td><code>upsertReportFigures</code></td>
+    <td><code>UpsertReportFiguresResult!</code></td>
+    <td>Replace a report's captured infographics (image asset store). Pipeline-only;
+delete-then-insert like `upsertReportDatapoints`.<div class="field-args"><span class="arg"><code>input: UpsertReportFiguresInput!</code></span></div></td>
   </tr><tr id="mutation-refreshaggregateddatapoints">
     <td><code>refreshAggregatedDatapoints</code></td>
     <td><code>RefreshAggregatedDatapointsResult!</code></td>
@@ -1285,7 +1311,8 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
         <p>All types in the schema, auto-generated from the running server.</p>
         <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
-ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
+enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
@@ -1573,6 +1600,11 @@ Ignored for platform-level callers.</td>
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>String</code></td>
+    <td>When the real-world event started (onset), parsed from signal text.
+ISO-8601; null/omitted when no onset could be resolved.</td>
+  </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -1808,7 +1840,7 @@ no-op instead of falsely stamping lastRevisedAt on a brand-new signal.</td>
   </tr><tr>
     <td><code>rawData</code></td>
     <td><code>JSON!</code></td>
-    <td>—</td>
+    <td>Write-only ingest payload stored internally. Not exposed on Signal queries.</td>
   </tr><tr>
     <td><code>rawS3Key</code></td>
     <td><code>String</code></td>
@@ -2169,12 +2201,32 @@ later re-embed backfill can filter by (provider, model).</td>
     <td><code>[String!]!</code></td>
     <td>NRC SAF sectors: Shelter, WASH, Protection, Health,
 Food Security, Education.</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Infographic capture: set only when this chunk is a figure
+transcription merged into the KB. `figureS3Key` is the cropped
+image's S3 key (join key to `report_figures`); `figureKind` is
+that figure's kind. Both null for ordinary text chunks.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-knowledgebasefilters"><code>KnowledgebaseFilters</code> <span class="type-badge">input</span></h3><p>Optional filters applied BEFORE the retrieval step — array
 filters use overlap semantics (any-of), the time range uses
 inclusive intersection. Leave a field null to skip that filter.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]</code></td>
     <td>Match rows tagged with ANY of these `locations.id` values.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String</code></td>
+    <td>Scope to one country: keep only chunks tagged with a location in this
+A0's subtree (itself or any descendant admin unit). Chunk locations are
+resolved to leaf admin ids, so a bare `locationIds=[A0]` would miss them —
+this expands the A0 to its subtree server-side via the locations tree. The
+situation-analysis RAG uses this so a country's analysis never cites reports
+about another country.</td>
   </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
@@ -2222,6 +2274,66 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
     <td><code>tagUserIds</code></td>
     <td><code>[String!]</code></td>
     <td>User IDs to tag in the reply.</td>
+  </tr></tbody></table><h3 id="type-reportfigureinput"><code>ReportFigureInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bbox</code></td>
+    <td><code>[Float!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isFullPage</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -2436,6 +2548,11 @@ Location correction — one without the other is rejected.</td>
     <td><code>lastSignalCreatedAt</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>String</code></td>
+    <td>When the real-world event started (onset), parsed from signal text.
+ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
@@ -2771,6 +2888,26 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td>The report's publisher source (a `data_sources` id), resolved by the
 pipeline via `resolveDataSource`. Null until source attribution backfills;
 a figure's own cited source lives per-figure inside `data`. See clear-context-pipeline ADR-0004.</td>
+  </tr></tbody></table><h3 id="type-upsertreportfiguresinput"><code>UpsertReportFiguresInput</code> <span class="type-badge">input</span></h3><p>Replace-on-reingest payload for one report's figures (pipeline-only).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>[ReportFigureInput!]!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisinput"><code>UpsertSituationAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>countryLocationId</code></td>
     <td><code>String!</code></td>
@@ -3448,6 +3585,12 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the real-world event actually STARTED (its onset) — parsed from the
+signal text, distinct from `validFrom`/`firstSignalCreatedAt` (record +
+signal-collection times). Null when no onset could be resolved.</td>
+  </tr><tr>
     <td><code>originLocation</code></td>
     <td><code>Location</code></td>
     <td>Origin location of the event.</td>
@@ -4054,6 +4197,18 @@ to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032.</td>
     <td><code>needSectors</code></td>
     <td><code>[String!]!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String</code></td>
+    <td>When this hit is a figure transcription, the cropped image's S3 key
+and its kind (chart/map/table/infographic/photo) — null for text hits.
+A consumer generating an infographic fetches this image and attaches it
+to the LLM call; plain Q&amp;A ignores it. Kept as a lightweight REFERENCE
+(no bytes) so retrieval never pays S3 cost.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-knowledgebaseingestjob"><code>KnowledgebaseIngestJob</code> <span class="type-badge">object</span></h3><p>One Dagster run kicked off by `uploadKnowledgebaseDocument`.
 Returned by both the mutation (initial launch) and the polling
 query. `reportId` / `reportTitle` / `s3Key` are populated from
@@ -4613,6 +4768,90 @@ ADR-0004.</td>
 Those were never re-extracted, so clients must keep a fallback - deriving a
 publisher from the `sourceUrl` host yields the aggregator (&quot;reliefweb.int&quot;),
 not the publisher, so it is a label of last resort.</td>
+  </tr></tbody></table><h3 id="type-reportfigure"><code>ReportFigure</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>1-indexed source page.</td>
+  </tr><tr>
+    <td><code>bbox</code></td>
+    <td><code>[Float!]!</code></td>
+    <td>Source-page bounding box [x0, top, x1, bottom] in PDF points; empty on full-page fallback.</td>
+  </tr><tr>
+    <td><code>isFullPage</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>S3 key of the cropped image.</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>chart | map | table | infographic | photo (logos are dropped, not stored).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>Structured transcription (rows / nested groups / callouts) from the vision pass.</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>Publishing source (data_sources id) for attribution.</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>extractedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-rotatedevuserapikeyresult"><code>RotateDevUserApiKeyResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `rotateDevUserApiKey` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -4625,7 +4864,8 @@ not the publisher, so it is a label of last resort.</td>
     <td><code>notificationEmailSent</code></td>
     <td><code>Boolean!</code></td>
     <td>True when the rotation-notice email was successfully handed off.</td>
-  </tr></tbody></table><h3 id="type-signal"><code>Signal</code> <span class="type-badge">object</span></h3><p>A signal derived from a data source.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-signal"><code>Signal</code> <span class="type-badge">object</span></h3><p>A source observation ingested from a data source or filed manually.
+Upstream source payloads are stored internally and are not returned on this type.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -5041,6 +5281,14 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>Boolean!</code></td>
     <td>`true` when the mutation replaced a previously extracted row,
 `false` when it created the first row for the report.</td>
+  </tr></tbody></table><h3 id="type-upsertreportfiguresresult"><code>UpsertReportFiguresResult</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of figures written.</td>
   </tr></tbody></table><h3 id="type-upsertsituationanalysisresult"><code>UpsertSituationAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertSituationAnalysis` mutation — reports
 whether the write superseded a previously-current row.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>situationAnalysisId</code></td>
@@ -5113,7 +5361,7 @@ the commenter's email.</p><table class="ref-table"><thead><tr><th>Field</th><th>
   </tr><tr>
     <td><code>role</code></td>
     <td><code>String</code></td>
-    <td>User role: viewer, editor, or admin. Null when caller is not
+    <td>User role: viewer, analyst, admin, or pending. Null when caller is not
 authorised to see this user's role.</td>
   </tr><tr>
     <td><code>isActive</code></td>
