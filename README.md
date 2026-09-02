@@ -41,8 +41,9 @@ cp .env.example .env
 # Edit .env with your DATABASE_URL and generate a secret:
 #   openssl rand -base64 32
 
-# Create database tables and generate Prisma client
-bunx prisma migrate dev
+# Apply existing migrations and generate the Prisma client
+bunx prisma migrate deploy
+bunx prisma generate
 
 # Start development server
 bun dev
@@ -71,8 +72,15 @@ Prisma manages the schema and migrations. The crisis enrichment fields
 in `prisma/migrations/` for history.
 
 ```bash
-# After editing prisma/schema.prisma:
-bunx prisma migrate dev --name <description>
+# On a shared database (team dev, staging, prod), USE ONLY:
+bunx prisma migrate deploy
+
+# After editing prisma/schema.prisma, run once on your local machine:
+bunx prisma migrate dev --create-only --name <description>
+# Then review prisma/migrations/<timestamp>_<description>/migration.sql
+# Prisma can't see `knowledgebase`'s HNSW/GIN indexes or trigger and may propose
+# dropping them on any unrelated schema change. Remove any such lines, then run:
+bunx prisma migrate deploy
 
 # Regenerate the typed client:
 bunx prisma generate

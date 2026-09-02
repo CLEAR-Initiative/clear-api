@@ -114,6 +114,172 @@ describe("FIELD_RULES registry", () => {
     const labels = FIELD_RULES.map((r) => r.label);
     expect(new Set(labels).size).toBe(labels.length);
   });
+
+  it("SADD cells are derived per (parent × cell), inheriting the parent's kind/bias (ADR-0008)", () => {
+    const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+    // A latest_state parent's cells stay latest_state + underreport.
+    expect(byLabel.get("idp_stock_female")?.path).toBe("displacement.idp_stock.breakdown.female");
+    expect(byLabel.get("idp_stock_female")?.kind).toBe("latest_state");
+    expect(byLabel.get("idp_stock_female")?.qualityBias).toBe("underreport");
+    // An additive_count parent's cells stay additive_count.
+    expect(byLabel.get("new_displacements_children_0_17")?.kind).toBe("additive_count");
+    // A max parent's cells stay max.
+    expect(byLabel.get("overall_affected_male")?.kind).toBe("max");
+    // Every (parent × cell) is present: 5 parents × 6 cells = 30 rules.
+    const parents = ["idp_stock", "new_displacements", "refugees", "overall_pin", "overall_affected"];
+    const cells = ["female", "male", "sex_unknown", "children_0_17", "adults_18_59", "elderly_60plus"];
+    for (const p of parents) {
+      for (const c of cells) expect(byLabel.has(`${p}_${c}`)).toBe(true);
+    }
+  });
+});
+
+describe("aggregateReports — SADD breakdown cells (ADR-0008)", () => {
+  it("rolls up a breakdown cell latest-wins, like its parent stock", () => {
+    // Cells carry the parent's scope (propagated in the pipeline), so they
+    // share its incident key and reduce with the same rule (latest_state here).
+    const rows = [
+      row("r-old", "2026-07-01T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { female: nf(520, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-01T00:00:00Z"),
+      row("r-new", "2026-07-08T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1200, "reported", "people", "kordofan"),
+            breakdown: { female: nf(640, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan");
+    expect(result!.data.idp_stock).toMatchObject({ value: 1200 });
+    expect(result!.data.idp_stock_female).toMatchObject({ value: 640 });
+  });
+
+  it("drops a breakdown cell with no scope (never rolled up)", () => {
+    // A cell the pipeline failed to scope must be excluded — matches the
+    // figure-scope rule for the parent. (Here the female cell carries no scope.)
+    const rows = [
+      row("r1", "2026-07-01T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { female: nf(520) },
+          },
+        },
+      }, "2026-07-01T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan");
+    expect(result!.data.idp_stock).toMatchObject({ value: 1000 });
+    expect(result!.data.idp_stock_female).toBeNull();
+  });
+
+  it("sums an additive breakdown cell across weeks, like its parent flow", () => {
+    // new_displacements is additive_count (week bucket): two different weeks
+    // sum. The children cell must reduce the same way as its parent total.
+    const rows = [
+      row("w27", "2026-07-03T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(400, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-03T00:00:00Z"),
+      row("w28", "2026-07-10T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1200, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(500, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-10T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.new_displacements).toMatchObject({ value: 2200 });
+    expect(result.data.new_displacements_children_0_17).toMatchObject({ value: 900 });
+  });
+
+  it("takes the max of an affected breakdown cell across months, like its parent", () => {
+    // overall_affected is max (month bucket): a later, narrower report must not
+    // shrink the widest reach — the male cell follows the same rule.
+    const rows = [
+      row("may", "2026-05-20T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(1_000_000, "reported", "people", "SD01"),
+            breakdown: { male: nf(480_000, "reported", "people", "SD01") },
+          },
+        },
+      }, "2026-05-31T00:00:00Z"),
+      row("jul", "2026-07-08T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(600_000, "verified", "people", "SD01"),
+            breakdown: { male: nf(300_000, "verified", "people", "SD01") },
+          },
+        },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.overall_affected).toMatchObject({ value: 1_000_000 });
+    expect(result.data.overall_affected_male).toMatchObject({ value: 480_000 });
+  });
+});
+
+describe("aggregateReports — response-tracking + sector SADD (ADR-0008 Phase 2)", () => {
+  it("registers targeted/reached parents (were unaggregated) per sector", () => {
+    const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+    // targeted = planning snapshot (neutral); reached = under-reported; both latest_state.
+    expect(byLabel.get("targeted_shelter")).toMatchObject({
+      path: "needs_and_funding.shelter.people_targeted",
+      kind: "latest_state", qualityBias: "neutral",
+    });
+    expect(byLabel.get("reached_health")).toMatchObject({
+      path: "needs_and_funding.health.people_reached",
+      kind: "latest_state", qualityBias: "underreport",
+    });
+    // and their SADD cells + sector-PIN + returnee cells exist
+    for (const label of [
+      "reached_health_female", "targeted_shelter_children_0_17",
+      "pin_wash_male", "returnee_stock_elderly_60plus", "new_returns_female",
+    ]) {
+      expect(byLabel.has(label)).toBe(true);
+    }
+  });
+
+  it("rolls up a reached breakdown cell latest-wins, like its parent", () => {
+    const rows = [
+      row("r-old", "2026-06-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(30_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(16_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-06-30T00:00:00Z"),
+      row("r-new", "2026-07-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(45_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(24_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-07-31T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.reached_health).toMatchObject({ value: 45_000 });      // latest month wins
+    expect(result.data.reached_health_female).toMatchObject({ value: 24_000 });
+  });
 });
 
 describe("aggregateReports — empty input", () => {
