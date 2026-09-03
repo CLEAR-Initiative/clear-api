@@ -89,7 +89,7 @@ interface UpdateSignalContentInput {
   rawData: Record<string, unknown>;
   url?: string;
   title?: string;
-  description?: string;
+  description?: string | null;
   severity?: number;
   casualties?: number;
   originId?: string;
