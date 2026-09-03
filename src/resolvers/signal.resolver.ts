@@ -595,6 +595,10 @@ export const signalResolvers = {
         return existing;
       }
 
+      // existing.contentHash null means no baseline to compare against —
+      // seed it without stamping lastRevisedAt, same as a freshly created signal.
+      const isFirstHashSeed = existing.contentHash === null;
+
       const locationId = await resolveLocationId(context, {
         locationId: input.locationId,
         lat: input.lat,
@@ -616,7 +620,7 @@ export const signalResolvers = {
           locationId,
           geoparsedData: input.geoparsedData as InputJsonValue | undefined,
           contentHash: input.contentHash,
-          lastRevisedAt: new Date(),
+          ...(isFirstHashSeed ? {} : { lastRevisedAt: new Date() }),
         },
       });
     },

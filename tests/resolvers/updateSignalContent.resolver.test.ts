@@ -121,7 +121,7 @@ describeIfDb("updateSignalContent", () => {
   });
 
   it("writes content fields and sets lastRevisedAt when contentHash differs", async () => {
-    const created = await createTestSignal({ rawData: { figure: 1000 }, severity: 2 });
+    const created = await createTestSignal({ contentHash: "baseline", rawData: { figure: 1000 }, severity: 2 });
     const ctx = buildContext({ id: viewerUserId, role: "admin" });
 
     const updated = await signalResolvers.Mutation.updateSignalContent(
@@ -185,6 +185,29 @@ describeIfDb("updateSignalContent", () => {
 
     expect(updated.lastRevisedAt).toBe(null);
     expect(updated.contentHash).toBe("seeded-hash-1");
+  });
+
+  it("seeds a legacy null contentHash without stamping lastRevisedAt, then stamps it on the next real revision", async () => {
+    const created = await createTestSignal(); // no contentHash → null, simulates a pre-existing legacy row
+    expect(created.contentHash).toBe(null);
+    const ctx = buildContext({ id: viewerUserId, role: "admin" });
+
+    const seeded = await signalResolvers.Mutation.updateSignalContent(
+      null,
+      { input: { id: created.id, contentHash: "first-real-hash", rawData: { test: true }, severity: 4 } },
+      ctx,
+    );
+    expect(seeded.contentHash).toBe("first-real-hash");
+    expect(seeded.severity).toBe(4);
+    expect(seeded.lastRevisedAt).toBe(null);
+
+    const revised = await signalResolvers.Mutation.updateSignalContent(
+      null,
+      { input: { id: created.id, contentHash: "second-real-hash", rawData: { test: true }, severity: 5 } },
+      ctx,
+    );
+    expect(revised.severity).toBe(5);
+    expect(revised.lastRevisedAt).toBeTruthy();
   });
 
   it("resolves a new locationId from lat/lng when none is explicit, same as createSignal", async () => {
