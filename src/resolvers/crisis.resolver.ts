@@ -74,7 +74,7 @@ async function sumEventPopulationAffected(
 // Crisis enrichment (populationInArea + narrative/scenarios/needs) is NOT
 // dispatched from here. clear-api's only job is to flag the crisis as needing
 // enrichment: `enrichmentStatus = PENDING` (set on create via the column
-// default, and on every event-set change below). The clear-context-pipeline
+// default, and on every event-set change below). The clear-pipeline
 // Dagster drain (`enrich_crises`) consumes `pendingCrises`, derives its own
 // district ids + events, RAG-grounds the overview, writes the results back, and
 // flips the crisis to ENRICHED via `markCrisisEnriched`. This replaces the

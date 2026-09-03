@@ -95,7 +95,7 @@ const envSchema = z.object({
    *  `dagster-quickstart` (project slug). Run
    *  `curl <dagster_url>/graphql -d '{"query":"{ repositoryLocations{ id name } }"}'`
    *  to check. */
-  DAGSTER_REPOSITORY_LOCATION_NAME: z.string().default("clear-context-pipeline"),
+  DAGSTER_REPOSITORY_LOCATION_NAME: z.string().default("clear-pipeline"),
   /** Repository name inside that location. Dagster auto-names it
    *  `__repository__` when the module uses `@definitions`. */
   DAGSTER_REPOSITORY_NAME: z.string().default("__repository__"),

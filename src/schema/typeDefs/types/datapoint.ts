@@ -2,7 +2,7 @@ import { gql } from "graphql-tag";
 
 /**
  * Structured humanitarian datapoints - Layers 1 and 2 of the read path
- * (see clear-context-pipeline/docs/humanitarian-datapoint-extraction.md).
+ * (see clear-pipeline/docs/humanitarian-datapoint-extraction.md).
  *
  * This file covers Layer 2 (per-report). Layer 1 (aggregated
  * datapoints + runtime rollup) ships in Phase 2.
@@ -66,7 +66,7 @@ export const datapointTypeDef = gql`
 
     """The report's publisher (a \`data_sources\` id), resolved by the pipeline
     via \`resolveDataSource\`. This is the report-level fallback; a figure's own
-    cited origin lives per-figure inside \`data\`. See clear-context-pipeline
+    cited origin lives per-figure inside \`data\`. See clear-pipeline
     ADR-0004."""
     sourceId: String
 
@@ -105,7 +105,7 @@ export const datapointTypeDef = gql`
     extractedByModel: String!
     """The report's publisher source (a \`data_sources\` id), resolved by the
     pipeline via \`resolveDataSource\`. Null until source attribution backfills;
-    a figure's own cited source lives per-figure inside \`data\`. See clear-context-pipeline ADR-0004."""
+    a figure's own cited source lives per-figure inside \`data\`. See clear-pipeline ADR-0004."""
     sourceId: String
   }
 
@@ -143,7 +143,7 @@ export const datapointTypeDef = gql`
 
     A numeric QualityEnvelope carries \`{ value, unit, confidence_mix,
     newest_report_at, oldest_report_at, contributing_report_ids }\` plus
-    the credibility fields (clear-context-pipeline ADR-0004/0005): the
+    the credibility fields (clear-pipeline ADR-0004/0005): the
     cached time-invariant \`reliability\` (1–4) and \`intrinsic_credibility\`
     (0–8.5), and - added on every read - \`recency\` (0–1.5),
     \`information_credibility\` (0–10), and \`data_quality\` (**0–10**), the
@@ -154,7 +154,7 @@ export const datapointTypeDef = gql`
     contributingReportIds: [String!]!
     newestSourceAt: DateTime!
     oldestSourceAt: DateTime!
-    """Bucket headline data quality on a **0–10** scale (clear-context-pipeline
+    """Bucket headline data quality on a **0–10** scale (clear-pipeline
     ADR-0005): the mean of the fields' read-time \`data_quality\`
     (\`(reliability × 2.5 × information_credibility) / 10\`, Recency folded
     in at read). The stored column carries the same 0–10 scale. NOTE: this

@@ -9,7 +9,7 @@
  * `age_days` and `stale`. Same split as LogIE (`services/logie/blockages.ts`):
  * pipeline stores, the route computes staleness at serve time.
  *
- * Contract: clear-context-pipeline/docs/data-source-specs/USGS-earthquake.md.
+ * Contract: clear-pipeline/docs/data-source-specs/USGS-earthquake.md.
  */
 
 /** MMI/PAGER + volume fields kept for paint/popup. */
