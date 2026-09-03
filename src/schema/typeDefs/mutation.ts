@@ -125,6 +125,14 @@ export const mutationTypeDef = gql`
     creating an isolated event. Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
+    """Apply an in-place content revision to an existing signal (e.g. IDMC's
+    IDU rows being revised upstream — same id, changed figures/role/dates/
+    location). Only writes when input.contentHash differs from the stored
+    contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
+    unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
+    only."""
+    updateSignalContent(input: UpdateSignalContentInput!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -671,6 +679,12 @@ export const mutationTypeDef = gql`
     existing row instead of creating a duplicate. Recommended prefix scheme:
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
+    """Fingerprint of rawData, for sources whose records get revised in
+    place (e.g. IDMC). Optional — most sources never revise a signal after
+    creation, so this stays null for them. Seeding it here means an
+    immediate follow-up updateSignalContent call (same hash) is a correct
+    no-op instead of falsely stamping lastRevisedAt on a brand-new signal."""
+    contentHash: String
     """Write-only ingest payload stored internally. Not exposed on Signal queries."""
     rawData: JSON!
     """Pointer to the raw payload blob in the S3 data lake (bronze layer),
@@ -706,6 +720,29 @@ export const mutationTypeDef = gql`
     instead of the signal's full paragraph. Ignored when \`locationId\`
     is supplied. When omitted, the resolver falls back to a coord-based
     label like \`Point 15.6280, 30.2156\`."""
+    pointName: String
+  }
+
+  input UpdateSignalContentInput {
+    id: String!
+    """Fingerprint of the incoming raw payload. Compared against the
+    signal's stored contentHash; the write (and lastRevisedAt) only
+    happens when they differ."""
+    contentHash: String!
+    rawData: JSON!
+    url: String
+    title: String
+    description: String
+    severity: Int
+    casualties: Int
+    originId: String
+    destinationId: String
+    locationId: String
+    """Fallback geo-resolution, same as CreateSignalInput's lat/lng — used
+    when no explicit originId/destinationId/locationId resolved."""
+    lat: Float
+    lng: Float
+    geoparsedData: JSON
     pointName: String
   }
 

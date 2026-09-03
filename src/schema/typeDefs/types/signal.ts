@@ -20,6 +20,13 @@ export const signalTypeDef = gql`
     status: SignalStatus!
     """When the downstream pipeline finished processing this signal (null while NEW)."""
     processedAt: DateTime
+    """Fingerprint of the source's raw data, for sources whose records get
+    revised in place (e.g. IDMC). Null for sources that never revise a signal
+    after creation."""
+    contentHash: String
+    """When the API last applied an in-place content revision to this signal
+    (e.g. an IDMC IDU row revised upstream). Null if never revised."""
+    lastRevisedAt: DateTime
     """Pointer to the raw payload blob in the S3 data lake, when landed there."""
     rawS3Key: String
     """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
