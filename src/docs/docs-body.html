@@ -838,7 +838,7 @@ not stored on the event.<div class="field-args"><span class="arg"><code>eventId:
 creating an ungraded row if none matches (admin/pipeline only). Matching order:
 exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (&gt;= minSimilarity,
 default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
+future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
   </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>
@@ -2807,7 +2807,7 @@ into the other with minimal transformation.</p><table class="ref-table"><thead><
     <td><code>String</code></td>
     <td>The report's publisher source (a `data_sources` id), resolved by the
 pipeline via `resolveDataSource`. Null until source attribution backfills;
-a figure's own cited source lives per-figure inside `data`. See clear-context-pipeline ADR-0004.</td>
+a figure's own cited source lives per-figure inside `data`. See clear-pipeline ADR-0004.</td>
   </tr></tbody></table><h3 id="type-upsertreportfiguresinput"><code>UpsertReportFiguresInput</code> <span class="type-badge">input</span></h3><p>Replace-on-reingest payload for one report's figures (pipeline-only).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
@@ -3005,7 +3005,7 @@ no report in scope reported that field.
 
 A numeric QualityEnvelope carries `{ value, unit, confidence_mix,
 newest_report_at, oldest_report_at, contributing_report_ids }` plus
-the credibility fields (clear-context-pipeline ADR-0004/0005): the
+the credibility fields (clear-pipeline ADR-0004/0005): the
 cached time-invariant `reliability` (1–4) and `intrinsic_credibility`
 (0–8.5), and - added on every read - `recency` (0–1.5),
 `information_credibility` (0–10), and `data_quality` (**0–10**), the
@@ -3026,7 +3026,7 @@ is retained for backwards compatibility.</td>
   </tr><tr>
     <td><code>dataQualityScore</code></td>
     <td><code>Float!</code></td>
-    <td>Bucket headline data quality on a **0–10** scale (clear-context-pipeline
+    <td>Bucket headline data quality on a **0–10** scale (clear-pipeline
 ADR-0005): the mean of the fields' read-time `data_quality`
 (`(reliability × 2.5 × information_credibility) / 10`, Recency folded
 in at read). The stored column carries the same 0–10 scale. NOTE: this
@@ -3394,7 +3394,7 @@ same source (e.g. &quot;IOM DTM&quot; / &quot;Displacement Tracking Matrix&quot;
     <td><code>reliability</code></td>
     <td><code>Int</code></td>
     <td>NATO Admiralty-style source-reliability grade, 1 (least) – 4 (most).
-Null = ungraded; the data-quality formula treats null as 1. See clear-context-pipeline ADR-0004.</td>
+Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline ADR-0004.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
@@ -4676,7 +4676,7 @@ versions must not be aggregated together.</td>
     <td><code>String</code></td>
     <td>The report's publisher (a `data_sources` id), resolved by the pipeline
 via `resolveDataSource`. This is the report-level fallback; a figure's own
-cited origin lives per-figure inside `data`. See clear-context-pipeline
+cited origin lives per-figure inside `data`. See clear-pipeline
 ADR-0004.</td>
   </tr><tr>
     <td><code>source</code></td>

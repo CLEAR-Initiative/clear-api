@@ -136,7 +136,7 @@ export const dataSourceResolvers = {
      * ungraded row if none matches. Mirrors `resolveKnowledgebaseLocation` — the
      * pipeline calls it during enrich/datapoint extraction so every figure's
      * cited source (and each report's publisher) lands on one canonical row.
-     * Matching order (clear-context-pipeline ADR-0004 §2): exact name/synonym → infoUrl → fuzzy → create.
+     * Matching order (clear-pipeline ADR-0004 §2): exact name/synonym → infoUrl → fuzzy → create.
      *
      * Operates ONLY on `type = 'organisation'` rows: the automated feed rows
      * (dtm/acled/gdacs/dataminr = "api", field_officer = "manual") referenced by
@@ -159,7 +159,7 @@ export const dataSourceResolvers = {
       }
       const homepage = args.homepage?.trim() || null;
       // pg_trgm similarity lives in [0, 1]; clamp so a caller can't disable the
-      // floor (negative) or make it unmatchable (>1). clear-context-pipeline ADR-0004 baseline 0.6.
+      // floor (negative) or make it unmatchable (>1). clear-pipeline ADR-0004 baseline 0.6.
       const minSim = Math.min(1, Math.max(0, args.minSimilarity ?? 0.6));
       const { prisma } = context;
 

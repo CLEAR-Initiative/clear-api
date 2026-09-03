@@ -132,7 +132,7 @@ export const locationMetadataResolvers = {
       args: { inputs: UpsertLocationMetadataInput[] },
       context: Context,
     ) => {
-      // Pipeline ingests (clear-context-pipeline location-metadata assets) call
+      // Pipeline ingests (clear-pipeline location-metadata assets) call
       // this with the `pipeline` role — matching the single-row upsert.
       requireRole(context, ["admin", "pipeline"]);
       const { inputs } = args;

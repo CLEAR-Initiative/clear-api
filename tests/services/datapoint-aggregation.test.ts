@@ -365,9 +365,9 @@ describe("aggregateReports — additive count (killed_total)", () => {
   it("dedupes two reports for the same week (period totals, not per-day events)", () => {
     // Both figures are weekly period-totals for the same week + location, so
     // they're competing observations of one measurement — deduped to ONE, not
-    // summed (clear-context-pipeline ADR-0002: no per-day breakdown). Which one
+    // summed (clear-pipeline ADR-0002: no per-day breakdown). Which one
     // wins is now bias-aware: killed_total is `overreport`, so among
-    // comparable-quality figures the LOWER value is taken (clear-context-pipeline ADR-0005 §4).
+    // comparable-quality figures the LOWER value is taken (clear-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
@@ -409,7 +409,7 @@ describe("aggregateReports — additive count (killed_total)", () => {
     // Same day, same location → same incident key. Both are competing
     // observations of one event. With uniform reliability the confidence gap
     // (reported vs verified) stays within the data-quality margin D, so they're
-    // comparable and the overreport bias takes the LOWER figure (clear-context-pipeline ADR-0005 §4).
+    // comparable and the overreport bias takes the LOWER figure (clear-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(10, "reported") } },
@@ -476,7 +476,7 @@ describe("aggregateReports — week bucket for summed figures", () => {
   it("dedupes two same-week reports (weekly period totals, not per-day events)", () => {
     // 2026-07-06 (Mon) and 2026-07-08 (Wed) are the same ISO week. The figures
     // are weekly period-totals for the same week + location → one measurement,
-    // deduped to the latest, not summed (clear-context-pipeline ADR-0002).
+    // deduped to the latest, not summed (clear-pipeline ADR-0002).
     const rows = [
       row("r-mon", "2026-07-06T00:00:00Z", ["SD0201"], {
         access_and_incidents: { security_incidents_count: nf(2, "reported") },
@@ -888,7 +888,7 @@ describe("aggregateReports — malformed inputs", () => {
 });
 
 /**
- * Aggregation invariants — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
+ * Aggregation invariants — see clear-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
  * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
  *
  * Both the country-scope inflation defect (#269) and the missing
@@ -1176,7 +1176,7 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
 // DQ P3 — data quality: reliability, bias-aware selection, quartile-drop
 // ────────────────────────────────────────────────────────────────────
 
-describe("aggregateReports — reliability-driven override (clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — reliability-driven override (clear-pipeline ADR-0005 §4)", () => {
   it("a higher-reliability source overrides a fresher, weaker one within reach", () => {
     // killed_total (overreport, window 7d/x2 → 3.5d reach). The strong source
     // (reliability 3) has data_quality far above the weak one (Δ ≥ D=1.0), so it
@@ -1214,7 +1214,7 @@ describe("aggregateReports — reliability-driven override (clear-context-pipeli
   });
 });
 
-describe("aggregateReports — directional bias tie-break (clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — directional bias tie-break (clear-pipeline ADR-0005 §4)", () => {
   it("an underreport field takes the HIGHER of two comparable figures", () => {
     // security_incidents_count (additive, underreport). Uniform reliability →
     // comparable quality → bias decides → the higher (incidents under-recorded).
@@ -1232,7 +1232,7 @@ describe("aggregateReports — directional bias tie-break (clear-context-pipelin
   });
 });
 
-describe("aggregateReports — max quartile-drop (overall_affected, clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — max quartile-drop (overall_affected, clear-pipeline ADR-0005 §4)", () => {
   it("drops the lowest-quality winner before taking the max", () => {
     // Four monthly buckets → four cross-group winners. The 9999 outlier comes
     // from an `unverified` figure (lowest data quality); the bottom quartile
@@ -1257,7 +1257,7 @@ describe("aggregateReports — max quartile-drop (overall_affected, clear-contex
   });
 });
 
-describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-context-pipeline ADR-0005 §2)", () => {
+describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-pipeline ADR-0005 §2)", () => {
   const envelope = (over: Record<string, unknown>) => ({
     value: 1000,
     unit: "people",
@@ -1315,7 +1315,7 @@ describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-co
   });
 });
 
-describe("aggregateReports — per-figure credibility override (clear-context-pipeline ADR-0004 §4)", () => {
+describe("aggregateReports — per-figure credibility override (clear-pipeline ADR-0004 §4)", () => {
   const docUnmet = {
     attribution_quality: "unmet", internal_consistency: "unmet",
     plausibility_in_context: "unmet", geographic_temporal_specificity: "unmet",
