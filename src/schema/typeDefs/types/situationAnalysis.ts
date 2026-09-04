@@ -8,7 +8,7 @@ import { gql } from "graphql-tag";
  *
  * The `data` payload carries seven top-level components; see the
  * Pydantic schemas in
- * `clear-context-pipeline/src/clear_context_pipeline/defs/situation/schemas.py`
+ * `clear-pipeline/src/clear_pipeline/defs/situation/schemas.py`
  * for the exact shape (deliberately not modelled in the GraphQL types
  * because the taxonomy still evolves — versioned via `schemaVersion`).
  * Clients should key their TypeScript types off the Python models via

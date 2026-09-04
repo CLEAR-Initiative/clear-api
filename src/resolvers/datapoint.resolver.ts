@@ -51,13 +51,13 @@ interface UpsertReportDatapointsInput {
 }
 
 // Default schema version - MUST match the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py), currently "v3". A
+// Python-side extraction module (datapoints_schemas.py), currently "v4". A
 // version-less `aggregatedDatapoint` query reads buckets of this version, so a
-// mismatch makes freshly-aggregated buckets go unread. The interval-and-range
-// change bumped the pipeline v2→v3 and re-extracts the whole corpus; this
-// default moves in lockstep. ROLLOUT: flip only alongside (or after) that
-// re-extraction - version-less reads return null for v3 until v3 rows exist.
-const DEFAULT_SCHEMA_VERSION = "v3";
+// mismatch makes freshly-aggregated buckets go unread. The SADD change
+// (ADR-0008) bumped the pipeline v3→v4 and re-extracts the corpus; this default
+// moves in lockstep. ROLLOUT: flip only alongside (or after) that re-extraction
+// - version-less reads return null for v4 until v4 rows exist.
+const DEFAULT_SCHEMA_VERSION = "v4";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How far back the estimated-current-total scan reads report_datapoints
@@ -375,7 +375,7 @@ export const datapointResolvers = {
         orderBy: { validFrom: "desc" },
       });
       if (cached) {
-        // Finalise data_quality with read-time Recency (clear-context-pipeline ADR-0005 §2): the cache
+        // Finalise data_quality with read-time Recency (clear-pipeline ADR-0005 §2): the cache
         // holds the time-invariant parts; freshness is scored live at `asOf`.
         const finalised = finaliseReadTimeQuality(
           (cached.data ?? {}) as Record<string, unknown>,

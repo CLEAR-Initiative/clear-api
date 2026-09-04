@@ -4,7 +4,7 @@ import { gql } from "graphql-tag";
  * Report figures — the image asset store behind the infographic-capture feature.
  * Each row is an infographic (chart/map/table/composite) cropped from a report
  * page and stored in S3, tagged with the same retrieval params as knowledge-base
- * chunks. See clear-context-pipeline/docs/infographic-capture-spec.md.
+ * chunks. See clear-pipeline/docs/infographic-capture-spec.md.
  *
  * Write path: `upsertReportFigures` (pipeline-only) — replaces a report's figures
  * atomically. Read path: `reportFigures(...)` filters by the same

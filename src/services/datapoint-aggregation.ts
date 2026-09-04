@@ -14,7 +14,7 @@
  *   - `timeBucket`: dedup granularity (unused for set_union / non_aggregatable)
  *   - `withinGroupPolicy`: how to pick a winner within an incident group
  *
- * Implemented refinements (full model lives in the clear-context-pipeline
+ * Implemented refinements (full model lives in the clear-pipeline
  * datapoint design doc + its ADRs):
  *   - Event-type IS part of the incident key — `(figure scope, time bucket,
  *     event-type set)` — so distinct phenomena at one scope+time don't collapse.
@@ -56,18 +56,18 @@ function normaliseConfidence(raw: string | undefined | null): ConfidenceTier {
   return "unverified";
 }
 
-// ── Information credibility (clear-context-pipeline ADR-0004 §4) ────────────────────────────
+// ── Information credibility (clear-pipeline ADR-0004 §4) ────────────────────────────
 // The document-level criteria are rated met/partial/unmet by the extractor and
 // stored on `narrative_and_confidence.information_credibility`. Directness is
 // the per-figure `confidence` tier (its CONFIDENCE_WEIGHTS value, not a rating).
 // Recency is NOT scored here — it depends on `now` and is folded in at read
-// time by the resolver (clear-context-pipeline ADR-0005 §2), so what we compute + cache is the
+// time by the resolver (clear-pipeline ADR-0005 §2), so what we compute + cache is the
 // TIME-INVARIANT part: 7 criteria summing to at most 8.5 (recency adds ≤1.5 at
 // read for the full 0–10 information_credibility).
 const CREDIBILITY_RATING: Record<string, number> = { met: 1, partial: 0.5, unmet: 0 };
 
 /** A missing / off-taxonomy rating scores `partial` (0.5) — the neutral
- *  "not assessed" fallback specified in clear-context-pipeline ADR-0004 §4.
+ *  "not assessed" fallback specified in clear-pipeline ADR-0004 §4.
  *  Deliberately neutral, not conservative like reliability's `null → 1`: an
  *  unrated criterion is no signal, not an untrusted source. Rarely exercised —
  *  a v2 row carries all six document-level criteria; this covers malformed /
@@ -76,7 +76,7 @@ function ratingValue(v: unknown): number {
   return typeof v === "string" && v in CREDIBILITY_RATING ? CREDIBILITY_RATING[v]! : 0.5;
 }
 
-/** Resolve one criterion per clear-context-pipeline ADR-0004 §4's per-datapoint-with-document-fallback
+/** Resolve one criterion per clear-pipeline ADR-0004 §4's per-datapoint-with-document-fallback
  *  rule: the figure's own override wins where present; otherwise the report's
  *  document-level rating; otherwise `partial` (neutral). */
 function resolvedRating(figureVal: unknown, docVal: unknown): number {
@@ -88,7 +88,7 @@ function resolvedRating(figureVal: unknown, docVal: unknown): number {
 
 /** Time-invariant information credibility for one figure, 0–8.5: Directness
  *  (per-figure `confidence`) plus the six intrinsic criteria, each resolved
- *  per-figure-then-document (clear-context-pipeline ADR-0004 §4) and weighted. Recency (weight 1.5) is
+ *  per-figure-then-document (clear-pipeline ADR-0004 §4) and weighted. Recency (weight 1.5) is
  *  added at read time. */
 function intrinsicCredibilityOf(
   confidence: ConfidenceTier,
@@ -116,7 +116,7 @@ function intrinsicCredibilityOf(
 
 /** Source-reliability grade (1–4) for a figure's source id, resolving through
  *  the registry map. An ungraded (null) or unknown source → 1, matching the
- *  clear-context-pipeline ADR-0005 formula's `null → 1` rule. */
+ *  clear-pipeline ADR-0005 formula's `null → 1` rule. */
 function reliabilityOf(sourceId: string | null, reliabilityBySource: Map<string, number | null>): number {
   if (!sourceId) return 1;
   const r = reliabilityBySource.get(sourceId);
@@ -136,7 +136,7 @@ export type FieldKind =
 
 export type TimeBucket = "day" | "week" | "month";
 
-/** Direction in which low-quality figures skew a field (clear-context-pipeline ADR-0005 §3). Drives
+/** Direction in which low-quality figures skew a field (clear-pipeline ADR-0005 §3). Drives
  *  the comparable-quality tie-break in bias-aware selection. */
 export type QualityBias = "overreport" | "underreport" | "neutral";
 
@@ -163,27 +163,29 @@ export interface FieldRule {
    * is preserved.
    */
   canonicaliseCase?: boolean;
-  /** Direction low-quality figures skew (clear-context-pipeline ADR-0005 §3). On comparable quality the
+  /** Direction low-quality figures skew (clear-pipeline ADR-0005 §3). On comparable quality the
    *  tie-break takes the LOWER value for `overreport`, HIGHER for `underreport`,
    *  freshest for `neutral`. Omitted on label (set_union) fields. */
   qualityBias?: QualityBias;
-  /** Freshness validity window in days (clear-context-pipeline ADR-0005 § table): how long a figure
+  /** Freshness validity window in days (clear-pipeline ADR-0005 § table): how long a figure
    *  stays "recent" for read-time Recency, and the base for the override reach.
    *  Omitted on label fields. */
   validityWindowDays?: number;
-  /** Override divisor `x` (clear-context-pipeline ADR-0005 §4): a higher-quality figure may override a
+  /** Override divisor `x` (clear-pipeline ADR-0005 §4): a higher-quality figure may override a
    *  fresher, weaker one only within `validityWindowDays / x` of the freshest. */
   overrideDivisor?: number;
 }
 
 /**
- * Aggregation registry. Fifteen fields cover the situation-analysis
- * dashboard's headline tiles; adding new rules is O(1) — append here
- * and the aggregator picks them up next run.
+ * Aggregation registry. The base rules below cover the situation-analysis
+ * dashboard's headline tiles; the block after the array registers the
+ * response-tracking sector rules and derives the sex/age SADD cell rules from
+ * their population/need/response parents (ADR-0008). Adding new rules is O(1) —
+ * append here and the aggregator picks them up next run.
  *
  * Time buckets. Our source reports are analytical and weekly, and a figure is
  * already a total over a reporting PERIOD ("600 affected between X and Y"), not
- * an event on a day (clear-context-pipeline ADR-0002). So SUMMED figures dedup at the
+ * an event on a day (clear-pipeline ADR-0002). So SUMMED figures dedup at the
  * reporting-WEEK granularity: two reports for the same week + location + event
  * are the same measurement (dedup); different weeks sum. A `day` bucket would
  * never group two weekly reports and would double-count same-week restatements;
@@ -201,7 +203,7 @@ export const FIELD_RULES: FieldRule[] = [
   // ── Casualties ─────────────────────────────────────────────
   // Weekly period totals ("N killed between X and Y") — dedup per reporting
   // week, not per day: there is no per-day figure to bucket on
-  // (clear-context-pipeline ADR-0002).
+  // (clear-pipeline ADR-0002).
   // Low-quality tolls skew HIGH (media inflation) → overreport; 7-day conflict
   // window, override reach /2.
   {
@@ -248,7 +250,7 @@ export const FIELD_RULES: FieldRule[] = [
     overrideDivisor: 3,
   },
   // Returns are split into a STOCK (cumulative returned to date, latest-wins)
-  // and a FLOW (new returns this period, summed) — clear-context-pipeline ADR-0005 §4a. The old single
+  // and a FLOW (new returns this period, summed) — clear-pipeline ADR-0005 §4a. The old single
   // `returnees` additive field conflated the two and double-counted a running
   // total. The estimated current-total roll-up (stock + forward flows) is a
   // read-time concern handled by the resolver, not baked here.
@@ -286,7 +288,7 @@ export const FIELD_RULES: FieldRule[] = [
   // ── Access & incidents ──────────────────────────────────────
   // Weekly period totals ("N incidents this period") — dedup per reporting
   // week. Reports don't carry per-incident/per-day breakdowns
-  // (clear-context-pipeline ADR-0002).
+  // (clear-pipeline ADR-0002).
   // Incidents are UNDER-recorded → underreport, 7-day conflict window. Aid-worker
   // tolls skew high like casualties → overreport.
   {
@@ -390,7 +392,7 @@ export const FIELD_RULES: FieldRule[] = [
     // latest: the largest evidenced affected figure across the window is the
     // best estimate of total reach; a later, narrower report shouldn't shrink
     // it. Within a report take the max figure, then latest across reports
-    // (clear-context-pipeline ADR-0001). Never sourced from `events`. Widest-
+    // (clear-pipeline ADR-0001). Never sourced from `events`. Widest-
     // reach claims skew high → overreport; the bottom quartile by data quality
     // is dropped before the max so one weak outlier can't set the ceiling.
     path: "needs_and_funding.overall_affected",
@@ -443,6 +445,95 @@ export const FIELD_RULES: FieldRule[] = [
 ];
 
 // ────────────────────────────────────────────────────────────────────
+// SADD cell rules — sex/age disaggregation (clear-pipeline ADR-0008)
+// ────────────────────────────────────────────────────────────────────
+//
+// The headline population figures may carry a `breakdown` of sex/age marginal
+// cells (extraction schema v4). Each cell is a NumericField at
+// `<parent path>.breakdown.<cell>`, and the pipeline propagates the parent
+// figure's resolved scope + source into every cell — so a cell shares the
+// parent's incident key and must reduce with the SAME rule as its parent.
+//
+// Rather than hand-list the (many) near-duplicate cell rules (and risk drift
+// when a parent's kind/bias changes), derive them from the parent rules already
+// registered above: one cell rule per (parent × cell), inheriting everything
+// but `path` + `label`. Everything downstream (aggregateReports,
+// finaliseReadTimeQuality, both read paths) iterates FIELD_RULES, so the cells
+// are picked up automatically.
+const SADD_CELLS = [
+  "female",
+  "male",
+  "sex_unknown",
+  "children_0_17",
+  "adults_18_59",
+  "elderly_60plus",
+] as const;
+
+// Response-tracking sector rules (ADR-0008 Phase 2). `people_targeted` /
+// `people_reached` had NO FieldRule — a gap, not a deliberate exclusion — so the
+// sectors' response figures never aggregated. Register them here so they roll up
+// (and can then be disaggregated): `targeted` = a planning-target snapshot
+// (neutral bias — a plan figure, not an over/under-prone estimate); `reached` =
+// a cumulative-reach snapshot, under-reported. Both `latest_state`, mirroring
+// `pin_<sector>`. Pushed BEFORE the SADD loop so it can find them as parents.
+const NEEDS_SECTORS = [
+  "shelter", "wash", "protection", "health", "food_security", "education",
+] as const;
+for (const sector of NEEDS_SECTORS) {
+  FIELD_RULES.push({
+    path: `needs_and_funding.${sector}.people_targeted`,
+    label: `targeted_${sector}`,
+    kind: "latest_state",
+    timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias: "neutral",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
+  });
+  FIELD_RULES.push({
+    path: `needs_and_funding.${sector}.people_reached`,
+    label: `reached_${sector}`,
+    kind: "latest_state",
+    timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias: "underreport",
+    validityWindowDays: 90,
+    overrideDivisor: 3,
+  });
+}
+
+// Every disaggregated parent whose cells roll up: the country-wide population
+// totals + returnee stock/flow (Phase 1 + this phase), plus all per-sector need
+// and response figures (Phase 2). The loop below derives one cell rule per
+// (parent × cell), inheriting the parent's kind/bias/bucket.
+const SADD_PARENT_LABELS: string[] = [
+  "idp_stock",
+  "new_displacements",
+  "refugees",
+  "overall_pin",
+  "overall_affected",
+  "returnee_stock",
+  "new_returns",
+  ...NEEDS_SECTORS.flatMap((s) => [`pin_${s}`, `targeted_${s}`, `reached_${s}`]),
+];
+
+for (const parentLabel of SADD_PARENT_LABELS) {
+  const parent = FIELD_RULES.find((r) => r.label === parentLabel);
+  if (!parent) {
+    throw new Error(
+      `[datapoint-aggregation] SADD parent rule "${parentLabel}" not found in FIELD_RULES`,
+    );
+  }
+  for (const cell of SADD_CELLS) {
+    FIELD_RULES.push({
+      ...parent,
+      path: `${parent.path}.breakdown.${cell}`,
+      label: `${parent.label}_${cell}`,
+    });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // I/O types
 // ────────────────────────────────────────────────────────────────────
 
@@ -466,13 +557,13 @@ export interface QualityEnvelope {
    *  `[value_low, value_high]` is the honest error bar, derived from the
    *  contributing figures' own reported ranges and their disagreement with each
    *  other. Equal to `value` when every contributor is an exact point that
-   *  agrees. (Interval-and-range model, clear-context-pipeline ADR-0007.) */
+   *  agrees. (Interval-and-range model, clear-pipeline ADR-0007.) */
   value_low: number;
   value_high: number;
   /** `value_high − value_low` — a first-class uncertainty signal beside
    *  `data_quality` (a wide band = noisy/disagreeing evidence). */
   range_width: number;
-  /** The field's systematic quality-bias direction (clear-context-pipeline ADR-0005 §3 / ADR-0007 §8),
+  /** The field's systematic quality-bias direction (clear-pipeline ADR-0005 §3 / ADR-0007 §8),
    *  surfaced so the consumer can PROJECT the [value_low, value_high] band to a
    *  single headline at the display edge: `overreport` → the low end
    *  (conservative against inflation), `underreport` → the high end, `neutral` →
@@ -480,7 +571,7 @@ export interface QualityEnvelope {
    *  consumer's choice (design §8 "project late"). Null on fields with no bias. */
   bias: QualityBias | null;
   unit: string | null;
-  /** Confidence-only (Directness) view, retained per clear-context-pipeline ADR-0005 — mean of the
+  /** Confidence-only (Directness) view, retained per clear-pipeline ADR-0005 — mean of the
    *  winners' CONFIDENCE_WEIGHTS. The headline is now `data_quality`, which the
    *  resolver finalises at read time from `reliability` + `intrinsic_credibility`
    *  + a live Recency score. */
@@ -693,7 +784,7 @@ interface Mention {
   // incidents and must not collapse into one. Empty string when the
   // report carries no event types. See eventKeyFor().
   eventKey: string;
-  /** Per-figure provenance for traceback (clear-context-pipeline datapoints
+  /** Per-figure provenance for traceback (clear-pipeline datapoints
    *  schema): the 1-indexed PDF page (the durable citation handle), the chunk the
    *  figure's quote matched, and the source quote itself. All null for an API
    *  (`location_metadata`) contributor — it doesn't come from a report chunk. */
@@ -768,7 +859,7 @@ function eventKeyFor(row: ReportRow): string {
 
 /** Turn one report's numeric field into a mention at its FIGURE SCOPE —
  *  the single `locations` id the figure is a total for (`scope_location_id`,
- *  resolved at extraction; see clear-context-pipeline's Figure Scope work).
+ *  resolved at extraction; see clear-pipeline's Figure Scope work).
  *
  *  Exactly one mention per figure, keyed on its scope. A figure with no
  *  resolved scope — the LLM couldn't pin one, or the name didn't resolve —
@@ -803,7 +894,7 @@ function extractNumericMentions(
   const value = Number(nf.value);
   if (!Number.isFinite(value)) return [];
 
-  // Interval-and-range fields (clear-context-pipeline ADR-0007, schema v3). A
+  // Interval-and-range fields (clear-pipeline ADR-0007, schema v3). A
   // pre-v3 figure carries only `value`, and the two fallbacks differ:
   //  - the value RANGE collapses to the point (valueLow = valueHigh = value), so
   //    a v2 figure has a zero-width band and reads exactly as before; but
@@ -842,7 +933,7 @@ function extractNumericMentions(
   const eventKey = eventKeyFor(row);
 
   // Source reliability: the figure's own cited source (`source_id`), else the
-  // report's publisher; ungraded/unknown → 1 (clear-context-pipeline ADR-0004/0005).
+  // report's publisher; ungraded/unknown → 1 (clear-pipeline ADR-0004/0005).
   const figureSourceId =
     typeof nf.source_id === "string" && nf.source_id ? nf.source_id : null;
   const reliability = reliabilityOf(figureSourceId ?? row.sourceId, reliabilityBySource);
@@ -852,7 +943,7 @@ function extractNumericMentions(
   const docCredibility = dig(row.data, "narrative_and_confidence.information_credibility");
   const intrinsicCredibility = intrinsicCredibilityOf(confidence, docCredibility, nf.credibility);
 
-  // Per-figure provenance handles (clear-context-pipeline datapoints schema):
+  // Per-figure provenance handles (clear-pipeline datapoints schema):
   // page_number is the durable citation; chunk_index is the backfilled chunk;
   // source_quote is the exact line. Carried through so the aggregate can be
   // traced back to the figures that produced it. source_quote is length-capped
@@ -901,7 +992,7 @@ function extractNumericMentions(
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** "Meaningfully higher" data-quality margin `D` (clear-context-pipeline ADR-0005 §4). A figure must
+/** "Meaningfully higher" data-quality margin `D` (clear-pipeline ADR-0005 §4). A figure must
  *  exceed the freshest by at least this on the `selectionQuality` scale to
  *  override it; within `D` the figures are comparable and bias decides.
  *
@@ -919,18 +1010,18 @@ const DATA_QUALITY_MARGIN = 1.0;
 /** Selection-time data quality (recency-free): `(reliability × 2.5) ×
  *  intrinsic_credibility / 10`. Recency is deliberately excluded here — within
  *  one bucket it barely varies, and freshness is handled separately by the
- *  override-reach gate; recency only shapes the read-time headline (clear-context-pipeline ADR-0005). */
+ *  override-reach gate; recency only shapes the read-time headline (clear-pipeline ADR-0005). */
 function selectionQuality(m: Mention): number {
   return (m.reliability * 2.5 * m.intrinsicCredibility) / 10;
 }
 
 /** Pick among comparable-quality candidates by the field's directional bias
- *  (clear-context-pipeline ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
+ *  (clear-pipeline ADR-0005 §4): `overreport` → the LOWER value (weak figures inflate),
  *  `underreport` → the HIGHER, `neutral` → the freshest. Value ties fall back to
  *  freshest, keeping the result stable and independent of input order.
  *
  *  Per-figure QUALIFIER as a hard constraint, clamped in BOTH directions
- *  independently of the field bias (clear-context-pipeline ADR-0007). The `qualifier` is a
+ *  independently of the field bias (clear-pipeline ADR-0007). The `qualifier` is a
  *  different axis from `qualityBias` — what the SOURCE asserted about THIS figure's
  *  bound — and can point either way, so they COMPOSE: the strongest `at_least`
  *  FLOOR (truth ≥ value) and strongest `at_most` CEILING (truth ≤ value) bound the
@@ -1024,7 +1115,7 @@ function pickWinner(mentions: Mention[], rule?: FieldRule): Mention {
   const latest = latestByPublishedAt(mentions);
 
   if (policy === "latest_wins_with_confidence_override") {
-    // Bias-aware override (clear-context-pipeline ADR-0005 §4, generalises the old 3-day verified
+    // Bias-aware override (clear-pipeline ADR-0005 §4, generalises the old 3-day verified
     // override): the freshest row wins UNLESS another row within the override
     // reach has meaningfully higher data quality. Among the top quality tier
     // (everything within D of the best), the directional bias breaks the tie.
@@ -1166,7 +1257,7 @@ function hasFlowInterval(f: Mention): boolean {
 }
 
 /** True when a figure is a snapshot / running-total rather than a period
- *  increment (clear-context-pipeline ADR-0007 measure_type): `stock_as_of` (a point-in-time
+ *  increment (clear-pipeline ADR-0007 measure_type): `stock_as_of` (a point-in-time
  *  total) or `cumulative_to_date` (a running total since an origin). Such a
  *  figure must be pulled OUT of the flow sweep — integrating a total as if it
  *  were a per-period rate fabricates a bogus daily flow. Only the two EXPLICIT
@@ -1185,7 +1276,7 @@ function asOfTime(m: Mention): number {
 }
 
 /** Reconcile cumulative / stock (as-of running-total) figures against reported
- *  period flows into ONE coherent set of period-flow increments (clear-context-pipeline ADR-0007).
+ *  period flows into ONE coherent set of period-flow increments (clear-pipeline ADR-0007).
  *
  *  A `cumulative_to_date` / `stock_as_of` is a running total to its as-of date,
  *  NOT a period increment — summing two snapshots, or a snapshot alongside the
@@ -1314,7 +1405,7 @@ interface Contrib {
 }
 
 /** The headline daily rate for a flow sub-interval covered by several figures
- *  (clear-context-pipeline ADR-0007 §8 bias-as-projection). Mirrors `pickWinner`'s confidence-override
+ *  (clear-pipeline ADR-0007 §8 bias-as-projection). Mirrors `pickWinner`'s confidence-override
  *  tie-break — top data-quality tier, then `qualityBias` direction — but WITHOUT
  *  the freshness gate, because on a flow overlap every covering figure measures
  *  the same elapsed days, so recency must not decide (that gate is what let a
@@ -1331,7 +1422,7 @@ function reconcileRatePoint(rates: Mention[], rule: FieldRule): number {
   return pickWinner(rates, rule).value;
 }
 
-/** Breakpoint-partition flow sweep (clear-context-pipeline ADR-0007 §6.2) — fixes overlapping periods
+/** Breakpoint-partition flow sweep (clear-pipeline ADR-0007 §6.2) — fixes overlapping periods
  *  (#2) and bucket-boundary spanning (#3) together, for ONE event-group. When
  *  the group has any real-interval figure, EVERY figure in the group is treated
  *  as an interval (a point as its single day); the timeline is cut at every
@@ -1341,7 +1432,7 @@ function reconcileRatePoint(rates: Mention[], rule: FieldRule): number {
  *  bucket that contains it. So an overlap reconciles instead of summing, and a
  *  period straddling two buckets splits by rate.
  *
- *  Reconciliation carries a RANGE, it does not pick a single winner (clear-context-pipeline ADR-0007
+ *  Reconciliation carries a RANGE, it does not pick a single winner (clear-pipeline ADR-0007
  *  §6.2 + §8): on an overlap both figures genuinely measure the same elapsed
  *  days, so the band is the UNION of their daily rate-ranges (min low … max high)
  *  — their disagreement is real uncertainty, surfaced as width — and the headline
@@ -1605,7 +1696,7 @@ function aggregateNumericField(
       break;
     case "max": {
       // Drop the bottom quartile of winners by data quality before taking the
-      // max, so a single low-quality outlier can't set the ceiling (clear-context-pipeline ADR-0005
+      // max, so a single low-quality outlier can't set the ceiling (clear-pipeline ADR-0005
       // §4). Under 4 winners nothing is dropped; `kept` is always non-empty.
       const ranked = [...winners].sort((a, b) => selectionQuality(a) - selectionQuality(b));
       const kept = ranked.slice(Math.floor(ranked.length / 4));
@@ -1617,7 +1708,7 @@ function aggregateNumericField(
       return null;
   }
 
-  // Divergence guard (clear-context-pipeline ADR-0006 §7, generalised to ranges by ADR-0007 §9). For a
+  // Divergence guard (clear-pipeline ADR-0006 §7, generalised to ranges by ADR-0007 §9). For a
   // point-in-time field, if the report estimate disagrees with the authoritative
   // API figure the API wins and the gap is surfaced as an early-warning signal.
   //
@@ -1699,7 +1790,7 @@ function aggregateNumericField(
   //    range, so a disagreement (including an API-vs-report gap) shows up as a
   //    wide band rather than being hidden behind a single number.
   //
-  // Deferred (clear-context-pipeline ADR-0007 §7.2): for a stock this WIDENS to
+  // Deferred (clear-pipeline ADR-0007 §7.2): for a stock this WIDENS to
   // the union of the figures' ranges (honest, shows disagreement). §7.2's stronger
   // move — INTERSECTING comparable-quality bounds to tighten the estimate, and
   // raising a divergence when two stock ranges don't overlap — is a follow-up, not
@@ -1780,7 +1871,7 @@ function aggregateSetUnionField(rows: ReportRow[], rule: FieldRule): SetUnionEnv
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Location-metadata reconciliation (clear-context-pipeline ADR-0006)
+// Location-metadata reconciliation (clear-pipeline ADR-0006)
 // ────────────────────────────────────────────────────────────────────
 //
 // Authoritative `location_metadata` (IOM DTM, OCHA, UNHCR, IPC, …) is read at
@@ -1816,7 +1907,7 @@ interface ApiFigure {
    *  anchor: it augments every window its validity period overlaps, not only the
    *  window containing its period end. Absent → a point figure at T₀. */
   referenceStart?: Date | null;
-  /** Interval-and-range measure type (clear-context-pipeline ADR-0007), when the adapter can state it
+  /** Interval-and-range measure type (clear-pipeline ADR-0007), when the adapter can state it
    *  (most API figures are `stock_as_of` snapshots). Defaults to null. */
   measureType?: string | null;
 }
@@ -2149,7 +2240,7 @@ export function buildApiMentions(
         incidentDate: fig.referenceDate ?? row.validFrom, // T₀ → bucket / flow cutoff
         locationId,
         value: fig.value,
-        // API figures are exact points as of their reference date (clear-context-pipeline ADR-0007).
+        // API figures are exact points as of their reference date (clear-pipeline ADR-0007).
         valueLow: fig.value,
         valueHigh: fig.value,
         qualifier: "exact",
@@ -2408,7 +2499,7 @@ export function aggregateReports(
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Read-time quality finalisation (clear-context-pipeline ADR-0005 §2)
+// Read-time quality finalisation (clear-pipeline ADR-0005 §2)
 // ────────────────────────────────────────────────────────────────────
 
 /** Weight of the Recency criterion in the 0–10 information_credibility score
@@ -2430,7 +2521,7 @@ function recencyScore(newestReportAt: Date, asOf: Date, validityWindowDays?: num
 }
 
 /** Finalise the headline `data_quality` for every numeric field on an
- *  aggregated `data` blob, folding in read-time Recency (clear-context-pipeline ADR-0005 §2). The
+ *  aggregated `data` blob, folding in read-time Recency (clear-pipeline ADR-0005 §2). The
  *  cache stores only the time-invariant parts (`reliability`,
  *  `intrinsic_credibility`, `newest_report_at`); this runs on every read so the
  *  score reflects freshness at `asOf` and never decays in place. Returns a new

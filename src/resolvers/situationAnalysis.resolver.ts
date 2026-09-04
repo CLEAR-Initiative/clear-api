@@ -23,7 +23,7 @@ import { deepMergeTranslation } from "../utils/translation-merge.js";
 
 // Reads resolve the schema version from the data rather than pinning a
 // constant. The pipeline
-// (`clear-context-pipeline/.../situation/schemas.py`) owns SCHEMA_VERSION
+// (`clear-pipeline/.../situation/schemas.py`) owns SCHEMA_VERSION
 // and bumps it independently; a constant here would mean writes keep
 // succeeding while every read returns null - an empty dashboard with no
 // signal, until someone remembers to bump a constant in another repo and

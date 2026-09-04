@@ -125,6 +125,14 @@ export const mutationTypeDef = gql`
     creating an isolated event. Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
+    """Apply an in-place content revision to an existing signal (e.g. IDMC's
+    IDU rows being revised upstream — same id, changed figures/role/dates/
+    location). Only writes when input.contentHash differs from the stored
+    contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
+    unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
+    only."""
+    updateSignalContent(input: UpdateSignalContentInput!): Signal!
+
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
 
@@ -164,7 +172,7 @@ export const mutationTypeDef = gql`
     creating an ungraded row if none matches (admin/pipeline only). Matching order:
     exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
     default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-    future lookups hit exactly. Returns the resolved data_sources id. See clear-context-pipeline ADR-0004."""
+    future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004."""
     resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
 
     # ─── Locations ─────────────────────────────────────────────────────────────
@@ -671,6 +679,12 @@ export const mutationTypeDef = gql`
     existing row instead of creating a duplicate. Recommended prefix scheme:
     "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
+    """Fingerprint of rawData, for sources whose records get revised in
+    place (e.g. IDMC). Optional — most sources never revise a signal after
+    creation, so this stays null for them. Seeding it here means an
+    immediate follow-up updateSignalContent call (same hash) is a correct
+    no-op instead of falsely stamping lastRevisedAt on a brand-new signal."""
+    contentHash: String
     """Write-only ingest payload stored internally. Not exposed on Signal queries."""
     rawData: JSON!
     """Pointer to the raw payload blob in the S3 data lake (bronze layer),
@@ -709,6 +723,29 @@ export const mutationTypeDef = gql`
     pointName: String
   }
 
+  input UpdateSignalContentInput {
+    id: String!
+    """Fingerprint of the incoming raw payload. Compared against the
+    signal's stored contentHash; the write (and lastRevisedAt) only
+    happens when they differ."""
+    contentHash: String!
+    rawData: JSON!
+    url: String
+    title: String
+    description: String
+    severity: Int
+    casualties: Int
+    originId: String
+    destinationId: String
+    locationId: String
+    """Fallback geo-resolution, same as CreateSignalInput's lat/lng — used
+    when no explicit originId/destinationId/locationId resolved."""
+    lat: Float
+    lng: Float
+    geoparsedData: JSON
+    pointName: String
+  }
+
   input CreateEventInput {
     signalIds: [String!]!
     title: String
@@ -718,6 +755,9 @@ export const mutationTypeDef = gql`
     validTo: String!
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
+    """When the real-world event started (onset), parsed from signal text.
+    ISO-8601; null/omitted when no onset could be resolved."""
+    startedAt: String
     originId: String
     destinationId: String
     locationId: String
@@ -751,6 +791,9 @@ export const mutationTypeDef = gql`
     validTo: String
     firstSignalCreatedAt: String
     lastSignalCreatedAt: String
+    """When the real-world event started (onset), parsed from signal text.
+    ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
+    startedAt: String
     originId: String
     destinationId: String
     locationId: String

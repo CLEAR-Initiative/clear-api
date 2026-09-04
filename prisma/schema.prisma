@@ -526,12 +526,12 @@ model dataSources {
   /// Alias set for source-name normalisation. `resolveDataSource` matches an
   /// incoming name against `name` OR any `synonyms` entry (exact, then fuzzy)
   /// before creating a new row, so one organisation isn't recorded under many
-  /// spellings ("IOM DTM" / "Displacement Tracking Matrix" / "DTM"). See clear-context-pipeline ADR-0004.
+  /// spellings ("IOM DTM" / "Displacement Tracking Matrix" / "DTM"). See clear-pipeline ADR-0004.
   synonyms String[] @default([])
 
   /// NATO Admiralty-style source-reliability grade, 1 (least) – 4 (most).
   /// NULL = ungraded (new/unresolved source); the data-quality formula treats
-  /// NULL as 1. Manually maintained by a domain expert. See clear-context-pipeline ADR-0004 / clear-context-pipeline ADR-0005.
+  /// NULL as 1. Manually maintained by a domain expert. See clear-pipeline ADR-0004 / clear-pipeline ADR-0005.
   reliability Int?
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -590,6 +590,12 @@ model signals {
   /// NEW on ingest; the downstream drain flips it to PROCESSED (or FAILED).
   status      SignalStatus @default(NEW)
   processedAt DateTime?    @map("processed_at")
+
+  /// lastRevisedAt marks that the API updated this record in place; contentHash
+  /// is a fingerprint of the source's raw data (rawData), compared against
+  /// incoming data to decide if an update is needed. Driven by IDMC integration.
+  contentHash String? @map("content_hash")
+  lastRevisedAt DateTime? @map("last_revised_at")
 
   url         String?
   title       String?
@@ -690,6 +696,11 @@ model events {
   validTo              DateTime @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  /// When the real-world event actually STARTED (its onset) — distinct from
+  /// validFrom/firstSignalCreatedAt (record + signal-collection times). Parsed
+  /// from the signal text by the pipeline (regex → LLM fallback); null when no
+  /// onset could be resolved.
+  startedAt            DateTime? @map("started_at")
   isDummy              Boolean  @default(false)
 
   originId       String?    @map("origin_id")
@@ -704,10 +715,15 @@ model events {
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
   populationAffected    BigInt?                 @map("population_affected")
-  /// Population displaced by this event. Resolution order in the pipeline:
-  /// (1) max across signal-level displacement data, (2) IOM DTM value cached
-  /// in `locationMetadata(type="iom_dtm_displacement")` for the event's
-  /// admin-2 location, (3) default fallback (1670).
+  /// Population displaced by this event. Resolution order in the pipeline
+  /// (`_resolve_population_displaced`, clear-context-pipeline providers/event.py):
+  /// (1) a source-specific reduction over that source's linked signals, when
+  /// the source's connector defines one (e.g. IDMC IDU's role/location rules,
+  /// via `reduce_source_signals`) — read from each signal's `rawData`, never
+  /// a dedicated signals column; (2) an LLM guess from the event's full text;
+  /// (3) a hardcoded default. No IOM DTM step — deliberately excluded, since
+  /// DTM figures are district-wide/event-agnostic and would misattribute a
+  /// whole district's total to one event.
   populationDisplaced   BigInt?                 @map("population_displaced")
   /// Aggregated casualties for this event (max across constituent signals).
   casualties            Int?
@@ -1324,7 +1340,7 @@ model reportDatapoint {
   /// first), resolved to a `data_sources` row via `resolveDataSource`. This is
   /// the fallback source for any figure that doesn't cite its own origin — a
   /// figure's cited source lives per-`NumericField` inside `data`. Nullable
-  /// until the source-attribution re-extraction backfills existing rows. clear-context-pipeline ADR-0004.
+  /// until the source-attribution re-extraction backfills existing rows. clear-pipeline ADR-0004.
   sourceId String?      @map("source_id")
   source   dataSources? @relation(fields: [sourceId], references: [id])
 
@@ -1365,7 +1381,7 @@ model reportDatapoint {
   /// Exhaustive extracted payload keyed by sub-schema name. Every
   /// numeric leaf is a NumericField object carrying provenance —
   /// see the shared Pydantic schema in
-  /// `clear-context-pipeline/src/clear_context_pipeline/defs/knowledgebase/datapoints_schemas.py`.
+  /// `clear-pipeline/src/clear_pipeline/defs/knowledgebase/datapoints_schemas.py`.
   data Json
 
   /// Schema-version string like "v1". Aggregation only combines
@@ -1389,7 +1405,7 @@ model reportDatapoint {
 /// One captured infographic — a chart, map, table, or composite "dashboard"
 /// panel — cropped from a report page. The image asset store behind the
 /// infographic-capture feature (see
-/// `clear-context-pipeline/docs/infographic-capture-spec.md`). Each row is a
+/// `clear-pipeline/docs/infographic-capture-spec.md`). Each row is a
 /// cropped image in S3 tagged with the SAME retrieval params as knowledge-base
 /// chunks (location / event type / need sector / time), so figures are
 /// filterable and attachable alongside text. The figure's TRANSCRIPTION (the
@@ -1505,7 +1521,7 @@ model aggregatedDatapoint {
   /// the dashboard can filter and sort without opening the JSON blob.
   newestSourceAt   DateTime @map("newest_source_at")
   oldestSourceAt   DateTime @map("oldest_source_at")
-  /// Bucket headline data quality on a 0-10 scale (clear-context-pipeline
+  /// Bucket headline data quality on a 0-10 scale (clear-pipeline
   /// ADR-0005): mean of the fields' data_quality, Recency folded in at write.
   /// Same 0-10 scale the GraphQL API serves. NOTE: this replaced the old
   /// 0-1 quality_score meaning — any external reader (incl. the Django app on
@@ -1556,9 +1572,9 @@ model aggregatedDatapoint {
 ///
 /// The `data` blob carries seven top-level components — see the
 /// situation-analysis design in
-/// `clear-context-pipeline/docs/humanitarian-datapoint-extraction.md`
+/// `clear-pipeline/docs/humanitarian-datapoint-extraction.md`
 /// (extension pending) and the Pydantic schemas in
-/// `clear-context-pipeline/src/clear_context_pipeline/defs/situation/schemas.py`:
+/// `clear-pipeline/src/clear_pipeline/defs/situation/schemas.py`:
 ///
 ///   1. datapoints                     (deterministic — hoisted from aggregated_datapoints)
 ///   2. ai_summary                     (LLM — narrative prose)

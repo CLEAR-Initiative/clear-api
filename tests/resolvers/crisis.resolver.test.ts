@@ -6,7 +6,7 @@
  * no database, no `describeIfDb`. All imported modules that reach external
  * services are `vi.mock(...)`ed BEFORE the resolver import so they never
  * run in CI:
- *   - `../../src/services/celery.js`      (Redis broker — enrichment dispatch + translation buffer)
+ *   - `../../src/services/celery.js`      (Redis broker — mocked to assert the crisis path NEVER dispatches post Celery→Dagster cutover)
  *   - `../../src/utils/geo-resolve.js`    (pulled in transitively by location-scope)
  *   - `../../src/utils/location-scope.js` (DB-walking team location filter)
  *   - `../../src/utils/activity-log.js`   (audit-log writer)
@@ -17,8 +17,8 @@
  *   Query.crises                 — auth gate, admin bypasses location scope vs
  *                                  non-admin builds the scoped where clause.
  *   createCrisisFromEvents       — role gate, empty-eventIds BAD_USER_INPUT,
- *                                  missing-event NOT_FOUND, default-value logic,
- *                                  generate-narrative flag derivation.
+ *                                  missing-event NOT_FOUND, no Celery dispatch
+ *                                  (PENDING drives the drain), create-time title lock.
  *   addEventToCrisis             — role gate, crisis/event NOT_FOUND,
  *                                  idempotent existing-link short-circuit.
  *   removeEventFromCrisis        — role gate, crisis/link NOT_FOUND,
@@ -185,22 +185,22 @@ describe("Mutation.createCrisisFromEvents", () => {
     const created = opts.created ?? { id: "c-new", title: null, severity: 3 };
     const createMany = vi.fn().mockResolvedValue({ count: events.length });
     const create = vi.fn().mockResolvedValue(created);
+    const feedbackCreate = vi.fn().mockResolvedValue({ id: "fb1" });
     const prisma = {
       events: {
-        // findMany is called for validation, then for population sum, then by collectDistrictIds.
+        // findMany is called for validation, then for the population sum.
         findMany: vi.fn().mockImplementation(({ select }: { select: Record<string, boolean> }) => {
           if (select?.id) return Promise.resolve(events);
           if (select?.populationAffected) return Promise.resolve([{ populationAffected: 10n }]);
-          // collectDistrictIds origin/destination/location select
           return Promise.resolve([]);
         }),
       },
       locations: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({ crises: { create }, eventCrises: { createMany } }),
+        fn({ crises: { create }, eventCrises: { createMany }, userFeedbacks: { create: feedbackCreate } }),
       ),
     };
-    return { ctx: buildContext(user, prisma), create, createMany };
+    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate };
   }
 
   it("rejects a viewer with FORBIDDEN", async () => {
@@ -234,20 +234,12 @@ describe("Mutation.createCrisisFromEvents", () => {
     ).rejects.toThrow(/e2/);
   });
 
-  it("dispatches enrichment with generate_narrative=true when title/summary missing", async () => {
-    const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
-    // settle the fire-and-forget dispatch
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalledWith(
-      "src.tasks.crisis.enrich_crisis",
-      expect.objectContaining({ crisis_id: "c-new", generate_narrative: true }),
-    );
-  });
-
-  it("derives generate_narrative=false when both title and summary supplied", async () => {
-    const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
+  it("does NOT dispatch a Celery task — the crisis is born PENDING for the Dagster drain", async () => {
+    // Celery→Dagster cutover: clear-api no longer fire-and-forgets
+    // `enrich_crisis`. The crisis is created enrichmentStatus=PENDING (column
+    // default) and the Dagster `enrich_crises` drain enriches it. This holds
+    // whether or not the caller supplied a title/summary.
+    const { ctx, create } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
       { input: { title: "T", summary: "S", severity: 2, needs: {}, eventIds: ["e1"] } },
@@ -255,10 +247,34 @@ describe("Mutation.createCrisisFromEvents", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalledWith(
-      "src.tasks.crisis.enrich_crisis",
-      expect.objectContaining({ generate_narrative: false }),
+    expect(create).toHaveBeenCalledOnce();
+    expect(sendCeleryTask).not.toHaveBeenCalled();
+  });
+
+  it("locks a caller-supplied create-time title so the drain preserves it", async () => {
+    // Writes the same [title-edit] sentinel updateCrisisTitle uses, so the
+    // Dagster drain's updateCrisisPopulation skips overwriting the human title.
+    const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
+    await createCrisisFromEvents(
+      null,
+      { input: { title: "Analyst title", severity: 2, needs: {}, eventIds: ["e1"] } },
+      ctx,
     );
+    expect(feedbackCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          crisisId: "c-new",
+          rating: 0,
+          text: expect.stringContaining("[title-edit]"),
+        }),
+      }),
+    );
+  });
+
+  it("writes no title lock when the caller supplies no title", async () => {
+    const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
+    expect(feedbackCreate).not.toHaveBeenCalled();
   });
 
   it("logs the crisis.create activity for the actor", async () => {
@@ -314,7 +330,7 @@ describe("Mutation.addEventToCrisis", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("creates the link, recomputes population, and dispatches enrichment", async () => {
+  it("creates the link, recomputes population, and flags PENDING for the drain (no Celery dispatch)", async () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
@@ -333,9 +349,10 @@ describe("Mutation.addEventToCrisis", () => {
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
+    // Event-set change re-queues the crisis for the Dagster drain via PENDING.
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
     await Promise.resolve();
-    expect(sendCeleryTask).toHaveBeenCalled();
+    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 });
 
@@ -402,6 +419,7 @@ describe("Mutation.removeEventFromCrisis", () => {
     expect(del).not.toHaveBeenCalled();
     expect(deleteMany).toHaveBeenCalledWith({ where: { crisisId: "c1", eventId: "e1" } });
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 7n, enrichmentStatus: "PENDING" } });
+    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 });
 

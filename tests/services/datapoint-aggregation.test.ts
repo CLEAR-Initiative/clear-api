@@ -114,6 +114,172 @@ describe("FIELD_RULES registry", () => {
     const labels = FIELD_RULES.map((r) => r.label);
     expect(new Set(labels).size).toBe(labels.length);
   });
+
+  it("SADD cells are derived per (parent × cell), inheriting the parent's kind/bias (ADR-0008)", () => {
+    const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+    // A latest_state parent's cells stay latest_state + underreport.
+    expect(byLabel.get("idp_stock_female")?.path).toBe("displacement.idp_stock.breakdown.female");
+    expect(byLabel.get("idp_stock_female")?.kind).toBe("latest_state");
+    expect(byLabel.get("idp_stock_female")?.qualityBias).toBe("underreport");
+    // An additive_count parent's cells stay additive_count.
+    expect(byLabel.get("new_displacements_children_0_17")?.kind).toBe("additive_count");
+    // A max parent's cells stay max.
+    expect(byLabel.get("overall_affected_male")?.kind).toBe("max");
+    // Every (parent × cell) is present: 5 parents × 6 cells = 30 rules.
+    const parents = ["idp_stock", "new_displacements", "refugees", "overall_pin", "overall_affected"];
+    const cells = ["female", "male", "sex_unknown", "children_0_17", "adults_18_59", "elderly_60plus"];
+    for (const p of parents) {
+      for (const c of cells) expect(byLabel.has(`${p}_${c}`)).toBe(true);
+    }
+  });
+});
+
+describe("aggregateReports — SADD breakdown cells (ADR-0008)", () => {
+  it("rolls up a breakdown cell latest-wins, like its parent stock", () => {
+    // Cells carry the parent's scope (propagated in the pipeline), so they
+    // share its incident key and reduce with the same rule (latest_state here).
+    const rows = [
+      row("r-old", "2026-07-01T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { female: nf(520, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-01T00:00:00Z"),
+      row("r-new", "2026-07-08T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1200, "reported", "people", "kordofan"),
+            breakdown: { female: nf(640, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-08T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan");
+    expect(result!.data.idp_stock).toMatchObject({ value: 1200 });
+    expect(result!.data.idp_stock_female).toMatchObject({ value: 640 });
+  });
+
+  it("drops a breakdown cell with no scope (never rolled up)", () => {
+    // A cell the pipeline failed to scope must be excluded — matches the
+    // figure-scope rule for the parent. (Here the female cell carries no scope.)
+    const rows = [
+      row("r1", "2026-07-01T00:00:00Z", ["kordofan"], {
+        displacement: {
+          idp_stock: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { female: nf(520) },
+          },
+        },
+      }, "2026-07-01T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan");
+    expect(result!.data.idp_stock).toMatchObject({ value: 1000 });
+    expect(result!.data.idp_stock_female).toBeNull();
+  });
+
+  it("sums an additive breakdown cell across weeks, like its parent flow", () => {
+    // new_displacements is additive_count (week bucket): two different weeks
+    // sum. The children cell must reduce the same way as its parent total.
+    const rows = [
+      row("w27", "2026-07-03T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1000, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(400, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-03T00:00:00Z"),
+      row("w28", "2026-07-10T00:00:00Z", ["kordofan"], {
+        displacement: {
+          new_displacements: {
+            ...nf(1200, "reported", "people", "kordofan"),
+            breakdown: { children_0_17: nf(500, "reported", "people", "kordofan") },
+          },
+        },
+      }, "2026-07-10T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.new_displacements).toMatchObject({ value: 2200 });
+    expect(result.data.new_displacements_children_0_17).toMatchObject({ value: 900 });
+  });
+
+  it("takes the max of an affected breakdown cell across months, like its parent", () => {
+    // overall_affected is max (month bucket): a later, narrower report must not
+    // shrink the widest reach — the male cell follows the same rule.
+    const rows = [
+      row("may", "2026-05-20T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(1_000_000, "reported", "people", "SD01"),
+            breakdown: { male: nf(480_000, "reported", "people", "SD01") },
+          },
+        },
+      }, "2026-05-31T00:00:00Z"),
+      row("jul", "2026-07-08T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          overall_affected: {
+            ...nf(600_000, "verified", "people", "SD01"),
+            breakdown: { male: nf(300_000, "verified", "people", "SD01") },
+          },
+        },
+      }, "2026-07-05T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.overall_affected).toMatchObject({ value: 1_000_000 });
+    expect(result.data.overall_affected_male).toMatchObject({ value: 480_000 });
+  });
+});
+
+describe("aggregateReports — response-tracking + sector SADD (ADR-0008 Phase 2)", () => {
+  it("registers targeted/reached parents (were unaggregated) per sector", () => {
+    const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+    // targeted = planning snapshot (neutral); reached = under-reported; both latest_state.
+    expect(byLabel.get("targeted_shelter")).toMatchObject({
+      path: "needs_and_funding.shelter.people_targeted",
+      kind: "latest_state", qualityBias: "neutral",
+    });
+    expect(byLabel.get("reached_health")).toMatchObject({
+      path: "needs_and_funding.health.people_reached",
+      kind: "latest_state", qualityBias: "underreport",
+    });
+    // and their SADD cells + sector-PIN + returnee cells exist
+    for (const label of [
+      "reached_health_female", "targeted_shelter_children_0_17",
+      "pin_wash_male", "returnee_stock_elderly_60plus", "new_returns_female",
+    ]) {
+      expect(byLabel.has(label)).toBe(true);
+    }
+  });
+
+  it("rolls up a reached breakdown cell latest-wins, like its parent", () => {
+    const rows = [
+      row("r-old", "2026-06-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(30_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(16_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-06-30T00:00:00Z"),
+      row("r-new", "2026-07-10T00:00:00Z", ["SD01"], {
+        needs_and_funding: {
+          health: {
+            people_reached: {
+              ...nf(45_000, "reported", "people", "SD01"),
+              breakdown: { female: nf(24_000, "reported", "people", "SD01") },
+            },
+          },
+        },
+      }, "2026-07-31T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "SD01")!;
+    expect(result.data.reached_health).toMatchObject({ value: 45_000 });      // latest month wins
+    expect(result.data.reached_health_female).toMatchObject({ value: 24_000 });
+  });
 });
 
 describe("aggregateReports — empty input", () => {
@@ -199,9 +365,9 @@ describe("aggregateReports — additive count (killed_total)", () => {
   it("dedupes two reports for the same week (period totals, not per-day events)", () => {
     // Both figures are weekly period-totals for the same week + location, so
     // they're competing observations of one measurement — deduped to ONE, not
-    // summed (clear-context-pipeline ADR-0002: no per-day breakdown). Which one
+    // summed (clear-pipeline ADR-0002: no per-day breakdown). Which one
     // wins is now bias-aware: killed_total is `overreport`, so among
-    // comparable-quality figures the LOWER value is taken (clear-context-pipeline ADR-0005 §4).
+    // comparable-quality figures the LOWER value is taken (clear-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-02T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(3, "verified") } },
@@ -243,7 +409,7 @@ describe("aggregateReports — additive count (killed_total)", () => {
     // Same day, same location → same incident key. Both are competing
     // observations of one event. With uniform reliability the confidence gap
     // (reported vs verified) stays within the data-quality margin D, so they're
-    // comparable and the overreport bias takes the LOWER figure (clear-context-pipeline ADR-0005 §4).
+    // comparable and the overreport bias takes the LOWER figure (clear-pipeline ADR-0005 §4).
     const rows = [
       row("r1", "2026-07-05T00:00:00Z", ["SD0201"], {
         casualties: { killed: { total: nf(10, "reported") } },
@@ -310,7 +476,7 @@ describe("aggregateReports — week bucket for summed figures", () => {
   it("dedupes two same-week reports (weekly period totals, not per-day events)", () => {
     // 2026-07-06 (Mon) and 2026-07-08 (Wed) are the same ISO week. The figures
     // are weekly period-totals for the same week + location → one measurement,
-    // deduped to the latest, not summed (clear-context-pipeline ADR-0002).
+    // deduped to the latest, not summed (clear-pipeline ADR-0002).
     const rows = [
       row("r-mon", "2026-07-06T00:00:00Z", ["SD0201"], {
         access_and_incidents: { security_incidents_count: nf(2, "reported") },
@@ -722,7 +888,7 @@ describe("aggregateReports — malformed inputs", () => {
 });
 
 /**
- * Aggregation invariants — see clear-context-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
+ * Aggregation invariants — see clear-pipeline/docs/adr/0002-deduplicate-at-figure-scope.md
  * and clear-api/docs/adr/0001-country-scope-dedups-by-report.md.
  *
  * Both the country-scope inflation defect (#269) and the missing
@@ -1010,7 +1176,7 @@ describe("event-type key — untyped/malformed/casing fixes (PR #81 review)", ()
 // DQ P3 — data quality: reliability, bias-aware selection, quartile-drop
 // ────────────────────────────────────────────────────────────────────
 
-describe("aggregateReports — reliability-driven override (clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — reliability-driven override (clear-pipeline ADR-0005 §4)", () => {
   it("a higher-reliability source overrides a fresher, weaker one within reach", () => {
     // killed_total (overreport, window 7d/x2 → 3.5d reach). The strong source
     // (reliability 3) has data_quality far above the weak one (Δ ≥ D=1.0), so it
@@ -1048,7 +1214,7 @@ describe("aggregateReports — reliability-driven override (clear-context-pipeli
   });
 });
 
-describe("aggregateReports — directional bias tie-break (clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — directional bias tie-break (clear-pipeline ADR-0005 §4)", () => {
   it("an underreport field takes the HIGHER of two comparable figures", () => {
     // security_incidents_count (additive, underreport). Uniform reliability →
     // comparable quality → bias decides → the higher (incidents under-recorded).
@@ -1066,7 +1232,7 @@ describe("aggregateReports — directional bias tie-break (clear-context-pipelin
   });
 });
 
-describe("aggregateReports — max quartile-drop (overall_affected, clear-context-pipeline ADR-0005 §4)", () => {
+describe("aggregateReports — max quartile-drop (overall_affected, clear-pipeline ADR-0005 §4)", () => {
   it("drops the lowest-quality winner before taking the max", () => {
     // Four monthly buckets → four cross-group winners. The 9999 outlier comes
     // from an `unverified` figure (lowest data quality); the bottom quartile
@@ -1091,7 +1257,7 @@ describe("aggregateReports — max quartile-drop (overall_affected, clear-contex
   });
 });
 
-describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-context-pipeline ADR-0005 §2)", () => {
+describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-pipeline ADR-0005 §2)", () => {
   const envelope = (over: Record<string, unknown>) => ({
     value: 1000,
     unit: "people",
@@ -1149,7 +1315,7 @@ describe("finaliseReadTimeQuality — read-time recency + data_quality (clear-co
   });
 });
 
-describe("aggregateReports — per-figure credibility override (clear-context-pipeline ADR-0004 §4)", () => {
+describe("aggregateReports — per-figure credibility override (clear-pipeline ADR-0004 §4)", () => {
   const docUnmet = {
     attribution_quality: "unmet", internal_consistency: "unmet",
     plausibility_in_context: "unmet", geographic_temporal_specificity: "unmet",
