@@ -14,13 +14,48 @@ const optionalUrl = () =>
     z.string().url().optional(),
   );
 
+/**
+ * Reduce a server base URL to a bare origin.
+ *
+ * Everything this process serves — Better Auth at `/api/auth`, the
+ * Developer Portal at `/portal`, the docs at `/docs` — is mounted at the
+ * root of the express app (see `src/index.ts`), so a path component on
+ * `BETTER_AUTH_URL` is always a misconfiguration.
+ *
+ * It used to pass validation and then silently corrupt every link built
+ * by hand from it: with `BETTER_AUTH_URL=https://dev-api.example/auth`,
+ * the emailed password-reset link came out as
+ * `https://dev-api.example/auth/portal/reset-password?token=…` — a 404,
+ * with no way for the recipient to guess the working URL.
+ *
+ * Normalising here rather than at each call site means a stray path
+ * can't reach `buildResetUrl`, `portalLoginUrl`, or Better Auth's own
+ * `baseURL`. The warning keeps the bad value visible so it still gets
+ * fixed at source.
+ */
+export function normaliseServerUrl(raw: string): string {
+  const url = new URL(raw);
+
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    console.warn(
+      `[ENV] BETTER_AUTH_URL is "${raw}" but this server mounts every route at the ` +
+        `root; using origin "${url.origin}" instead. Set BETTER_AUTH_URL to a bare ` +
+        `origin to silence this.`,
+    );
+  }
+
+  return url.origin;
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "staging", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   DATABASE_URL: z.string(),
   BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.string().url(),
+  /** Server base URL. Always stored as a bare origin — see
+   *  {@link normaliseServerUrl} for why a path here is never valid. */
+  BETTER_AUTH_URL: z.string().url().transform(normaliseServerUrl),
 
   // Frontend URL (for verification links)
   FRONTEND_URL: z.string().default("http://localhost:3000"),
