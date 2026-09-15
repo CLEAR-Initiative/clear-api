@@ -7,8 +7,10 @@
  * prefix — the webhook strips the channel prefix before the lookup). For
  * the Twilio Sandbox POC that is the sandbox number, +14155238886.
  *
- * Idempotent: found-or-created by transportId; an existing row is
- * reactivated and renamed rather than duplicated.
+ * Idempotent: found-or-created by transportId; an existing HOTLINE row is
+ * reactivated and renamed rather than duplicated. A row of any other kind
+ * is refused, never converted — group sources are gated on consent scope,
+ * and flipping kind to "hotline" would bypass that gate.
  *
  * Usage:
  *   bun run scripts/seed-hotline-source.ts +14155238886 "Twilio sandbox hotline"
@@ -30,9 +32,16 @@ if (!/^\+\d{6,15}$/.test(transportId)) {
 async function main() {
   const existing = await prisma.groundSources.findUnique({ where: { transportId } });
   if (existing) {
+    if (existing.kind !== "hotline") {
+      console.error(
+        `transportId ${transportId} is already registered as kind "${existing.kind}"; ` +
+          "refusing to convert it to a hotline",
+      );
+      process.exit(1);
+    }
     const source = await prisma.groundSources.update({
       where: { id: existing.id },
-      data: { name, kind: "hotline", isActive: true },
+      data: { name, isActive: true },
     });
     console.log(`Updated hotline source ${source.id} for ${transportId}.`);
     return;
