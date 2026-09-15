@@ -32,9 +32,26 @@ const optionalUrl = () =>
  * can't reach `buildResetUrl`, `portalLoginUrl`, or Better Auth's own
  * `baseURL`. The warning keeps the bad value visible so it still gets
  * fixed at source.
+ *
+ * Deliberately never throws. A value this function can't make sense of
+ * is returned close to as-given: an env var that can only produce dead
+ * links is already broken, and crash-looping the API over it would turn
+ * a degraded deployment into an outage.
  */
 export function normaliseServerUrl(raw: string): string {
   const url = new URL(raw);
+
+  // `z.string().url()` accepts any scheme, and `URL.origin` is the string
+  // "null" for every non-special one (`foo://bar` → "null"). Returning that
+  // would bake a literal "null" into every emailed link — harder to trace
+  // back to this env var than the original value was. Hand it back instead.
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    console.warn(
+      `[ENV] BETTER_AUTH_URL is "${raw}", which is not an http(s) URL. Leaving it ` +
+        `as-is; links built from it will not work until it is corrected.`,
+    );
+    return raw.replace(/\/+$/, "");
+  }
 
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
     console.warn(

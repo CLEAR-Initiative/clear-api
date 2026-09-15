@@ -52,6 +52,18 @@ describe("normaliseServerUrl", () => {
     );
   });
 
+  // URL.origin is the literal string "null" for any non-special scheme, so a
+  // naive `.origin` would bake "null" into every emailed link — less traceable
+  // back to this env var than the bad value itself.
+  it("hands back a non-http(s) URL rather than the string \"null\"", () => {
+    expect(normaliseServerUrl("foo://bar/baz")).toBe("foo://bar/baz");
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("never throws, so a bad value degrades links instead of the boot", () => {
+    expect(() => normaliseServerUrl("file:///tmp/x")).not.toThrow();
+  });
+
   it("drops a query string or fragment too", () => {
     expect(normaliseServerUrl("https://api.example.com/?x=1")).toBe(
       "https://api.example.com",
