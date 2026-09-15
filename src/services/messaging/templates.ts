@@ -498,7 +498,7 @@ The CLEAR team`,
  *   - userName            display name for greeting
  *   - plaintextApiKey     full `sk_live_…` key, shown verbatim and
  *                         flagged as non-retrievable
- *   - setPasswordUrl      pre-signed link to /auth/reset-password?token=…&kind=setup
+ *   - setPasswordUrl      pre-signed link to /portal/reset-password?token=…&kind=setup
  *   - setPasswordTtlDays  TTL of the magic link, e.g. 7
  *   - graphqlEndpoint     e.g. https://api.clear.example/graphql
  *   - docsUrl             link to the API docs surface served by clear-api
