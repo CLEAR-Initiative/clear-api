@@ -44,6 +44,19 @@ const envSchema = z.object({
   ELKS46_API_PASSWORD: z.string().optional(),
   ELKS46_FROM: z.string().optional(),
 
+  // WhatsApp hotline webhook (Twilio transport POC — WhatsApp Signal
+  // Pipeline V3). All three must be set for the route to accept traffic;
+  // it answers 503 otherwise. HOTLINE_WEBHOOK_URL is the EXACT public
+  // URL Twilio calls (signature validation is defined over it);
+  // HOTLINE_PSEUDONYM_SECRET keys the per-conversation reporter
+  // pseudonyms (services/hotline-ingest.ts) — rotating it unlinks all
+  // prior pseudonyms.
+  HOTLINE_WEBHOOK_URL: optionalUrl(),
+  HOTLINE_PSEUDONYM_SECRET: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().min(16).optional(),
+  ),
+
   // Celery broker (Redis) — for sending tasks to clear-pipeline workers
   CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
 
