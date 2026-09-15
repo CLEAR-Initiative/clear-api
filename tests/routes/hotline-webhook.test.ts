@@ -19,9 +19,17 @@ const AUTH_TOKEN = "test-auth-token";
 
 const { envStub, prismaStub, uploadBufferToS3Mock } = vi.hoisted(() => {
   const envStub: Record<string, string | undefined> = {};
+  type ThreadCreateArgs = {
+    data: { title: string; messages: { create: Record<string, unknown> } };
+  };
+  const createThread = async ({ data }: ThreadCreateArgs) => {
+    prismaStub.__threads.push({ title: data.title, message: { ...data.messages.create } });
+    return { id: "t1", messages: [{ id: "gm_1" }] };
+  };
   const prismaStub = {
     __source: null as Record<string, unknown> | null,
     __threads: [] as Array<{ title: string; message: Record<string, unknown> }>,
+    __createThread: createThread,
     groundSources: {
       findFirst: async ({ where }: { where: { transportId: string } }) =>
         prismaStub.__source && prismaStub.__source.transportId === where.transportId
@@ -29,26 +37,17 @@ const { envStub, prismaStub, uploadBufferToS3Mock } = vi.hoisted(() => {
           : null,
     },
     groundMessages: {
-      findMany: async ({
-        where,
-      }: {
-        where: { externalId: { in: string[] } };
-      }) =>
-        prismaStub.__threads
-          .filter((t) => where.externalId.in.includes(t.message.externalId as string))
-          .map((t) => ({ externalId: t.message.externalId })),
-      findFirst: async () => ({ id: "gm_1" }),
-    },
-    groundThreads: {
-      create: async ({
-        data,
-      }: {
-        data: { title: string; messages: { create: Record<string, unknown> } };
-      }) => {
-        prismaStub.__threads.push({ title: data.title, message: data.messages.create });
-        return { id: "t1" };
+      findFirst: async ({ where }: { where: { externalId: string } }) => {
+        const hit = prismaStub.__threads.find((t) => t.message.externalId === where.externalId);
+        return hit ? { id: "gm_1", threadId: "t1", mediaKeys: hit.message.mediaKeys } : null;
+      },
+      update: async ({ data }: { data: { mediaKeys: string[] } }) => {
+        const hit = prismaStub.__threads[0];
+        if (hit) hit.message.mediaKeys = data.mediaKeys;
+        return hit?.message;
       },
     },
+    groundThreads: { create: createThread },
   };
   return { envStub, prismaStub, uploadBufferToS3Mock: vi.fn() };
 });
@@ -72,7 +71,10 @@ vi.mock("../../src/services/hotline-ingest.js", async (importOriginal) => {
 });
 
 import express from "express";
-import { hotlineWebhookRouter } from "../../src/routes/hotline-webhook.js";
+import {
+  hotlineWebhookRouter,
+  MAX_HOTLINE_MEDIA_BYTES,
+} from "../../src/routes/hotline-webhook.js";
 import { computeTwilioSignature } from "../../src/services/twilio-signature.js";
 import { hotlinePseudonym } from "../../src/services/hotline-ingest.js";
 
@@ -146,8 +148,31 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     enqueueTranscriptionMock.mockReset();
     uploadBufferToS3Mock.mockReset();
     uploadBufferToS3Mock.mockImplementation(async (_buf: Buffer, key: string) => key);
+    prismaStub.groundThreads.create = prismaStub.__createThread;
     vi.unstubAllGlobals();
   });
+
+  /** Stub the global fetch for Twilio media URLs only — the stub also
+   * intercepts the test's own request to the local server, so those are
+   * routed to the real implementation. */
+  function stubMediaFetch(
+    handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  ) {
+    const realFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("http://127.0.0.1")) return realFetch(input, init);
+      return handler(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const VOICE_PARAMS = {
+    Body: "",
+    NumMedia: "1",
+    MediaUrl0: "https://api.twilio.com/2010-04-01/Accounts/AC/Messages/SM001/Media/ME1",
+    MediaContentType0: "audio/ogg",
+  };
 
   it("503s (loudly) when the hotline env is not configured", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -163,6 +188,24 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     const res = await post(baseParams(), { sign: false });
     expect(res.status).toBe(403);
     expect(prismaStub.__threads).toHaveLength(0);
+  });
+
+  it("403s (not 500s) an unsigned non-form POST, e.g. JSON from a scanner", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ MessageSid: "SM001" }),
+    });
+    expect(res.status).toBe(403);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(prismaStub.__threads).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
+  it("403s an unsigned empty-body POST", async () => {
+    const res = await fetch(url, { method: "POST" });
+    expect(res.status).toBe(403);
   });
 
   it("403s a signature over a tampered body", async () => {
@@ -225,21 +268,9 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
 
   it("fetches voice media with Twilio auth, stores it, and enqueues transcription", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
-    // The stubbed global fetch also intercepts the test's own request —
-    // route local-server URLs to the real implementation.
-    const realFetch = globalThis.fetch;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).startsWith("http://127.0.0.1")) return realFetch(input, init);
-      return new Response(bytes, { status: 200 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubMediaFetch(async () => new Response(bytes, { status: 200 }));
 
-    const params = baseParams({
-      Body: "",
-      NumMedia: "1",
-      MediaUrl0: "https://api.twilio.com/2010-04-01/Accounts/AC/Messages/SM001/Media/ME1",
-      MediaContentType0: "audio/ogg",
-    });
+    const params = baseParams(VOICE_PARAMS);
     const res = await post(params);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(EMPTY_TWIML);
@@ -250,6 +281,8 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     );
     expect(mediaCall).toBeDefined();
     expect((mediaCall?.[1]?.headers as Record<string, string>).Authorization).toMatch(/^Basic /);
+    // Bounded: the fetch carries an abort signal (per-attachment timeout).
+    expect(mediaCall?.[1]?.signal).toBeInstanceOf(AbortSignal);
 
     // Stored under the ground content-hash scheme with the audio extension.
     expect(uploadBufferToS3Mock).toHaveBeenCalledTimes(1);
@@ -261,20 +294,73 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     expect(enqueueTranscriptionMock).toHaveBeenCalledExactlyOnceWith("gm_1");
   });
 
-  it("500s when persistence fails, so Twilio retries", async () => {
+  it("500s when a media fetch aborts, but the message row is already persisted", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubMediaFetch(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+
+    const res = await post(baseParams(VOICE_PARAMS));
+    expect(res.status).toBe(500);
+    // Persist-before-media: the report survives even if Twilio never retries.
+    expect(prismaStub.__threads).toHaveLength(1);
+    expect(prismaStub.__threads[0].message.mediaKeys).toEqual([]);
+    expect(uploadBufferToS3Mock).not.toHaveBeenCalled();
+    // Nothing enqueued for a half-ingested message; the retry does that.
+    expect(enqueueClassificationMock).not.toHaveBeenCalled();
+    expect(enqueueTranscriptionMock).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("backfills media and enqueues on the retry after a media failure", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let attempt = 0;
+    stubMediaFetch(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError("fetch failed");
+      return new Response(new Uint8Array([9, 9, 9]).buffer, { status: 200 });
+    });
+
+    expect((await post(baseParams(VOICE_PARAMS))).status).toBe(500);
+    const retry = await post(baseParams(VOICE_PARAMS));
+    expect(retry.status).toBe(200);
+    expect(await retry.text()).toBe(EMPTY_TWIML);
+
+    expect(prismaStub.__threads).toHaveLength(1);
+    expect(prismaStub.__threads[0].message.mediaKeys).toHaveLength(1);
+    expect(enqueueClassificationMock).toHaveBeenCalledExactlyOnceWith("gs_hotline");
+    expect(enqueueTranscriptionMock).toHaveBeenCalledExactlyOnceWith("gm_1");
+    errorSpy.mockRestore();
+  });
+
+  it("rejects media whose declared size exceeds the cap without buffering it", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubMediaFetch(
+      async () =>
+        new Response(new Uint8Array([1]).buffer, {
+          status: 200,
+          headers: { "content-length": String(MAX_HOTLINE_MEDIA_BYTES + 1) },
+        }),
+    );
+
+    const res = await post(baseParams(VOICE_PARAMS));
+    expect(res.status).toBe(500);
+    expect(uploadBufferToS3Mock).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[hotline-webhook] Failed:",
+      expect.objectContaining({ message: expect.stringContaining("too large") }),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("500s when persistence fails (Twilio retries only with the 5xx override configured)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     prismaStub.groundThreads.create = async () => {
       throw new Error("db down");
     };
-    try {
-      const res = await post(baseParams());
-      expect(res.status).toBe(500);
-    } finally {
-      prismaStub.groundThreads.create = async ({ data }) => {
-        prismaStub.__threads.push({ title: data.title, message: data.messages.create });
-        return { id: "t1" };
-      };
-      errorSpy.mockRestore();
-    }
+    const res = await post(baseParams());
+    expect(res.status).toBe(500);
+    expect(prismaStub.__threads).toHaveLength(0);
+    errorSpy.mockRestore();
   });
 });

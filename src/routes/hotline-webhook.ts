@@ -13,8 +13,15 @@
  * fetch) replaces this one against the same service.
  *
  * Flow (all inline — media is small and Twilio allows ~15s; acking only
- * AFTER persistence keeps Twilio's retry semantics as our durability
- * net, and the MessageSid-based externalId makes retries idempotent):
+ * AFTER persistence, and the MessageSid-based externalId makes retries
+ * idempotent). DURABILITY: Twilio does NOT retry a 5xx by default — its
+ * default webhook retry policy is one retry on connect timeout only
+ * (connection override `rp=ct`). A 5xx retry has to be enabled on the
+ * Twilio side, by appending `#rp=5xx,ct&rc=3` to the webhook URL in the
+ * console or configuring a Fallback URL to this same endpoint (see
+ * .env.example). The ingest service therefore persists the message row
+ * BEFORE fetching media, so a transient media/S3 failure leaves a
+ * retrievable message rather than nothing; a retry backfills the media.
  *   1. Config guard: the three hotline env vars must be set → else 503.
  *   2. Twilio signature validation against the EXACT configured public
  *      URL → else 403.
@@ -22,10 +29,11 @@
  *      "hotline" ground source. Unknown number → 200 with nothing
  *      persisted (a retry cannot fix it) and a LOUD log line — same
  *      visibility contract as the live-ingest consent gate.
- *   4. Ingest: dedupe on MessageSid, fetch+store media to S3 (ground
- *      content-hash keys), redact, pseudonymize, placeholder thread.
- *   5. Enqueue classification (always, on create) and transcription
- *      (voice media only).
+ *   4. Ingest: dedupe on MessageSid, redact, pseudonymize, placeholder
+ *      thread, THEN fetch+store media to S3 (ground content-hash keys)
+ *      and fill in mediaKeys.
+ *   5. Enqueue classification (on create / media backfill) and
+ *      transcription (voice media only).
  *   6. Respond with EMPTY TwiML.
  *
  * NO OUTBOUND (ubiquitous PRD constraint pending NRC sign-off): the
@@ -90,12 +98,23 @@ export function hotlineMediaFilename(
   return `${messageSid}-${index}${ext ? `.${ext}` : ""}`;
 }
 
+/** Per-attachment fetch budget. Twilio's webhook timeout is ~15s and
+ * attachments are fetched concurrently, so one slow media edge fails
+ * fast and deterministically instead of stalling the whole request into
+ * a Twilio-side timeout. */
+export const HOTLINE_MEDIA_FETCH_TIMEOUT_MS = 8_000;
+/** WhatsApp caps media at 16MB; anything larger is not a legitimate
+ * attachment and must not be buffered. */
+export const MAX_HOTLINE_MEDIA_BYTES = 16 * 1024 * 1024;
+
 /**
  * Fetch one attachment from Twilio and store it under the ground
  * content-hash key scheme. Twilio media URLs require HTTP basic auth
  * with the account credentials; fetch() drops the Authorization header
  * on the cross-origin redirect to their storage backend, which is the
- * correct behaviour.
+ * correct behaviour. Bounded by HOTLINE_MEDIA_FETCH_TIMEOUT_MS and
+ * MAX_HOTLINE_MEDIA_BYTES; either violation throws so the route's catch
+ * path returns 500.
  */
 async function fetchAndStoreTwilioMedia(options: {
   groundSourceId: string;
@@ -108,15 +127,44 @@ async function fetchAndStoreTwilioMedia(options: {
   ).toString("base64");
   const response = await fetch(options.media.url, {
     headers: { Authorization: `Basic ${credentials}` },
+    signal: AbortSignal.timeout(HOTLINE_MEDIA_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`media fetch failed: HTTP ${response.status} for media ${options.index}`);
   }
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_HOTLINE_MEDIA_BYTES) {
+    throw new Error(`media ${options.index} too large: ${declaredLength} bytes`);
+  }
   const buffer = Buffer.from(await response.arrayBuffer());
+  // content-length is advisory (chunked responses omit it) — enforce on
+  // the bytes actually received too.
+  if (buffer.length > MAX_HOTLINE_MEDIA_BYTES) {
+    throw new Error(`media ${options.index} too large: ${buffer.length} bytes`);
+  }
   const filename = hotlineMediaFilename(options.messageSid, options.index, options.media.contentType);
   const key = groundMediaKey(options.groundSourceId, filename, buffer);
   await uploadBufferToS3(buffer, key, options.media.contentType);
   return key;
+}
+
+/**
+ * Coerce the parsed body into the flat string map the signature scheme is
+ * defined over. Express 5 leaves `req.body` UNDEFINED when no parser
+ * matched the content type (a JSON or empty POST from a scanner), and
+ * `urlencoded({extended:false})` yields string[] for repeated keys; both
+ * must fall through to the signature check (→ 403), not throw (→ 500).
+ * Twilio never sends repeated keys, so the first value is kept only to
+ * keep the map typed — such a request fails the signature check anyway.
+ */
+export function normalizeFormParams(body: unknown): Record<string, string> {
+  if (typeof body !== "object" || body === null) return {};
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    const first = Array.isArray(value) ? value[0] : value;
+    if (typeof first === "string") params[key] = first;
+  }
+  return params;
 }
 
 /** Pull MediaUrl{N}/MediaContentType{N} pairs out of the form params. */
@@ -152,7 +200,7 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const params = req.body as Record<string, string>;
+    const params = normalizeFormParams(req.body);
     const valid = validateTwilioSignature({
       authToken: TWILIO_AUTH_TOKEN,
       signature: req.headers["x-twilio-signature"] as string | undefined,
@@ -204,9 +252,11 @@ router.post("/", async (req: Request, res: Response) => {
         fetchAndStoreTwilioMedia({ groundSourceId: source.id, messageSid, media, index }),
     });
 
-    if (result.status === "created") {
+    // "created" and "media_backfilled" are both the first fully
+    // successful ingest of this message (see HotlineIngestResult).
+    if (result.status !== "duplicate") {
       enqueueGroundClassification(source.id);
-      if (result.hasAudio && result.groundMessageId) {
+      if (result.hasAudio) {
         enqueueGroundTranscription(result.groundMessageId);
       }
     }
@@ -214,7 +264,10 @@ router.post("/", async (req: Request, res: Response) => {
     respondEmptyTwiml(res);
   } catch (err) {
     console.error("[hotline-webhook] Failed:", err);
-    // 500 → Twilio retries; the MessageSid externalId makes that safe.
+    // 500 is NOT retried by Twilio unless the webhook URL carries the
+    // `#rp=5xx` connection override or a Fallback URL is set (module
+    // doc). With the override, the retry is safe: the MessageSid
+    // externalId dedupes and the media backfill completes a partial row.
     res.status(500).json({ error: "Hotline ingest failed" });
   }
 });

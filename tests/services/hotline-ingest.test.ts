@@ -35,6 +35,7 @@ const REPORTER = "whatsapp:+249111222333";
 
 interface StoredThread {
   id: string;
+  messageId: string;
   title: string;
   message: Record<string, unknown>;
 }
@@ -49,29 +50,30 @@ function makeDb(source: HotlineSourceRow | null) {
         source && source.transportId === where.transportId ? source : null,
     },
     groundMessages: {
-      findMany: async ({ where }) =>
-        threads
-          .map((t) => t.message)
-          .filter(
-            (m) =>
-              m.groundSourceId === where.groundSourceId &&
-              where.externalId.in.includes(m.externalId as string),
-          )
-          .map((m) => ({ externalId: m.externalId as string })),
       findFirst: async ({ where }) => {
         const hit = threads.find(
           (t) =>
             t.message.groundSourceId === where.groundSourceId &&
             t.message.externalId === where.externalId,
         );
-        return hit ? { id: `m${hit.id}` } : null;
+        return hit
+          ? { id: hit.messageId, threadId: hit.id, mediaKeys: hit.message.mediaKeys as string[] }
+          : null;
+      },
+      update: async ({ where, data }) => {
+        const hit = threads.find((t) => t.messageId === where.id);
+        if (!hit) throw new Error(`no message ${where.id}`);
+        hit.message.mediaKeys = data.mediaKeys;
+        return hit.message;
       },
     },
     groundThreads: {
       create: async ({ data }) => {
-        const id = `t${nextId++}`;
-        threads.push({ id, title: data.title, message: { ...data.messages.create } });
-        return { id };
+        const n = nextId++;
+        const id = `t${n}`;
+        const messageId = `m${n}`;
+        threads.push({ id, messageId, title: data.title, message: { ...data.messages.create } });
+        return { id, messages: [{ id: messageId }] };
       },
     },
   };
@@ -219,13 +221,59 @@ describe("ingestHotlineMessage", () => {
     expect(result.status).toBe("created");
     if (result.status !== "created") return;
     expect(result.hasAudio).toBe(true);
-    expect(result.groundMessageId).not.toBe("");
+    // The id comes back from the nested create itself, not a re-lookup.
+    expect(result.groundMessageId).toBe("m1");
 
     const message = threads[0].message;
     expect(message.mediaKeys).toEqual(["ground/gs_hotline/key-0", "ground/gs_hotline/key-1"]);
     // Caption-less media must still become a signal (PRD requirement).
     expect(message.text).toBe("");
     expect(threads[0].title).toBe("[media] voice-0");
+  });
+
+  it("persists the row BEFORE media, so a media failure leaves a retrievable message", async () => {
+    const { db, threads } = makeDb(ACTIVE_HOTLINE);
+    storeMediaMock.mockRejectedValue(new Error("twilio media edge timed out"));
+    const withVoice = textMessage({
+      text: "Voice note attached",
+      media: [{ url: "https://api.twilio.com/media/1", contentType: "audio/ogg" }],
+    });
+
+    await expect(ingest(db, withVoice)).rejects.toThrow("timed out");
+    // The message survived the media failure — no lost hotline report.
+    expect(threads).toHaveLength(1);
+    expect(threads[0].message.mediaKeys).toEqual([]);
+    expect(threads[0].message.mediaRefs).toEqual(["voice-0"]);
+  });
+
+  it("backfills media on a retry after a media failure, without a second row", async () => {
+    const { db, threads } = makeDb(ACTIVE_HOTLINE);
+    const withVoice = textMessage({
+      media: [{ url: "https://api.twilio.com/media/1", contentType: "audio/ogg" }],
+    });
+    storeMediaMock.mockRejectedValueOnce(new Error("S3 unavailable"));
+    await expect(ingest(db, withVoice)).rejects.toThrow("S3 unavailable");
+
+    const retry = await ingest(db, withVoice);
+    expect(retry.status).toBe("media_backfilled");
+    if (retry.status !== "media_backfilled") return;
+    // Same row, same id the first attempt created — the caller enqueues on this.
+    expect(retry.groundMessageId).toBe("m1");
+    expect(retry.threadId).toBe("t1");
+    expect(retry.hasAudio).toBe(true);
+    expect(threads).toHaveLength(1);
+    expect(threads[0].message.mediaKeys).toEqual(["ground/gs_hotline/key-0"]);
+
+    // And once media has landed, a further retry is a plain duplicate.
+    expect((await ingest(db, withVoice)).status).toBe("duplicate");
+    expect(storeMediaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not treat a media-less duplicate as a backfill candidate", async () => {
+    const { db } = makeDb(ACTIVE_HOTLINE);
+    expect((await ingest(db, textMessage())).status).toBe("created");
+    expect((await ingest(db, textMessage())).status).toBe("duplicate");
+    expect(storeMediaMock).not.toHaveBeenCalled();
   });
 
   it("reports hasAudio false for a text-only submission", async () => {

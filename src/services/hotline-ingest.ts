@@ -46,11 +46,7 @@ import {
   extractUncertaintyMarker,
   redactPhoneNumbers,
 } from "./whatsapp-export.js";
-import {
-  deriveThreadTitle,
-  type GroundIngestDb,
-  type GroundMessageCreate,
-} from "./ground-ingest.js";
+import { deriveThreadTitle, type GroundMessageCreate } from "./ground-ingest.js";
 import { sendCeleryTask } from "./celery.js";
 
 /** The slice of a groundSources row the hotline gate judges. */
@@ -61,19 +57,44 @@ export interface HotlineSourceRow {
   isActive: boolean;
 }
 
+/** The slice of an existing groundMessages row the dedupe/backfill path
+ * needs: its id (transcription enqueue), thread, and whether media landed. */
+export interface HotlineExistingMessage {
+  id: string;
+  threadId: string | null;
+  mediaKeys: string[];
+}
+
+/** Narrow structural view of the Prisma client used by hotline ingest.
+ * Deliberately NOT built on GroundIngestDb: the hotline path needs the
+ * created message id back from the nested create and an update for the
+ * media backfill, which the group paths do not. */
 export interface HotlineIngestDb {
   groundSources: {
     findFirst(args: {
       where: { transportId: string };
     }): Promise<HotlineSourceRow | null>;
   };
-  groundMessages: GroundIngestDb["groundMessages"] & {
+  groundMessages: {
     findFirst(args: {
       where: { groundSourceId: string; externalId: string };
-      select: { id: true };
-    }): Promise<{ id: string } | null>;
+      select: { id: true; threadId: true; mediaKeys: true };
+    }): Promise<HotlineExistingMessage | null>;
+    update(args: {
+      where: { id: string };
+      data: { mediaKeys: string[] };
+    }): Promise<unknown>;
   };
-  groundThreads: GroundIngestDb["groundThreads"];
+  groundThreads: {
+    create(args: {
+      data: {
+        groundSourceId: string;
+        title: string;
+        messages: { create: GroundMessageCreate };
+      };
+      select: { id: true; messages: { select: { id: true } } };
+    }): Promise<{ id: string; messages: Array<{ id: string }> }>;
+  };
 }
 
 /** One media attachment on an inbound hotline message, not yet stored. */
@@ -151,24 +172,39 @@ export function hotlineExternalId(transportId: string, messageId: string): strin
 }
 
 export type HotlineIngestResult =
+  /** Row already exists with its media (or had none): nothing to do. */
   | { status: "duplicate" }
   | {
-      status: "created";
+      /** "created": new row + media stored. "media_backfilled": the row
+       * existed from an earlier attempt whose media step failed; this
+       * attempt stored the media. Both are "first successful ingest" from
+       * the caller's point of view — enqueue on either. */
+      status: "created" | "media_backfilled";
       groundMessageId: string;
-      threadId: string;
-      /** True when any stored media is audio — the caller enqueues
-       * transcription for the message. */
+      threadId: string | null;
+      /** True when any media is audio — the caller enqueues transcription
+       * for the message. */
       hasAudio: boolean;
     };
 
 /**
- * Ingest one hotline message. Media bytes are fetched/stored via the
- * injected `storeMedia` ONLY after the duplicate check, so webhook
- * retries do not re-download media (content-hash keys make a re-store
- * harmless anyway, but the fetch is the expensive part).
+ * Ingest one hotline message.
  *
- * The caller resolves the source first (resolveHotlineSource) — media
- * must never be fetched, let alone stored, for an unregistered number.
+ * Ordering is PERSIST FIRST, MEDIA SECOND. Twilio does not retry a 5xx by
+ * default (its default retry policy is one retry on connect timeout only
+ * — see the route doc), so if we fetched media before writing the row, a
+ * transient media/S3 failure would lose the reporter's whole submission
+ * with no outbound channel to ask them to resend. Instead the row is
+ * created with empty mediaKeys, media is then fetched/stored via the
+ * injected `storeMedia`, and mediaKeys is filled in. A media failure
+ * still throws (→ 500), but leaves a retrievable message behind; a retry
+ * (Twilio-side `#rp=5xx` override, or a manual replay) hits the
+ * duplicate path, sees the empty mediaKeys, and backfills the media
+ * without creating a second row. Media is never re-fetched on a retry
+ * once it has landed.
+ *
+ * The caller resolves the source first (resolveHotlineSource) — nothing
+ * is persisted or fetched for an unregistered number.
  */
 export async function ingestHotlineMessage(options: {
   db: HotlineIngestDb;
@@ -184,21 +220,34 @@ export async function ingestHotlineMessage(options: {
   const { db, source, message } = options;
 
   const externalId = hotlineExternalId(source.transportId, message.messageId);
-  const existing = await db.groundMessages.findMany({
-    where: { groundSourceId: source.id, externalId: { in: [externalId] } },
-    select: { externalId: true },
+  const hasAudio = message.media.some((m) => m.contentType.startsWith("audio/"));
+  /** Attachments are fetched concurrently — each is bounded by the route's
+   * per-fetch timeout, and the whole webhook has ~15s. Order is preserved
+   * so mediaKeys[i] pairs with mediaRefs[i]. */
+  const storeAllMedia = () =>
+    Promise.all(message.media.map((media, index) => options.storeMedia(media, index)));
+
+  const existing = await db.groundMessages.findFirst({
+    where: { groundSourceId: source.id, externalId },
+    select: { id: true, threadId: true, mediaKeys: true },
   });
-  if (existing.length > 0) {
+  if (existing) {
+    if (message.media.length > 0 && existing.mediaKeys.length === 0) {
+      // An earlier attempt persisted the row but failed before media
+      // landed — this retry completes it.
+      const mediaKeys = await storeAllMedia();
+      await db.groundMessages.update({ where: { id: existing.id }, data: { mediaKeys } });
+      return {
+        status: "media_backfilled",
+        groundMessageId: existing.id,
+        threadId: existing.threadId,
+        hasAudio,
+      };
+    }
     return { status: "duplicate" };
   }
 
-  const mediaKeys: string[] = [];
-  for (const [index, media] of message.media.entries()) {
-    mediaKeys.push(await options.storeMedia(media, index));
-  }
-
   const text = redactPhoneNumbers(message.text ?? "");
-  const hasAudio = message.media.some((m) => m.contentType.startsWith("audio/"));
   /** Human-readable media labels for the review UI (groundMessages.mediaRefs
    * documents export filenames; the hotline has none, so label by type). */
   const mediaRefs = message.media.map(
@@ -213,36 +262,27 @@ export async function ingestHotlineMessage(options: {
     // Hotline anonymity: no display name is ever persisted.
     senderName: null,
     text,
-    mediaKeys,
+    // Filled in below once the bytes are stored; see the function doc.
+    mediaKeys: [],
     mediaRefs,
     omittedMediaCount: 0,
     uncertainty: extractUncertaintyMarker(text),
     isEdited: false,
   };
 
+  let thread: { id: string; messages: Array<{ id: string }> };
   try {
-    const thread = await db.groundThreads.create({
+    thread = await db.groundThreads.create({
       data: {
         groundSourceId: source.id,
         title: deriveThreadTitle(text, mediaRefs, 0),
         messages: { create: data },
       },
+      select: { id: true, messages: { select: { id: true } } },
     });
-    // The nested create returns the thread id; the message id is only
-    // needed for the transcription enqueue, so look it up by externalId.
-    const created = await db.groundMessages.findFirst({
-      where: { groundSourceId: source.id, externalId },
-      select: { id: true },
-    });
-    return {
-      status: "created",
-      groundMessageId: created?.id ?? "",
-      threadId: thread.id,
-      hasAudio,
-    };
   } catch (err: unknown) {
     // P2002 on [groundSourceId, externalId]: a concurrent webhook retry
-    // won the race — the idempotent outcome.
+    // won the race — the idempotent outcome (the winner stores the media).
     if (
       typeof err === "object" &&
       err !== null &&
@@ -253,6 +293,17 @@ export async function ingestHotlineMessage(options: {
     }
     throw err;
   }
+  const groundMessageId = thread.messages[0]?.id;
+  if (!groundMessageId) {
+    throw new Error("nested groundMessages create returned no id");
+  }
+
+  if (message.media.length > 0) {
+    const mediaKeys = await storeAllMedia();
+    await db.groundMessages.update({ where: { id: groundMessageId }, data: { mediaKeys } });
+  }
+
+  return { status: "created", groundMessageId, threadId: thread.id, hasAudio };
 }
 
 /** Celery task name for voice transcription. CONTRACT with clear-pipeline
