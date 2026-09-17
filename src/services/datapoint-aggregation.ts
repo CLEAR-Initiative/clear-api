@@ -534,6 +534,157 @@ for (const parentLabel of SADD_PARENT_LABELS) {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// ADR-0009 — constrained-indicator coverage (extraction schema v5)
+// ────────────────────────────────────────────────────────────────────
+//
+// New headline rules for the previously-missing indicators, plus closed-vocab
+// CATEGORICAL cell rules derived from their parents (the `by_<axis>` maps in the
+// v5 schema). Categorical cells inherit the parent's resolved scope/source in the
+// pipeline (ADR-0009 §4), so — exactly like SADD cells — they share the parent's
+// incident key and MUST reduce with the parent's rule. We therefore derive one
+// cell rule per (parent × axis × enum-value), inheriting everything but path +
+// label. The enum-value lists mirror the pipeline's Python `Literal`s; keeping
+// them here is the price of a separate codebase (a drifted list only means a cell
+// isn't aggregated, never a crash — an unknown key folds to `other` upstream).
+
+/** A point-in-time count snapshot: latest-wins per month, 30-day validity. */
+function snapshotRule(
+  path: string,
+  label: string,
+  qualityBias: QualityBias = "underreport",
+): FieldRule {
+  return {
+    path, label,
+    kind: "latest_state", timeBucket: "month",
+    withinGroupPolicy: "latest_wins",
+    qualityBias, validityWindowDays: 30, overrideDivisor: 3,
+  };
+}
+
+FIELD_RULES.push(
+  // Housing damage (#15–17) — dwelling-count snapshots.
+  snapshotRule("access_and_incidents.housing.destroyed", "housing_destroyed"),
+  snapshotRule("access_and_incidents.housing.damaged", "housing_damaged"),
+  snapshotRule("access_and_incidents.housing.uninhabitable", "housing_uninhabitable"),
+  // Displacement movement (#6) — evacuated/relocated DURING the period = flow.
+  {
+    path: "displacement.movement", label: "movement",
+    kind: "additive_count", timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "underreport", validityWindowDays: 30, overrideDivisor: 2,
+  },
+  // Displacement sites (#7) — a count of LOCATIONS, snapshot (neutral).
+  snapshotRule("displacement.displacement_sites", "displacement_sites", "neutral"),
+  // Access / protection / service population + count snapshots (#20,23,27,14,21).
+  snapshotRule("access_and_incidents.access_constrained_population", "access_constrained_population"),
+  snapshotRule("access_and_incidents.routes_blocked", "routes_blocked"),
+  snapshotRule("access_and_incidents.service_disruption_people", "service_disruption_people"),
+  snapshotRule("access_and_incidents.family_separation", "family_separation"),
+  snapshotRule("access_and_incidents.inaccessible_locations_count", "inaccessible_locations_count"),
+  // Markets disrupted (#26) — facility-count snapshot.
+  snapshotRule("access_and_incidents.markets_disrupted", "markets_disrupted"),
+  // Missing-persons total (#13) — was unaggregated; a weekly toll like killed,
+  // but under-reported (tracing lags) rather than media-inflated.
+  {
+    path: "casualties.missing.total", label: "missing_total",
+    kind: "additive_count", timeBucket: "week",
+    withinGroupPolicy: "latest_wins_with_confidence_override",
+    qualityBias: "underreport", validityWindowDays: 7, overrideDivisor: 2,
+  },
+);
+
+// Essential-service facilities (#26) — schools/health/water were never wired to
+// aggregate; register all facility types × statuses so the indicator rolls up.
+const FACILITY_TYPES = [
+  "schools", "health_facilities", "water_facilities",
+  "power_facilities", "communication_facilities",
+] as const;
+const FACILITY_STATUSES = ["destroyed", "damaged", "non_functional"] as const;
+for (const ft of FACILITY_TYPES) {
+  for (const st of FACILITY_STATUSES) {
+    FIELD_RULES.push(snapshotRule(`access_and_incidents.${ft}.${st}`, `${ft}_${st}`));
+  }
+}
+
+// Response gap (#25) — people not reached, per sector; under-reported snapshot
+// like `reached_<sector>`. Registered before the SADD/categorical derivation
+// so the loops below find it as a parent.
+for (const sector of NEEDS_SECTORS) {
+  FIELD_RULES.push(snapshotRule(`needs_and_funding.${sector}.people_not_reached`, `not_reached_${sector}`));
+}
+
+// SADD (sex/age) cells for the NEW splittable population figures. Reuses the
+// same per-cell derivation as ADR-0008; these parents just weren't in the
+// original SADD_PARENT_LABELS list.
+const ADR0009_SADD_PARENTS: string[] = [
+  "access_constrained_population",
+  "service_disruption_people",
+  "family_separation",
+  ...NEEDS_SECTORS.map((s) => `not_reached_${s}`),
+];
+for (const parentLabel of ADR0009_SADD_PARENTS) {
+  const parent = FIELD_RULES.find((r) => r.label === parentLabel);
+  if (!parent) {
+    throw new Error(`[datapoint-aggregation] ADR-0009 SADD parent "${parentLabel}" not found`);
+  }
+  for (const cell of SADD_CELLS) {
+    FIELD_RULES.push({ ...parent, path: `${parent.path}.breakdown.${cell}`, label: `${parent.label}_${cell}` });
+  }
+}
+
+// Closed-vocab enum values — mirror the pipeline's Python `Literal`s (ADR-0009 §5).
+const DWELLING_TYPES = ["house", "apartment", "makeshift", "traditional", "mobile", "other"] as const;
+const DAMAGE_SEVERITIES = ["severe", "moderate", "minor", "other"] as const;
+const MOVEMENT_TYPES = ["evacuation", "relocation", "other"] as const;
+const SITE_TYPES = ["site", "settlement", "collective_centre", "reception_centre", "camp", "other"] as const;
+const ACCOMMODATION_TYPES = ["host_family", "rented", "collective_centre", "reception_centre", "formal_site", "informal_site", "public_building", "open_air", "other"] as const;
+const DISPLACEMENT_CAUSES = ["conflict", "violence", "natural_hazard", "eviction", "housing_destruction", "loss_of_services", "livelihood_loss", "other"] as const;
+const INTENTIONS = ["return", "remain", "move_onward", "relocate", "undecided", "other"] as const;
+const ACCESS_CLASSIFICATIONS = ["hard_to_reach", "inaccessible", "besieged", "isolated", "constrained", "other"] as const;
+const ACCESS_BARRIERS = ["insecurity", "road_damage", "checkpoints", "administrative_restrictions", "denial", "weather", "distance", "transport", "discrimination", "lack_of_information", "other"] as const;
+const INFRASTRUCTURE_TYPES = ["road", "route", "bridge", "crossing", "transport_link", "other"] as const;
+const SERVICE_TYPES = ["water", "healthcare", "education", "energy", "markets", "communications", "transport", "other"] as const;
+const SEPARATION_CATEGORIES = ["unaccompanied", "separated", "other"] as const;
+const CASUALTY_STATUSES = ["confirmed", "presumed", "unverified", "other"] as const;
+const MISSING_CASE_STATUSES = ["new", "active", "resolved", "other"] as const;
+
+// Categorical `by_<axis>` cell rules, derived per (parent × axis × value). Label
+// is `<parentLabel>__<axis-without-by_>__<value>` — unique, and namespaced with
+// `__` so it never collides with the single-underscore SADD cell labels.
+const CATEGORICAL_AXES: { parents: readonly string[]; axis: string; values: readonly string[] }[] = [
+  { parents: ["housing_destroyed", "housing_damaged", "housing_uninhabitable"], axis: "by_dwelling_type", values: DWELLING_TYPES },
+  { parents: ["housing_damaged", "housing_uninhabitable"], axis: "by_severity", values: DAMAGE_SEVERITIES },
+  { parents: ["idp_stock"], axis: "by_accommodation_type", values: ACCOMMODATION_TYPES },
+  { parents: ["idp_stock"], axis: "by_intention", values: INTENTIONS },
+  { parents: ["new_displacements"], axis: "by_cause", values: DISPLACEMENT_CAUSES },
+  { parents: ["movement"], axis: "by_movement_type", values: MOVEMENT_TYPES },
+  { parents: ["displacement_sites"], axis: "by_site_type", values: SITE_TYPES },
+  { parents: ["access_constrained_population"], axis: "by_access_classification", values: ACCESS_CLASSIFICATIONS },
+  { parents: ["access_constrained_population"], axis: "by_barrier", values: ACCESS_BARRIERS },
+  { parents: ["routes_blocked"], axis: "by_infrastructure_type", values: INFRASTRUCTURE_TYPES },
+  { parents: ["service_disruption_people"], axis: "by_service_type", values: SERVICE_TYPES },
+  { parents: ["family_separation"], axis: "by_separation_category", values: SEPARATION_CATEGORIES },
+  { parents: ["killed_total"], axis: "by_casualty_status", values: CASUALTY_STATUSES },
+  { parents: ["missing_total"], axis: "by_case_status", values: MISSING_CASE_STATUSES },
+];
+for (const { parents, axis, values } of CATEGORICAL_AXES) {
+  const axisKey = axis.replace(/^by_/, "");
+  for (const parentLabel of parents) {
+    const parent = FIELD_RULES.find((r) => r.label === parentLabel);
+    if (!parent) {
+      throw new Error(`[datapoint-aggregation] categorical parent "${parentLabel}" not found for axis ${axis}`);
+    }
+    for (const v of values) {
+      FIELD_RULES.push({
+        ...parent,
+        path: `${parent.path}.${axis}.${v}`,
+        label: `${parentLabel}__${axisKey}__${v}`,
+      });
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // I/O types
 // ────────────────────────────────────────────────────────────────────
 

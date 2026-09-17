@@ -2199,3 +2199,87 @@ describe("filterApiMentionsToWindow - interval vs point anchors", () => {
     expect(anchored.divergence).toEqual({ reportValue: 8_622_801, apiValue: 33_699_770, pctDiff: -74.4 });
   });
 });
+
+describe("FIELD_RULES — ADR-0009 constrained indicators", () => {
+  const byLabel = new Map(FIELD_RULES.map((r) => [r.label, r]));
+
+  it("registers the new headline count rules with the right kind", () => {
+    expect(byLabel.get("housing_destroyed")).toMatchObject({
+      path: "access_and_incidents.housing.destroyed", kind: "latest_state", qualityBias: "underreport",
+    });
+    // movement is a period flow → additive_count/week
+    expect(byLabel.get("movement")).toMatchObject({ kind: "additive_count", timeBucket: "week" });
+    // missing total (previously unaggregated) now rolls up
+    expect(byLabel.get("missing_total")).toMatchObject({ path: "casualties.missing.total", kind: "additive_count" });
+    // response gap per sector + facilities
+    expect(byLabel.has("not_reached_shelter")).toBe(true);
+    expect(byLabel.get("schools_destroyed")).toMatchObject({ path: "access_and_incidents.schools.destroyed" });
+    expect(byLabel.get("power_facilities_damaged")).toMatchObject({ path: "access_and_incidents.power_facilities.damaged" });
+  });
+
+  it("derives categorical cells per (parent × axis × value), inheriting the parent's kind", () => {
+    const cell = byLabel.get("housing_destroyed__dwelling_type__house");
+    expect(cell?.path).toBe("access_and_incidents.housing.destroyed.by_dwelling_type.house");
+    expect(cell?.kind).toBe("latest_state"); // inherited from housing_destroyed
+    // additive parent → additive cells
+    expect(byLabel.get("movement__movement_type__evacuation")?.kind).toBe("additive_count");
+    // every enum value present, including the `other` bucket
+    expect(byLabel.has("access_constrained_population__barrier__checkpoints")).toBe(true);
+    expect(byLabel.has("new_displacements__cause__other")).toBe(true);
+    expect(byLabel.has("missing_total__case_status__active")).toBe(true);
+  });
+
+  it("gives the new splittable figures SADD cells too", () => {
+    expect(byLabel.get("family_separation_female")?.kind).toBe("latest_state");
+    expect(byLabel.has("access_constrained_population_children_0_17")).toBe(true);
+  });
+});
+
+describe("aggregateReports — ADR-0009 categorical + new counts", () => {
+  it("rolls up a housing categorical cell latest-wins, like its parent", () => {
+    const rows = [
+      row("r-old", "2026-07-01T00:00:00Z", ["kordofan"], {
+        access_and_incidents: { housing: { destroyed: {
+          ...nf(200, "reported", "dwellings", "kordofan"),
+          by_dwelling_type: { house: nf(150, "reported", "dwellings", "kordofan") },
+        } } },
+      }, "2026-07-01T00:00:00Z"),
+      row("r-new", "2026-07-20T00:00:00Z", ["kordofan"], {
+        access_and_incidents: { housing: { destroyed: {
+          ...nf(260, "reported", "dwellings", "kordofan"),
+          by_dwelling_type: { house: nf(190, "reported", "dwellings", "kordofan") },
+        } } },
+      }, "2026-07-20T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.housing_destroyed).toMatchObject({ value: 260 });
+    expect(result.data.housing_destroyed__dwelling_type__house).toMatchObject({ value: 190 });
+  });
+
+  it("sums missing_total additively across weeks", () => {
+    const rows = [
+      row("w27", "2026-07-03T00:00:00Z", ["kordofan"], {
+        casualties: { missing: { total: nf(10, "reported", "people", "kordofan") } },
+      }, "2026-07-03T00:00:00Z"),
+      row("w28", "2026-07-10T00:00:00Z", ["kordofan"], {
+        casualties: { missing: { total: nf(15, "reported", "people", "kordofan") } },
+      }, "2026-07-10T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.missing_total).toMatchObject({ value: 25 });
+  });
+
+  it("drops a categorical cell with no scope", () => {
+    const rows = [
+      row("r1", "2026-07-01T00:00:00Z", ["kordofan"], {
+        access_and_incidents: { housing: { destroyed: {
+          ...nf(200, "reported", "dwellings", "kordofan"),
+          by_dwelling_type: { house: nf(150) }, // no scope on the cell
+        } } },
+      }, "2026-07-01T00:00:00Z"),
+    ];
+    const result = aggregateReports(rows, "kordofan")!;
+    expect(result.data.housing_destroyed).toMatchObject({ value: 200 });
+    expect(result.data.housing_destroyed__dwelling_type__house).toBeNull();
+  });
+});
