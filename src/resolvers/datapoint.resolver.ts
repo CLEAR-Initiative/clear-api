@@ -51,7 +51,7 @@ interface UpsertReportDatapointsInput {
 }
 
 // Default schema version - MUST match the SCHEMA_VERSION constant in the
-// Python-side extraction module (datapoints_schemas.py), currently "v4". A
+// Python-side extraction module (datapoints_schemas.py), currently "v5". A
 // version-less `aggregatedDatapoint` query reads buckets of this version, so a
 // mismatch makes freshly-aggregated buckets go unread. The SADD change
 // (ADR-0008) bumped the pipeline v3→v4; the constrained-indicator change

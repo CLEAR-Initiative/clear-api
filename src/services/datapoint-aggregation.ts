@@ -580,18 +580,31 @@ FIELD_RULES.push(
   snapshotRule("access_and_incidents.routes_blocked", "routes_blocked"),
   snapshotRule("access_and_incidents.service_disruption_people", "service_disruption_people"),
   snapshotRule("access_and_incidents.family_separation", "family_separation"),
+  snapshotRule("access_and_incidents.shelter_condition_people", "shelter_condition_people"),
   snapshotRule("access_and_incidents.inaccessible_locations_count", "inaccessible_locations_count"),
   // Markets disrupted (#26) — facility-count snapshot.
   snapshotRule("access_and_incidents.markets_disrupted", "markets_disrupted"),
-  // Missing-persons total (#13) — was unaggregated; a weekly toll like killed,
-  // but under-reported (tracing lags) rather than media-inflated.
-  {
-    path: "casualties.missing.total", label: "missing_total",
-    kind: "additive_count", timeBucket: "week",
-    withinGroupPolicy: "latest_wins_with_confidence_override",
-    qualityBias: "underreport", validityWindowDays: 7, overrideDivisor: 2,
-  },
+  // Missing-persons total (#13) — was unaggregated. A STOCK, not a weekly toll:
+  // "missing" is a persisting population that a report restates period over
+  // period, and MissingCaseStatus (new/active/resolved) frames it as a lifecycle
+  // — so summing weeks would inflate (reviewer P5). Latest-wins snapshot like
+  // idp_stock; under-reported (tracing lags). Its by_case_status cells inherit
+  // this kind.
+  snapshotRule("casualties.missing.total", "missing_total"),
 );
+
+// Count-less categorical presence lists (ADR-0009 §3, reviewer P3): a report can
+// name accommodation types / causes / intentions / access barriers WITHOUT a
+// number, which land in a `list[<Enum>]` on the producer. Union them across
+// reports like `event_types` / `active_clusters` so they still surface.
+for (const [path, label] of [
+  ["access_and_incidents.access_barriers", "access_barriers_present"],
+  ["displacement.accommodation_types", "accommodation_types_present"],
+  ["displacement.displacement_causes", "displacement_causes_present"],
+  ["displacement.intentions", "intentions_present"],
+] as const) {
+  FIELD_RULES.push({ path, label, kind: "set_union", withinGroupPolicy: "set_union_all" });
+}
 
 // Essential-service facilities (#26) — schools/health/water were never wired to
 // aggregate; register all facility types × statuses so the indicator rolls up.
@@ -620,6 +633,7 @@ const ADR0009_SADD_PARENTS: string[] = [
   "access_constrained_population",
   "service_disruption_people",
   "family_separation",
+  "shelter_condition_people",
   ...NEEDS_SECTORS.map((s) => `not_reached_${s}`),
 ];
 for (const parentLabel of ADR0009_SADD_PARENTS) {
@@ -647,6 +661,7 @@ const SERVICE_TYPES = ["water", "healthcare", "education", "energy", "markets", 
 const SEPARATION_CATEGORIES = ["unaccompanied", "separated", "other"] as const;
 const CASUALTY_STATUSES = ["confirmed", "presumed", "unverified", "other"] as const;
 const MISSING_CASE_STATUSES = ["new", "active", "resolved", "other"] as const;
+const SHELTER_CONDITIONS = ["inadequate", "unsafe", "damaged", "overcrowded", "exposed", "other"] as const;
 
 // Categorical `by_<axis>` cell rules, derived per (parent × axis × value). Label
 // is `<parentLabel>__<axis-without-by_>__<value>` — unique, and namespaced with
@@ -664,6 +679,7 @@ const CATEGORICAL_AXES: { parents: readonly string[]; axis: string; values: read
   { parents: ["routes_blocked"], axis: "by_infrastructure_type", values: INFRASTRUCTURE_TYPES },
   { parents: ["service_disruption_people"], axis: "by_service_type", values: SERVICE_TYPES },
   { parents: ["family_separation"], axis: "by_separation_category", values: SEPARATION_CATEGORIES },
+  { parents: ["shelter_condition_people"], axis: "by_shelter_condition", values: SHELTER_CONDITIONS },
   { parents: ["killed_total"], axis: "by_casualty_status", values: CASUALTY_STATUSES },
   { parents: ["missing_total"], axis: "by_case_status", values: MISSING_CASE_STATUSES },
 ];
