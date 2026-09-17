@@ -597,7 +597,7 @@ async function seed() {
       validTo: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
       firstSignalCreatedAt: now,
       lastSignalCreatedAt: now,
-      types: ["conflict"],
+      types: ["ba"], // GLIDE: battles
       rank: 0.91,
       severity: 5, // critical (pipeline normally sets this; seeded for demo/E2E)
       originId: elFasher.id,
@@ -613,7 +613,7 @@ async function seed() {
       validTo: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
       firstSignalCreatedAt: now,
       lastSignalCreatedAt: now,
-      types: ["displacement"],
+      types: ["ce"], // GLIDE: complex emergency
       rank: 0.85,
       severity: 3, // medium
       originId: northDarfur.id,
@@ -631,7 +631,7 @@ async function seed() {
       validTo: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000),
       firstSignalCreatedAt: now,
       lastSignalCreatedAt: now,
-      types: ["natural_disaster", "flood"],
+      types: ["fl"], // GLIDE: flood
       rank: 0.87,
       severity: 4, // high
       locationId: khartoum.id,
@@ -646,7 +646,7 @@ async function seed() {
       validTo: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
       firstSignalCreatedAt: now,
       lastSignalCreatedAt: now,
-      types: ["food_security"],
+      types: ["fa"], // GLIDE: famine
       rank: 0.82,
       severity: 2, // low
       locationId: northDarfur.id,
@@ -691,7 +691,7 @@ async function seed() {
       data: {
         userId: analyst.id,
         locationId: northDarfur.id,
-        alertType: "conflict",
+        alertType: "ba", // matches evtDarfurConflict
         channel: "email",
         frequency: "immediately",
       },
@@ -700,7 +700,7 @@ async function seed() {
       data: {
         userId: viewer.id,
         locationId: khartoum.id,
-        alertType: "natural_disaster",
+        alertType: "fl", // matches evtKhartoumFlood
         channel: "email",
         frequency: "daily",
       },
