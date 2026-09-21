@@ -8,14 +8,16 @@
  * providers/clear_api.py UPDATE_SIGNAL_CONTENT, mirrored below — keep in
  * sync if that query changes) through a real ApolloServer instance, the
  * same way the pipeline's HTTP request does.
+ *
+ * DB-FREE: `context.prisma` is a `vi.fn()` mock (the resolver only calls
+ * `signals.findUnique` + `signals.update`), so the schema/selection-set
+ * validation runs without a seeded database.
  */
 import { ApolloServer } from "@apollo/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { typeDefs } from "../../src/schema/index.js";
 import { resolvers } from "../../src/resolvers/index.js";
-import { prisma } from "../../src/lib/prisma.js";
 import type { Context } from "../../src/context.js";
-import { describeIfDb } from "../helpers/db.js";
 
 const UPDATE_SIGNAL_CONTENT = `
   mutation UpdateSignalContent($input: UpdateSignalContentInput!) {
@@ -27,77 +29,49 @@ const UPDATE_SIGNAL_CONTENT = `
   }
 `;
 
-function buildContext(user: { id: string; role: string } | null): Context {
+/** Mock prisma with just the two delegates the resolver touches. The stored
+ *  signal has a DIFFERENT contentHash so the resolver takes the update branch. */
+function mockPrisma() {
+  const existing = { id: "sig-1", contentHash: "old-hash", lastRevisedAt: null };
   return {
-    prisma,
-    user: user as Context["user"],
-    session: null,
-    authMethod: user ? "session" : null,
-    locale: "en",
-  } as Context;
+    signals: {
+      findUnique: vi.fn().mockResolvedValue(existing),
+      update: vi.fn().mockResolvedValue({
+        ...existing, contentHash: "test-hash", lastRevisedAt: new Date(),
+      }),
+    },
+  };
 }
 
-describeIfDb("updateSignalContent schema contract", () => {
-  const createdSignalIds: string[] = [];
-  const server = new ApolloServer<Context>({ typeDefs, resolvers });
-  let viewerUserId: string;
-  let dataminrSourceId: string;
+function buildContext(prisma: unknown, user: { id: string; role: string }): Context {
+  return {
+    prisma, user, session: null, authMethod: "session", locale: "en",
+  } as unknown as Context;
+}
 
-  beforeAll(async () => {
-    await server.start();
-
-    const user = await prisma.user.findFirst({ select: { id: true } });
-    if (!user) {
-      throw new Error("No user in DB to use as test actor — seed at least one user first.");
-    }
-    viewerUserId = user.id;
-
-    const dataminr = await prisma.dataSources.findFirst({
-      where: { name: "dataminr" },
-      select: { id: true },
-    });
-    if (!dataminr) {
-      throw new Error("No 'dataminr' DataSource seeded — required for this test.");
-    }
-    dataminrSourceId = dataminr.id;
-  });
-
-  afterAll(async () => {
-    if (createdSignalIds.length > 0) {
-      await prisma.$executeRaw`DELETE FROM "signals" WHERE id = ANY(${createdSignalIds}::text[])`;
-    }
-    await server.stop();
-    await prisma.$disconnect();
-  });
-
+describe("updateSignalContent schema contract", () => {
   it("executes the pipeline's real query without a schema validation error", async () => {
-    const created = await prisma.signals.create({
-      data: {
-        sourceId: dataminrSourceId,
-        title: "TEST signal for updateSignalContent schema contract",
-        publishedAt: new Date(),
-        rawData: { test: true },
-        externalId: `test:schema-contract:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      },
-    });
-    createdSignalIds.push(created.id);
+    const server = new ApolloServer<Context>({ typeDefs, resolvers });
+    await server.start();
 
     const response = await server.executeOperation(
       {
         query: UPDATE_SIGNAL_CONTENT,
         variables: {
-          input: { id: created.id, contentHash: "test-hash", rawData: { test: true } },
+          input: { id: "sig-1", contentHash: "test-hash", rawData: { test: true } },
         },
       },
-      { contextValue: buildContext({ id: viewerUserId, role: "pipeline" }) },
+      { contextValue: buildContext(mockPrisma(), { id: "u", role: "pipeline" }) },
     );
+
+    await server.stop();
 
     if (response.body.kind !== "single") {
       throw new Error(`Expected a single result, got ${response.body.kind}`);
     }
     expect(response.body.singleResult.errors).toBeUndefined();
     expect(response.body.singleResult.data?.updateSignalContent).toMatchObject({
-      id: created.id,
+      id: "sig-1",
       contentHash: "test-hash",
     });
   });
