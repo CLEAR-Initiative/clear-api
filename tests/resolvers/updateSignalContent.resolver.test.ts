@@ -4,140 +4,75 @@
  * changed figures/role/dates/location). Hash-gated: only writes when the
  * incoming contentHash differs from what's stored.
  *
- * Tests run against the real database (DATABASE_URL from `.env`). All
- * created rows are tracked and DELETEd in `afterAll`. The dataminr
- * DataSource is looked up by name rather than a hardcoded id, since that id
- * is only stable within whichever DB seeded it (see
- * signal.resolver.test.ts's DATAMINR_SOURCE_ID for the same issue).
- *
- * Skipped automatically when DATABASE_URL is missing.
+ * DB-FREE: `context.prisma` is a small STATEFUL mock (findUnique returns the
+ * current row; update mutates it), so the hash-gating / lastRevisedAt logic is
+ * exercised across calls without a seeded database. `createPointLocation` (the
+ * only PostGIS dependency, via resolveLocationId) is mocked — its spatial
+ * correctness is covered by the DB-gated geo-resolve.test.ts.
  */
-
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
-import { prisma } from "../../src/lib/prisma.js";
+
+vi.mock("../../src/utils/geo-resolve.js", () => ({
+  createPointLocation: vi.fn().mockResolvedValue({ id: "point-loc-1", name: "pt", level: 4 }),
+  getLocationIdsWithDescendants: vi.fn().mockResolvedValue([]),
+}));
+
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
-import { describeIfDb } from "../helpers/db.js";
 
-function buildContext(user: { id: string; role: string } | null): Context {
+const update = signalResolvers.Mutation.updateSignalContent;
+
+/** Stateful mock of the two `signals` delegates the resolver touches — enough
+ *  to make the cross-call hash-gate behave like a real row. */
+function makePrisma(initial: Record<string, unknown> | null) {
+  let stored: Record<string, unknown> | null = initial ? { ...initial } : null;
   return {
-    prisma,
-    user: user as Context["user"],
-    session: null,
-    authMethod: user ? "session" : null,
-    locale: "en",
-  } as Context;
+    signals: {
+      findUnique: vi.fn(async () => (stored ? { ...stored } : null)),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        stored = { ...(stored ?? {}), ...data };
+        return { ...stored };
+      }),
+    },
+  };
 }
 
-describeIfDb("updateSignalContent", () => {
-  const createdSignalIds: string[] = [];
-  const createdLocationIds: string[] = [];
-  let viewerUserId: string;
-  let dataminrSourceId: string;
+function ctx(prisma: unknown, user: { id: string; role: string } | null): Context {
+  return {
+    prisma, user, session: null, authMethod: user ? "session" : null, locale: "en",
+  } as unknown as Context;
+}
 
-  beforeAll(async () => {
-    const user = await prisma.user.findFirst({ select: { id: true } });
-    if (!user) {
-      throw new Error("No user in DB to use as test actor — seed at least one user first.");
-    }
-    viewerUserId = user.id;
-
-    const dataminr = await prisma.dataSources.findFirst({
-      where: { name: "dataminr" },
-      select: { id: true },
-    });
-    if (!dataminr) {
-      throw new Error("No 'dataminr' DataSource seeded — required for these tests.");
-    }
-    dataminrSourceId = dataminr.id;
-  });
-
-  afterAll(async () => {
-    if (createdSignalIds.length > 0) {
-      await prisma.$executeRaw`DELETE FROM "signals" WHERE id = ANY(${createdSignalIds}::text[])`;
-    }
-    if (createdLocationIds.length > 0) {
-      await prisma.$executeRaw`DELETE FROM "locations" WHERE id = ANY(${createdLocationIds}::text[])`;
-    }
-    await prisma.$disconnect();
-  });
-
-  async function createTestSignal(overrides: Record<string, unknown> = {}) {
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
-    const result = await signalResolvers.Mutation.createSignal(
-      null,
-      {
-        input: {
-          sourceId: dataminrSourceId,
-          title: "TEST signal for updateSignalContent",
-          description: "seed row",
-          publishedAt: new Date().toISOString(),
-          rawData: { test: true },
-          externalId: `test:update-content:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          ...overrides,
-        },
-      },
-      ctx,
-    );
-    createdSignalIds.push(result.id);
-    if (result.locationId) createdLocationIds.push(result.locationId);
-    return result;
-  }
-
+describe("updateSignalContent", () => {
   it("rejects a viewer-role user with FORBIDDEN", async () => {
-    const created = await createTestSignal();
-    const ctx = buildContext({ id: viewerUserId, role: "viewer" });
     await expect(
-      signalResolvers.Mutation.updateSignalContent(
-        null,
-        { input: { id: created.id, contentHash: "h1", rawData: { test: true } } },
-        ctx,
-      ),
+      update(null, { input: { id: "s1", contentHash: "h1", rawData: { test: true } } },
+        ctx(makePrisma({ id: "s1" }), { id: "u", role: "viewer" })),
     ).rejects.toThrow(/insufficient permissions/i);
   });
 
   it("rejects an unauthenticated request with UNAUTHENTICATED", async () => {
-    const created = await createTestSignal();
-    const ctx = buildContext(null);
     await expect(
-      signalResolvers.Mutation.updateSignalContent(
-        null,
-        { input: { id: created.id, contentHash: "h1", rawData: { test: true } } },
-        ctx,
-      ),
+      update(null, { input: { id: "s1", contentHash: "h1", rawData: { test: true } } },
+        ctx(makePrisma({ id: "s1" }), null)),
     ).rejects.toThrow(GraphQLError);
   });
 
   it("throws NOT_FOUND for an id that doesn't exist", async () => {
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
     await expect(
-      signalResolvers.Mutation.updateSignalContent(
-        null,
-        { input: { id: "does-not-exist", contentHash: "h1", rawData: { test: true } } },
-        ctx,
-      ),
+      update(null, { input: { id: "does-not-exist", contentHash: "h1", rawData: { test: true } } },
+        ctx(makePrisma(null), { id: "u", role: "admin" })),
     ).rejects.toThrow(/not found/i);
   });
 
   it("writes content fields and sets lastRevisedAt when contentHash differs", async () => {
-    const created = await createTestSignal({ contentHash: "baseline", rawData: { figure: 1000 }, severity: 2 });
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
-
-    const updated = await signalResolvers.Mutation.updateSignalContent(
+    const prisma = makePrisma({ id: "s1", contentHash: "baseline", severity: 2, lastRevisedAt: null });
+    const updated = await update(
       null,
-      {
-        input: {
-          id: created.id,
-          contentHash: "revision-1",
-          rawData: { figure: 1500 },
-          severity: 3,
-          title: "TEST revised title",
-        },
-      },
-      ctx,
+      { input: { id: "s1", contentHash: "revision-1", rawData: { figure: 1500 }, severity: 3, title: "TEST revised title" } },
+      ctx(prisma, { id: "u", role: "admin" }),
     );
-
     expect(updated.contentHash).toBe("revision-1");
     expect(updated.severity).toBe(3);
     expect(updated.title).toBe("TEST revised title");
@@ -145,90 +80,51 @@ describeIfDb("updateSignalContent", () => {
   });
 
   it("is a no-op when contentHash matches what's already stored", async () => {
-    const created = await createTestSignal({ rawData: { figure: 1000 }, severity: 2 });
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
+    // Seed a legacy null-hash row; the first call seeds the hash (no stamp),
+    // the second with the SAME hash must be ignored (the gate actually gates).
+    const prisma = makePrisma({ id: "s1", contentHash: null, severity: 2, lastRevisedAt: null });
+    const c = ctx(prisma, { id: "u", role: "admin" });
 
-    const first = await signalResolvers.Mutation.updateSignalContent(
-      null,
-      {
-        input: { id: created.id, contentHash: "revision-a", rawData: { figure: 1500 }, severity: 3 },
-      },
-      ctx,
-    );
+    const first = await update(null, { input: { id: "s1", contentHash: "revision-a", rawData: { figure: 1500 }, severity: 3 } }, c);
     expect(first.severity).toBe(3);
 
-    // Same contentHash again, deliberately different payload — must be
-    // ignored, proving the hash-gate actually gates (a Redis-TTL-expiry
-    // false-positive resend is exactly this shape).
-    const second = await signalResolvers.Mutation.updateSignalContent(
-      null,
-      {
-        input: { id: created.id, contentHash: "revision-a", rawData: { figure: 9999 }, severity: 5 },
-      },
-      ctx,
-    );
-    expect(second.severity).toBe(3);
+    const second = await update(null, { input: { id: "s1", contentHash: "revision-a", rawData: { figure: 9999 }, severity: 5 } }, c);
+    expect(second.severity).toBe(3);                     // ignored
     expect(second.lastRevisedAt).toEqual(first.lastRevisedAt);
+    expect(prisma.signals.update).toHaveBeenCalledTimes(1); // only the first call wrote
   });
 
-  it("does not set lastRevisedAt when createSignal already seeded the matching contentHash", async () => {
-    const created = await createTestSignal({ contentHash: "seeded-hash-1" });
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
-
-    const updated = await signalResolvers.Mutation.updateSignalContent(
-      null,
-      {
-        input: { id: created.id, contentHash: "seeded-hash-1", rawData: { test: true } },
-      },
-      ctx,
+  it("does not set lastRevisedAt when the stored contentHash already matches", async () => {
+    const prisma = makePrisma({ id: "s1", contentHash: "seeded-hash-1", lastRevisedAt: null });
+    const updated = await update(
+      null, { input: { id: "s1", contentHash: "seeded-hash-1", rawData: { test: true } } },
+      ctx(prisma, { id: "u", role: "admin" }),
     );
-
     expect(updated.lastRevisedAt).toBe(null);
     expect(updated.contentHash).toBe("seeded-hash-1");
   });
 
-  it("seeds a legacy null contentHash without stamping lastRevisedAt, then stamps it on the next real revision", async () => {
-    const created = await createTestSignal(); // no contentHash → null, simulates a pre-existing legacy row
-    expect(created.contentHash).toBe(null);
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
+  it("seeds a legacy null contentHash without stamping, then stamps on the next real revision", async () => {
+    const prisma = makePrisma({ id: "s1", contentHash: null, lastRevisedAt: null });
+    const c = ctx(prisma, { id: "u", role: "admin" });
 
-    const seeded = await signalResolvers.Mutation.updateSignalContent(
-      null,
-      { input: { id: created.id, contentHash: "first-real-hash", rawData: { test: true }, severity: 4 } },
-      ctx,
-    );
+    const seeded = await update(null, { input: { id: "s1", contentHash: "first-real-hash", rawData: { test: true }, severity: 4 } }, c);
     expect(seeded.contentHash).toBe("first-real-hash");
     expect(seeded.severity).toBe(4);
-    expect(seeded.lastRevisedAt).toBe(null);
+    expect(seeded.lastRevisedAt).toBe(null); // first seed → no stamp
 
-    const revised = await signalResolvers.Mutation.updateSignalContent(
-      null,
-      { input: { id: created.id, contentHash: "second-real-hash", rawData: { test: true }, severity: 5 } },
-      ctx,
-    );
+    const revised = await update(null, { input: { id: "s1", contentHash: "second-real-hash", rawData: { test: true }, severity: 5 } }, c);
     expect(revised.severity).toBe(5);
-    expect(revised.lastRevisedAt).toBeTruthy();
+    expect(revised.lastRevisedAt).toBeTruthy(); // real revision → stamped
   });
 
-  it("resolves a new locationId from lat/lng when none is explicit, same as createSignal", async () => {
-    const created = await createTestSignal();
-    const ctx = buildContext({ id: viewerUserId, role: "admin" });
-
-    const updated = await signalResolvers.Mutation.updateSignalContent(
+  it("resolves a new locationId from lat/lng via createPointLocation", async () => {
+    const prisma = makePrisma({ id: "s1", contentHash: "baseline" });
+    const updated = await update(
       null,
-      {
-        input: {
-          id: created.id,
-          contentHash: "revision-with-coords",
-          rawData: { test: true },
-          lat: 13.601,
-          lng: 24.755,
-        },
-      },
-      ctx,
+      { input: { id: "s1", contentHash: "revision-with-coords", rawData: { test: true }, lat: 13.601, lng: 24.755 } },
+      ctx(prisma, { id: "u", role: "admin" }),
     );
-    if (updated.locationId) createdLocationIds.push(updated.locationId);
-
-    expect(updated.locationId).toBeTruthy();
+    expect(updated.locationId).toBe("point-loc-1"); // from the mocked point-location resolver
   });
 });
