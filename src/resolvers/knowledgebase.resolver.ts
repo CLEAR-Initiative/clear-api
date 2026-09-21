@@ -33,6 +33,7 @@ import {
   getRunStatus,
   launchRun,
 } from "../utils/dagster-client.js";
+import { syncEventCards } from "../services/event-card.js";
 import { embedQuery, loadEmbeddingConfig } from "../utils/embedding-client.js";
 import { env } from "../utils/env.js";
 
@@ -50,6 +51,64 @@ const RRF_K = 60;
 // higher blows fusion cost without lifting NDCG@10 in the ad-hoc
 // benchmarks Anthropic published for Contextual Retrieval.
 const CANDIDATES_PER_RETRIEVER = 50;
+
+// ─── ADR-0006 tiered-merge knobs (v1: fixed constants; v2: evidence fns) ────
+// TOPICAL mode only: an incident must clear this cosine-similarity floor to
+// compete, so off-topic event cards don't claim a 50/50 rank slot on a query
+// that isn't about them. (No floor in FRAME mode — a vague frame query can't
+// clear it, and that's exactly the incidents the frame is asking for.)
+const INCIDENT_SIM_FLOOR = 0.35;
+// TOPICAL mode: a mild preference for the curated report tier, expressed as a
+// rank OFFSET (not a score multiplier — RRF scores are near-flat across ranks,
+// so a multiplier shoves an item ~10 ranks; an offset of 2 is the small,
+// interpretable knob). An incident competes as if it were 2 ranks lower.
+const INCIDENT_RANK_OFFSET = 2;
+// FRAME mode: fraction of the result budget reserved for the incident band, so
+// the fresh incident timeline is guaranteed to surface (capped so it can't
+// crowd out the analysis). Rounded up, min 1 when any incidents exist.
+const INCIDENT_QUOTA_FRACTION = 0.4;
+
+type SearchTier = "report" | "incident";
+
+/** SELECT projections that map each tier's columns onto the shared
+ *  KnowledgebaseHit shape (+ a `tier` literal, and the incident-only ordering
+ *  fields `_severity` / `_startedAt`). Keeps both retrievers returning one row
+ *  type so the merge is uniform. */
+const REPORT_SELECT = `
+  "id",
+  "report_id"     AS "reportId",
+  "report_title"  AS "reportTitle",
+  "source_url"    AS "sourceUrl",
+  "published_at"  AS "publishedAt",
+  "page_start"    AS "pageStart",
+  "page_end"      AS "pageEnd",
+  "chunk_text"    AS "chunkText",
+  "location_ids"  AS "locationIds",
+  "event_types"   AS "eventTypes",
+  "need_sectors"  AS "needSectors",
+  "figure_s3_key" AS "figureS3Key",
+  "figure_kind"   AS "figureKind",
+  'report'::text  AS "tier",
+  NULL::int       AS "_severity",
+  "time_range_start" AS "_startedAt"`;
+
+const INCIDENT_SELECT = `
+  "id",
+  ('event:' || "event_id")     AS "reportId",
+  "title"                      AS "reportTitle",
+  COALESCE("source_url", '')   AS "sourceUrl",
+  "started_at"                 AS "publishedAt",
+  0                            AS "pageStart",
+  0                            AS "pageEnd",
+  "card_text"                  AS "chunkText",
+  "location_ids"               AS "locationIds",
+  "event_types"                AS "eventTypes",
+  ARRAY[]::text[]              AS "needSectors",
+  NULL::text                   AS "figureS3Key",
+  NULL::text                   AS "figureKind",
+  'incident'::text             AS "tier",
+  "severity"                   AS "_severity",
+  "started_at"                 AS "_startedAt"`;
 
 // Dagster run tag keys — the mutation attaches these at launch time
 // so the polling query can echo the document's identity back to the
@@ -170,6 +229,13 @@ interface KnowledgebaseHitRow {
   needSectors: string[];
   figureS3Key: string | null;
   figureKind: string | null;
+  tier: SearchTier;
+  /** Incident-only ordering fields (null on report rows). */
+  _severity: number | null;
+  _startedAt: Date | null;
+  /** Best dense cosine distance for this row (set by the dense retriever);
+   *  `sim = 1 - _dist`. Absent on sparse-only or recency rows. */
+  _dist?: number | null;
 }
 
 /**
@@ -187,7 +253,11 @@ interface KnowledgebaseHitRow {
 export function buildFilterClause(
   filters: KnowledgebaseFilters | null | undefined,
   params: unknown[],
+  opts?: { hasNeedSectors?: boolean },
 ): string {
+  // The incident tier (`events_index`) has no `need_sectors` column, so the
+  // caller passes hasNeedSectors:false to skip that one condition (ADR-0006).
+  const hasNeedSectors = opts?.hasNeedSectors ?? true;
   const conditions: string[] = [];
 
   const currentEmbeddingModelOnly = filters?.currentEmbeddingModelOnly ?? true;
@@ -223,7 +293,7 @@ export function buildFilterClause(
     params.push(filters.eventTypes);
     conditions.push(`"event_types" && $${params.length}::text[]`);
   }
-  if (filters?.needSectors && filters.needSectors.length > 0) {
+  if (hasNeedSectors && filters?.needSectors && filters.needSectors.length > 0) {
     params.push(filters.needSectors);
     conditions.push(`"need_sectors" && $${params.length}::text[]`);
   }
@@ -247,6 +317,170 @@ export function buildFilterClause(
  * exported so both call sites are visibly the only writers/readers. */
 function queryVectorLiteral(vec: number[]): string {
   return `[${vec.map((v) => v.toFixed(7)).join(",")}]`;
+}
+
+interface RankedHit {
+  row: KnowledgebaseHitRow;
+  rrf: number;
+  /** Best dense cosine similarity (1 - min distance); 0 for sparse-only rows. */
+  sim: number;
+}
+
+type SearchHit = Omit<KnowledgebaseHitRow, "_severity" | "_startedAt" | "_dist"> & {
+  score: number;
+};
+
+/** Strip the internal ordering fields and attach the merge score. */
+function toHit(row: KnowledgebaseHitRow, score: number): SearchHit {
+  const { _severity: _s, _startedAt: _st, _dist: _d, ...rest } = row;
+  void _s; void _st; void _d;
+  return { ...rest, score };
+}
+
+/** One tier's hybrid retrieval: dense (pgvector `<=>`) + sparse (tsvector),
+ *  each capped at CANDIDATES_PER_RETRIEVER, fused with RRF. Each hit carries the
+ *  fused `rrf` and `sim` (1 - best dense distance; 0 when it surfaced only via
+ *  sparse). Per-tier — the caller merges the two tiers (ADR-0006). */
+async function hybridRetrieveTier(
+  prisma: Context["prisma"],
+  table: string,
+  select: string,
+  vecLiteral: string,
+  q: string,
+  filters: KnowledgebaseFilters | null | undefined,
+  hasNeedSectors: boolean,
+): Promise<RankedHit[]> {
+  const denseParams: unknown[] = [];
+  const denseWhere = buildFilterClause(filters, denseParams, { hasNeedSectors });
+  const vecPos = denseParams.length + 1;
+  const denseSql = `
+    SELECT ${select}, ("embedding" <=> $${vecPos}::vector(1024)) AS "_dist"
+    FROM "${table}"
+    ${denseWhere}
+    ORDER BY "embedding" <=> $${vecPos}::vector(1024)
+    LIMIT $${denseParams.length + 2}
+  `;
+  denseParams.push(vecLiteral, CANDIDATES_PER_RETRIEVER);
+
+  const sparseParams: unknown[] = [];
+  const sparseWhere = buildFilterClause(filters, sparseParams, { hasNeedSectors });
+  const sparseSql = `
+    SELECT ${select}
+    FROM "${table}"
+    ${sparseWhere ? `${sparseWhere} AND` : "WHERE"}
+      "lexical_tsv" @@ plainto_tsquery('english', $${sparseParams.length + 1})
+    ORDER BY ts_rank_cd(
+      "lexical_tsv", plainto_tsquery('english', $${sparseParams.length + 2})
+    ) DESC
+    LIMIT $${sparseParams.length + 3}
+  `;
+  sparseParams.push(q, q, CANDIDATES_PER_RETRIEVER);
+
+  const [denseRows, sparseRows] = await Promise.all([
+    prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(denseSql, ...denseParams),
+    q ? prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(sparseSql, ...sparseParams) : Promise.resolve([]),
+  ]);
+
+  const fused = new Map<string, RankedHit>();
+  denseRows.forEach((row, i) => {
+    const dist = typeof row._dist === "number" ? row._dist : 1;
+    fused.set(row.id, { row, rrf: 1 / (RRF_K + i + 1), sim: 1 - dist });
+  });
+  sparseRows.forEach((row, i) => {
+    const bonus = 1 / (RRF_K + i + 1);
+    const existing = fused.get(row.id);
+    if (existing) existing.rrf += bonus;
+    else fused.set(row.id, { row, rrf: bonus, sim: 0 });
+  });
+  return [...fused.values()].sort((a, b) => b.rrf - a.rrf);
+}
+
+/** FRAME-mode non-semantic retrieval: filter by the frame, order by an explicit
+ *  clause (recency + severity for incidents; recency for reports). No embedding
+ *  — used where the query is frame-only and similarity is noise (ADR-0006 §4). */
+async function recencyRetrieveTier(
+  prisma: Context["prisma"],
+  table: string,
+  select: string,
+  orderBy: string,
+  filters: KnowledgebaseFilters | null | undefined,
+  hasNeedSectors: boolean,
+  limit: number,
+): Promise<KnowledgebaseHitRow[]> {
+  if (limit <= 0) return [];
+  const params: unknown[] = [];
+  const where = buildFilterClause(filters, params, { hasNeedSectors });
+  const sql = `SELECT ${select} FROM "${table}" ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1}`;
+  params.push(limit);
+  return prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(sql, ...params);
+}
+
+/** TOPICAL merge (ADR-0006 §4): both tiers retrieved semantically; incidents
+ *  gated by the similarity floor; interleaved by within-tier rank with a small
+ *  rank offset preferring reports. */
+async function mergeTopical(
+  prisma: Context["prisma"],
+  q: string,
+  vecLiteral: string,
+  filters: KnowledgebaseFilters | null | undefined,
+  limit: number,
+  wantReport: boolean,
+  wantIncident: boolean,
+): Promise<SearchHit[]> {
+  const [reportHits, incidentHits] = await Promise.all([
+    wantReport ? hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vecLiteral, q, filters, true) : Promise.resolve([]),
+    wantIncident ? hybridRetrieveTier(prisma, "events_index", INCIDENT_SELECT, vecLiteral, q, filters, false) : Promise.resolve([]),
+  ]);
+
+  const scored: SearchHit[] = [];
+  reportHits.forEach((h, i) => scored.push(toHit(h.row, 1 / (RRF_K + i + 1))));
+  incidentHits
+    .filter((h) => h.sim >= INCIDENT_SIM_FLOOR) // gate off-topic incidents
+    .forEach((h, i) => scored.push(toHit(h.row, 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET))));
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/** FRAME merge (ADR-0006 §4): incident band by recency + severity (quota-
+ *  bounded, no floor); report band by relevance (or recency if no query). Bands
+ *  concatenated report-then-incident; `tier` is the real grouping key. */
+async function mergeFrame(
+  prisma: Context["prisma"],
+  q: string,
+  filters: KnowledgebaseFilters | null | undefined,
+  limit: number,
+  wantReport: boolean,
+  wantIncident: boolean,
+): Promise<SearchHit[]> {
+  const incidentQuota = wantIncident ? Math.max(1, Math.round(limit * INCIDENT_QUOTA_FRACTION)) : 0;
+  const incidentRows = await recencyRetrieveTier(
+    prisma, "events_index", INCIDENT_SELECT,
+    `"started_at" DESC NULLS LAST, "severity" DESC NULLS LAST`,
+    filters, false, incidentQuota,
+  );
+  const reportBudget = limit - incidentRows.length;
+
+  let reportRows: KnowledgebaseHitRow[] = [];
+  if (wantReport && reportBudget > 0) {
+    if (q !== "") {
+      const vec = queryVectorLiteral(await embedQuery(q));
+      const hits = await hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vec, q, filters, true);
+      reportRows = hits.slice(0, reportBudget).map((h) => h.row);
+    } else {
+      reportRows = await recencyRetrieveTier(
+        prisma, "knowledgebase", REPORT_SELECT,
+        `"published_at" DESC NULLS LAST`, filters, true, reportBudget,
+      );
+    }
+  }
+
+  // Two bands, reports then incidents; synthetic descending scores keep the
+  // flat list ordered while the `tier` field carries the band identity.
+  const out: SearchHit[] = [];
+  let rank = 0;
+  for (const r of reportRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  for (const r of incidentRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  return out.slice(0, limit);
 }
 
 export const knowledgebaseResolvers = {
@@ -314,119 +548,53 @@ export const knowledgebaseResolvers = {
         query: string;
         filters?: KnowledgebaseFilters | null;
         limit?: number | null;
+        tiers?: string[] | null;
+        mode?: "AUTO" | "FRAME" | "TOPICAL" | null;
       },
       context: Context,
-    ): Promise<Array<KnowledgebaseHitRow & { score: number }>> => {
-      // Any authenticated content reader (admin/analyst/viewer);
-      // rejects pending users with the standard pending-approval
-      // message. The knowledge base is derived from public ReliefWeb
-      // reports so the read gate is deliberately loose.
+    ): Promise<SearchHit[]> => {
+      // Any authenticated content reader (admin/analyst/viewer); the KB is
+      // derived from public ReliefWeb reports so the read gate is loose.
       requireContentReader(context);
 
       const q = args.query.trim();
-      if (!q) {
-        throw new GraphQLError("searchKnowledgebase: query must not be empty", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
-      }
       // Bound the fan-out so a runaway caller can't request 10k rows.
-      // The retrieval step still runs against CANDIDATES_PER_RETRIEVER
-      // regardless of `limit` — clamping just the output.
       const limit = Math.min(Math.max(args.limit ?? 10, 1), 50);
 
-      // Dense-side needs the query vector cast to pgvector; sparse-side
-      // needs the raw text for tsquery. Both paths share the filter
-      // clause so callers see consistent params applied.
-      const queryVec = await embedQuery(q);
-      const vecLiteral = queryVectorLiteral(queryVec);
+      // Which tiers to search (ADR-0006). Default: both, so the KB is always
+      // fresh. Unknown tier names are ignored.
+      const tiers = new Set(args.tiers?.length ? args.tiers : ["report", "incident"]);
+      const wantReport = tiers.has("report");
+      const wantIncident = tiers.has("incident");
 
-      // Build the filter clause once and reuse the params for both
-      // queries. Dense appends [vecLiteral, limit]; sparse appends
-      // [q, q, limit] (tsquery is referenced twice: WHERE + ORDER BY).
-      const denseParams: unknown[] = [];
-      const denseWhere = buildFilterClause(args.filters, denseParams);
-      const sparseParams: unknown[] = [];
-      const sparseWhere = buildFilterClause(args.filters, sparseParams);
+      // Resolve the merge mode. AUTO → FRAME when the query is effectively
+      // empty/frame-only, else TOPICAL.
+      const mode = (args.mode ?? "AUTO") === "AUTO"
+        ? (q === "" ? "FRAME" : "TOPICAL")
+        : args.mode;
 
-      const denseSql = `
-        SELECT
-          "id",
-          "report_id"       AS "reportId",
-          "report_title"    AS "reportTitle",
-          "source_url"      AS "sourceUrl",
-          "published_at"    AS "publishedAt",
-          "page_start"      AS "pageStart",
-          "page_end"        AS "pageEnd",
-          "chunk_text"      AS "chunkText",
-          "location_ids"    AS "locationIds",
-          "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors",
-          "figure_s3_key"   AS "figureS3Key",
-          "figure_kind"     AS "figureKind"
-        FROM "knowledgebase"
-        ${denseWhere}
-        ORDER BY "embedding" <=> $${denseParams.length + 1}::vector(1024)
-        LIMIT $${denseParams.length + 2}
-      `;
-      denseParams.push(vecLiteral, CANDIDATES_PER_RETRIEVER);
+      // An empty query is only meaningful in FRAME mode with an actual frame
+      // (location/time/type) to scope + order by — otherwise there's nothing
+      // to retrieve. TOPICAL needs a real query for its semantic step.
+      const hasFrame = !!(
+        args.filters?.locationIds?.length
+        || args.filters?.countryLocationId
+        || args.filters?.timeRange?.from
+        || args.filters?.timeRange?.to
+        || args.filters?.eventTypes?.length
+      );
+      if (q === "" && !(mode === "FRAME" && hasFrame)) {
+        throw new GraphQLError(
+          "searchKnowledgebase: query must not be empty (except in FRAME mode with a location/time/type frame)",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
 
-      // Sparse: filter by tsvector match FIRST so we don't rank rows
-      // that don't touch any query term. `plainto_tsquery` handles
-      // stop-word stripping + stemming automatically; a query that
-      // reduces to nothing (all stopwords) yields zero sparse hits,
-      // which is fine — dense still runs.
-      const sparseSql = `
-        SELECT
-          "id",
-          "report_id"       AS "reportId",
-          "report_title"    AS "reportTitle",
-          "source_url"      AS "sourceUrl",
-          "published_at"    AS "publishedAt",
-          "page_start"      AS "pageStart",
-          "page_end"        AS "pageEnd",
-          "chunk_text"      AS "chunkText",
-          "location_ids"    AS "locationIds",
-          "event_types"     AS "eventTypes",
-          "need_sectors"    AS "needSectors",
-          "figure_s3_key"   AS "figureS3Key",
-          "figure_kind"     AS "figureKind"
-        FROM "knowledgebase"
-        ${sparseWhere ? `${sparseWhere} AND` : "WHERE"}
-          "lexical_tsv" @@ plainto_tsquery('english', $${sparseParams.length + 1})
-        ORDER BY ts_rank_cd(
-          "lexical_tsv",
-          plainto_tsquery('english', $${sparseParams.length + 2})
-        ) DESC
-        LIMIT $${sparseParams.length + 3}
-      `;
-      sparseParams.push(q, q, CANDIDATES_PER_RETRIEVER);
-
-      const [denseRows, sparseRows] = await Promise.all([
-        context.prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(denseSql, ...denseParams),
-        context.prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(sparseSql, ...sparseParams),
-      ]);
-
-      // Reciprocal Rank Fusion. Each row gets 1/(k + rank) from every
-      // retriever it appeared in; rows in both get both contributions.
-      // No score normalisation — RRF is already rank-based.
-      const fused = new Map<string, { row: KnowledgebaseHitRow; score: number }>();
-      denseRows.forEach((row, i) => {
-        fused.set(row.id, { row, score: 1 / (RRF_K + i + 1) });
-      });
-      sparseRows.forEach((row, i) => {
-        const bonus = 1 / (RRF_K + i + 1);
-        const existing = fused.get(row.id);
-        if (existing) {
-          existing.score += bonus;
-        } else {
-          fused.set(row.id, { row, score: bonus });
-        }
-      });
-
-      return Array.from(fused.values())
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit)
-        .map(({ row, score }) => ({ ...row, score }));
+      if (mode === "FRAME") {
+        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident);
+      }
+      const vecLiteral = queryVectorLiteral(await embedQuery(q));
+      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident);
     },
 
     knowledgebaseIngestJob: async (
@@ -450,6 +618,20 @@ export const knowledgebaseResolvers = {
   },
 
   Mutation: {
+    syncEventCards: async (
+      _parent: unknown,
+      args: { eventIds: string[] },
+      context: Context,
+    ): Promise<{ synced: number; skipped: number }> => {
+      requireRole(context, ["admin", "pipeline"]);
+      if (!args.eventIds || args.eventIds.length === 0) {
+        throw new GraphQLError("syncEventCards: eventIds must be non-empty", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      return syncEventCards(context.prisma, args.eventIds);
+    },
+
     upsertKnowledgebaseChunks: async (
       _parent: unknown,
       args: UpsertKnowledgebaseArgs,

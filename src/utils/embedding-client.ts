@@ -66,14 +66,28 @@ export function loadEmbeddingConfig(): EmbeddingConfig {
 }
 
 /**
- * Embed a single search query. Returns the raw float vector — the
- * caller formats it as a `'[…]'::vector(1024)` literal at SQL time.
+ * Embed a single search query (Voyage `input_type: "query"`). Returns the raw
+ * float vector — the caller formats it as a `'[…]'::vector(1024)` literal.
  */
 export async function embedQuery(text: string): Promise<number[]> {
+  return embed(text, "query");
+}
+
+/**
+ * Embed a document for INDEXING (Voyage `input_type: "document"`) — used by the
+ * event-card write path (ADR-0006) so incident cards land in the SAME asymmetric
+ * space the ReliefWeb ingest wrote with. openai_compat is symmetric (no
+ * input_type), so it embeds identically to a query there.
+ */
+export async function embedDocument(text: string): Promise<number[]> {
+  return embed(text, "document");
+}
+
+async function embed(text: string, inputType: "query" | "document"): Promise<number[]> {
   const config = loadEmbeddingConfig();
   const vec =
     config.provider === "voyage"
-      ? await embedViaVoyage(text, config)
+      ? await embedViaVoyage(text, config, inputType)
       : await embedViaOpenAICompat(text, config);
   if (vec.length !== config.dimensions) {
     throw new Error(
@@ -84,7 +98,11 @@ export async function embedQuery(text: string): Promise<number[]> {
   return vec;
 }
 
-async function embedViaVoyage(text: string, config: EmbeddingConfig): Promise<number[]> {
+async function embedViaVoyage(
+  text: string,
+  config: EmbeddingConfig,
+  inputType: "query" | "document",
+): Promise<number[]> {
   const resp = await fetch(VOYAGE_ENDPOINT, {
     method: "POST",
     headers: {
@@ -94,10 +112,10 @@ async function embedViaVoyage(text: string, config: EmbeddingConfig): Promise<nu
     body: JSON.stringify({
       input: [text],
       model: config.model,
-      // Asymmetric embedding: ingest writes with "document", search
-      // queries with "query". Same model, different heads. Skipping
-      // this on the query side effectively halves recall on Voyage.
-      input_type: "query",
+      // Asymmetric embedding: ingest/index writes with "document", search
+      // queries with "query". Same model, different heads. Getting this
+      // wrong effectively halves recall on Voyage.
+      input_type: inputType,
       output_dimension: config.dimensions,
     }),
   });

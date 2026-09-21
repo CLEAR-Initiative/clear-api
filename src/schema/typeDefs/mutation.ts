@@ -444,6 +444,14 @@ export const mutationTypeDef = gql`
       chunks: [KnowledgebaseChunkInput!]!
     ): UpsertKnowledgebaseResult!
 
+    """Synthesise, embed, and upsert incident-tier "event cards" into
+    \`events_index\` for the given events (ADR-0006) — replace-on-revise,
+    keyed by event id. Call this when events are created or revised (from
+    the signal→event grouping step, or a periodic catch-up) to keep the
+    incident tier of \`searchKnowledgebase\` fresh. Embedding uses the same
+    provider+model as the report KB. Admin/pipeline only."""
+    syncEventCards(eventIds: [String!]!): SyncEventCardsResult!
+
     """Replace the \`report_datapoints\` row for \`input.reportId\`.
     Admin / pipeline only. The dagster-quickstart datapoints
     extraction asset is the primary caller; hand-invocation is

@@ -1218,6 +1218,62 @@ model knowledgebase {
   @@map("knowledgebase")
 }
 
+/// Incident-tier index for the knowledgebase (ADR-0006). One row per EVENT
+/// (grouped signals), embedded as a synthesised "event card". This is the
+/// physically-separate, lower-tier companion to `knowledgebase` (the
+/// report/state tier): `searchKnowledgebase` retrieves both and merges
+/// tier-aware. Like `knowledgebase`, `embedding` (pgvector) + `lexicalTsv`
+/// (tsvector) are `Unsupported` and written/read exclusively via raw SQL; the
+/// HNSW + tsvector-trigger DDL lives in the migration. Don't remove those two
+/// fields — it would cascade the HNSW index.
+model eventsIndex {
+  id String @id @default(cuid())
+
+  /// The `events.id` this card came from. Unique — the write path
+  /// deletes-then-inserts per event (the replace-on-revise idempotency key).
+  eventId String @map("event_id")
+
+  /// Event title, and the human-readable card text a UI renders on a hit
+  /// (the incident-tier analog of `knowledgebase.chunk_text`).
+  title    String
+  cardText String @map("card_text")
+  /// What was embedded + tokenised into `lexical_tsv` (card + a structured
+  /// line: type / location / time / severity). Stored verbatim so the ranking
+  /// is reproducible offline.
+  embeddedText String  @map("embedded_text")
+  /// Link back to the event / its signals for a search hit.
+  sourceUrl    String? @map("source_url")
+
+  embeddingProvider String @map("embedding_provider")
+  embeddingModel    String @map("embedding_model")
+
+  /// Same preservation rule + raw-SQL access as `knowledgebase.embedding`.
+  embedding  Unsupported("vector(1024)")
+  /// Populated by a BEFORE INSERT/UPDATE trigger from `embedded_text`.
+  lexicalTsv Unsupported("tsvector") @map("lexical_tsv")
+
+  locationIds    String[] @map("location_ids")
+  locationPcodes String[] @map("location_pcodes")
+  timeRangeStart DateTime? @map("time_range_start")
+  timeRangeEnd   DateTime? @map("time_range_end")
+  /// Event onset — the recency signal frame-mode incident ordering uses.
+  startedAt      DateTime? @map("started_at")
+
+  eventTypes String[] @map("event_types")
+  /// 1–5 aggregated severity — the other frame-mode incident ordering signal.
+  severity   Int?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([eventId])
+  @@index([embeddingModel])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([timeRangeStart, timeRangeEnd])
+  @@index([startedAt])
+  @@map("events_index")
+}
+
 /// Outbound webhook subscription. Configured by platform admins; every
 /// incoming GlitchTip alert is fanned out to every active subscription
 /// whose filters match. HMAC signing is opt-out (not currently exposed —

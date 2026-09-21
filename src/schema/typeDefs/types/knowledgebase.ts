@@ -77,6 +77,13 @@ export const knowledgebaseTypeDef = gql`
     chunksInserted: Int!
   }
 
+  """Result of \`syncEventCards\` — how many event cards were written vs
+  skipped (an id that no longer resolves to an event)."""
+  type SyncEventCardsResult {
+    synced: Int!
+    skipped: Int!
+  }
+
   # ─── Read side (search) ─────────────────────────────────────────────
 
   """One hit from \`searchKnowledgebase\`. Carries enough source
@@ -85,12 +92,24 @@ export const knowledgebaseTypeDef = gql`
   the caller can highlight which filters matched."""
   type KnowledgebaseHit {
     id: String!
+    """Tier this hit came from (ADR-0006): \`report\` = the ReliefWeb
+    state/analysis KB; \`incident\` = an event card from the incident
+    index. Consumers should weight/caveat \`incident\` hits as
+    lower-tier (possibly unverified) and MUST NOT let incident figures
+    feed the same datapoint aggregation as report figures."""
+    tier: String!
+    """For a \`report\` hit, the ReliefWeb report id; for an \`incident\`
+    hit, \`event:<event id>\`."""
     reportId: String!
     reportTitle: String!
     sourceUrl: String!
+    """Report publication date, or — for an incident — the event's onset
+    (\`startedAt\`), the recency signal used to order the incident band."""
     publishedAt: DateTime
+    """0 for an incident hit (page range is report-only)."""
     pageStart: Int!
     pageEnd: Int!
+    """Report chunk excerpt, or — for an incident — the synthesised event card."""
     chunkText: String!
     """RRF-fused score. Larger is better. Not directly comparable
     across queries — the constant \`k=60\` bounds each per-row term
@@ -114,6 +133,23 @@ export const knowledgebaseTypeDef = gql`
   input DateRangeInput {
     from: DateTime
     to: DateTime
+  }
+
+  """How \`searchKnowledgebase\` merges the report + incident tiers
+  (ADR-0006)."""
+  enum KnowledgebaseSearchMode {
+    """Pick FRAME when the query is effectively empty / frame-only, else
+    TOPICAL."""
+    AUTO
+    """Situation-analysis: a location+time frame with little topical text.
+    Returns a report band + a quota-bounded incident band ordered by
+    recency + severity; no similarity floor (it would gate out the very
+    incidents the frame is asking for)."""
+    FRAME
+    """Chatbot: a strong free-text query. Interleaves the two tiers by
+    relevance (soft), gating weak incidents below a similarity floor and
+    giving reports a small rank preference."""
+    TOPICAL
   }
 
   # ─── Manual ingest trigger ─────────────────────────────────────────
