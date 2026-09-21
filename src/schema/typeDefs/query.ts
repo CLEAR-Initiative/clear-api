@@ -302,9 +302,9 @@ export const queryTypeDef = gql`
       query: String!
       filters: KnowledgebaseFilters
       limit: Int = 10
-      """Which tiers to search. Default: both. Pass [\"report\"] to get
-      the pre-ADR-0006 report-only behaviour."""
-      tiers: [String!]
+      """Which tiers to search. Default: both (the KB is always fresh). Pass
+      [report] to get the pre-ADR-0006 report-only behaviour."""
+      tiers: [KnowledgebaseTier!]
       mode: KnowledgebaseSearchMode = AUTO
     ): [KnowledgebaseHit!]!
 

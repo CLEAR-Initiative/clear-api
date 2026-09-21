@@ -35,8 +35,8 @@ CREATE TABLE "events_index" (
 );
 
 -- CreateIndex
--- One row per event; the write path deletes-then-inserts per event, so this
--- doubles as the replace-on-revise idempotency key.
+-- One row per event; the write path upserts per event (INSERT ... ON CONFLICT
+-- ("event_id") DO UPDATE), so this doubles as the replace-on-revise key.
 CREATE UNIQUE INDEX "events_index_event_id_key" ON "events_index"("event_id");
 
 -- CreateIndex

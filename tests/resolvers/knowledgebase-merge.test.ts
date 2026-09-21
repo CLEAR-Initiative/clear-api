@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../src/utils/embedding-client.js", () => ({
   embedQuery: vi.fn().mockResolvedValue(new Array(1024).fill(0.01)),
   loadEmbeddingConfig: vi.fn().mockReturnValue({ provider: "voyage", model: "voyage-3-large" }),
+  EMBEDDING_DIMENSIONS: 1024,
+  vectorLiteral: (v: number[]) => `[${v.join(",")}]`,
 }));
 
 import { knowledgebaseResolvers } from "../../src/resolvers/knowledgebase.resolver.js";
@@ -117,5 +119,38 @@ describe("searchKnowledgebase — TOPICAL mode (ADR-0006)", () => {
     // no events_index query issued
     const calls = q.mock.calls.map((c) => String(c[0]));
     expect(calls.some((s) => s.includes('"events_index"'))).toBe(false);
+  });
+});
+
+describe("searchKnowledgebase — ADR-0006 review fixes (E1/E2/E7)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("E1: an incident-only FRAME query fills the whole budget (not just the 40% quota)", async () => {
+    const q = makeQueryRawUnsafe({
+      incidentRecency: Array.from({ length: 6 }, (_, i) => row(`e${i}`, "incident")),
+    });
+    const out = await search(null, { query: "", filters: FILTERS, limit: 6, tiers: ["incident"], mode: "FRAME" }, ctx(q));
+    expect(out.length).toBe(6); // not round(6*0.4)=2
+    expect(out.every((h) => h.tier === "incident")).toBe(true);
+  });
+
+  it("E2: a sparse-only incident (no dense sim) survives the TOPICAL floor", async () => {
+    const q = makeQueryRawUnsafe({
+      incidentDense: [],                                   // not in the dense window
+      incidentSparse: [row("e_lexical", "incident")],      // exact keyword match, no _dist
+    });
+    const out = await search(null, { query: "cholera", filters: FILTERS, tiers: ["incident"], mode: "TOPICAL" }, ctx(q));
+    expect(out.map((h) => h.id)).toContain("e_lexical"); // kept, not floored out as sim=0
+  });
+
+  it("E7: recency shapes incident order — a fresher incident outranks an older equally-similar one", async () => {
+    const q = makeQueryRawUnsafe({
+      incidentDense: [
+        row("e_old", "incident", { _dist: 0.2, _startedAt: new Date("2020-01-01") }),   // dense rank 0
+        row("e_recent", "incident", { _dist: 0.2, _startedAt: new Date() }),            // dense rank 1
+      ],
+    });
+    const out = await search(null, { query: "airstrike", filters: FILTERS, tiers: ["incident"], mode: "TOPICAL" }, ctx(q));
+    expect(out[0].id).toBe("e_recent"); // recency bonus overtakes the one-rank gap
   });
 });

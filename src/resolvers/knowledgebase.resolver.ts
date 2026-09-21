@@ -34,10 +34,13 @@ import {
   launchRun,
 } from "../utils/dagster-client.js";
 import { syncEventCards } from "../services/event-card.js";
-import { embedQuery, loadEmbeddingConfig } from "../utils/embedding-client.js";
+import {
+  EMBEDDING_DIMENSIONS,
+  embedQuery,
+  loadEmbeddingConfig,
+  vectorLiteral,
+} from "../utils/embedding-client.js";
 import { env } from "../utils/env.js";
-
-const EMBEDDING_DIMENSIONS = 1024;
 
 // Reciprocal Rank Fusion constant. The k=60 default from the RRF
 // paper (Cormack et al. 2009) tempers early-rank scores so a
@@ -199,12 +202,6 @@ interface UpsertKnowledgebaseArgs {
   chunks: KnowledgebaseChunkInput[];
 }
 
-/** Format a numeric vector for the `'[…]'::vector(1024)` cast. */
-function vectorLiteral(embedding: number[]): string {
-  // Fixed precision keeps the SQL text bounded; 7 digits preserves
-  // effectively all information in a 32-bit float embedding.
-  return `[${embedding.map((v) => v.toFixed(7)).join(",")}]`;
-}
 
 interface KnowledgebaseFilters {
   locationIds?: string[] | null;
@@ -312,18 +309,29 @@ export function buildFilterClause(
   return conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 }
 
-/** Format a numeric vector for the `'[…]'::vector(1024)` cast — same
- * helper the write path uses; kept as a module-local rather than
- * exported so both call sites are visibly the only writers/readers. */
-function queryVectorLiteral(vec: number[]): string {
-  return `[${vec.map((v) => v.toFixed(7)).join(",")}]`;
-}
 
 interface RankedHit {
   row: KnowledgebaseHitRow;
   rrf: number;
-  /** Best dense cosine similarity (1 - min distance); 0 for sparse-only rows. */
-  sim: number;
+  /** Best dense cosine similarity (1 - min distance), or `null` for a row that
+   *  surfaced ONLY via the sparse/lexical retriever (outside the dense candidate
+   *  window). `null` means "no dense evidence" — NOT "zero similarity" — so the
+   *  TOPICAL floor must treat it as lexically-relevant, not off-topic (E2). */
+  sim: number | null;
+}
+
+// TOPICAL recency shaping (ADR-0006 §4, reviewer E7). A small additive bonus so
+// fresher incidents edge out equally-ranked ones without overriding relevance:
+// tuned to ~1–2 rank steps (a rank step of RRF is ~1/RRF_K² ≈ 2.7e-4).
+const INCIDENT_RECENCY_HALF_LIFE_DAYS = 14;
+const INCIDENT_RECENCY_BONUS = 5e-4;
+
+/** Exponential recency in (0,1]: 1 for "now", halving every half-life. 0 when
+ *  the incident has no onset date. */
+function recencyScore(startedAt: Date | null | undefined): number {
+  if (!startedAt) return 0;
+  const ageDays = (Date.now() - new Date(startedAt).getTime()) / (1000 * 60 * 60 * 24);
+  return Math.pow(0.5, Math.max(0, ageDays) / INCIDENT_RECENCY_HALF_LIFE_DAYS);
 }
 
 type SearchHit = Omit<KnowledgebaseHitRow, "_severity" | "_startedAt" | "_dist"> & {
@@ -389,8 +397,8 @@ async function hybridRetrieveTier(
   sparseRows.forEach((row, i) => {
     const bonus = 1 / (RRF_K + i + 1);
     const existing = fused.get(row.id);
-    if (existing) existing.rrf += bonus;
-    else fused.set(row.id, { row, rrf: bonus, sim: 0 });
+    if (existing) existing.rrf += bonus; // already has a dense sim; keep it
+    else fused.set(row.id, { row, rrf: bonus, sim: null }); // sparse-only: no dense evidence
   });
   return [...fused.values()].sort((a, b) => b.rrf - a.rrf);
 }
@@ -416,8 +424,9 @@ async function recencyRetrieveTier(
 }
 
 /** TOPICAL merge (ADR-0006 §4): both tiers retrieved semantically; incidents
- *  gated by the similarity floor; interleaved by within-tier rank with a small
- *  rank offset preferring reports. */
+ *  gated by the similarity floor (dense-scored rows only — a sparse-only lexical
+ *  match bypasses it, E2); incident order blends rank with recency (E7);
+ *  interleaved with a small rank offset preferring the curated report tier. */
 async function mergeTopical(
   prisma: Context["prisma"],
   q: string,
@@ -435,8 +444,16 @@ async function mergeTopical(
   const scored: SearchHit[] = [];
   reportHits.forEach((h, i) => scored.push(toHit(h.row, 1 / (RRF_K + i + 1))));
   incidentHits
-    .filter((h) => h.sim >= INCIDENT_SIM_FLOOR) // gate off-topic incidents
-    .forEach((h, i) => scored.push(toHit(h.row, 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET))));
+    // Gate only rows that HAVE dense evidence: a null sim means the row surfaced
+    // only via BM25 (an exact keyword match outside the dense window) — keep it,
+    // don't conflate "no dense hit" with "off-topic" (E2).
+    .filter((h) => h.sim === null || h.sim >= INCIDENT_SIM_FLOOR)
+    .forEach((h, i) => {
+      // Base rank score (with the report rank-offset) + a small recency bonus so
+      // fresher incidents shape the order without overriding relevance (E7).
+      const base = 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET);
+      scored.push(toHit(h.row, base + INCIDENT_RECENCY_BONUS * recencyScore(h.row._startedAt)));
+    });
 
   return scored.sort((a, b) => b.score - a.score).slice(0, limit);
 }
@@ -452,7 +469,15 @@ async function mergeFrame(
   wantReport: boolean,
   wantIncident: boolean,
 ): Promise<SearchHit[]> {
-  const incidentQuota = wantIncident ? Math.max(1, Math.round(limit * INCIDENT_QUOTA_FRACTION)) : 0;
+  // Incident budget: the quota only *caps* incidents when they share the budget
+  // with reports (so they can't swamp the analysis). When incidents own the whole
+  // budget (report tier off) they fill it entirely — else an incident-only frame
+  // query under-returns (reviewer E1). No Math.max(1,…) floor: at limit 1–2 with
+  // both tiers, round(limit·0.4)=0 gives the slot to the report/analysis rather
+  // than starving it (reviewer E9).
+  const incidentQuota = !wantIncident
+    ? 0
+    : (wantReport ? Math.round(limit * INCIDENT_QUOTA_FRACTION) : limit);
   const incidentRows = await recencyRetrieveTier(
     prisma, "events_index", INCIDENT_SELECT,
     `"started_at" DESC NULLS LAST, "severity" DESC NULLS LAST`,
@@ -463,7 +488,7 @@ async function mergeFrame(
   let reportRows: KnowledgebaseHitRow[] = [];
   if (wantReport && reportBudget > 0) {
     if (q !== "") {
-      const vec = queryVectorLiteral(await embedQuery(q));
+      const vec = vectorLiteral(await embedQuery(q));
       const hits = await hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vec, q, filters, true);
       reportRows = hits.slice(0, reportBudget).map((h) => h.row);
     } else {
@@ -593,7 +618,7 @@ export const knowledgebaseResolvers = {
       if (mode === "FRAME") {
         return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident);
       }
-      const vecLiteral = queryVectorLiteral(await embedQuery(q));
+      const vecLiteral = vectorLiteral(await embedQuery(q));
       return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident);
     },
 

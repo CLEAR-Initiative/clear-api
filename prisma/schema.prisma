@@ -1229,8 +1229,8 @@ model knowledgebase {
 model eventsIndex {
   id String @id @default(cuid())
 
-  /// The `events.id` this card came from. Unique — the write path
-  /// deletes-then-inserts per event (the replace-on-revise idempotency key).
+  /// The `events.id` this card came from. Unique — the write path upserts per
+  /// event (INSERT ... ON CONFLICT DO UPDATE), the replace-on-revise key.
   eventId String @map("event_id")
 
   /// Event title, and the human-readable card text a UI renders on a hit

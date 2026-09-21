@@ -29,7 +29,16 @@
  */
 
 const VOYAGE_ENDPOINT = "https://api.voyageai.com/v1/embeddings";
-const EXPECTED_DIMENSIONS = 1024;
+/** The pgvector column dimension. Single source of truth for the read path,
+ *  the report write path, and the event-card write path (reviewer E14). */
+export const EMBEDDING_DIMENSIONS = 1024;
+const EXPECTED_DIMENSIONS = EMBEDDING_DIMENSIONS;
+
+/** Format a float vector for a `'[…]'::vector(1024)` SQL cast. Fixed precision
+ *  keeps the SQL text bounded; 7 digits preserves a 32-bit float embedding. */
+export function vectorLiteral(embedding: number[]): string {
+  return `[${embedding.map((v) => v.toFixed(7)).join(",")}]`;
+}
 
 export interface EmbeddingConfig {
   provider: "voyage" | "openai_compat";

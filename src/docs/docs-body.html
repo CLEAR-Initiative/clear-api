@@ -527,8 +527,8 @@ report band + a quota-bounded incident band ordered by recency +
 severity; TOPICAL (a strong free-text query — the chatbot case)
 interleaves by relevance, gating weak incidents. AUTO picks FRAME
 when the query is effectively empty/frame-only, else TOPICAL. Every
-hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [String!]</code> — Which tiers to search. Default: both. Pass [&quot;report&quot;] to get
-the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
+hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [KnowledgebaseTier!]</code> — Which tiers to search. Default: both (the KB is always fresh). Pass
+[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
   </tr><tr>
     <td><code>knowledgebaseIngestJob</code></td>
     <td><code>KnowledgebaseIngestJob</code></td>
@@ -1344,7 +1344,9 @@ Returns a report band + a quota-bounded incident band ordered by
 recency + severity; no similarity floor (it would gate out the very
 incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><td>Chatbot: a strong free-text query. Interleaves the two tiers by
 relevance (soft), gating weak incidents below a similarity floor and
-giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
+giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
+KB; `incident` = an event card from the incident index (lower-tier, possibly
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
 NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
 alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
@@ -4182,12 +4184,10 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
     <td>—</td>
   </tr><tr>
     <td><code>tier</code></td>
-    <td><code>String!</code></td>
-    <td>Tier this hit came from (ADR-0006): `report` = the ReliefWeb
-state/analysis KB; `incident` = an event card from the incident
-index. Consumers should weight/caveat `incident` hits as
-lower-tier (possibly unverified) and MUST NOT let incident figures
-feed the same datapoint aggregation as report figures.</td>
+    <td><code>KnowledgebaseTier!</code></td>
+    <td>Tier this hit came from (ADR-0006). Consumers should weight/caveat
+`incident` hits as lower-tier (possibly unverified) and MUST NOT let
+incident figures feed the same datapoint aggregation as report figures.</td>
   </tr><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
@@ -4221,9 +4221,10 @@ hit, `event:&lt;event id&gt;`.</td>
   </tr><tr>
     <td><code>score</code></td>
     <td><code>Float!</code></td>
-    <td>RRF-fused score. Larger is better. Not directly comparable
-across queries — the constant `k=60` bounds each per-row term
-to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032.</td>
+    <td>Merge score, larger is better. Ordering/membership only — NOT
+comparable across queries or (post-ADR-0006) across tiers: it is a
+positional `1/(k+rank)` from the tier-aware merge, plus a small recency
+term on incidents, not the raw RRF sum.</td>
   </tr><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]!</code></td>

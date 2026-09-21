@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../src/utils/embedding-client.js", () => ({
   embedDocument: vi.fn().mockResolvedValue(new Array(1024).fill(0.02)),
   loadEmbeddingConfig: vi.fn().mockReturnValue({ provider: "voyage", model: "voyage-3-large" }),
+  EMBEDDING_DIMENSIONS: 1024,
+  vectorLiteral: (v: number[]) => `[${v.join(",")}]`,
 }));
 
 import { synthesiseEventCard, syncEventCards, type EventForCard } from "../../src/services/event-card.js";
@@ -15,7 +17,7 @@ import type { Context } from "../../src/context.js";
 
 function ev(overrides: Partial<EventForCard> = {}): EventForCard {
   return {
-    id: "ev1", title: null, description: null, types: ["conflict"],
+    id: "ev1", title: null, description: null, description_signals: null, types: ["conflict"],
     severity: 3, casualties: 12, populationDisplaced: 5000n, populationAffected: null,
     startedAt: new Date("2026-09-15T00:00:00Z"), firstSignalCreatedAt: new Date("2026-09-14T00:00:00Z"),
     validFrom: new Date("2026-09-15T00:00:00Z"), validTo: new Date("2026-09-16T00:00:00Z"),
@@ -90,5 +92,47 @@ describe("syncEventCards", () => {
     const res = await syncEventCards(ctx(findMany, exec).prisma, []);
     expect(res).toEqual({ synced: 0, skipped: 0 });
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("event-card review fixes (E6/E4/E13)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function ctx(findMany: ReturnType<typeof vi.fn>, exec: ReturnType<typeof vi.fn>): Context {
+    return { prisma: { events: { findMany }, $executeRawUnsafe: exec } as unknown as Context["prisma"] } as unknown as Context;
+  }
+
+  it("E13: folds description_signals into the embedded card body", () => {
+    const card = synthesiseEventCard(ev({
+      title: "Clash", description: null,
+      description_signals: [{ description: "Gunfire near the market" }, "Two vehicles torched"],
+    }));
+    expect(card.embeddedText).toContain("Gunfire near the market");
+    expect(card.embeddedText).toContain("Two vehicles torched");
+  });
+
+  it("E6: a content-empty event is skipped (never embedded), counted in skipped", async () => {
+    const empty = ev({
+      title: null, description: null, description_signals: null, types: [],
+      severity: null, casualties: null, populationDisplaced: null, populationAffected: null,
+      originLocation: null, destinationLocation: null, generalLocation: null,
+    });
+    const findMany = vi.fn().mockResolvedValue([empty]);
+    const exec = vi.fn().mockResolvedValue(1);
+    const res = await syncEventCards(ctx(findMany, exec).prisma, ["ev1"]);
+    expect(res).toEqual({ synced: 0, skipped: 1 });
+    expect(embedDocument).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("E4: one event's embed failure is isolated — the batch continues, count is honest", async () => {
+    (embedDocument as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(new Array(1024).fill(0.02))   // event a: ok
+      .mockRejectedValueOnce(new Error("429 rate limit")); // event b: fails
+    const findMany = vi.fn().mockResolvedValue([ev({ id: "a" }), ev({ id: "b" })]);
+    const exec = vi.fn().mockResolvedValue(1);
+    const res = await syncEventCards(ctx(findMany, exec).prisma, ["a", "b"]);
+    expect(res).toEqual({ synced: 1, skipped: 1 }); // a written, b failed → skipped
+    expect(exec).toHaveBeenCalledTimes(1);            // only a's write happened
   });
 });

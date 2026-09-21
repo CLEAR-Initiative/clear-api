@@ -92,12 +92,10 @@ export const knowledgebaseTypeDef = gql`
   the caller can highlight which filters matched."""
   type KnowledgebaseHit {
     id: String!
-    """Tier this hit came from (ADR-0006): \`report\` = the ReliefWeb
-    state/analysis KB; \`incident\` = an event card from the incident
-    index. Consumers should weight/caveat \`incident\` hits as
-    lower-tier (possibly unverified) and MUST NOT let incident figures
-    feed the same datapoint aggregation as report figures."""
-    tier: String!
+    """Tier this hit came from (ADR-0006). Consumers should weight/caveat
+    \`incident\` hits as lower-tier (possibly unverified) and MUST NOT let
+    incident figures feed the same datapoint aggregation as report figures."""
+    tier: KnowledgebaseTier!
     """For a \`report\` hit, the ReliefWeb report id; for an \`incident\`
     hit, \`event:<event id>\`."""
     reportId: String!
@@ -111,9 +109,10 @@ export const knowledgebaseTypeDef = gql`
     pageEnd: Int!
     """Report chunk excerpt, or — for an incident — the synthesised event card."""
     chunkText: String!
-    """RRF-fused score. Larger is better. Not directly comparable
-    across queries — the constant \`k=60\` bounds each per-row term
-    to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032."""
+    """Merge score, larger is better. Ordering/membership only — NOT
+    comparable across queries or (post-ADR-0006) across tiers: it is a
+    positional \`1/(k+rank)\` from the tier-aware merge, plus a small recency
+    term on incidents, not the raw RRF sum."""
     score: Float!
     locationIds: [String!]!
     eventTypes: [String!]!
@@ -133,6 +132,14 @@ export const knowledgebaseTypeDef = gql`
   input DateRangeInput {
     from: DateTime
     to: DateTime
+  }
+
+  """A knowledgebase tier (ADR-0006). \`report\` = the ReliefWeb state/analysis
+  KB; \`incident\` = an event card from the incident index (lower-tier, possibly
+  unverified). Lowercase values match the stored tier strings."""
+  enum KnowledgebaseTier {
+    report
+    incident
   }
 
   """How \`searchKnowledgebase\` merges the report + incident tiers

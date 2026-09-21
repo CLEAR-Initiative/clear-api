@@ -11,9 +11,12 @@
  */
 
 import type { Context } from "../context.js";
-import { embedDocument, loadEmbeddingConfig } from "../utils/embedding-client.js";
-
-const EMBEDDING_DIMENSIONS = 1024;
+import {
+  EMBEDDING_DIMENSIONS,
+  embedDocument,
+  loadEmbeddingConfig,
+  vectorLiteral,
+} from "../utils/embedding-client.js";
 
 /** Minimal event shape the card needs — matches a `prisma.events.findMany`
  *  with the three location relations selected. */
@@ -21,6 +24,9 @@ export interface EventForCard {
   id: string;
   title: string | null;
   description: string | null;
+  /** Per-signal descriptions the grouping recorded (JSON). Folded into the
+   *  card so a report-less incident still has retrievable body text (E13). */
+  description_signals: unknown;
   types: string[];
   severity: number | null;
   casualties: number | null;
@@ -64,6 +70,36 @@ function distinctLocations(ev: EventForCard): { ids: string[]; names: string[] }
   return { ids, names };
 }
 
+/** Pull human-readable text out of the `description_signals` JSON (E13). The
+ *  grouping stores a list of per-signal descriptions (strings, or objects with a
+ *  `description`/`text`/`title` field); be defensive about the exact shape. */
+function signalTexts(descriptionSignals: unknown): string[] {
+  if (!Array.isArray(descriptionSignals)) return [];
+  const out: string[] = [];
+  for (const s of descriptionSignals) {
+    if (typeof s === "string" && s.trim()) out.push(s.trim());
+    else if (s && typeof s === "object") {
+      const o = s as Record<string, unknown>;
+      const t = o.description ?? o.text ?? o.title;
+      if (typeof t === "string" && t.trim()) out.push(t.trim());
+    }
+  }
+  return out;
+}
+
+/** A truly content-less event (no title, description, signal text, type,
+ *  location, or metric) would embed the bare token "Incident" → a garbage vector
+ *  that matches unrelated queries. Skip those (reviewer E6). */
+export function isContentEmpty(ev: EventForCard): boolean {
+  return !ev.title?.trim()
+    && !ev.description?.trim()
+    && signalTexts(ev.description_signals).length === 0
+    && ev.types.length === 0
+    && distinctLocations(ev).names.length === 0
+    && ev.severity == null && ev.casualties == null
+    && ev.populationDisplaced == null && ev.populationAffected == null;
+}
+
 /** Build the event card. Pure — no DB, no network. */
 export function synthesiseEventCard(ev: EventForCard): EventCard {
   const { ids: locationIds, names: locationNames } = distinctLocations(ev);
@@ -84,7 +120,8 @@ export function synthesiseEventCard(ev: EventForCard): EventCard {
   if (ev.populationAffected != null) facts.push(`Affected: ${ev.populationAffected.toString()}`);
   const structuredLine = facts.join(". ");
 
-  const description = ev.description?.trim() ?? "";
+  // Body: the event description, else the per-signal descriptions (E13).
+  const description = ev.description?.trim() || signalTexts(ev.description_signals).join(" ");
   const cardText = [description, structuredLine].filter(Boolean).join("\n\n");
   const embeddedText = [title, cardText].filter(Boolean).join("\n\n");
 
@@ -104,13 +141,9 @@ export function synthesiseEventCard(ev: EventForCard): EventCard {
   };
 }
 
-function vectorLiteral(embedding: number[]): string {
-  return `[${embedding.map((v) => v.toFixed(7)).join(",")}]`;
-}
-
 const EVENT_SELECT = {
-  id: true, title: true, description: true, types: true, severity: true,
-  casualties: true, populationDisplaced: true, populationAffected: true,
+  id: true, title: true, description: true, description_signals: true, types: true,
+  severity: true, casualties: true, populationDisplaced: true, populationAffected: true,
   startedAt: true, firstSignalCreatedAt: true, validFrom: true, validTo: true,
   originLocation: { select: { id: true, name: true } },
   destinationLocation: { select: { id: true, name: true } },
@@ -119,9 +152,11 @@ const EVENT_SELECT = {
 
 /**
  * Synthesise + embed + upsert cards for the given events into `events_index`
- * (replace-on-revise, keyed by event_id). Returns how many were written vs
- * skipped (an id that no longer resolves to an event). Embedding is one call
- * per event — cheap; a card is one short string.
+ * (replace-on-revise, keyed by event_id). Returns {synced, skipped}: `synced` =
+ * cards written; `skipped` = every other id (unresolved event, content-empty
+ * event, or a per-event embed/write failure). Each event is isolated (reviewer
+ * E4) — one failure never aborts the batch or loses the count — and each upsert
+ * is idempotent, so a re-run is safe. Embedding is one call per event (cheap).
  */
 export async function syncEventCards(
   prisma: Context["prisma"],
@@ -136,15 +171,41 @@ export async function syncEventCards(
 
   const config = loadEmbeddingConfig();
   let synced = 0;
+  let failed = 0;
   for (const ev of events) {
-    const card = synthesiseEventCard(ev);
-    const embedding = await embedDocument(card.embeddedText);
-    if (embedding.length !== EMBEDDING_DIMENSIONS) {
-      throw new Error(
-        `Event ${ev.id} embedding length ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`,
+    if (isContentEmpty(ev)) continue; // E6 — no body to embed; counted in skipped
+    try {
+      await upsertOneCard(prisma, config, ev);
+      synced += 1;
+    } catch (err) {
+      // Per-event isolation (E4): drop just this card and continue. Earlier cards
+      // are already committed (each is an idempotent upsert), so the batch never
+      // aborts mid-way with a partial, uncounted result.
+      failed += 1;
+      console.error(
+        `[syncEventCards] event ${ev.id} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    await prisma.$executeRawUnsafe(
+  }
+  if (failed > 0) {
+    console.warn(`[syncEventCards] ${failed} of ${events.length} events failed to sync`);
+  }
+  return { synced, skipped: eventIds.length - synced };
+}
+
+async function upsertOneCard(
+  prisma: Context["prisma"],
+  config: { provider: string; model: string },
+  ev: EventForCard,
+): Promise<void> {
+  const card = synthesiseEventCard(ev);
+  const embedding = await embedDocument(card.embeddedText);
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `Event ${ev.id} embedding length ${embedding.length}, expected ${EMBEDDING_DIMENSIONS}`,
+    );
+  }
+  await prisma.$executeRawUnsafe(
       `
         INSERT INTO "events_index" (
           "id", "event_id", "title", "card_text", "embedded_text", "source_url",
@@ -180,8 +241,5 @@ export async function syncEventCards(
       card.locationIds, card.locationPcodes,
       card.timeRangeStart, card.timeRangeEnd, card.startedAt,
       card.eventTypes, card.severity,
-    );
-    synced += 1;
-  }
-  return { synced, skipped: eventIds.length - synced };
+  );
 }

@@ -112,11 +112,14 @@ distributions v2 is fitted against, not as throwaway.
 
 ### 7. Write path — a job on event create/revise
 
-A job (Dagster asset or clear-api background task) fires on event create/revise:
-synthesise the card → embed → upsert into `events_index` (replace-on-update,
-keyed `event:<id>`, mirroring the report path's delete-then-insert). Events
-**persist** — the whole point is to prevent the information loss reports cause;
-a later report does not delete the event.
+The clear-pipeline `classify_group` drain fires on event create/revise:
+synthesise the card → embed → **upsert** into `events_index` (`INSERT … ON
+CONFLICT ("event_id") DO UPDATE`, keyed by event id). The per-event upsert (vs
+the report path's per-report delete-then-insert) is deliberate — an event is one
+row, so a single idempotent upsert replaces-on-revise without a delete. Each
+event is isolated in the write loop, so one bad embed drops just that card.
+Events **persist** — the whole point is to prevent the information loss reports
+cause; a later report does not delete the event.
 
 ### 8. Boundary — never double-count at the datapoint level
 
@@ -154,10 +157,18 @@ index keep that boundary explicit.
 - One new table + migration (raw SQL, like `knowledgebase`, because `embedding`
   and `lexical_tsv` are pgvector/tsvector types Prisma can't serialise).
 - `searchKnowledgebase` gains a second retrieval + a mode-aware merge and a
-  `tier` field on results; the report-only path is unchanged when the events tier
-  is off, so there is no regression risk to existing callers.
+  `tier` field on results. The tier is **on by default** (`tiers` defaults to
+  both) so the KB is always fresh — a deliberate, low-risk behavior change:
+  incident rows carry no figures (`figure_*` NULL) so §8 can't fire, and every
+  hit is `tier`-labelled for consumers to weight/caveat. A caller can opt out
+  with `tiers:[report]`, which is byte-for-byte the pre-ADR report-only path.
 - A new event-card embedding + upsert write path, fed continuously so the KB is
   always fresh without re-ingesting the report corpus.
+- **Embedding-config alignment (deploy note).** Report chunks are tagged with the
+  pipeline-supplied embedding provider/model; event cards with clear-api's own
+  `EMBEDDING_*` env. `currentEmbeddingModelOnly` (default true) filters each tier
+  by model, so if the two configs ever drift, one whole tier is silently filtered
+  out. Keep them identical (voyage-3-large / 1024).
 - Consumers: the situation-analysis RAG drives the **frame** mode (its
   country/time filters already exist); the chatbot drives the **topical** mode.
 
