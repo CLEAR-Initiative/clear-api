@@ -285,11 +285,27 @@ export const queryTypeDef = gql`
     embedding provider is the one configured in the environment -
     keep the write and read sides on the same provider or turn on
     \`filters.currentEmbeddingModelOnly\` to guarantee vector-space
-    consistency. Requires any authenticated content reader."""
+    consistency. Requires any authenticated content reader.
+
+    Two tiers are searched (ADR-0006): the ReliefWeb report KB (state /
+    analysis) and the incident index (event cards, always fresh). Each
+    tier is retrieved + RRF-fused independently, then merged tier-aware
+    so the few short incident cards are never buried by the many dense
+    report chunks. \`mode\` picks the merge: FRAME (a location+time frame
+    with little topical text — the situation-analysis case) returns a
+    report band + a quota-bounded incident band ordered by recency +
+    severity; TOPICAL (a strong free-text query — the chatbot case)
+    interleaves by relevance, gating weak incidents. AUTO picks FRAME
+    when the query is effectively empty/frame-only, else TOPICAL. Every
+    hit carries its \`tier\`."""
     searchKnowledgebase(
       query: String!
       filters: KnowledgebaseFilters
       limit: Int = 10
+      """Which tiers to search. Default: both (the KB is always fresh). Pass
+      [report] to get the pre-ADR-0006 report-only behaviour."""
+      tiers: [KnowledgebaseTier!]
+      mode: KnowledgebaseSearchMode = AUTO
     ): [KnowledgebaseHit!]!
 
     """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.

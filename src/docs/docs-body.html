@@ -515,7 +515,20 @@ set; each contributes up to 50 candidates before fusion. The
 embedding provider is the one configured in the environment -
 keep the write and read sides on the same provider or turn on
 `filters.currentEmbeddingModelOnly` to guarantee vector-space
-consistency. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+consistency. Requires any authenticated content reader.
+
+Two tiers are searched (ADR-0006): the ReliefWeb report KB (state /
+analysis) and the incident index (event cards, always fresh). Each
+tier is retrieved + RRF-fused independently, then merged tier-aware
+so the few short incident cards are never buried by the many dense
+report chunks. `mode` picks the merge: FRAME (a location+time frame
+with little topical text — the situation-analysis case) returns a
+report band + a quota-bounded incident band ordered by recency +
+severity; TOPICAL (a strong free-text query — the chatbot case)
+interleaves by relevance, gating weak incidents. AUTO picks FRAME
+when the query is effectively empty/frame-only, else TOPICAL. Every
+hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [KnowledgebaseTier!]</code> — Which tiers to search. Default: both (the KB is always fresh). Pass
+[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
   </tr><tr>
     <td><code>knowledgebaseIngestJob</code></td>
     <td><code>KnowledgebaseIngestJob</code></td>
@@ -1157,6 +1170,15 @@ delete so a re-run can retry cleanly. Vector length is validated
 against the pgvector column dimension (1024) on the server;
 mismatched rows are rejected before the write hits Postgres.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span></div></td>
+  </tr><tr id="mutation-synceventcards">
+    <td><code>syncEventCards</code></td>
+    <td><code>SyncEventCardsResult!</code></td>
+    <td>Synthesise, embed, and upsert incident-tier &quot;event cards&quot; into
+`events_index` for the given events (ADR-0006) — replace-on-revise,
+keyed by event id. Call this when events are created or revised (from
+the signal→event grouping step, or a periodic catch-up) to keep the
+incident tier of `searchKnowledgebase` fresh. Embedding uses the same
+provider+model as the report KB. Admin/pipeline only.<div class="field-args"><span class="arg"><code>eventIds: [String!]!</code></span></div></td>
   </tr><tr id="mutation-upsertreportdatapoints">
     <td><code>upsertReportDatapoints</code></td>
     <td><code>UpsertReportDatapointsResult!</code></td>
@@ -1315,7 +1337,16 @@ ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-tabl
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
-is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
+is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
+(ADR-0006).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>AUTO</code></td><td>Pick FRAME when the query is effectively empty / frame-only, else
+TOPICAL.</td></tr><tr><td><code>FRAME</code></td><td>Situation-analysis: a location+time frame with little topical text.
+Returns a report band + a quota-bounded incident band ordered by
+recency + severity; no similarity floor (it would gate out the very
+incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><td>Chatbot: a strong free-text query. Interleaves the two tiers by
+relevance (soft), gating weak incidents below a similarity floor and
+giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
+KB; `incident` = an event card from the incident index (lower-tier, possibly
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
 NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
 alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
@@ -4152,9 +4183,16 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>tier</code></td>
+    <td><code>KnowledgebaseTier!</code></td>
+    <td>Tier this hit came from (ADR-0006). Consumers should weight/caveat
+`incident` hits as lower-tier (possibly unverified) and MUST NOT let
+incident figures feed the same datapoint aggregation as report figures.</td>
+  </tr><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
-    <td>—</td>
+    <td>For a `report` hit, the ReliefWeb report id; for an `incident`
+hit, `event:&lt;event id&gt;`.</td>
   </tr><tr>
     <td><code>reportTitle</code></td>
     <td><code>String!</code></td>
@@ -4166,11 +4204,12 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
   </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>DateTime</code></td>
-    <td>—</td>
+    <td>Report publication date, or — for an incident — the event's onset
+(`startedAt`), the recency signal used to order the incident band.</td>
   </tr><tr>
     <td><code>pageStart</code></td>
     <td><code>Int!</code></td>
-    <td>—</td>
+    <td>0 for an incident hit (page range is report-only).</td>
   </tr><tr>
     <td><code>pageEnd</code></td>
     <td><code>Int!</code></td>
@@ -4178,13 +4217,14 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
   </tr><tr>
     <td><code>chunkText</code></td>
     <td><code>String!</code></td>
-    <td>—</td>
+    <td>Report chunk excerpt, or — for an incident — the synthesised event card.</td>
   </tr><tr>
     <td><code>score</code></td>
     <td><code>Float!</code></td>
-    <td>RRF-fused score. Larger is better. Not directly comparable
-across queries — the constant `k=60` bounds each per-row term
-to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032.</td>
+    <td>Merge score, larger is better. Ordering/membership only — NOT
+comparable across queries or (post-ADR-0006) across tiers: it is a
+positional `1/(k+rank)` from the tier-aware merge, plus a small recency
+term on incidents, not the raw RRF sum.</td>
   </tr><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]!</code></td>
@@ -5132,6 +5172,15 @@ as already counted inside `stock`.</td>
     <td><code>Int!</code></td>
     <td>Reports contributing forward flows - a provenance count, not a count of
 distinct flow events.</td>
+  </tr></tbody></table><h3 id="type-synceventcardsresult"><code>SyncEventCardsResult</code> <span class="type-badge">object</span></h3><p>Result of `syncEventCards` — how many event cards were written vs
+skipped (an id that no longer resolves to an event).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>synced</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
