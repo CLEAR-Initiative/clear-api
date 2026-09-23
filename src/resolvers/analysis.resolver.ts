@@ -17,7 +17,7 @@
  */
 
 import { GraphQLError } from "graphql";
-import type { Prisma } from "../generated/prisma/client.js";
+import { Prisma } from "../generated/prisma/client.js";
 
 import type { Context } from "../context.js";
 import { requireContentReader, requireRole } from "../utils/auth-guard.js";
@@ -75,16 +75,24 @@ interface UpdateAnalysisAutomationInput {
 }
 
 /** Cadence → milliseconds until the next run. Unknown cadences fall back to
- *  weekly so a typo can't wedge a frame into a tight regeneration loop. */
+ *  weekly so a typo can't wedge a frame into a tight regeneration loop.
+ *  (`monthly` is a 30-day approximation — calendar-month scheduling is a later
+ *  refinement.) */
 const CADENCE_MS: Record<string, number> = {
   hourly: 3_600_000,
   daily: 86_400_000,
   weekly: 604_800_000,
   monthly: 2_592_000_000, // 30d
 };
-function nextRunFromCadence(cadence: string, from: Date): Date {
+/** Next run anchored to the PRIOR scheduled time, not wall-clock mark-time — so a
+ *  late pickup doesn't push the cadence progressively later each cycle. Missed
+ *  cycles skip forward to the next future slot; a never-run row schedules from
+ *  `now`. */
+function nextScheduledRun(cadence: string, priorNextRunAt: Date | null, now: Date): Date {
   const ms = CADENCE_MS[cadence.toLowerCase()] ?? CADENCE_MS.weekly;
-  return new Date(from.getTime() + ms);
+  let next = (priorNextRunAt ?? now).getTime() + ms;
+  while (next <= now.getTime()) next += ms;
+  return new Date(next);
 }
 
 export const analysisResolvers = {
@@ -264,17 +272,41 @@ export const analysisResolvers = {
     ) => {
       requireRole(context, ["admin", "analyst"]);
       const { input } = args;
-      return context.prisma.analysisAutomation.create({
-        data: {
-          locationIds: canonicalizeArray(input.locationIds),
-          eventTypes: canonicalizeArray(input.eventTypes),
-          needSectors: canonicalizeArray(input.needSectors),
-          windowStart: input.windowStart,
-          cadence: input.cadence,
-          teamId: input.teamId ?? null,
-          createdByUserId: context.user?.id ?? null,
-        },
-      });
+      const data = {
+        locationIds: canonicalizeArray(input.locationIds),
+        eventTypes: canonicalizeArray(input.eventTypes),
+        needSectors: canonicalizeArray(input.needSectors),
+        windowStart: input.windowStart,
+        cadence: input.cadence,
+        teamId: input.teamId ?? null,
+        createdByUserId: context.user?.id ?? null,
+      };
+      try {
+        return await context.prisma.analysisAutomation.create({ data });
+      } catch (e) {
+        // Re-subscribe to the same (frame, owner): the partial-unique index
+        // rejects the duplicate — update the existing subscription's cadence
+        // instead (the "updates cadence rather than duplicating" contract).
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          const existing = await context.prisma.analysisAutomation.findFirst({
+            where: {
+              locationIds: { equals: data.locationIds },
+              eventTypes: { equals: data.eventTypes },
+              needSectors: { equals: data.needSectors },
+              windowStart: data.windowStart,
+              teamId: data.teamId,
+              createdByUserId: data.createdByUserId,
+            },
+          });
+          if (existing) {
+            return context.prisma.analysisAutomation.update({
+              where: { id: existing.id },
+              data: { cadence: data.cadence, enabled: true },
+            });
+          }
+        }
+        throw e;
+      }
     },
 
     updateAnalysisAutomation: async (
@@ -317,17 +349,30 @@ export const analysisResolvers = {
         where: { ...frameWhere(input), status: "PENDING" },
       });
       if (existing) return existing;
-      return context.prisma.analysisRequest.create({
-        data: {
-          locationIds: canonicalizeArray(input.locationIds),
-          eventTypes: canonicalizeArray(input.eventTypes),
-          needSectors: canonicalizeArray(input.needSectors),
-          windowStart: input.windowStart,
-          windowEnd: input.windowEnd ?? null,
-          teamId: input.teamId ?? null,
-          requestedByUserId: context.user?.id ?? null,
-        },
-      });
+      try {
+        return await context.prisma.analysisRequest.create({
+          data: {
+            locationIds: canonicalizeArray(input.locationIds),
+            eventTypes: canonicalizeArray(input.eventTypes),
+            needSectors: canonicalizeArray(input.needSectors),
+            windowStart: input.windowStart,
+            windowEnd: input.windowEnd ?? null,
+            teamId: input.teamId ?? null,
+            requestedByUserId: context.user?.id ?? null,
+          },
+        });
+      } catch (e) {
+        // Lost the create race against a concurrent identical request — the
+        // partial-unique index (PENDING per frame) rejected the duplicate;
+        // return the winner instead of double-generating.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          const winner = await context.prisma.analysisRequest.findFirst({
+            where: { ...frameWhere(input), status: "PENDING" },
+          });
+          if (winner) return winner;
+        }
+        throw e;
+      }
     },
 
     // Pipeline: mark a drained request done after its analysis was upserted.
@@ -375,13 +420,16 @@ export const analysisResolvers = {
       const now = new Date();
       const rows = await context.prisma.analysisAutomation.findMany({
         where: { id: { in: args.ids } },
-        select: { id: true, cadence: true },
+        select: { id: true, cadence: true, nextRunAt: true },
       });
       await context.prisma.$transaction(
         rows.map((r) =>
           context.prisma.analysisAutomation.update({
             where: { id: r.id },
-            data: { lastRunAt: now, nextRunAt: nextRunFromCadence(r.cadence, now) },
+            data: {
+              lastRunAt: now,
+              nextRunAt: nextScheduledRun(r.cadence, r.nextRunAt, now),
+            },
           }),
         ),
       );

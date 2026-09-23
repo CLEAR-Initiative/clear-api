@@ -1882,7 +1882,11 @@ model analysisRequest {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([status])
+  /// The (status, created_at) index serves the oldest-first pendingAnalyses
+  /// drain. A partial unique — one PENDING request per frame (NULLS NOT
+  /// DISTINCT) — is added in migration 20260923000000 (SQL-only; Prisma can't
+  /// express partial indexes).
+  @@index([status, createdAt])
   @@map("analysis_requests")
 }
 

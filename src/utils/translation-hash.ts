@@ -80,8 +80,8 @@ const HASH_FIELDS: Record<TranslatableEntityType, readonly string[]> = {
     "scenarios",
   ],
   // Unified frame-scoped analysis (ADR-0007) — the same prose components as
-  // situationAnalysis (plus `scenarios` once Phase 3 lands it). Presence-only
-  // on the clear-api read path; keep aligned with the pipeline's hashing.
+  // situationAnalysis, including `scenarios`. Presence-only on the clear-api
+  // read path; keep aligned with the pipeline's hashing.
   analysis: [
     "ai_summary",
     "context_risks",
