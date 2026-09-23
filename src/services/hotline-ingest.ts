@@ -28,10 +28,9 @@
  *     groundSources row of kind "hotline" for the receiving number and
  *     nothing else. Unknown numbers are rejected with nothing persisted.
  *
- *   - VOICE triggers a transcription enqueue. Audio media on a created
- *     message fires the clear-pipeline `transcribe_ground_message` task
- *     (fire-and-forget, same contract style as classify_ground_messages;
- *     the pipeline-side task is V3 work in clear-pipeline).
+ *   - VOICE is flagged (`hasAudio` on the result) but not yet transcribed —
+ *     no consumer exists for voice notes yet; a future enrichment asset
+ *     picks them up the same way ground_hotline_enrich drains text.
  *
  * Shared with the group paths: phone-number redaction at persistence,
  * uncertainty-marker extraction, placeholder thread per message, and the
@@ -47,7 +46,6 @@ import {
   redactPhoneNumbers,
 } from "./whatsapp-export.js";
 import { deriveThreadTitle, type GroundMessageCreate } from "./ground-ingest.js";
-import { sendCeleryTask } from "./celery.js";
 
 /** The slice of a groundSources row the hotline gate judges. */
 export interface HotlineSourceRow {
@@ -304,23 +302,4 @@ export async function ingestHotlineMessage(options: {
   }
 
   return { status: "created", groundMessageId, threadId: thread.id, hasAudio };
-}
-
-/** Celery task name for voice transcription. CONTRACT with clear-pipeline
- * (V3 work there): registered with the BARE name, like
- * classify_ground_messages — see services/ground-classify.ts. */
-export const GROUND_TRANSCRIBE_TASK = "transcribe_ground_message";
-
-/** Fire-and-forget, same rationale as enqueueGroundClassification: a
- * broker hiccup must never fail a persisted ingest; the message sits in
- * the review queue untranscribed and the task can be re-enqueued. */
-export function enqueueGroundTranscription(groundMessageId: string): void {
-  void sendCeleryTask(GROUND_TRANSCRIBE_TASK, { ground_message_id: groundMessageId }).catch(
-    (err) => {
-      console.warn(
-        `[hotline-ingest] transcription enqueue failed for ${groundMessageId}:`,
-        err instanceof Error ? err.message : err,
-      );
-    },
-  );
 }

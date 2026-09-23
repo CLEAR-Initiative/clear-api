@@ -48,10 +48,8 @@ import { env } from "../utils/env.js";
 import {
   ingestHotlineMessage,
   resolveHotlineSource,
-  enqueueGroundTranscription,
   type HotlineInboundMedia,
 } from "../services/hotline-ingest.js";
-import { enqueueGroundClassification } from "../services/ground-classify.js";
 import { validateTwilioSignature } from "../services/twilio-signature.js";
 import { groundMediaKey } from "../services/ground-ingest.js";
 import { uploadBufferToS3 } from "../services/s3.js";
@@ -234,7 +232,10 @@ router.post("/", async (req: Request, res: Response) => {
     }
     const source = gate.source;
 
-    const result = await ingestHotlineMessage({
+    // Enrichment isn't enqueue-triggered — the ground_hotline_enrich
+    // Dagster asset (clear-context-pipeline) polls classification-pending
+    // messages on its own interval sensor.
+    await ingestHotlineMessage({
       db: prisma,
       source,
       message: {
@@ -251,15 +252,6 @@ router.post("/", async (req: Request, res: Response) => {
       storeMedia: (media, index) =>
         fetchAndStoreTwilioMedia({ groundSourceId: source.id, messageSid, media, index }),
     });
-
-    // "created" and "media_backfilled" are both the first fully
-    // successful ingest of this message (see HotlineIngestResult).
-    if (result.status !== "duplicate") {
-      enqueueGroundClassification(source.id);
-      if (result.hasAudio) {
-        enqueueGroundTranscription(result.groundMessageId);
-      }
-    }
 
     respondEmptyTwiml(res);
   } catch (err) {

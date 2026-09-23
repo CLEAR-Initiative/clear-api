@@ -1,13 +1,12 @@
 /**
  * Handler tests for the Twilio hotline webhook: config guard, signature
- * gating, payload validation, the source gate's logged 200-drop, the
- * empty-TwiML no-outbound guarantee, and the enqueue wiring — exactly as
- * Twilio sees them.
+ * gating, payload validation, the source gate's logged 200-drop, and the
+ * empty-TwiML no-outbound guarantee — exactly as Twilio sees them.
  *
- * Fully hermetic: env, the Prisma client, S3, and both celery enqueues
- * are vi.mock()ed; media bytes come from a stubbed global fetch. Requests
- * are real form-encoded POSTs against a throwaway local Express server,
- * signed with the same scheme Twilio uses.
+ * Fully hermetic: env, the Prisma client, and S3 are vi.mock()ed; media
+ * bytes come from a stubbed global fetch. Requests are real form-encoded
+ * POSTs against a throwaway local Express server, signed with the same
+ * scheme Twilio uses.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
@@ -55,20 +54,6 @@ const { envStub, prismaStub, uploadBufferToS3Mock } = vi.hoisted(() => {
 vi.mock("../../src/utils/env.js", () => ({ env: envStub }));
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: prismaStub }));
 vi.mock("../../src/services/s3.js", () => ({ uploadBufferToS3: uploadBufferToS3Mock }));
-
-const { enqueueClassificationMock, enqueueTranscriptionMock } = vi.hoisted(() => ({
-  enqueueClassificationMock: vi.fn(),
-  enqueueTranscriptionMock: vi.fn(),
-}));
-
-vi.mock("../../src/services/ground-classify.js", () => ({
-  enqueueGroundClassification: enqueueClassificationMock,
-}));
-
-vi.mock("../../src/services/hotline-ingest.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/services/hotline-ingest.js")>();
-  return { ...actual, enqueueGroundTranscription: enqueueTranscriptionMock };
-});
 
 import express from "express";
 import {
@@ -144,8 +129,6 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     envStub.HOTLINE_PSEUDONYM_SECRET = "test-secret-at-least-16-chars";
     prismaStub.__source = { ...ACTIVE_HOTLINE };
     prismaStub.__threads.length = 0;
-    enqueueClassificationMock.mockReset();
-    enqueueTranscriptionMock.mockReset();
     uploadBufferToS3Mock.mockReset();
     uploadBufferToS3Mock.mockImplementation(async (_buf: Buffer, key: string) => key);
     prismaStub.groundThreads.create = prismaStub.__createThread;
@@ -230,14 +213,13 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(EMPTY_TWIML);
     expect(prismaStub.__threads).toHaveLength(0);
-    expect(enqueueClassificationMock).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("gate rejected message SM001"),
     );
     warnSpy.mockRestore();
   });
 
-  it("ingests a text submission: empty TwiML back, anonymized row, classification enqueued", async () => {
+  it("ingests a text submission: empty TwiML back, anonymized row", async () => {
     const res = await post(baseParams());
 
     expect(res.status).toBe(200);
@@ -253,9 +235,6 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
       hotlinePseudonym("test-secret-at-least-16-chars", HOTLINE_NUMBER, "whatsapp:+249111222333"),
     );
     expect(JSON.stringify(message)).not.toContain("+249111222333");
-
-    expect(enqueueClassificationMock).toHaveBeenCalledExactlyOnceWith("gs_hotline");
-    expect(enqueueTranscriptionMock).not.toHaveBeenCalled();
   });
 
   it("is idempotent on a Twilio retry of the same MessageSid", async () => {
@@ -263,10 +242,9 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     expect((await post(baseParams())).status).toBe(200);
 
     expect(prismaStub.__threads).toHaveLength(1);
-    expect(enqueueClassificationMock).toHaveBeenCalledTimes(1);
   });
 
-  it("fetches voice media with Twilio auth, stores it, and enqueues transcription", async () => {
+  it("fetches voice media with Twilio auth and stores it", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
     const fetchMock = stubMediaFetch(async () => new Response(bytes, { status: 200 }));
 
@@ -291,7 +269,6 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     expect(contentType).toBe("audio/ogg");
 
     expect(prismaStub.__threads[0].message.mediaKeys).toEqual([key]);
-    expect(enqueueTranscriptionMock).toHaveBeenCalledExactlyOnceWith("gm_1");
   });
 
   it("500s when a media fetch aborts, but the message row is already persisted", async () => {
@@ -306,13 +283,10 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
     expect(prismaStub.__threads).toHaveLength(1);
     expect(prismaStub.__threads[0].message.mediaKeys).toEqual([]);
     expect(uploadBufferToS3Mock).not.toHaveBeenCalled();
-    // Nothing enqueued for a half-ingested message; the retry does that.
-    expect(enqueueClassificationMock).not.toHaveBeenCalled();
-    expect(enqueueTranscriptionMock).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 
-  it("backfills media and enqueues on the retry after a media failure", async () => {
+  it("backfills media on the retry after a media failure", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     let attempt = 0;
     stubMediaFetch(async () => {
@@ -328,8 +302,6 @@ describe("POST /api/webhooks/twilio/whatsapp", () => {
 
     expect(prismaStub.__threads).toHaveLength(1);
     expect(prismaStub.__threads[0].message.mediaKeys).toHaveLength(1);
-    expect(enqueueClassificationMock).toHaveBeenCalledExactlyOnceWith("gs_hotline");
-    expect(enqueueTranscriptionMock).toHaveBeenCalledExactlyOnceWith("gm_1");
     errorSpy.mockRestore();
   });
 

@@ -84,6 +84,16 @@ export const groundTypeDef = gql`
     """Id of the \`signals\` row created when this thread was promoted
     (approved_public only)."""
     promotedSignalId: String
+    """LLM-suggested headline from the hotline-enrichment job. A draft —
+    the ERM reviews/edits it before promotion; never used directly."""
+    draftTitle: String
+    """1-5 suggestion from the hotline-enrichment job."""
+    draftSeverity: Int
+    """Geoparser-resolved \`locations\` row id, suggested by the
+    hotline-enrichment job."""
+    draftLocationId: String
+    """Disaster-type guess from the hotline-enrichment job."""
+    draftDisasterType: String
     messages: [GroundMessage!]!
     """Ids of the thread's messages, oldest first. The pipeline worker
     selects this (via groundThreadsForSource) instead of \`messages\` —
@@ -187,5 +197,16 @@ export const groundTypeDef = gql`
     groundSourceId. A promoted/terminal (or unknown/wrong-source) target
     is never mutated: a NEW thread is created instead, with a warning."""
     threadId: String
+  }
+
+  """One enrichment draft from the Dagster hotline-enrichment job. Null
+  fields leave the existing draft value on the thread unchanged."""
+  input GroundThreadDraftInput {
+    threadId: String!
+    draftTitle: String
+    """1-5. Validated server-side when present."""
+    draftSeverity: Int
+    draftLocationId: String
+    draftDisasterType: String
   }
 `;

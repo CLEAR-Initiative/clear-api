@@ -671,6 +671,12 @@ lifecycleState (&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quo
 &quot;retracted&quot;); omitted/empty returns all. The worker selects
 {id, title, lifecycleState, reviewState, messageIds} — no message
 content, no sender identity.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>states: [String!]</code></span></div></td>
+  </tr><tr>
+    <td><code>pipelineGroundSourceIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): active source ids for a
+given kind, minimal projection (no consent/policy fields) — used by
+the hotline enrichment job to enumerate sources to drain.<div class="field-args"><span class="arg"><code>kind: String</code></span><span class="arg"><code>isActive: Boolean</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1293,6 +1299,14 @@ target is never mutated (a new thread is created instead) — the
 review gate outranks the pipeline. Returns one thread id per input,
 in order; null where an input had no movable messages (no thread
 created or updated).<div class="field-args"><span class="arg"><code>inputs: [GroundThreadUpsertInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundthreaddrafts">
+    <td><code>upsertGroundThreadDrafts</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back enrichment
+drafts (title/severity/location/disasterType) from the hotline
+enrichment job. Unknown threadIds are skipped with a warning. Null
+fields on an input leave the existing draft value unchanged. Returns
+the number of threads updated.<div class="field-args"><span class="arg"><code>inputs: [GroundThreadDraftInput!]!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -2117,6 +2131,27 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>String</code></td>
     <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
 ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundthreaddraftinput"><code>GroundThreadDraftInput</code> <span class="type-badge">input</span></h3><p>One enrichment draft from the Dagster hotline-enrichment job. Null
+fields leave the existing draft value on the thread unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>threadId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftTitle</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>1-5. Validated server-side when present.</td>
+  </tr><tr>
+    <td><code>draftLocationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftDisasterType</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One thread (a cluster of staged Signals) produced by the pipeline
 threading task. Its messageIds are re-pointed at the thread, replacing
 their V1 one-per-message placeholder threads. With `threadId` set,
@@ -4051,6 +4086,24 @@ thread is promoted and becomes a Signal.</p><table class="ref-table"><thead><tr>
     <td><code>String</code></td>
     <td>Id of the `signals` row created when this thread was promoted
 (approved_public only).</td>
+  </tr><tr>
+    <td><code>draftTitle</code></td>
+    <td><code>String</code></td>
+    <td>LLM-suggested headline from the hotline-enrichment job. A draft —
+the ERM reviews/edits it before promotion; never used directly.</td>
+  </tr><tr>
+    <td><code>draftSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>1-5 suggestion from the hotline-enrichment job.</td>
+  </tr><tr>
+    <td><code>draftLocationId</code></td>
+    <td><code>String</code></td>
+    <td>Geoparser-resolved `locations` row id, suggested by the
+hotline-enrichment job.</td>
+  </tr><tr>
+    <td><code>draftDisasterType</code></td>
+    <td><code>String</code></td>
+    <td>Disaster-type guess from the hotline-enrichment job.</td>
   </tr><tr>
     <td><code>messages</code></td>
     <td><code>[GroundMessage!]!</code></td>

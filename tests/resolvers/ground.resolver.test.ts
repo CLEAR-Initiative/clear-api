@@ -39,9 +39,9 @@ const PIPELINE: User = { id: "machine", role: "pipeline" };
 const ADMIN: User = { id: "admin1", role: "admin" };
 const ANALYST: User = { id: "a1", role: "analyst" };
 
-const { groundMessagesForClassification, groundThreadsForSource } =
+const { groundMessagesForClassification, groundThreadsForSource, pipelineGroundSourceIds } =
   groundResolvers.Query;
-const { upsertGroundMessageClassifications, upsertGroundThreads } =
+const { upsertGroundMessageClassifications, upsertGroundThreads, upsertGroundThreadDrafts } =
   groundResolvers.Mutation;
 
 // ---------------------------------------------------------------------------
@@ -84,6 +84,15 @@ describe("pipeline-contract auth gate", () => {
           },
           ctx,
         ),
+    },
+    {
+      name: "upsertGroundThreadDrafts",
+      run: (ctx) =>
+        upsertGroundThreadDrafts(null, { inputs: [{ threadId: "t1", draftTitle: "x" }] }, ctx),
+    },
+    {
+      name: "pipelineGroundSourceIds",
+      run: (ctx) => pipelineGroundSourceIds(null, {}, ctx),
     },
   ];
 
@@ -786,5 +795,133 @@ describe("upsertGroundThreads", () => {
     );
 
     expect(ids).toEqual(["new_t1", "new_t2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertGroundThreadDrafts
+// ---------------------------------------------------------------------------
+
+describe("upsertGroundThreadDrafts", () => {
+  function draftsPrisma(knownIds: string[]) {
+    const update = vi.fn((args: unknown) => Promise.resolve(args));
+    const prisma = {
+      groundThreads: {
+        findMany: vi.fn(async () => knownIds.map((id) => ({ id }))),
+        update,
+      },
+      $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    };
+    return { prisma, update };
+  }
+
+  it("rejects a draftSeverity outside 1-5", async () => {
+    const { prisma } = draftsPrisma(["t1"]);
+    await expect(
+      upsertGroundThreadDrafts(
+        null,
+        { inputs: [{ threadId: "t1", draftSeverity: 6 }] },
+        buildContext(PIPELINE, prisma),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
+  it("writes only the provided fields, leaving null ones untouched", async () => {
+    const { prisma, update } = draftsPrisma(["t1", "t2"]);
+    const count = await upsertGroundThreadDrafts(
+      null,
+      {
+        inputs: [
+          {
+            threadId: "t1",
+            draftTitle: "Flooding near Nyala",
+            draftSeverity: 3,
+            draftLocationId: "loc_1",
+            draftDisasterType: "flood",
+          },
+          { threadId: "t2", draftTitle: "Market chatter" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(count).toBe(2);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: {
+        draftTitle: "Flooding near Nyala",
+        draftSeverity: 3,
+        draftLocationId: "loc_1",
+        draftDisasterType: "flood",
+      },
+    });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "t2" },
+      data: { draftTitle: "Market chatter" },
+    });
+  });
+
+  it("skips unknown threadIds with a warning and returns the updated count", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prisma, update } = draftsPrisma(["t1"]);
+
+    const count = await upsertGroundThreadDrafts(
+      null,
+      {
+        inputs: [
+          { threadId: "t1", draftTitle: "known" },
+          { threadId: "ghost", draftTitle: "unknown" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(count).toBe(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("1 unknown threadId"));
+    warnSpy.mockRestore();
+  });
+
+  it("returns 0 for an empty input list without touching the db", async () => {
+    const { prisma, update } = draftsPrisma([]);
+    const count = await upsertGroundThreadDrafts(
+      null,
+      { inputs: [] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pipelineGroundSourceIds
+// ---------------------------------------------------------------------------
+
+describe("pipelineGroundSourceIds", () => {
+  it("filters by kind and isActive and returns only ids", async () => {
+    const findMany = vi.fn(async () => [{ id: "gs_1" }, { id: "gs_2" }]);
+    const prisma = { groundSources: { findMany } };
+
+    const ids = await pipelineGroundSourceIds(
+      null,
+      { kind: "hotline", isActive: true },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(ids).toEqual(["gs_1", "gs_2"]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { kind: "hotline", isActive: true },
+      select: { id: true },
+    });
+  });
+
+  it("omits filters that are null/omitted", async () => {
+    const findMany = vi.fn(async () => []);
+    const prisma = { groundSources: { findMany } };
+
+    await pipelineGroundSourceIds(null, {}, buildContext(PIPELINE, prisma));
+
+    expect(findMany).toHaveBeenCalledWith({ where: {}, select: { id: true } });
   });
 });

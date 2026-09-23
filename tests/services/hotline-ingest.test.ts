@@ -2,28 +2,17 @@
  * Hotline ingest tests: the gate (kind + active, NOT consent scope), the
  * anonymity guarantees the ticket makes non-negotiable (no senderName,
  * keyed per-conversation pseudonym, no raw handle anywhere), redaction,
- * MessageSid idempotency, media ordering (gate → dedupe → fetch), voice
- * detection, and the transcription-enqueue contract. Hermetic: in-memory
- * DB stub, injected storeMedia, mocked celery.
+ * MessageSid idempotency, and media ordering (gate → dedupe → fetch).
+ * Hermetic: in-memory DB stub, injected storeMedia.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const { sendCeleryTaskMock } = vi.hoisted(() => ({
-  sendCeleryTaskMock: vi.fn(),
-}));
-
-vi.mock("../../src/services/celery.js", () => ({
-  sendCeleryTask: sendCeleryTaskMock,
-}));
 
 import {
   resolveHotlineSource,
   ingestHotlineMessage,
   hotlinePseudonym,
   hotlineExternalId,
-  enqueueGroundTranscription,
-  GROUND_TRANSCRIBE_TASK,
   type HotlineIngestDb,
   type HotlineInboundMessage,
   type HotlineSourceRow,
@@ -282,37 +271,5 @@ describe("ingestHotlineMessage", () => {
     expect(result.status).toBe("created");
     if (result.status !== "created") return;
     expect(result.hasAudio).toBe(false);
-  });
-});
-
-describe("enqueueGroundTranscription", () => {
-  beforeEach(() => {
-    sendCeleryTaskMock.mockReset();
-    sendCeleryTaskMock.mockResolvedValue("task-id");
-  });
-
-  it("enqueues transcribe_ground_message with ground_message_id kwargs", () => {
-    enqueueGroundTranscription("gm_1");
-
-    expect(sendCeleryTaskMock).toHaveBeenCalledExactlyOnceWith(GROUND_TRANSCRIBE_TASK, {
-      ground_message_id: "gm_1",
-    });
-    // CONTRACT PIN: clear-pipeline must register @app.task(name="transcribe_ground_message")
-    // — the bare name, like classify_ground_messages. Do not change one side alone.
-    expect(GROUND_TRANSCRIBE_TASK).toBe("transcribe_ground_message");
-  });
-
-  it("swallows broker failures with a warning (fire-and-forget)", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    sendCeleryTaskMock.mockRejectedValue(new Error("broker down"));
-
-    enqueueGroundTranscription("gm_1");
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("transcription enqueue failed for gm_1"),
-      "broker down",
-    );
-    warnSpy.mockRestore();
   });
 });

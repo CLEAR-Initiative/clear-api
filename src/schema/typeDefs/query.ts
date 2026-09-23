@@ -488,5 +488,10 @@ export const queryTypeDef = gql`
       groundSourceId: String!
       states: [String!]
     ): [GroundThread]
+
+    """PIPELINE CONTRACT (admin/pipeline only): active source ids for a
+    given kind, minimal projection (no consent/policy fields) — used by
+    the hotline enrichment job to enumerate sources to drain."""
+    pipelineGroundSourceIds(kind: String, isActive: Boolean = true): [String!]!
   }
 `;

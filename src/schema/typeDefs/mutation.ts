@@ -573,6 +573,13 @@ export const mutationTypeDef = gql`
     in order; null where an input had no movable messages (no thread
     created or updated)."""
     upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back enrichment
+    drafts (title/severity/location/disasterType) from the hotline
+    enrichment job. Unknown threadIds are skipped with a warning. Null
+    fields on an input leave the existing draft value unchanged. Returns
+    the number of threads updated."""
+    upsertGroundThreadDrafts(inputs: [GroundThreadDraftInput!]!): Int!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────

@@ -229,6 +229,28 @@ export const groundResolvers = {
         orderBy: { createdAt: "asc" },
       });
     },
+
+    /**
+     * PIPELINE CONTRACT: minimal source-enumeration query for workers
+     * that need to know WHICH sources to drain (e.g. the hotline
+     * enrichment job) without the private-tier consent/policy fields
+     * the admin/analyst-only `groundSources` query returns.
+     */
+    pipelineGroundSourceIds: async (
+      _parent: unknown,
+      args: { kind?: string | null; isActive?: boolean | null },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const rows = await context.prisma.groundSources.findMany({
+        where: {
+          ...(args.kind != null ? { kind: args.kind } : {}),
+          ...(args.isActive != null ? { isActive: args.isActive } : {}),
+        },
+        select: { id: true },
+      });
+      return rows.map((r) => r.id);
+    },
   },
 
   Mutation: {
@@ -686,6 +708,77 @@ export const groundResolvers = {
         },
         { timeout: 60_000, maxWait: 10_000 },
       );
+    },
+
+    /**
+     * PIPELINE CONTRACT: enrichment write-back from the hotline
+     * enrichment job. Unknown threadIds are skipped with a warning (a
+     * thread can be deleted/re-threaded between read and write — the
+     * batch must not fail for it). Null fields on an input leave the
+     * existing draft value untouched. Returns the number of rows updated.
+     */
+    upsertGroundThreadDrafts: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{
+          threadId: string;
+          draftTitle?: string | null;
+          draftSeverity?: number | null;
+          draftLocationId?: string | null;
+          draftDisasterType?: string | null;
+        }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      for (const input of inputs) {
+        if (
+          input.draftSeverity != null &&
+          (input.draftSeverity < 1 || input.draftSeverity > 5)
+        ) {
+          throw new GraphQLError("draftSeverity must be between 1 and 5", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      const existing = await context.prisma.groundThreads.findMany({
+        where: { id: { in: inputs.map((i) => i.threadId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.threadId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundThreadDrafts] skipping ${inputs.length - valid.length} unknown threadId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      await context.prisma.$transaction(
+        valid.map((input) =>
+          context.prisma.groundThreads.update({
+            where: { id: input.threadId },
+            data: {
+              ...(input.draftTitle != null ? { draftTitle: input.draftTitle } : {}),
+              ...(input.draftSeverity != null
+                ? { draftSeverity: input.draftSeverity }
+                : {}),
+              ...(input.draftLocationId != null
+                ? { draftLocationId: input.draftLocationId }
+                : {}),
+              ...(input.draftDisasterType != null
+                ? { draftDisasterType: input.draftDisasterType }
+                : {}),
+            },
+          }),
+        ),
+      );
+      return valid.length;
     },
   },
 
