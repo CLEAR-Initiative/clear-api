@@ -589,6 +589,40 @@ with the caller's locale translation like every other read — the
 pipeline calls it as `en` and gets canonical text back. Requires any
 authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>analysis</code></td>
+    <td><code>Analysis</code></td>
+    <td>Unified frame-scoped analysis (ADR-0007). Reads the current row for a
+FRAME (locationIds / eventTypes / needSectors / window) — the generalised
+successor to `situationAnalysis`, and the read path for &quot;crisis
+overview&quot; frames. `windowEnd` null in the frame reads the rolling
+(&quot;to present&quot;) row. Pass `asOf` for a historical read and
+`schemaVersion` to pin a payload shape. Returns null when no analysis
+exists for the frame yet. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span><span class="arg"><code>asOf: DateTime</code></span><span class="arg"><code>schemaVersion: String</code></span></div></td>
+  </tr><tr>
+    <td><code>analysisById</code></td>
+    <td><code>Analysis</code></td>
+    <td>Read one analysis by row id, including superseded history rows (the
+frame-keyed `analysis` query only returns the current row). Requires any
+authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>analysisAutomations</code></td>
+    <td><code>[AnalysisAutomation!]!</code></td>
+    <td>List analysis automation subscriptions (ADR-0007 §5). Optionally scope
+to a team or to enabled rows only. Requires any authenticated content
+reader.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>enabledOnly: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>pendingAnalyses</code></td>
+    <td><code>[AnalysisRequest!]!</code></td>
+    <td>Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
+requests, so the generation sensor can pick them up. Admin / pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>dueAnalysisAutomations</code></td>
+    <td><code>[AnalysisAutomation!]!</code></td>
+    <td>Scheduler drain (ADR-0007 §5): enabled analysis automations that are DUE
+(never run, or their nextRunAt has passed). The pipeline groups them by
+frame and regenerates each at the minimum cadence across subscribers.
+Admin / pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
     <td><code>reportFigures</code></td>
     <td><code>[ReportFigure!]!</code></td>
     <td>Captured infographics (charts/maps/tables/composite panels) filtered by the
@@ -1197,6 +1231,49 @@ previous current row for the same bucket in the same
 transaction. History rows are preserved. Admin / pipeline only —
 the Dagster `weekly_situation_analyses` asset is the primary
 caller.<div class="field-args"><span class="arg"><code>input: UpsertSituationAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertanalysis">
+    <td><code>upsertAnalysis</code></td>
+    <td><code>UpsertAnalysisResult!</code></td>
+    <td>Upsert a unified frame-scoped analysis (ADR-0007). The pipeline
+generator's write path: bitemporal supersede-then-insert keyed on the
+frame columns (locationIds / eventTypes / needSectors / windowStart /
+windowEnd), stamping `validTo` on the previous current row for the same
+frame in the same transaction. History rows are preserved. Frame arrays are
+canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-createanalysisautomation">
+    <td><code>createAnalysisAutomation</code></td>
+    <td><code>AnalysisAutomation!</code></td>
+    <td>Create an analysis automation — a subscription that keeps a frame's
+analysis current on a cadence (ADR-0007 §5). Admin / analyst.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
+  </tr><tr id="mutation-updateanalysisautomation">
+    <td><code>updateAnalysisAutomation</code></td>
+    <td><code>AnalysisAutomation!</code></td>
+    <td>Update an analysis automation's cadence or enabled flag. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
+  </tr><tr id="mutation-deleteanalysisautomation">
+    <td><code>deleteAnalysisAutomation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete an analysis automation subscription. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-requestanalysis">
+    <td><code>requestAnalysis</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
+an existing PENDING request for the same frame. Admin / analyst.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-markanalysisrequestgenerated">
+    <td><code>markAnalysisRequestGenerated</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Pipeline: mark a drained request GENERATED after its analysis was
+upserted. Admin / pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-markanalysisrequestfailed">
+    <td><code>markAnalysisRequestFailed</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Pipeline: record a generation failure on a request (bumps the attempt
+counter). Admin / pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>error: String</code></span></div></td>
+  </tr><tr id="mutation-markanalysisautomationsran">
+    <td><code>markAnalysisAutomationsRan</code></td>
+    <td><code>Int!</code></td>
+    <td>Scheduler: stamp lastRunAt + nextRunAt (from each row's cadence) on the
+automations whose frame was just regenerated (ADR-0007 §5) — pass all the
+ids sharing that frame. Returns the count updated. Admin / pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
   </tr><tr id="mutation-upsertreportfigures">
     <td><code>upsertReportFigures</code></td>
     <td><code>UpsertReportFiguresResult!</code></td>
@@ -1331,7 +1408,7 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
@@ -1490,6 +1567,28 @@ its descendants).</td>
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
     <td>Hide isDummy events when false (default).</td>
+  </tr></tbody></table><h3 id="type-analysisframeinput"><code>AnalysisFrameInput</code> <span class="type-badge">input</span></h3><p>A frame — the scope of an analysis. `windowEnd` omitted / null means
+rolling &quot;to present&quot;. Array members are order-insensitive (canonicalised
+server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -1498,6 +1597,30 @@ its descendants).</td>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-createanalysisautomationinput"><code>CreateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>String!</code></td>
+    <td>Refresh cadence label, e.g. `daily` / `weekly`.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team. Omit for a system-owned automation (admin only).</td>
   </tr></tbody></table><h3 id="type-createapikeyinput"><code>CreateApiKeyInput</code> <span class="type-badge">input</span></h3><p>Input for creating a new API key.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -2365,6 +2488,30 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
     <td><code>timeRangeEnd</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-requestanalysisinput"><code>RequestAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team, for a team-scoped on-demand request.</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -2498,6 +2645,14 @@ Location correction — one without the other is rejected.</td>
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5).</td>
+  </tr></tbody></table><h3 id="type-updateanalysisautomationinput"><code>UpdateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>cadence</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enabled</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
@@ -2810,6 +2965,46 @@ optional — provide only what you want to change.</p><table class="ref-table"><
   </tr><tr>
     <td><code>active</code></td>
     <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisinput"><code>UpsertAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>The frame this analysis covers.</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-upsertlocationmetadatainput"><code>UpsertLocationMetadataInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationId</code></td>
@@ -3262,6 +3457,183 @@ content reader.</td>
   </tr><tr>
     <td><code>frequency</code></td>
     <td><code>Frequency!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-analysis"><code>Analysis</code> <span class="type-badge">object</span></h3><p>A single frame-scoped analysis snapshot. Cache read path — always the
+current row for its frame unless `asOf` is supplied for a historical read.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>── Frame ── The dimensions this analysis was generated over, the same
+ones the knowledgebase is filtered by. Arrays are canonicalised (sorted +
+de-duplicated) on write so frame identity is stable.</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>Window end. `null` means rolling &quot;to present&quot; (an automated
+analysis); a value means a fixed range (on-demand). The concrete &quot;as of&quot;
+instant of a rolling row is `generatedAt` / `validFrom`.</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>Full analysis blob (situation taxonomy + `scenarios`). Opaque and
+versioned by `schemaVersion`; LLM components carry their own
+`source_report_ids` for per-component provenance.</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Denormalised union of every contributing report id across components.
+Per-field datapoint provenance lives inside `data` — a frame can span
+many aggregated-datapoints rows, so there is no single bucket reference.</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Bitemporal validity — `validTo` is null while this is the current row
+for its frame, else the timestamp a regeneration superseded it.</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Bumped when the payload taxonomy or prompt set changes. Versions
+coexist per frame; trend reads never mix them.</td>
+  </tr></tbody></table><h3 id="type-analysisautomation"><code>AnalysisAutomation</code> <span class="type-badge">object</span></h3><p>A subscription that keeps one frame's analysis current on a cadence
+(ADR-0007 §5). The analysis row is shared; the scheduler regenerates each
+frame at the minimum cadence across its subscribers. Automations are always
+rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdByUserId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enabled</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastRunAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nextRunAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-analysisrequest"><code>AnalysisRequest</code> <span class="type-badge">object</span></h3><p>An on-demand analysis generation request (ADR-0007 §4). A user enqueues a
+frame that may not exist yet; a pipeline sensor drains `pendingAnalyses`,
+generates + upserts the analysis, and marks the request `GENERATED`. Scheduled
+refreshes use `AnalysisAutomation` instead of this one-shot queue.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>AnalysisRequestStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>requestedByUserId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>attempts</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastError</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>createdAt</code></td>
@@ -5309,6 +5681,16 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisresult"><code>UpsertAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertAnalysis` mutation — reports whether the write
+superseded a previously-current row for the same frame.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>analysisId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>supersededPrevious</code></td>
+    <td><code>Boolean!</code></td>
+    <td>`true` when the mutation stamped `validTo` on a previous current row
+for the same frame, `false` when this was the first row for the frame.</td>
   </tr></tbody></table><h3 id="type-upsertknowledgebaseresult"><code>UpsertKnowledgebaseResult</code> <span class="type-badge">object</span></h3><p>Result of a knowledgebase upsert — summary counts for logging.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>

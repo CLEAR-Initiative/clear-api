@@ -29,6 +29,7 @@ import { knowledgebaseResolvers } from "./knowledgebase.resolver.js";
 import { gazetteerResolvers } from "./gazetteer.resolver.js";
 import { datapointResolvers } from "./datapoint.resolver.js";
 import { situationAnalysisResolvers } from "./situationAnalysis.resolver.js";
+import { analysisResolvers } from "./analysis.resolver.js";
 import { reportFigureResolvers } from "./reportFigure.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
 import { groundResolvers } from "./ground.resolver.js";
@@ -64,6 +65,7 @@ export const resolvers: IResolvers[] = [
   gazetteerResolvers,
   datapointResolvers,
   situationAnalysisResolvers,
+  analysisResolvers,
   reportFigureResolvers,
   webhookResolvers,
   groundResolvers,

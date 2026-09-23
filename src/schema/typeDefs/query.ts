@@ -380,6 +380,39 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     situationAnalysisById(id: String!): SituationAnalysis
 
+    """Unified frame-scoped analysis (ADR-0007). Reads the current row for a
+    FRAME (locationIds / eventTypes / needSectors / window) — the generalised
+    successor to \`situationAnalysis\`, and the read path for "crisis
+    overview" frames. \`windowEnd\` null in the frame reads the rolling
+    ("to present") row. Pass \`asOf\` for a historical read and
+    \`schemaVersion\` to pin a payload shape. Returns null when no analysis
+    exists for the frame yet. Requires any authenticated content reader."""
+    analysis(
+      frame: AnalysisFrameInput!
+      asOf: DateTime
+      schemaVersion: String
+    ): Analysis
+
+    """Read one analysis by row id, including superseded history rows (the
+    frame-keyed \`analysis\` query only returns the current row). Requires any
+    authenticated content reader."""
+    analysisById(id: String!): Analysis
+
+    """List analysis automation subscriptions (ADR-0007 §5). Optionally scope
+    to a team or to enabled rows only. Requires any authenticated content
+    reader."""
+    analysisAutomations(teamId: String, enabledOnly: Boolean): [AnalysisAutomation!]!
+
+    """Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
+    requests, so the generation sensor can pick them up. Admin / pipeline only."""
+    pendingAnalyses(limit: Int): [AnalysisRequest!]!
+
+    """Scheduler drain (ADR-0007 §5): enabled analysis automations that are DUE
+    (never run, or their nextRunAt has passed). The pipeline groups them by
+    frame and regenerates each at the minimum cadence across subscribers.
+    Admin / pipeline only."""
+    dueAnalysisAutomations(limit: Int): [AnalysisAutomation!]!
+
     """Captured infographics (charts/maps/tables/composite panels) filtered by the
     SAME params as text — location / event type / need sector / time / kind — so a
     figure can be attached to an answer scoped to a place + topic + period. Powers
