@@ -198,6 +198,13 @@ export const groundResolvers = {
         senderRef: m.senderRef,
         hasMedia:
           m.mediaKeys.length > 0 || m.mediaRefs.length > 0 || m.omittedMediaCount > 0,
+        // mediaKeys[i] pairs with mediaRefs[i] (see hotline-ingest.ts); the
+        // "voice-" prefix is the hotline ingest's own convention for audio
+        // attachments, so this only ever finds matches on hotline sources.
+        voiceMediaKeys: m.mediaKeys.filter((_key, i) =>
+          m.mediaRefs[i]?.startsWith("voice-"),
+        ),
+        transcript: m.transcript,
         classification: m.classification,
         threadId: m.threadId,
       }));
@@ -537,6 +544,46 @@ export const groundResolvers = {
                 ? { uncertainty: input.uncertaintyMarker }
                 : {}),
             },
+          }),
+        ),
+      );
+      return valid.length;
+    },
+
+    /**
+     * PIPELINE CONTRACT: transcription write-back from the
+     * ground_transcribe worker. Unknown messageIds are skipped with a
+     * warning (a message can be deleted between read and write — the
+     * batch must not fail for it). Returns the number of rows updated.
+     */
+    upsertGroundMessageTranscripts: async (
+      _parent: unknown,
+      args: { inputs: Array<{ messageId: string; transcript: string }> },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundMessageTranscripts] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      await context.prisma.$transaction(
+        valid.map((input) =>
+          context.prisma.groundMessages.update({
+            where: { id: input.messageId },
+            data: { transcript: input.transcript },
           }),
         ),
       );

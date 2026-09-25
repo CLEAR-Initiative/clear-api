@@ -560,6 +560,13 @@ export const mutationTypeDef = gql`
       inputs: [GroundMessageClassificationInput!]!
     ): Int!
 
+    """PIPELINE CONTRACT (admin/pipeline only): write back transcriptions
+    from the ground_transcribe worker. Unknown messageIds are skipped
+    with a warning. Returns the number of messages updated."""
+    upsertGroundMessageTranscripts(
+      inputs: [GroundMessageTranscriptInput!]!
+    ): Int!
+
     """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
     threading with pipeline-built threads (clusters of staged
     Signals). Each input creates a

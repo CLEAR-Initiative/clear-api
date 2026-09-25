@@ -41,8 +41,12 @@ const ANALYST: User = { id: "a1", role: "analyst" };
 
 const { groundMessagesForClassification, groundThreadsForSource, pipelineGroundSourceIds } =
   groundResolvers.Query;
-const { upsertGroundMessageClassifications, upsertGroundThreads, upsertGroundThreadDrafts } =
-  groundResolvers.Mutation;
+const {
+  upsertGroundMessageClassifications,
+  upsertGroundMessageTranscripts,
+  upsertGroundThreads,
+  upsertGroundThreadDrafts,
+} = groundResolvers.Mutation;
 
 // ---------------------------------------------------------------------------
 // Auth gate — pipeline surface is admin/pipeline only (NOT analyst).
@@ -91,6 +95,11 @@ describe("pipeline-contract auth gate", () => {
         upsertGroundThreadDrafts(null, { inputs: [{ threadId: "t1", draftTitle: "x" }] }, ctx),
     },
     {
+      name: "upsertGroundMessageTranscripts",
+      run: (ctx) =>
+        upsertGroundMessageTranscripts(null, { inputs: [{ messageId: "m1", transcript: "x" }] }, ctx),
+    },
+    {
       name: "pipelineGroundSourceIds",
       run: (ctx) => pipelineGroundSourceIds(null, {}, ctx),
     },
@@ -125,6 +134,7 @@ describe("groundMessagesForClassification", () => {
     mediaKeys: [] as string[],
     mediaRefs: [] as string[],
     omittedMediaCount: 0,
+    transcript: null,
     classification: null,
     threadId: "t1",
     ...overrides,
@@ -149,11 +159,30 @@ describe("groundMessagesForClassification", () => {
         sentAt: new Date("2026-08-04T10:00:00Z"),
         senderRef: "s_abc123def456",
         hasMedia: false,
+        voiceMediaKeys: [],
+        transcript: null,
         classification: null,
         threadId: "t1",
       },
     ]);
     expect(JSON.stringify(result)).not.toContain("PRIVATE NAME");
+  });
+
+  it("voiceMediaKeys picks only the media keys paired with a voice- ref", async () => {
+    const { prisma } = prismaWithRows([
+      row({
+        mediaKeys: ["ground/gs_1/a.ogg", "ground/gs_1/b.jpg"],
+        mediaRefs: ["voice-0", "media-1"],
+      }),
+    ]);
+    const result = await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1" },
+      buildContext(PIPELINE, prisma),
+    );
+    expect((result[0] as { voiceMediaKeys: string[] }).voiceMediaKeys).toEqual([
+      "ground/gs_1/a.ogg",
+    ]);
   });
 
   it.each([
@@ -392,6 +421,70 @@ describe("upsertGroundMessageClassifications", () => {
   it("returns 0 for an empty input list without touching the db", async () => {
     const { prisma, update } = classificationPrisma([]);
     const count = await upsertGroundMessageClassifications(
+      null,
+      { inputs: [] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertGroundMessageTranscripts
+// ---------------------------------------------------------------------------
+
+describe("upsertGroundMessageTranscripts", () => {
+  function transcriptPrisma(knownIds: string[]) {
+    const update = vi.fn((args: unknown) => Promise.resolve(args));
+    const prisma = {
+      groundMessages: {
+        findMany: vi.fn(async () => knownIds.map((id) => ({ id }))),
+        update,
+      },
+      $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    };
+    return { prisma, update };
+  }
+
+  it("writes the transcript", async () => {
+    const { prisma, update } = transcriptPrisma(["m1"]);
+    const count = await upsertGroundMessageTranscripts(
+      null,
+      { inputs: [{ messageId: "m1", transcript: "we need water" }] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      data: { transcript: "we need water" },
+    });
+  });
+
+  it("skips unknown messageIds with a warning and returns the updated count", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prisma, update } = transcriptPrisma(["m1"]);
+
+    const count = await upsertGroundMessageTranscripts(
+      null,
+      {
+        inputs: [
+          { messageId: "m1", transcript: "ok" },
+          { messageId: "ghost", transcript: "ok" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(count).toBe(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("1 unknown messageId"));
+    warnSpy.mockRestore();
+  });
+
+  it("returns 0 for an empty input list without touching the db", async () => {
+    const { prisma, update } = transcriptPrisma([]);
+    const count = await upsertGroundMessageTranscripts(
       null,
       { inputs: [] },
       buildContext(PIPELINE, prisma),

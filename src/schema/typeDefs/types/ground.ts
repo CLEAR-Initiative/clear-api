@@ -162,6 +162,13 @@ export const groundTypeDef = gql`
     """True when the message carries stored media, export-referenced
     attachments, or export-omitted media."""
     hasMedia: Boolean!
+    """S3 keys of this message's audio attachments only (a subset of its
+    stored media) — empty when the message has no voice note. Awaiting
+    transcription while non-empty and \`transcript\` is null."""
+    voiceMediaKeys: [String!]!
+    """Transcribed text for this message's voice note(s), null until the
+    Dagster ground_transcribe asset transcribes them."""
+    transcript: String
     """Current label, null while unclassified."""
     classification: String
     """Current thread (placeholder or pipeline-built)."""
@@ -176,6 +183,13 @@ export const groundTypeDef = gql`
     """Pipeline-detected uncertainty tag. Null/omitted leaves the
     ingest-extracted marker untouched."""
     uncertaintyMarker: String
+  }
+
+  """One transcription write-back from the ground_transcribe worker."""
+  input GroundMessageTranscriptInput {
+    messageId: String!
+    """Transcribed text of the message's voice note(s)."""
+    transcript: String!
   }
 
   """One thread (a cluster of staged Signals) produced by the pipeline

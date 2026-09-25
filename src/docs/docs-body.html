@@ -1284,6 +1284,12 @@ all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id:
 classifications from the classify_ground_messages worker. Unknown
 messageIds are skipped with a warning. Returns the number of
 messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageClassificationInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundmessagetranscripts">
+    <td><code>upsertGroundMessageTranscripts</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back transcriptions
+from the ground_transcribe worker. Unknown messageIds are skipped
+with a warning. Returns the number of messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageTranscriptInput!]!</code></span></div></td>
   </tr><tr id="mutation-upsertgroundthreads">
     <td><code>upsertGroundThreads</code></td>
     <td><code>[String]!</code></td>
@@ -2131,6 +2137,14 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>String</code></td>
     <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
 ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundmessagetranscriptinput"><code>GroundMessageTranscriptInput</code> <span class="type-badge">input</span></h3><p>One transcription write-back from the ground_transcribe worker.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String!</code></td>
+    <td>Transcribed text of the message's voice note(s).</td>
   </tr></tbody></table><h3 id="type-groundthreaddraftinput"><code>GroundThreadDraftInput</code> <span class="type-badge">input</span></h3><p>One enrichment draft from the Dagster hotline-enrichment job. Null
 fields leave the existing draft value on the thread unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>threadId</code></td>
@@ -3977,6 +3991,17 @@ senderRef.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th
     <td><code>Boolean!</code></td>
     <td>True when the message carries stored media, export-referenced
 attachments, or export-omitted media.</td>
+  </tr><tr>
+    <td><code>voiceMediaKeys</code></td>
+    <td><code>[String!]!</code></td>
+    <td>S3 keys of this message's audio attachments only (a subset of its
+stored media) — empty when the message has no voice note. Awaiting
+transcription while non-empty and `transcript` is null.</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String</code></td>
+    <td>Transcribed text for this message's voice note(s), null until the
+Dagster ground_transcribe asset transcribes them.</td>
   </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>
