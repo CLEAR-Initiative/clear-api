@@ -26,6 +26,7 @@ const VALID_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
   "crisis",
   "location",
   "situationAnalysis",
+  "analysis",
 ]);
 
 const ENTITY_TYPE_LIST = [...VALID_ENTITY_TYPES].join(", ");
@@ -69,6 +70,11 @@ async function assertEntityExists(
     });
   } else if (entityType === "location") {
     found = await ctx.prisma.locations.findUnique({
+      where: { id: entityId },
+      select: { id: true },
+    });
+  } else if (entityType === "analysis") {
+    found = await ctx.prisma.analysis.findUnique({
       where: { id: entityId },
       select: { id: true },
     });
@@ -159,6 +165,8 @@ export const translationResolvers = {
         allRows = await context.prisma.crises.findMany({ select: { id: true } });
       } else if (entityType === "location") {
         allRows = await context.prisma.locations.findMany({ select: { id: true } });
+      } else if (entityType === "analysis") {
+        allRows = await context.prisma.analysis.findMany({ select: { id: true } });
       } else {
         allRows = await context.prisma.situationAnalysis.findMany({
           select: { id: true },
@@ -181,23 +189,31 @@ export const translationResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const [grouped, eventCount, crisisCount, locationCount, situationCount] =
-        await Promise.all([
-          context.prisma.translations.groupBy({
-            by: ["entityType", "locale"],
-            _count: { entityId: true },
-          }),
-          context.prisma.events.count(),
-          context.prisma.crises.count(),
-          context.prisma.locations.count(),
-          context.prisma.situationAnalysis.count(),
-        ]);
+      const [
+        grouped,
+        eventCount,
+        crisisCount,
+        locationCount,
+        situationCount,
+        analysisCount,
+      ] = await Promise.all([
+        context.prisma.translations.groupBy({
+          by: ["entityType", "locale"],
+          _count: { entityId: true },
+        }),
+        context.prisma.events.count(),
+        context.prisma.crises.count(),
+        context.prisma.locations.count(),
+        context.prisma.situationAnalysis.count(),
+        context.prisma.analysis.count(),
+      ]);
 
       const canonical: Record<TranslatableEntityType, number> = {
         event: eventCount,
         crisis: crisisCount,
         location: locationCount,
         situationAnalysis: situationCount,
+        analysis: analysisCount,
       };
 
       // Build (translatedCount) lookup keyed by `${type}:${locale}`.
@@ -393,6 +409,7 @@ export const translationResolvers = {
             crisisId?: string;
             locationId?: string;
             situationAnalysisId?: string;
+            analysisId?: string;
           } =
             entityType === "event"
               ? { eventId: input.entityId }
@@ -400,7 +417,9 @@ export const translationResolvers = {
                 ? { crisisId: input.entityId }
                 : entityType === "location"
                   ? { locationId: input.entityId }
-                  : { situationAnalysisId: input.entityId };
+                  : entityType === "situationAnalysis"
+                    ? { situationAnalysisId: input.entityId }
+                    : { analysisId: input.entityId };
           return context.prisma.translations.upsert({
             where: {
               entityType_entityId_locale: {

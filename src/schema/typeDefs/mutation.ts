@@ -472,6 +472,37 @@ export const mutationTypeDef = gql`
       input: UpsertSituationAnalysisInput!
     ): UpsertSituationAnalysisResult!
 
+    """Upsert a unified frame-scoped analysis (ADR-0007). The pipeline
+    generator's write path: bitemporal supersede-then-insert keyed on the
+    frame columns (locationIds / eventTypes / needSectors / windowStart /
+    windowEnd), stamping \`validTo\` on the previous current row for the same
+    frame in the same transaction. History rows are preserved. Frame arrays are
+    canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only."""
+    upsertAnalysis(input: UpsertAnalysisInput!): UpsertAnalysisResult!
+
+    """Create an analysis automation — a subscription that keeps a frame's
+    analysis current on a cadence (ADR-0007 §5). Admin / analyst."""
+    createAnalysisAutomation(input: CreateAnalysisAutomationInput!): AnalysisAutomation!
+    """Update an analysis automation's cadence or enabled flag. Admin / analyst."""
+    updateAnalysisAutomation(id: String!, input: UpdateAnalysisAutomationInput!): AnalysisAutomation!
+    """Delete an analysis automation subscription. Admin / analyst."""
+    deleteAnalysisAutomation(id: String!): Boolean!
+
+    """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
+    an existing PENDING request for the same frame. Admin / analyst."""
+    requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
+    """Pipeline: mark a drained request GENERATED after its analysis was
+    upserted. Admin / pipeline only."""
+    markAnalysisRequestGenerated(id: String!): AnalysisRequest!
+    """Pipeline: record a generation failure on a request (bumps the attempt
+    counter). Admin / pipeline only."""
+    markAnalysisRequestFailed(id: String!, error: String): AnalysisRequest!
+
+    """Scheduler: stamp lastRunAt + nextRunAt (from each row's cadence) on the
+    automations whose frame was just regenerated (ADR-0007 §5) — pass all the
+    ids sharing that frame. Returns the count updated. Admin / pipeline only."""
+    markAnalysisAutomationsRan(ids: [String!]!): Int!
+
     """Replace a report's captured infographics (image asset store). Pipeline-only;
     delete-then-insert like \`upsertReportDatapoints\`."""
     upsertReportFigures(

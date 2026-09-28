@@ -10,7 +10,8 @@ export type TranslatableEntityType =
   | "event"
   | "crisis"
   | "location"
-  | "situationAnalysis";
+  | "situationAnalysis"
+  | "analysis";
 
 /**
  * Shape stored in `translations.data`. Mirrors the canonical entity's
@@ -122,7 +123,9 @@ export function createTranslationLoader(
               ? "crisisId"
               : entityType === "location"
                 ? "locationId"
-                : "situationAnalysisId";
+                : entityType === "situationAnalysis"
+                  ? "situationAnalysisId"
+                  : "analysisId";
         const rows = await prisma.translations.findMany({
           where: {
             [fkColumn]: { in: uniqueIds },
@@ -133,6 +136,7 @@ export function createTranslationLoader(
             crisisId: true,
             locationId: true,
             situationAnalysisId: true,
+            analysisId: true,
             data: true,
           },
         });
@@ -149,7 +153,9 @@ export function createTranslationLoader(
                 ? row.crisisId
                 : entityType === "location"
                   ? row.locationId
-                  : row.situationAnalysisId;
+                  : entityType === "situationAnalysis"
+                    ? row.situationAnalysisId
+                    : row.analysisId;
           if (!id) continue;
           // Prisma types `data` as JsonValue which is wider than what we
           // know the pipeline writes. Cast at the loader boundary so

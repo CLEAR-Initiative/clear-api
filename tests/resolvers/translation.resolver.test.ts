@@ -233,6 +233,7 @@ describe("Query.translationCoverage", () => {
       crisisCount?: number;
       locationCount?: number;
       situationCount?: number;
+      analysisCount?: number;
     } = {},
   ) {
     const groupBy = vi.fn().mockResolvedValue(opts.grouped ?? []);
@@ -240,12 +241,14 @@ describe("Query.translationCoverage", () => {
     const crisesCount = vi.fn().mockResolvedValue(opts.crisisCount ?? 0);
     const locationsCount = vi.fn().mockResolvedValue(opts.locationCount ?? 0);
     const situationCount = vi.fn().mockResolvedValue(opts.situationCount ?? 0);
+    const analysisCount = vi.fn().mockResolvedValue(opts.analysisCount ?? 0);
     const ctx = buildContext(user, {
       translations: { groupBy },
       events: { count: eventsCount },
       crises: { count: crisesCount },
       locations: { count: locationsCount },
       situationAnalysis: { count: situationCount },
+      analysis: { count: analysisCount },
     });
     return { ctx, groupBy };
   }
@@ -257,12 +260,13 @@ describe("Query.translationCoverage", () => {
     });
   });
 
-  it("builds the full (event,crisis,location,situationAnalysis) x (target locale) matrix, skipping 'en'", async () => {
+  it("builds the full (event,crisis,location,situationAnalysis,analysis) x (target locale) matrix, skipping 'en'", async () => {
     const { ctx } = buildCtx(admin, {
       eventCount: 5,
       crisisCount: 2,
       locationCount: 9,
       situationCount: 4,
+      analysisCount: 7,
       grouped: [{ entityType: "event", locale: "ar", _count: { entityId: 3 } }],
     });
     const out = (await translationCoverage(null, {}, ctx)) as Array<{
@@ -272,8 +276,8 @@ describe("Query.translationCoverage", () => {
       translatedCount: number;
     }>;
 
-    // 4 entity types x 3 target locales (ar, fr, es — 'en' excluded) = 12 rows.
-    expect(out).toHaveLength(12);
+    // 5 entity types x 3 target locales (ar, fr, es — 'en' excluded) = 15 rows.
+    expect(out).toHaveLength(15);
     expect(out.some((r) => r.locale === "en")).toBe(false);
 
     // The one grouped row is reflected; every other cell zero-filled.
@@ -294,6 +298,10 @@ describe("Query.translationCoverage", () => {
       (r) => r.entityType === "situationAnalysis" && r.locale === "ar",
     );
     expect(situationAr).toMatchObject({ canonicalCount: 4, translatedCount: 0 });
+    const analysisAr = out.find(
+      (r) => r.entityType === "analysis" && r.locale === "ar",
+    );
+    expect(analysisAr).toMatchObject({ canonicalCount: 7, translatedCount: 0 });
   });
 });
 
