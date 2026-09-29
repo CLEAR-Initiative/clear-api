@@ -148,6 +148,19 @@ export const groundTypeDef = gql`
     preserved from the source text."""
     uncertainty: String
     isEdited: Boolean!
+    """Enrichment (ground_hotline_enrich) gave up on this message: set when
+    the drain exhausted its attempts. While set, the message is out of the
+    enrichment queue — retryGroundMessage(stage: ENRICH) clears it."""
+    enrichFailedAt: DateTime
+    """Last error from the enrichment drain (truncated, phone-redacted)."""
+    enrichError: String
+    """Transcription (ground_transcribe) gave up on this voice note: set
+    when the drain exhausted its attempts. While set, the message is out of
+    both the transcription and enrichment queues ("transcription failed")
+    — retryGroundMessage(stage: TRANSCRIBE) clears it."""
+    transcribeFailedAt: DateTime
+    """Last error from the transcription drain (truncated, phone-redacted)."""
+    transcribeError: String
     threadId: String
     createdAt: DateTime!
   }
@@ -189,6 +202,30 @@ export const groundTypeDef = gql`
     classification: String
     """Current thread (placeholder or pipeline-built)."""
     threadId: String
+    """Set once the enrichment drain has given up on the message (see
+    markGroundMessagesFailed)."""
+    enrichFailedAt: DateTime
+    enrichError: String
+    """Set once the transcription drain has given up on the voice note."""
+    transcribeFailedAt: DateTime
+    transcribeError: String
+  }
+
+  """A clear-pipeline ground drain stage that can give up on a message."""
+  enum GroundPipelineStage {
+    """ground_hotline_enrich — classification + thread draft."""
+    ENRICH
+    """ground_transcribe — voice-note transcription."""
+    TRANSCRIBE
+  }
+
+  """One failure marker from a clear-pipeline ground drain."""
+  input GroundMessageFailureInput {
+    messageId: String!
+    stage: GroundPipelineStage!
+    """Exception text from the last attempt. Stored truncated to 500
+    characters, with phone numbers redacted."""
+    error: String!
   }
 
   """One classification write-back from the pipeline worker."""

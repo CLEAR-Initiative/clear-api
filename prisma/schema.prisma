@@ -2107,6 +2107,17 @@ model groundMessages {
   /// original redacted message text is never mutated.
   transcript String?
 
+  /// Durable per-stage failure markers, set by clear-pipeline via
+  /// markGroundMessagesFailed once a ground drain exhausts its attempts on
+  /// the message. A set *FailedAt drops the message out of that drain's
+  /// queue (groundMessagesForClassification) until a reviewer clears it
+  /// with retryGroundMessage. *Error is the last exception text, truncated
+  /// and phone-redacted.
+  enrichFailedAt     DateTime? @map("enrich_failed_at")
+  enrichError        String?   @map("enrich_error")
+  transcribeFailedAt DateTime? @map("transcribe_failed_at")
+  transcribeError    String?   @map("transcribe_error")
+
   /// True when the export carried the "<This message was edited>" marker.
   isEdited Boolean @default(false) @map("is_edited")
 

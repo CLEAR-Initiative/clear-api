@@ -511,10 +511,13 @@ export const queryTypeDef = gql`
       groundSourceId: String!
       limit: Int = 500
       """Only messages with no classification yet — the enrichment
-      drain's queue."""
+      drain's queue. Excludes messages marked failed for enrichment, and
+      voice notes marked failed for transcription (they have no content to
+      enrich until a retry transcribes them)."""
       unclassifiedOnly: Boolean = false
       """Only hotline voice notes with no transcript yet — the
-      transcription drain's queue."""
+      transcription drain's queue. Excludes messages marked failed for
+      transcription."""
       awaitingTranscript: Boolean = false
     ): [GroundMessageForClassification!]!
 

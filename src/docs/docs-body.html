@@ -697,8 +697,11 @@ thread assembly (clustering staged Signals into threads). Drains
 pass `unclassifiedOnly` / `awaitingTranscript` to read only their
 work queue — the default window is the oldest `limit` messages and
 stops advancing once those are all done.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>unclassifiedOnly: Boolean</code> — Only messages with no classification yet — the enrichment
-drain's queue.</span><span class="arg"><code>awaitingTranscript: Boolean</code> — Only hotline voice notes with no transcript yet — the
-transcription drain's queue.</span></div></td>
+drain's queue. Excludes messages marked failed for enrichment, and
+voice notes marked failed for transcription (they have no content to
+enrich until a retry transcribes them).</span><span class="arg"><code>awaitingTranscript: Boolean</code> — Only hotline voice notes with no transcript yet — the
+transcription drain's queue. Excludes messages marked failed for
+transcription.</span></div></td>
   </tr><tr>
     <td><code>groundThreadsForSource</code></td>
     <td><code>[GroundThread]</code></td>
@@ -1400,6 +1403,22 @@ drafts (title/severity/location/disasterType) from the hotline
 enrichment job. Unknown threadIds are skipped with a warning. Null
 fields on an input leave the existing draft value unchanged. Returns
 the number of threads updated.<div class="field-args"><span class="arg"><code>inputs: [GroundThreadDraftInput!]!</code></span></div></td>
+  </tr><tr id="mutation-markgroundmessagesfailed">
+    <td><code>markGroundMessagesFailed</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): durably mark messages a
+ground drain has given up on (attempts exhausted, or a message that
+can never succeed). A marked message drops out of that stage's queue
+in groundMessagesForClassification until retryGroundMessage clears
+it. A message whose stage already succeeded (classification /
+transcript set) is left unmarked. Unknown messageIds are skipped with
+a warning. Returns the number of messages marked.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageFailureInput!]!</code></span></div></td>
+  </tr><tr id="mutation-retrygroundmessage">
+    <td><code>retryGroundMessage</code></td>
+    <td><code>GroundMessage!</code></td>
+    <td>Clear a message's failure marker for one stage (admin/analyst), so
+it re-enters that drain's queue on the next pipeline run. No-op when
+the stage isn't marked failed. Returns the message.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>stage: GroundPipelineStage!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1441,7 +1460,7 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
         <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
-enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
@@ -2270,6 +2289,19 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>String</code></td>
     <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
 ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundmessagefailureinput"><code>GroundMessageFailureInput</code> <span class="type-badge">input</span></h3><p>One failure marker from a clear-pipeline ground drain.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>stage</code></td>
+    <td><code>GroundPipelineStage!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>error</code></td>
+    <td><code>String!</code></td>
+    <td>Exception text from the last attempt. Stored truncated to 500
+characters, with phone numbers redacted.</td>
   </tr></tbody></table><h3 id="type-groundmessagetranscriptinput"><code>GroundMessageTranscriptInput</code> <span class="type-badge">input</span></h3><p>One transcription write-back from the ground_transcribe worker.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>messageId</code></td>
     <td><code>String!</code></td>
@@ -4374,6 +4406,27 @@ preserved from the source text.</td>
     <td><code>Boolean!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>enrichFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Enrichment (ground_hotline_enrich) gave up on this message: set when
+the drain exhausted its attempts. While set, the message is out of the
+enrichment queue — retryGroundMessage(stage: ENRICH) clears it.</td>
+  </tr><tr>
+    <td><code>enrichError</code></td>
+    <td><code>String</code></td>
+    <td>Last error from the enrichment drain (truncated, phone-redacted).</td>
+  </tr><tr>
+    <td><code>transcribeFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Transcription (ground_transcribe) gave up on this voice note: set
+when the drain exhausted its attempts. While set, the message is out of
+both the transcription and enrichment queues (&quot;transcription failed&quot;)
+— retryGroundMessage(stage: TRANSCRIBE) clears it.</td>
+  </tr><tr>
+    <td><code>transcribeError</code></td>
+    <td><code>String</code></td>
+    <td>Last error from the transcription drain (truncated, phone-redacted).</td>
+  </tr><tr>
     <td><code>threadId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -4431,6 +4484,23 @@ Dagster ground_transcribe asset transcribes them.</td>
     <td><code>threadId</code></td>
     <td><code>String</code></td>
     <td>Current thread (placeholder or pipeline-built).</td>
+  </tr><tr>
+    <td><code>enrichFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set once the enrichment drain has given up on the message (see
+markGroundMessagesFailed).</td>
+  </tr><tr>
+    <td><code>enrichError</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcribeFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set once the transcription drain has given up on the voice note.</td>
+  </tr><tr>
+    <td><code>transcribeError</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The

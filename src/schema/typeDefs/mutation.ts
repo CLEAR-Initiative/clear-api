@@ -629,6 +629,20 @@ export const mutationTypeDef = gql`
     fields on an input leave the existing draft value unchanged. Returns
     the number of threads updated."""
     upsertGroundThreadDrafts(inputs: [GroundThreadDraftInput!]!): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): durably mark messages a
+    ground drain has given up on (attempts exhausted, or a message that
+    can never succeed). A marked message drops out of that stage's queue
+    in groundMessagesForClassification until retryGroundMessage clears
+    it. A message whose stage already succeeded (classification /
+    transcript set) is left unmarked. Unknown messageIds are skipped with
+    a warning. Returns the number of messages marked."""
+    markGroundMessagesFailed(inputs: [GroundMessageFailureInput!]!): Int!
+
+    """Clear a message's failure marker for one stage (admin/analyst), so
+    it re-enters that drain's queue on the next pipeline run. No-op when
+    the stage isn't marked failed. Returns the message."""
+    retryGroundMessage(messageId: String!, stage: GroundPipelineStage!): GroundMessage!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────
