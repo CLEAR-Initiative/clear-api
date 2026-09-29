@@ -129,6 +129,15 @@ export const groundTypeDef = gql`
     """Media the export omitted ("image omitted") — the message still
     counts as a media message."""
     omittedMediaCount: Int!
+    """True when the message has a voice-note attachment (hotline
+    sources). Set when the row is created, so it is true even while the
+    voice note's media is still being stored."""
+    hasVoice: Boolean!
+    """Transcribed text of the message's voice note(s). Null until the
+    clear-pipeline Dagster ground_transcribe asset transcribes it, and
+    always null for messages without a voice note. Phone numbers are
+    redacted at write time."""
+    transcript: String
     """"field_report" | "news_digest" | "operational" | "chatter"; null
     until the pipeline classification task labels the message."""
     classification: String
