@@ -21,6 +21,8 @@
  * Pure functions, unit-tested in tests/services/ground-review.test.ts.
  */
 
+import { redactPhoneNumbers } from "./whatsapp-export.js";
+
 export const REVIEW_STATES = [
   "unverified",
   "approved_private",
@@ -138,8 +140,10 @@ export interface ReviewExtrasOk {
  * Validate the decision-specific extras of a review: `rejectReason` only
  * with reject, `overrides` only with approve_public. Blank strings count
  * as "not overridden" (the promoted signal keeps the thread-derived
- * default); severity must be an integer 1-5. Location existence is I/O
- * and checked by the caller.
+ * default); severity must be an integer 1-5. Title and description are
+ * phone-redacted like every other text entering the ground tier — a
+ * reviewer pasting a reporter's number must not publish it on the signal.
+ * Location existence is I/O and checked by the caller.
  */
 export function reviewExtras(
   decision: ReviewDecision,
@@ -172,9 +176,9 @@ export function reviewExtras(
       normalised.severity = severity;
     }
     const title = overrides.title?.trim();
-    if (title) normalised.title = title;
+    if (title) normalised.title = redactPhoneNumbers(title);
     const description = overrides.description?.trim();
-    if (description) normalised.description = description;
+    if (description) normalised.description = redactPhoneNumbers(description);
     const locationId = overrides.locationId?.trim();
     if (locationId) normalised.locationId = locationId;
   }

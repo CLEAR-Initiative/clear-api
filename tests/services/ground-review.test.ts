@@ -178,6 +178,17 @@ describe("reviewExtras", () => {
     });
   });
 
+  it("phone-redacts title and description overrides", () => {
+    const result = reviewExtras("approve_public", {
+      overrides: { title: "Call +249 912 345 678", description: "Reporter on 0912345678 says the bridge fell" },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.overrides.title).not.toMatch(/912/);
+    expect(result.overrides.description).not.toMatch(/0912345678/);
+    expect(result.overrides.description).toContain("says the bridge fell");
+  });
+
   it("trims text overrides and treats blank or null as not overridden", () => {
     expect(
       reviewExtras("approve_public", {
