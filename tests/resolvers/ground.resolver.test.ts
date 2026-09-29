@@ -160,6 +160,7 @@ describe("groundMessagesForClassification", () => {
         senderRef: "s_abc123def456",
         hasMedia: false,
         voiceMediaKeys: [],
+        hasVoice: false,
         transcript: null,
         classification: null,
         threadId: "t1",
@@ -183,6 +184,65 @@ describe("groundMessagesForClassification", () => {
     expect((result[0] as { voiceMediaKeys: string[] }).voiceMediaKeys).toEqual([
       "ground/gs_1/a.ogg",
     ]);
+  });
+
+  it("hasVoice is true from the voice- ref alone, before mediaKeys lands", async () => {
+    const { prisma } = prismaWithRows([row({ mediaKeys: [], mediaRefs: ["voice-0"] })]);
+    const result = await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1" },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(result[0]).toMatchObject({ hasVoice: true, voiceMediaKeys: [] });
+  });
+
+  it("unclassifiedOnly filters on classification: null server-side", async () => {
+    const { prisma, findMany } = prismaWithRows([]);
+    await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1", limit: 2000, unclassifiedOnly: true },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(findMany).toHaveBeenCalledWith({
+      where: { groundSourceId: "gs_1", classification: null },
+      orderBy: { sentAt: "asc" },
+      take: 2000,
+    });
+  });
+
+  it("awaitingTranscript pre-selects voice notes without a transcript", async () => {
+    const findMany = vi.fn(async () => []);
+    const $queryRaw = vi.fn(async () => [{ id: "m7" }, { id: "m9" }]);
+    await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1", limit: 50, awaitingTranscript: true },
+      buildContext(PIPELINE, { groundMessages: { findMany }, $queryRaw }),
+    );
+    const [strings, ...values] = $queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    const sql = strings.join("?");
+    expect(sql).toContain('"transcript" IS NULL');
+    expect(sql).toContain("unnest(\"media_refs\")");
+    expect(values).toEqual(["gs_1", "voice-%", 50]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { groundSourceId: "gs_1", id: { in: ["m7", "m9"] } },
+      orderBy: { sentAt: "asc" },
+      take: 50,
+    });
+  });
+
+  it("awaitingTranscript returns [] without a findMany when nothing is waiting", async () => {
+    const findMany = vi.fn(async () => []);
+    const $queryRaw = vi.fn(async () => []);
+    const result = await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1", awaitingTranscript: true },
+      buildContext(PIPELINE, { groundMessages: { findMany }, $queryRaw }),
+    );
+    expect(result).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -435,11 +495,11 @@ describe("upsertGroundMessageClassifications", () => {
 // ---------------------------------------------------------------------------
 
 describe("upsertGroundMessageTranscripts", () => {
-  function transcriptPrisma(knownIds: string[]) {
+  function transcriptPrisma(knownIds: string[], uncertainty: string | null = null) {
     const update = vi.fn((args: unknown) => Promise.resolve(args));
     const prisma = {
       groundMessages: {
-        findMany: vi.fn(async () => knownIds.map((id) => ({ id }))),
+        findMany: vi.fn(async () => knownIds.map((id) => ({ id, uncertainty }))),
         update,
       },
       $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
@@ -458,6 +518,47 @@ describe("upsertGroundMessageTranscripts", () => {
     expect(update).toHaveBeenCalledWith({
       where: { id: "m1" },
       data: { transcript: "we need water" },
+    });
+  });
+
+  it("redacts phone numbers in the transcript, same as hotline text", async () => {
+    const { prisma, update } = transcriptPrisma(["m1"]);
+    await upsertGroundMessageTranscripts(
+      null,
+      {
+        inputs: [
+          { messageId: "m1", transcript: "call my brother on 0912 345 678 or +249 912 345 678" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      data: { transcript: "call my brother on [phone redacted] or [phone redacted]" },
+    });
+  });
+
+  it("fills uncertainty from the transcript only when ingest found none", async () => {
+    const { prisma, update } = transcriptPrisma(["m1"]);
+    await upsertGroundMessageTranscripts(
+      null,
+      { inputs: [{ messageId: "m1", transcript: "Unconfirmed: shelling near the market" }] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      data: { transcript: "Unconfirmed: shelling near the market", uncertainty: "unconfirmed" },
+    });
+
+    const kept = transcriptPrisma(["m2"], "rumour");
+    await upsertGroundMessageTranscripts(
+      null,
+      { inputs: [{ messageId: "m2", transcript: "unconfirmed reports" }] },
+      buildContext(PIPELINE, kept.prisma),
+    );
+    expect(kept.update).toHaveBeenCalledWith({
+      where: { id: "m2" },
+      data: { transcript: "unconfirmed reports" },
     });
   });
 

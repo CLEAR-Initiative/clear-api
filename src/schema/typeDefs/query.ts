@@ -468,12 +468,21 @@ export const queryTypeDef = gql`
 
     """PIPELINE CONTRACT (admin/pipeline only): a source's staged
     messages, oldest first, projected for the classification/threading
-    worker — no private-tier sender identity. Returns ALL messages
-    (classified and not) so one query powers both labelling and
-    thread assembly (clustering staged Signals into threads)."""
+    worker — no private-tier sender identity. By default returns ALL
+    messages (classified and not) so one query powers both labelling and
+    thread assembly (clustering staged Signals into threads). Drains
+    pass \`unclassifiedOnly\` / \`awaitingTranscript\` to read only their
+    work queue — the default window is the oldest \`limit\` messages and
+    stops advancing once those are all done."""
     groundMessagesForClassification(
       groundSourceId: String!
       limit: Int = 500
+      """Only messages with no classification yet — the enrichment
+      drain's queue."""
+      unclassifiedOnly: Boolean = false
+      """Only hotline voice notes with no transcript yet — the
+      transcription drain's queue."""
+      awaitingTranscript: Boolean = false
     ): [GroundMessageForClassification!]!
 
     """PIPELINE CONTRACT (admin/pipeline only): threading context for the

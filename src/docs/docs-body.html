@@ -657,9 +657,14 @@ review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;appr
     <td><code>[GroundMessageForClassification!]!</code></td>
     <td>PIPELINE CONTRACT (admin/pipeline only): a source's staged
 messages, oldest first, projected for the classification/threading
-worker — no private-tier sender identity. Returns ALL messages
-(classified and not) so one query powers both labelling and
-thread assembly (clustering staged Signals into threads).<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+worker — no private-tier sender identity. By default returns ALL
+messages (classified and not) so one query powers both labelling and
+thread assembly (clustering staged Signals into threads). Drains
+pass `unclassifiedOnly` / `awaitingTranscript` to read only their
+work queue — the default window is the oldest `limit` messages and
+stops advancing once those are all done.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>unclassifiedOnly: Boolean</code> — Only messages with no classification yet — the enrichment
+drain's queue.</span><span class="arg"><code>awaitingTranscript: Boolean</code> — Only hotline voice notes with no transcript yet — the
+transcription drain's queue.</span></div></td>
   </tr><tr>
     <td><code>groundThreadsForSource</code></td>
     <td><code>[GroundThread]</code></td>
@@ -3995,8 +4000,14 @@ attachments, or export-omitted media.</td>
     <td><code>voiceMediaKeys</code></td>
     <td><code>[String!]!</code></td>
     <td>S3 keys of this message's audio attachments only (a subset of its
-stored media) — empty when the message has no voice note. Awaiting
-transcription while non-empty and `transcript` is null.</td>
+stored media) — empty when the message has no voice note, or while
+its media is still being stored (see `hasVoice`).</td>
+  </tr><tr>
+    <td><code>hasVoice</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message has a voice attachment. Set when the row is
+created, so it stays true while `voiceMediaKeys` is still empty
+because the media hasn't been stored yet.</td>
   </tr><tr>
     <td><code>transcript</code></td>
     <td><code>String</code></td>

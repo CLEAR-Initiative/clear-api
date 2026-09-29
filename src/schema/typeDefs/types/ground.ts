@@ -163,9 +163,13 @@ export const groundTypeDef = gql`
     attachments, or export-omitted media."""
     hasMedia: Boolean!
     """S3 keys of this message's audio attachments only (a subset of its
-    stored media) — empty when the message has no voice note. Awaiting
-    transcription while non-empty and \`transcript\` is null."""
+    stored media) — empty when the message has no voice note, or while
+    its media is still being stored (see \`hasVoice\`)."""
     voiceMediaKeys: [String!]!
+    """True when the message has a voice attachment. Set when the row is
+    created, so it stays true while \`voiceMediaKeys\` is still empty
+    because the media hasn't been stored yet."""
+    hasVoice: Boolean!
     """Transcribed text for this message's voice note(s), null until the
     Dagster ground_transcribe asset transcribes them."""
     transcript: String
