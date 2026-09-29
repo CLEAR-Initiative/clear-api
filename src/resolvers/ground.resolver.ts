@@ -12,7 +12,14 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
-import { canReviewSource, reviewTransition } from "../services/ground-review.js";
+import {
+  canReviewSource,
+  reviewExtras,
+  reviewTransition,
+  type PromotionOverrides,
+  type PromotionOverridesInput,
+  type ReviewDecision,
+} from "../services/ground-review.js";
 import {
   buildPromotedSignalInput,
   ensureWhatsAppDataSource,
@@ -81,8 +88,13 @@ function parseDateInput(value: string, field: string): Date {
  *
  * Identity scrubbing happens structurally: buildPromotedSignalInput's
  * message type has no sender fields at all (see ground-promotion.ts).
+ * `overrides` are the reviewer's already-validated edits.
  */
-async function promoteThread(context: Context, threadId: string): Promise<string> {
+async function promoteThread(
+  context: Context,
+  threadId: string,
+  overrides: PromotionOverrides = {},
+): Promise<string> {
   const thread = await context.prisma.groundThreads.findUnique({
     where: { id: threadId },
     include: { messages: { orderBy: { sentAt: "asc" } } },
@@ -123,6 +135,7 @@ async function promoteThread(context: Context, threadId: string): Promise<string
       isEdited: m.isEdited,
     })),
     mediaUrls,
+    overrides,
   });
 
   const signal = await signalResolvers.Mutation.createSignal(null, { input }, context);
@@ -482,7 +495,13 @@ export const groundResolvers = {
     },
     reviewGroundThread: async (
       _parent: unknown,
-      args: { id: string; decision: string; note?: string | null },
+      args: {
+        id: string;
+        decision: string;
+        note?: string | null;
+        rejectReason?: string | null;
+        overrides?: PromotionOverridesInput | null;
+      },
       context: Context,
     ) => {
       // Coarse gate first (viewers/pending never reach the queue), then
@@ -513,6 +532,30 @@ export const groundResolvers = {
         });
       }
 
+      // reviewTransition has validated the decision string.
+      const extras = reviewExtras(args.decision as ReviewDecision, {
+        rejectReason: args.rejectReason,
+        overrides: args.overrides,
+      });
+      if (!extras.ok) {
+        throw new GraphQLError(extras.reason, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      // signals.location_id is an FK: check up front so a bad id is a clear
+      // BAD_USER_INPUT rather than an opaque P2003 out of createSignal.
+      if (extras.overrides.locationId) {
+        const location = await context.prisma.locations.findUnique({
+          where: { id: extras.overrides.locationId },
+          select: { id: true },
+        });
+        if (!location) {
+          throw new GraphQLError("overrides.locationId: location not found", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
       // approve_public promotes BEFORE the state flips: if promotion
       // fails, the thread stays reviewable and the decision can be
       // retried. createSignal's (sourceId, externalId) dedupe makes the
@@ -521,7 +564,7 @@ export const groundResolvers = {
       // terminal, so a thread cannot be promoted twice.
       let promotedSignalId: string | null = null;
       if (transition.next === "approved_public" && !thread.promotedSignalId) {
-        promotedSignalId = await promoteThread(context, thread.id);
+        promotedSignalId = await promoteThread(context, thread.id, extras.overrides);
       }
 
       return context.prisma.groundThreads.update({
@@ -531,6 +574,7 @@ export const groundResolvers = {
           reviewedBy: user.id,
           reviewedAt: new Date(),
           reviewNote: args.note ?? null,
+          rejectReason: extras.rejectReason,
           ...(promotedSignalId ? { promotedSignalId } : {}),
         },
       });

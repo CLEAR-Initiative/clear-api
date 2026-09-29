@@ -21,6 +21,8 @@
  * Pure functions, unit-tested in tests/services/ground-review.test.ts.
  */
 
+import { redactPhoneNumbers } from "./whatsapp-export.js";
+
 export const REVIEW_STATES = [
   "unverified",
   "approved_private",
@@ -101,4 +103,89 @@ export function canReviewSource(
   if (!role) return false;
   if (role === "admin") return true;
   return reviewerRoles.includes(role);
+}
+
+/** Structured reject reasons (the hotline inbox's reject menu). */
+export const REJECT_REASONS = ["spam", "not_report", "unusable", "duplicate"] as const;
+export type RejectReason = (typeof REJECT_REASONS)[number];
+
+export function isRejectReason(value: string): value is RejectReason {
+  return (REJECT_REASONS as readonly string[]).includes(value);
+}
+
+/** Reviewer edits for the promoted signal, as received (approve_public). */
+export interface PromotionOverridesInput {
+  title?: string | null;
+  description?: string | null;
+  severity?: number | null;
+  locationId?: string | null;
+}
+
+/** Normalised overrides: only the fields that actually override. */
+export interface PromotionOverrides {
+  title?: string;
+  description?: string;
+  severity?: number;
+  locationId?: string;
+}
+
+export interface ReviewExtrasOk {
+  ok: true;
+  /** null for every decision but reject — so leaving `rejected` clears it. */
+  rejectReason: RejectReason | null;
+  overrides: PromotionOverrides;
+}
+
+/**
+ * Validate the decision-specific extras of a review: `rejectReason` only
+ * with reject, `overrides` only with approve_public. Blank strings count
+ * as "not overridden" (the promoted signal keeps the thread-derived
+ * default); severity must be an integer 1-5. Title and description are
+ * phone-redacted like every other text entering the ground tier — a
+ * reviewer pasting a reporter's number must not publish it on the signal.
+ * Location existence is I/O and checked by the caller.
+ */
+export function reviewExtras(
+  decision: ReviewDecision,
+  input: { rejectReason?: string | null; overrides?: PromotionOverridesInput | null },
+): ReviewExtrasOk | TransitionErr {
+  const { rejectReason, overrides } = input;
+
+  if (rejectReason != null) {
+    if (decision !== "reject") {
+      return { ok: false, reason: "rejectReason is only accepted with the reject decision" };
+    }
+    if (!isRejectReason(rejectReason)) {
+      return {
+        ok: false,
+        reason: `Unknown rejectReason "${rejectReason}" — expected one of: ${REJECT_REASONS.join(", ")}`,
+      };
+    }
+  }
+
+  const normalised: PromotionOverrides = {};
+  if (overrides != null) {
+    if (decision !== "approve_public") {
+      return { ok: false, reason: "overrides are only accepted with the approve_public decision" };
+    }
+    const { severity } = overrides;
+    if (severity != null) {
+      if (!Number.isInteger(severity) || severity < 1 || severity > 5) {
+        return { ok: false, reason: "overrides.severity must be an integer between 1 and 5" };
+      }
+      normalised.severity = severity;
+    }
+    const title = overrides.title?.trim();
+    if (title) normalised.title = redactPhoneNumbers(title);
+    const description = overrides.description?.trim();
+    if (description) normalised.description = redactPhoneNumbers(description);
+    const locationId = overrides.locationId?.trim();
+    if (locationId) normalised.locationId = locationId;
+  }
+
+  return {
+    ok: true,
+    rejectReason: decision === "reject" && rejectReason != null ? (rejectReason as RejectReason) : null,
+    overrides: normalised,
+  };
 }
