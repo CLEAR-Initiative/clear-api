@@ -164,8 +164,8 @@ export const crisisResolvers = {
   Mutation: {
     // Drain completion: the enrichment consumer marks a crisis ENRICHED once
     // narrative/scenarios/needs-analysis are current. Admin/pipeline only.
-    // Idempotent. (setCrisisNeedsAnalysis also flips ENRICHED for the current
-    // Celery path; this is the explicit signal for the Dagster consumer.)
+    // Idempotent. (setCrisisNeedsAnalysis also flips ENRICHED as a
+    // leftover of the pre-Dagster path; this is the drain's own signal.)
     markCrisisEnriched: async (
       _parent: unknown,
       args: { id: string },

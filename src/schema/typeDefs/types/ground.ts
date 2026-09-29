@@ -84,6 +84,16 @@ export const groundTypeDef = gql`
     """Id of the \`signals\` row created when this thread was promoted
     (approved_public only)."""
     promotedSignalId: String
+    """LLM-suggested headline from the hotline-enrichment job. A draft —
+    the ERM reviews/edits it before promotion; never used directly."""
+    draftTitle: String
+    """1-5 suggestion from the hotline-enrichment job."""
+    draftSeverity: Int
+    """Geoparser-resolved \`locations\` row id, suggested by the
+    hotline-enrichment job."""
+    draftLocationId: String
+    """Disaster-type guess from the hotline-enrichment job."""
+    draftDisasterType: String
     messages: [GroundMessage!]!
     """Ids of the thread's messages, oldest first. The pipeline worker
     selects this (via groundThreadsForSource) instead of \`messages\` —
@@ -152,6 +162,17 @@ export const groundTypeDef = gql`
     """True when the message carries stored media, export-referenced
     attachments, or export-omitted media."""
     hasMedia: Boolean!
+    """S3 keys of this message's audio attachments only (a subset of its
+    stored media) — empty when the message has no voice note, or while
+    its media is still being stored (see \`hasVoice\`)."""
+    voiceMediaKeys: [String!]!
+    """True when the message has a voice attachment. Set when the row is
+    created, so it stays true while \`voiceMediaKeys\` is still empty
+    because the media hasn't been stored yet."""
+    hasVoice: Boolean!
+    """Transcribed text for this message's voice note(s), null until the
+    Dagster ground_transcribe asset transcribes them."""
+    transcript: String
     """Current label, null while unclassified."""
     classification: String
     """Current thread (placeholder or pipeline-built)."""
@@ -166,6 +187,13 @@ export const groundTypeDef = gql`
     """Pipeline-detected uncertainty tag. Null/omitted leaves the
     ingest-extracted marker untouched."""
     uncertaintyMarker: String
+  }
+
+  """One transcription write-back from the ground_transcribe worker."""
+  input GroundMessageTranscriptInput {
+    messageId: String!
+    """Transcribed text of the message's voice note(s)."""
+    transcript: String!
   }
 
   """One thread (a cluster of staged Signals) produced by the pipeline
@@ -187,5 +215,16 @@ export const groundTypeDef = gql`
     groundSourceId. A promoted/terminal (or unknown/wrong-source) target
     is never mutated: a NEW thread is created instead, with a warning."""
     threadId: String
+  }
+
+  """One enrichment draft from the Dagster hotline-enrichment job. Null
+  fields leave the existing draft value on the thread unchanged."""
+  input GroundThreadDraftInput {
+    threadId: String!
+    draftTitle: String
+    """1-5. Validated server-side when present."""
+    draftSeverity: Int
+    draftLocationId: String
+    draftDisasterType: String
   }
 `;

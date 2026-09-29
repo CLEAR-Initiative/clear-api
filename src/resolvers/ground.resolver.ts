@@ -22,6 +22,17 @@ import {
   GROUND_SOURCE_KINDS,
   missingConsentFields,
 } from "../services/ground-sources.js";
+import {
+  extractUncertaintyMarker,
+  redactPhoneNumbers,
+} from "../services/whatsapp-export.js";
+
+/** Hotline ingest labels each attachment `voice-{i}` or `media-{i}` in
+ * mediaRefs (see hotline-ingest.ts). mediaRefs is set when the row is
+ * created, before mediaKeys is filled in, so it is the reliable voice
+ * signal while media is still being stored (or failed to store). */
+const VOICE_REF_PREFIX = "voice-";
+const isVoiceRef = (ref: string | undefined) => ref?.startsWith(VOICE_REF_PREFIX) ?? false;
 
 /** Callers of the pipeline-facing contract surface (the
  * classify_ground_messages worker authenticates as a pipeline-role
@@ -177,19 +188,53 @@ export const groundResolvers = {
      * messages for the source, oldest first, so the worker can both
      * label unclassified rows and assemble threads (clusters of staged
      * Signals) with full context.
+     *
+     * Drains pass `unclassifiedOnly` / `awaitingTranscript` so the window
+     * holds only their work queue. Without them the window is the source's
+     * oldest N messages, which stops moving once N are all done.
      */
     groundMessagesForClassification: async (
       _parent: unknown,
-      args: { groundSourceId: string; limit?: number | null },
+      args: {
+        groundSourceId: string;
+        limit?: number | null;
+        unclassifiedOnly?: boolean | null;
+        awaitingTranscript?: boolean | null;
+      },
       context: Context,
     ) => {
       requireRole(context, PIPELINE_ROLES);
+      // Clamp to [1, 2000]: zero/negative limits must never reach
+      // Prisma's `take` (negative take reverses the query).
+      const take = Math.min(Math.max(args.limit ?? 500, 1), 2000);
+
+      // Prisma can't prefix-match elements of a String[] column, so the
+      // voice-ref condition is a raw pre-select of ids.
+      let awaitingIds: string[] | null = null;
+      if (args.awaitingTranscript) {
+        const idRows = await context.prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "ground_messages"
+          WHERE "ground_source_id" = ${args.groundSourceId}
+            AND "transcript" IS NULL
+            AND EXISTS (
+              SELECT 1 FROM unnest("media_refs") AS ref
+              WHERE ref LIKE ${VOICE_REF_PREFIX + "%"}
+            )
+          ORDER BY "sent_at" ASC
+          LIMIT ${take}
+        `;
+        awaitingIds = idRows.map((r) => r.id);
+        if (awaitingIds.length === 0) return [];
+      }
+
       const rows = await context.prisma.groundMessages.findMany({
-        where: { groundSourceId: args.groundSourceId },
+        where: {
+          groundSourceId: args.groundSourceId,
+          ...(args.unclassifiedOnly ? { classification: null } : {}),
+          ...(awaitingIds ? { id: { in: awaitingIds } } : {}),
+        },
         orderBy: { sentAt: "asc" },
-        // Clamp to [1, 2000]: zero/negative limits must never reach
-        // Prisma's `take` (negative take reverses the query).
-        take: Math.min(Math.max(args.limit ?? 500, 1), 2000),
+        take,
       });
       return rows.map((m) => ({
         id: m.id,
@@ -198,6 +243,12 @@ export const groundResolvers = {
         senderRef: m.senderRef,
         hasMedia:
           m.mediaKeys.length > 0 || m.mediaRefs.length > 0 || m.omittedMediaCount > 0,
+        // mediaKeys[i] pairs with mediaRefs[i] (see hotline-ingest.ts); the
+        // "voice-" prefix is the hotline ingest's own convention for audio
+        // attachments, so this only ever finds matches on hotline sources.
+        voiceMediaKeys: m.mediaKeys.filter((_key, i) => isVoiceRef(m.mediaRefs[i])),
+        hasVoice: m.mediaRefs.some((ref) => isVoiceRef(ref)),
+        transcript: m.transcript,
         classification: m.classification,
         threadId: m.threadId,
       }));
@@ -228,6 +279,28 @@ export const groundResolvers = {
         },
         orderBy: { createdAt: "asc" },
       });
+    },
+
+    /**
+     * PIPELINE CONTRACT: minimal source-enumeration query for workers
+     * that need to know WHICH sources to drain (e.g. the hotline
+     * enrichment job) without the private-tier consent/policy fields
+     * the admin/analyst-only `groundSources` query returns.
+     */
+    pipelineGroundSourceIds: async (
+      _parent: unknown,
+      args: { kind?: string | null; isActive?: boolean | null },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const rows = await context.prisma.groundSources.findMany({
+        where: {
+          ...(args.kind != null ? { kind: args.kind } : {}),
+          ...(args.isActive != null ? { isActive: args.isActive } : {}),
+        },
+        select: { id: true },
+      });
+      return rows.map((r) => r.id);
     },
   },
 
@@ -522,6 +595,55 @@ export const groundResolvers = {
     },
 
     /**
+     * PIPELINE CONTRACT: transcription write-back from the
+     * ground_transcribe worker. Unknown messageIds are skipped with a
+     * warning (a message can be deleted between read and write — the
+     * batch must not fail for it). Returns the number of rows updated.
+     *
+     * Transcripts get the same phone-number redaction hotline ingest
+     * applies to `text`, so a spoken number can't bypass it. An
+     * uncertainty marker found in the transcript fills `uncertainty` only
+     * when ingest found none in `text`.
+     */
+    upsertGroundMessageTranscripts: async (
+      _parent: unknown,
+      args: { inputs: Array<{ messageId: string; transcript: string }> },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true, uncertainty: true },
+      });
+      const uncertaintyById = new Map(existing.map((row) => [row.id, row.uncertainty]));
+
+      const valid = inputs.filter((i) => uncertaintyById.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundMessageTranscripts] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      await context.prisma.$transaction(
+        valid.map((input) => {
+          const transcript = redactPhoneNumbers(input.transcript);
+          const marker = uncertaintyById.get(input.messageId)
+            ? null
+            : extractUncertaintyMarker(transcript);
+          return context.prisma.groundMessages.update({
+            where: { id: input.messageId },
+            data: { transcript, ...(marker ? { uncertainty: marker } : {}) },
+          });
+        }),
+      );
+      return valid.length;
+    },
+
+    /**
      * PIPELINE CONTRACT: replace placeholder threading with the
      * worker's thread clustering. Per input: create a thread — or,
      * when `threadId` is set, APPEND to that existing thread (cross-run
@@ -686,6 +808,102 @@ export const groundResolvers = {
         },
         { timeout: 60_000, maxWait: 10_000 },
       );
+    },
+
+    /**
+     * PIPELINE CONTRACT: enrichment write-back from the hotline
+     * enrichment job. Unknown threadIds are skipped with a warning (a
+     * thread can be deleted/re-threaded between read and write — the
+     * batch must not fail for it). Null fields on an input leave the
+     * existing draft value untouched. Returns the number of rows updated.
+     */
+    upsertGroundThreadDrafts: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{
+          threadId: string;
+          draftTitle?: string | null;
+          draftSeverity?: number | null;
+          draftLocationId?: string | null;
+          draftDisasterType?: string | null;
+        }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      for (const input of inputs) {
+        if (
+          input.draftSeverity != null &&
+          (input.draftSeverity < 1 || input.draftSeverity > 5)
+        ) {
+          throw new GraphQLError("draftSeverity must be between 1 and 5", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      const existing = await context.prisma.groundThreads.findMany({
+        where: { id: { in: inputs.map((i) => i.threadId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.threadId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundThreadDrafts] skipping ${inputs.length - valid.length} unknown threadId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      // draft_location_id has an FK to locations — an unknown id would throw
+      // P2003 inside the transaction and roll back the whole batch. Drop just
+      // that field for the affected inputs instead.
+      const locIds = [
+        ...new Set(valid.flatMap((i) => (i.draftLocationId ? [i.draftLocationId] : []))),
+      ];
+      const knownLocs = new Set(
+        locIds.length === 0
+          ? []
+          : (
+              await context.prisma.locations.findMany({
+                where: { id: { in: locIds } },
+                select: { id: true },
+              })
+            ).map((row) => row.id),
+      );
+      const badLocs = valid.filter(
+        (i) => i.draftLocationId != null && !knownLocs.has(i.draftLocationId),
+      ).length;
+      if (badLocs > 0) {
+        console.warn(
+          `[upsertGroundThreadDrafts] dropping ${badLocs} unknown draftLocationId(s)`,
+        );
+      }
+
+      await context.prisma.$transaction(
+        valid.map((input) =>
+          context.prisma.groundThreads.update({
+            where: { id: input.threadId },
+            data: {
+              ...(input.draftTitle != null ? { draftTitle: input.draftTitle } : {}),
+              ...(input.draftSeverity != null
+                ? { draftSeverity: input.draftSeverity }
+                : {}),
+              ...(input.draftLocationId != null && knownLocs.has(input.draftLocationId)
+                ? { draftLocationId: input.draftLocationId }
+                : {}),
+              ...(input.draftDisasterType != null
+                ? { draftDisasterType: input.draftDisasterType }
+                : {}),
+            },
+          }),
+        ),
+      );
+      return valid.length;
     },
   },
 

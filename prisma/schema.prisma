@@ -470,6 +470,10 @@ model locations {
   eventOrigins           events[]                 @relation("EventOrigin")
   eventDestinations      events[]                 @relation("EventDestination")
   eventLocations         events[]                 @relation("EventLocation")
+
+  // Reverse relation for ground thread drafts
+  groundThreadDrafts groundThreads[] @relation("GroundThreadDraftLocation")
+
   userAlertSubscriptions userAlertSubscriptions[]
   teamScopes             teamLocations[]
   crises                 crises[]                 @relation("CrisisLocation")
@@ -2024,6 +2028,17 @@ model groundThreads {
   /// promoted thread is never promoted again.
   promotedSignalId String? @map("promoted_signal_id")
 
+  /// Enrichment suggestions from the Dagster hotline-enrichment job
+  /// (classification/title/severity/location/disasterType ticket). A
+  /// draft, never used directly — the ERM reviews and edits it in the
+  /// inbox modal before Add to CLEAR carries it into createSignal.
+  draftTitle        String?    @map("draft_title")
+  /// 1-5 scale, same range as signals.severity.
+  draftSeverity     Int?       @map("draft_severity")
+  draftLocationId   String?    @map("draft_location_id")
+  draftLocation     locations? @relation("GroundThreadDraftLocation", fields: [draftLocationId], references: [id], onDelete: SetNull)
+  draftDisasterType String?    @map("draft_disaster_type")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -2082,6 +2097,11 @@ model groundMessages {
   /// Contributor's own uncertainty tag ("unconfirmed", "rumour"), preserved
   /// verbatim from the text so it survives ingestion and promotion.
   uncertainty String?
+
+  /// Transcribed text for audio attachments, null until the Dagster
+  /// ground_transcribe asset transcribes them. Separate from `text` — the
+  /// original redacted message text is never mutated.
+  transcript String?
 
   /// True when the export carried the "<This message was edited>" marker.
   isEdited Boolean @default(false) @map("is_edited")

@@ -33,7 +33,6 @@ import {
   type UploadedMediaFile,
 } from "../services/ground-ingest.js";
 import { uploadBufferToS3 } from "../services/s3.js";
-import { enqueueGroundClassification } from "../services/ground-classify.js";
 
 const router = Router();
 
@@ -114,12 +113,6 @@ router.post("/", uploadFields, async (req, res) => {
           file.mimetype,
         ),
     });
-
-    // New rows → classification work exists. Fire-and-forget: a broker
-    // hiccup must not fail an upload that already persisted.
-    if (result.created > 0) {
-      enqueueGroundClassification(source.id);
-    }
 
     res.json(result);
   } catch (err) {

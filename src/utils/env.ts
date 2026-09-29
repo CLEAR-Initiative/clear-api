@@ -109,7 +109,8 @@ const envSchema = z.object({
     z.string().min(16).optional(),
   ),
 
-  // Celery broker (Redis) — for sending tasks to clear-pipeline workers
+  // Shared Redis instance (name kept from the pre-Dagster Celery broker;
+  // renaming is an infra change, not a code one). Used by redis-cache.ts.
   CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
 
   // S3 (for manual signal media uploads)

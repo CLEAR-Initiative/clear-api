@@ -11,22 +11,18 @@
  *
  * DB-FREE: `context.prisma` is a `vi.fn()` mock — `dataSources.findUnique`
  * returns a canned source by id (dataminr = non-trusted, field_officer =
- * trusted), `signals.create` echoes the row. `sendCeleryTask` + the audit-log
- * writer are module-mocked so nothing touches Redis or the DB.
+ * trusted), `signals.create` echoes the row. The audit-log writer is
+ * module-mocked so nothing touches the DB.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 
-vi.mock("../../src/services/celery.js", () => ({
-  sendCeleryTask: vi.fn(async () => undefined),
-}));
 vi.mock("../../src/utils/activity-log.js", () => ({
   logActivity: vi.fn(async () => undefined),
 }));
 
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
-import { sendCeleryTask } from "../../src/services/celery.js";
 import type { Context } from "../../src/context.js";
 
 // Canned dataSource rows keyed by id (were dev-DB seed ids; now just mock keys).
@@ -97,17 +93,13 @@ describe("signal resolver — auth model on signal creation", () => {
   });
 
   describe("createManualSignal", () => {
-    it("allows an admin to file a manual signal on a trusted source (and queues the pipeline task)", async () => {
+    it("allows an admin to file a manual signal on a trusted source", async () => {
       const result = await signalResolvers.Mutation.createManualSignal(
         null,
         { input: { sourceId: FIELD_OFFICER_SOURCE_ID, title: "TEST admin-filed manual signal", description: "d", severity: 4 } },
         ctx({ id: ACTOR_ID, role: "admin" }),
       );
       expect(result.id).toBeTruthy();
-      expect(sendCeleryTask).toHaveBeenCalledWith(
-        "src.tasks.process.process_manual_signal",
-        expect.objectContaining({ signal_id: result.id, source_type: "field_officer", user_id: ACTOR_ID }),
-      );
     });
 
     it("rejects a viewer without a teamId with FORBIDDEN", async () => {
