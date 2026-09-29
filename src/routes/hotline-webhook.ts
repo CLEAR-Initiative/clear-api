@@ -233,7 +233,7 @@ router.post("/", async (req: Request, res: Response) => {
     const source = gate.source;
 
     // Enrichment isn't enqueue-triggered — the ground_hotline_enrich
-    // Dagster asset (clear-context-pipeline) polls classification-pending
+    // Dagster asset (clear-pipeline) polls classification-pending
     // messages on its own interval sensor.
     await ingestHotlineMessage({
       db: prisma,

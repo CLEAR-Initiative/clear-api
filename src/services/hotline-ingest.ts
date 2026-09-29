@@ -28,9 +28,10 @@
  *     groundSources row of kind "hotline" for the receiving number and
  *     nothing else. Unknown numbers are rejected with nothing persisted.
  *
- *   - VOICE is flagged (`hasAudio` on the result) but not yet transcribed —
- *     no consumer exists for voice notes yet; a future enrichment asset
- *     picks them up the same way ground_hotline_enrich drains text.
+ *   - VOICE is flagged (`hasAudio` on the result) but not transcribed here —
+ *     the ground_transcribe Dagster asset (clear-pipeline) drains voice
+ *     notes and writes the text back via upsertGroundMessageTranscripts;
+ *     ground_hotline_enrich then classifies them like text messages.
  *
  * Shared with the group paths: phone-number redaction at persistence,
  * uncertainty-marker extraction, placeholder thread per message, and the

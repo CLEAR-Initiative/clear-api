@@ -859,6 +859,31 @@ export const groundResolvers = {
       }
       if (valid.length === 0) return 0;
 
+      // draft_location_id has an FK to locations — an unknown id would throw
+      // P2003 inside the transaction and roll back the whole batch. Drop just
+      // that field for the affected inputs instead.
+      const locIds = [
+        ...new Set(valid.flatMap((i) => (i.draftLocationId ? [i.draftLocationId] : []))),
+      ];
+      const knownLocs = new Set(
+        locIds.length === 0
+          ? []
+          : (
+              await context.prisma.locations.findMany({
+                where: { id: { in: locIds } },
+                select: { id: true },
+              })
+            ).map((row) => row.id),
+      );
+      const badLocs = valid.filter(
+        (i) => i.draftLocationId != null && !knownLocs.has(i.draftLocationId),
+      ).length;
+      if (badLocs > 0) {
+        console.warn(
+          `[upsertGroundThreadDrafts] dropping ${badLocs} unknown draftLocationId(s)`,
+        );
+      }
+
       await context.prisma.$transaction(
         valid.map((input) =>
           context.prisma.groundThreads.update({
@@ -868,7 +893,7 @@ export const groundResolvers = {
               ...(input.draftSeverity != null
                 ? { draftSeverity: input.draftSeverity }
                 : {}),
-              ...(input.draftLocationId != null
+              ...(input.draftLocationId != null && knownLocs.has(input.draftLocationId)
                 ? { draftLocationId: input.draftLocationId }
                 : {}),
               ...(input.draftDisasterType != null

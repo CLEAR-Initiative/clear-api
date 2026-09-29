@@ -997,12 +997,15 @@ describe("upsertGroundThreads", () => {
 // ---------------------------------------------------------------------------
 
 describe("upsertGroundThreadDrafts", () => {
-  function draftsPrisma(knownIds: string[]) {
+  function draftsPrisma(knownIds: string[], knownLocIds: string[] = ["loc_1"]) {
     const update = vi.fn((args: unknown) => Promise.resolve(args));
     const prisma = {
       groundThreads: {
         findMany: vi.fn(async () => knownIds.map((id) => ({ id }))),
         update,
+      },
+      locations: {
+        findMany: vi.fn(async () => knownLocIds.map((id) => ({ id }))),
       },
       $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
     };
@@ -1073,6 +1076,37 @@ describe("upsertGroundThreadDrafts", () => {
     expect(count).toBe(1);
     expect(update).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("1 unknown threadId"));
+    warnSpy.mockRestore();
+  });
+
+  it("drops an unknown draftLocationId without failing the rest of the batch", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prisma, update } = draftsPrisma(["t1", "t2"], ["loc_1"]);
+
+    const count = await upsertGroundThreadDrafts(
+      null,
+      {
+        inputs: [
+          { threadId: "t1", draftTitle: "valid loc", draftLocationId: "loc_1" },
+          { threadId: "t2", draftTitle: "ghost loc", draftLocationId: "loc_ghost" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(count).toBe(2);
+    expect(prisma.locations.findMany).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { draftTitle: "valid loc", draftLocationId: "loc_1" },
+    });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "t2" },
+      data: { draftTitle: "ghost loc" },
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("1 unknown draftLocationId"),
+    );
     warnSpy.mockRestore();
   });
 

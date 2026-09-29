@@ -455,7 +455,7 @@ export const signalResolvers = {
       });
 
       // No enqueue: the signal is created with status NEW, and the
-      // classify_group Dagster asset (clear-context-pipeline) drains NEW
+      // classify_group Dagster asset (clear-pipeline) drains NEW
       // signals from every source — including manual — on its own poll
       // sensor interval.
       void logActivity(context.prisma, {
