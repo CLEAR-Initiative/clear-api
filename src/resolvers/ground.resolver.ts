@@ -50,6 +50,25 @@ const GROUND_CLASSIFICATIONS = new Set([
   "chatter",
 ]);
 
+/** A clear-pipeline ground drain that can give up on a message
+ * (GraphQL enum GroundPipelineStage). */
+type GroundPipelineStage = "ENRICH" | "TRANSCRIBE";
+
+/** Stored failure text cap. Exception text can be arbitrarily long (an
+ * HTTP body, a stack) and only needs to tell a reviewer why it failed. */
+const FAILURE_ERROR_MAX_CHARS = 500;
+
+/** Exception text can echo message content (a transcript, a rejected
+ * input), so it gets the same phone redaction as `text` — no phone number
+ * is ever stored. Redacted before truncation so a cut can't leave a
+ * partial number the pattern no longer matches. */
+function failureErrorText(error: string): string {
+  const redacted = redactPhoneNumbers(error);
+  return redacted.length > FAILURE_ERROR_MAX_CHARS
+    ? `${redacted.slice(0, FAILURE_ERROR_MAX_CHARS - 1)}…`
+    : redacted;
+}
+
 const GROUND_LIFECYCLE_STATES = new Set([
   "reported",
   "updated",
@@ -195,7 +214,10 @@ export const groundResolvers = {
      *
      * Drains pass `unclassifiedOnly` / `awaitingTranscript` so the window
      * holds only their work queue. Without them the window is the source's
-     * oldest N messages, which stops moving once N are all done.
+     * oldest N messages, which stops moving once N are all done. Both
+     * queues exclude messages the drain has marked failed
+     * (markGroundMessagesFailed), so a message that can never succeed
+     * doesn't hold a slot in the window or incur another paid call.
      */
     groundMessagesForClassification: async (
       _parent: unknown,
@@ -220,6 +242,7 @@ export const groundResolvers = {
           SELECT id FROM "ground_messages"
           WHERE "ground_source_id" = ${args.groundSourceId}
             AND "transcript" IS NULL
+            AND "transcribe_failed_at" IS NULL
             AND EXISTS (
               SELECT 1 FROM unnest("media_refs") AS ref
               WHERE ref LIKE ${VOICE_REF_PREFIX + "%"}
@@ -234,7 +257,12 @@ export const groundResolvers = {
       const rows = await context.prisma.groundMessages.findMany({
         where: {
           groundSourceId: args.groundSourceId,
-          ...(args.unclassifiedOnly ? { classification: null } : {}),
+          // A voice note whose transcription failed has no content to
+          // enrich until a retry transcribes it, so it leaves the
+          // enrichment queue too rather than being held out forever.
+          ...(args.unclassifiedOnly
+            ? { classification: null, enrichFailedAt: null, transcribeFailedAt: null }
+            : {}),
           ...(awaitingIds ? { id: { in: awaitingIds } } : {}),
         },
         orderBy: { sentAt: "asc" },
@@ -255,6 +283,10 @@ export const groundResolvers = {
         transcript: m.transcript,
         classification: m.classification,
         threadId: m.threadId,
+        enrichFailedAt: m.enrichFailedAt,
+        enrichError: m.enrichError,
+        transcribeFailedAt: m.transcribeFailedAt,
+        transcribeError: m.transcribeError,
       }));
     },
 
@@ -909,6 +941,91 @@ export const groundResolvers = {
       );
       return valid.length;
     },
+
+    /**
+     * PIPELINE CONTRACT: durable failure marker from the ground drains,
+     * called once a message exhausts its attempts (or can never succeed).
+     * The marker takes the message out of that stage's queue until
+     * retryGroundMessage clears it. Unknown messageIds are skipped with a
+     * warning (a message can be deleted between read and write — the batch
+     * must not fail for it). A message whose stage has already succeeded
+     * is left unmarked, so a late mark can't flag finished work. Returns
+     * the number of messages marked.
+     */
+    markGroundMessagesFailed: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{ messageId: string; stage: GroundPipelineStage; error: string }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[markGroundMessagesFailed] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      const failedAt = new Date();
+      const results = await context.prisma.$transaction(
+        valid.map((input) => {
+          const error = failureErrorText(input.error);
+          return input.stage === "ENRICH"
+            ? context.prisma.groundMessages.updateMany({
+                where: { id: input.messageId, classification: null },
+                data: { enrichFailedAt: failedAt, enrichError: error },
+              })
+            : context.prisma.groundMessages.updateMany({
+                where: { id: input.messageId, transcript: null },
+                data: { transcribeFailedAt: failedAt, transcribeError: error },
+              });
+        }),
+      );
+      return results.reduce((total, result) => total + result.count, 0);
+    },
+
+    /**
+     * Reviewer action: clear one stage's failure marker so the message
+     * re-enters that drain's queue on the next pipeline run (with a fresh
+     * set of attempts — the pipeline resets its counter when it marks).
+     * Idempotent: clearing an unmarked stage is a no-op.
+     */
+    retryGroundMessage: async (
+      _parent: unknown,
+      args: { messageId: string; stage: GroundPipelineStage },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+
+      const existing = await context.prisma.groundMessages.findUnique({
+        where: { id: args.messageId },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Ground message not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.groundMessages.update({
+        where: { id: existing.id },
+        data:
+          args.stage === "ENRICH"
+            ? { enrichFailedAt: null, enrichError: null }
+            : { transcribeFailedAt: null, transcribeError: null },
+      });
+    },
   },
 
   GroundMessage: {
@@ -921,7 +1038,8 @@ export const groundResolvers = {
     },
     /** Derived from mediaRefs (set at row creation), so it is true even
      * while the voice note's media is still being stored. `transcript`
-     * needs no resolver — it is read straight off the row. */
+     * and the failure markers need no resolver — they are read straight
+     * off the row. */
     hasVoice: (parent: { mediaRefs: string[] }) => hasVoiceRef(parent.mediaRefs),
   },
 

@@ -2,7 +2,9 @@
  * Unit tests for the PIPELINE CONTRACT surface of `ground.resolver.ts`:
  * groundMessagesForClassification, upsertGroundMessageClassifications,
  * and upsertGroundThreads — the read/write API the clear-pipeline
- * classify_ground_messages worker is being built against (expo-364).
+ * classify_ground_messages worker is being built against (expo-364) —
+ * plus the drain failure markers (markGroundMessagesFailed /
+ * retryGroundMessage, #659).
  *
  * DB-FREE: `context.prisma` is a per-test stub exposing only the
  * delegates each resolver calls. Modules that reach outside (S3 presign,
@@ -46,6 +48,8 @@ const {
   upsertGroundMessageTranscripts,
   upsertGroundThreads,
   upsertGroundThreadDrafts,
+  markGroundMessagesFailed,
+  retryGroundMessage,
 } = groundResolvers.Mutation;
 
 // ---------------------------------------------------------------------------
@@ -103,6 +107,15 @@ describe("pipeline-contract auth gate", () => {
       name: "pipelineGroundSourceIds",
       run: (ctx) => pipelineGroundSourceIds(null, {}, ctx),
     },
+    {
+      name: "markGroundMessagesFailed",
+      run: (ctx) =>
+        markGroundMessagesFailed(
+          null,
+          { inputs: [{ messageId: "m1", stage: "ENRICH", error: "boom" }] },
+          ctx,
+        ),
+    },
   ];
 
   for (const { name, run } of cases) {
@@ -137,6 +150,10 @@ describe("groundMessagesForClassification", () => {
     transcript: null,
     classification: null,
     threadId: "t1",
+    enrichFailedAt: null,
+    enrichError: null,
+    transcribeFailedAt: null,
+    transcribeError: null,
     ...overrides,
   });
 
@@ -164,6 +181,10 @@ describe("groundMessagesForClassification", () => {
         transcript: null,
         classification: null,
         threadId: "t1",
+        enrichFailedAt: null,
+        enrichError: null,
+        transcribeFailedAt: null,
+        transcribeError: null,
       },
     ]);
     expect(JSON.stringify(result)).not.toContain("PRIVATE NAME");
@@ -196,17 +217,43 @@ describe("groundMessagesForClassification", () => {
     expect(result[0]).toMatchObject({ hasVoice: true, voiceMediaKeys: [] });
   });
 
-  it("unclassifiedOnly filters on classification: null server-side", async () => {
+  it("unclassifiedOnly filters on classification: null server-side, excluding failed rows", async () => {
     const { prisma, findMany } = prismaWithRows([]);
     await groundMessagesForClassification(
       null,
       { groundSourceId: "gs_1", limit: 2000, unclassifiedOnly: true },
       buildContext(PIPELINE, prisma),
     );
+    // enrichFailedAt: the enrichment drain gave up on it.
+    // transcribeFailedAt: a voice note with no transcript to enrich — it
+    // must leave the queue instead of being held out client-side forever.
     expect(findMany).toHaveBeenCalledWith({
-      where: { groundSourceId: "gs_1", classification: null },
+      where: {
+        groundSourceId: "gs_1",
+        classification: null,
+        enrichFailedAt: null,
+        transcribeFailedAt: null,
+      },
       orderBy: { sentAt: "asc" },
       take: 2000,
+    });
+  });
+
+  it("projects the failure markers so a caller can see why a row failed", async () => {
+    const failedAt = new Date("2026-09-20T08:00:00Z");
+    const { prisma } = prismaWithRows([
+      row({ transcribeFailedAt: failedAt, transcribeError: "unsupported format: amr" }),
+    ]);
+    const result = await groundMessagesForClassification(
+      null,
+      { groundSourceId: "gs_1" },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(result[0]).toMatchObject({
+      enrichFailedAt: null,
+      enrichError: null,
+      transcribeFailedAt: failedAt,
+      transcribeError: "unsupported format: amr",
     });
   });
 
@@ -224,6 +271,7 @@ describe("groundMessagesForClassification", () => {
     ];
     const sql = strings.join("?");
     expect(sql).toContain('"transcript" IS NULL');
+    expect(sql).toContain('"transcribe_failed_at" IS NULL');
     expect(sql).toContain("unnest(\"media_refs\")");
     expect(values).toEqual(["gs_1", "voice-%", 50]);
     expect(findMany).toHaveBeenCalledWith({
@@ -613,6 +661,193 @@ describe("upsertGroundMessageTranscripts", () => {
     );
     expect(count).toBe(0);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markGroundMessagesFailed (#659)
+// ---------------------------------------------------------------------------
+
+describe("markGroundMessagesFailed", () => {
+  /** `markable` ids are those whose stage hasn't already succeeded — the
+   * guarded updateMany matches them (count 1); other known ids match
+   * nothing (count 0). */
+  function failurePrisma(knownIds: string[], markable: string[] = knownIds) {
+    const updateMany = vi.fn(async (args: { where: { id: string } }) => ({
+      count: markable.includes(args.where.id) ? 1 : 0,
+    }));
+    const prisma = {
+      groundMessages: {
+        findMany: vi.fn(async () => knownIds.map((id) => ({ id }))),
+        updateMany,
+      },
+      $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    };
+    return { prisma, updateMany };
+  }
+
+  it("marks ENRICH only while classification is still null", async () => {
+    const { prisma, updateMany } = failurePrisma(["m1"]);
+    const count = await markGroundMessagesFailed(
+      null,
+      { inputs: [{ messageId: "m1", stage: "ENRICH", error: "BAD_USER_INPUT: nope" }] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(1);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "m1", classification: null },
+      data: { enrichFailedAt: expect.any(Date), enrichError: "BAD_USER_INPUT: nope" },
+    });
+  });
+
+  it("marks TRANSCRIBE only while transcript is still null", async () => {
+    const { prisma, updateMany } = failurePrisma(["m1"]);
+    await markGroundMessagesFailed(
+      null,
+      { inputs: [{ messageId: "m1", stage: "TRANSCRIBE", error: "unsupported format: amr" }] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "m1", transcript: null },
+      data: { transcribeFailedAt: expect.any(Date), transcribeError: "unsupported format: amr" },
+    });
+  });
+
+  it("doesn't count a message whose stage already succeeded", async () => {
+    const { prisma } = failurePrisma(["m1", "m2"], ["m2"]);
+    const count = await markGroundMessagesFailed(
+      null,
+      {
+        inputs: [
+          { messageId: "m1", stage: "ENRICH", error: "late" },
+          { messageId: "m2", stage: "ENRICH", error: "boom" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(1);
+  });
+
+  it("truncates the stored error to 500 chars", async () => {
+    const { prisma, updateMany } = failurePrisma(["m1"]);
+    await markGroundMessagesFailed(
+      null,
+      { inputs: [{ messageId: "m1", stage: "ENRICH", error: "x".repeat(5000) }] },
+      buildContext(PIPELINE, prisma),
+    );
+    const { enrichError } = updateMany.mock.calls[0]![0].data as { enrichError: string };
+    expect(enrichError).toHaveLength(500);
+    expect(enrichError.endsWith("…")).toBe(true);
+  });
+
+  it("redacts phone numbers echoed in the error text", async () => {
+    const { prisma, updateMany } = failurePrisma(["m1"]);
+    await markGroundMessagesFailed(
+      null,
+      {
+        inputs: [
+          { messageId: "m1", stage: "ENRICH", error: "validation failed on: call +249 912 345 678" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(updateMany.mock.calls[0]![0].data).toMatchObject({
+      enrichError: "validation failed on: call [phone redacted]",
+    });
+  });
+
+  it("skips unknown messageIds with a warning and returns the marked count", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prisma, updateMany } = failurePrisma(["m1"]);
+
+    const count = await markGroundMessagesFailed(
+      null,
+      {
+        inputs: [
+          { messageId: "m1", stage: "TRANSCRIBE", error: "boom" },
+          { messageId: "ghost", stage: "TRANSCRIBE", error: "boom" },
+        ],
+      },
+      buildContext(PIPELINE, prisma),
+    );
+
+    expect(count).toBe(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("1 unknown messageId"));
+    warnSpy.mockRestore();
+  });
+
+  it("returns 0 for an empty input list without touching the db", async () => {
+    const { prisma, updateMany } = failurePrisma([]);
+    const count = await markGroundMessagesFailed(
+      null,
+      { inputs: [] },
+      buildContext(PIPELINE, prisma),
+    );
+    expect(count).toBe(0);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// retryGroundMessage (#659)
+// ---------------------------------------------------------------------------
+
+describe("retryGroundMessage", () => {
+  function retryPrisma(exists = true) {
+    const update = vi.fn(async (args: { where: { id: string } }) => ({ id: args.where.id }));
+    const prisma = {
+      groundMessages: {
+        findUnique: vi.fn(async () => (exists ? { id: "m1" } : null)),
+        update,
+      },
+    };
+    return { prisma, update };
+  }
+
+  it("clears the ENRICH marker so the message re-enters the enrichment queue", async () => {
+    const { prisma, update } = retryPrisma();
+    const result = await retryGroundMessage(
+      null,
+      { messageId: "m1", stage: "ENRICH" },
+      buildContext(ANALYST, prisma),
+    );
+    expect(result).toEqual({ id: "m1" });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      data: { enrichFailedAt: null, enrichError: null },
+    });
+  });
+
+  it("clears only the TRANSCRIBE marker for stage TRANSCRIBE", async () => {
+    const { prisma, update } = retryPrisma();
+    await retryGroundMessage(
+      null,
+      { messageId: "m1", stage: "TRANSCRIBE" },
+      buildContext(ADMIN, prisma),
+    );
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      data: { transcribeFailedAt: null, transcribeError: null },
+    });
+  });
+
+  it("rejects an unknown message with NOT_FOUND", async () => {
+    const { prisma, update } = retryPrisma(false);
+    await expect(
+      retryGroundMessage(null, { messageId: "ghost", stage: "ENRICH" }, buildContext(ADMIN, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the pipeline role", PIPELINE],
+    ["a viewer", { id: "v1", role: "viewer" }],
+  ] as const)("is a reviewer action: rejects %s with FORBIDDEN", async (_name, user) => {
+    const { prisma } = retryPrisma();
+    await expect(
+      retryGroundMessage(null, { messageId: "m1", stage: "ENRICH" }, buildContext(user, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 });
 
