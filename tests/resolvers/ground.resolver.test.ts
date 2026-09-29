@@ -405,6 +405,27 @@ describe("GroundThread relation resolvers", () => {
 });
 
 // ---------------------------------------------------------------------------
+// GroundMessage field resolvers (hotline inbox, #661)
+// ---------------------------------------------------------------------------
+
+describe("GroundMessage.hasVoice", () => {
+  const { hasVoice } = groundResolvers.GroundMessage;
+
+  it("is true when any media ref is a voice- ref", () => {
+    expect(hasVoice({ mediaRefs: ["media-0", "voice-1"] })).toBe(true);
+  });
+
+  it("is true from the voice- ref alone, before mediaKeys lands", () => {
+    expect(hasVoice({ mediaRefs: ["voice-0"] })).toBe(true);
+  });
+
+  it("is false for non-voice media and for text-only messages", () => {
+    expect(hasVoice({ mediaRefs: ["media-0", "IMG-001.jpg"] })).toBe(false);
+    expect(hasVoice({ mediaRefs: [] })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // upsertGroundMessageClassifications
 // ---------------------------------------------------------------------------
 

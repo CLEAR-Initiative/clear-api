@@ -34,6 +34,10 @@ import {
 const VOICE_REF_PREFIX = "voice-";
 const isVoiceRef = (ref: string | undefined) => ref?.startsWith(VOICE_REF_PREFIX) ?? false;
 
+/** True when any of a message's attachments is a voice note. Shared by
+ * GroundMessageForClassification (pipeline) and GroundMessage (inbox). */
+const hasVoiceRef = (mediaRefs: string[]) => mediaRefs.some((ref) => isVoiceRef(ref));
+
 /** Callers of the pipeline-facing contract surface (the
  * classify_ground_messages worker authenticates as a pipeline-role
  * API-key user; platform admins pass for manual poking). */
@@ -247,7 +251,7 @@ export const groundResolvers = {
         // "voice-" prefix is the hotline ingest's own convention for audio
         // attachments, so this only ever finds matches on hotline sources.
         voiceMediaKeys: m.mediaKeys.filter((_key, i) => isVoiceRef(m.mediaRefs[i])),
-        hasVoice: m.mediaRefs.some((ref) => isVoiceRef(ref)),
+        hasVoice: hasVoiceRef(m.mediaRefs),
         transcript: m.transcript,
         classification: m.classification,
         threadId: m.threadId,
@@ -915,6 +919,10 @@ export const groundResolvers = {
       if (parent.mediaKeys.length === 0) return [];
       return getPresignedUrls(parent.mediaKeys);
     },
+    /** Derived from mediaRefs (set at row creation), so it is true even
+     * while the voice note's media is still being stored. `transcript`
+     * needs no resolver — it is read straight off the row. */
+    hasVoice: (parent: { mediaRefs: string[] }) => hasVoiceRef(parent.mediaRefs),
   },
 
   GroundThread: {

@@ -4322,6 +4322,19 @@ time — URLs are never stored.</td>
     <td>Media the export omitted (&quot;image omitted&quot;) — the message still
 counts as a media message.</td>
   </tr><tr>
+    <td><code>hasVoice</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message has a voice-note attachment (hotline
+sources). Set when the row is created, so it is true even while the
+voice note's media is still being stored.</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String</code></td>
+    <td>Transcribed text of the message's voice note(s). Null until the
+clear-pipeline Dagster ground_transcribe asset transcribes it, and
+always null for messages without a voice note. Phone numbers are
+redacted at write time.</td>
+  </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>
     <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;; null
