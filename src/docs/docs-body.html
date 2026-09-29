@@ -1358,7 +1358,12 @@ global role must appear in the source's reviewerRoles; platform
 admins always pass). Transitions follow the V1 state machine —
 notably approved_public is terminal. approve_public also promotes
 the thread into the standard signals graph via createSignal, with
-all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+all sender identity scrubbed.
+
+`overrides` (approve_public only) carries the reviewer's edits into
+the promoted signal. `rejectReason` (reject only) is one of &quot;spam&quot;,
+&quot;not_report&quot;, &quot;unusable&quot;, &quot;duplicate&quot;; any other decision clears it.
+Either one sent with the wrong decision is BAD_USER_INPUT.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span><span class="arg"><code>rejectReason: String</code></span><span class="arg"><code>overrides: GroundPromotionOverridesInput</code></span></div></td>
   </tr><tr id="mutation-upsertgroundmessageclassifications">
     <td><code>upsertGroundMessageClassifications</code></td>
     <td><code>Int!</code></td>
@@ -2273,6 +2278,26 @@ ingest-extracted marker untouched.</td>
     <td><code>transcript</code></td>
     <td><code>String!</code></td>
     <td>Transcribed text of the message's voice note(s).</td>
+  </tr></tbody></table><h3 id="type-groundpromotionoverridesinput"><code>GroundPromotionOverridesInput</code> <span class="type-badge">input</span></h3><p>Reviewer edits applied to the signal a thread is promoted into
+(reviewGroundThread approve_public only). Omitted, null or blank fields
+keep the default derived from the thread (thread title; the joined
+message text as description; no severity; no location). The signal's
+rawData provenance is never affected.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>Integer 1-5.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>An existing `locations` row id (any admin level).</td>
   </tr></tbody></table><h3 id="type-groundthreaddraftinput"><code>GroundThreadDraftInput</code> <span class="type-badge">input</span></h3><p>One enrichment draft from the Dagster hotline-enrichment job. Null
 fields leave the existing draft value on the thread unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>threadId</code></td>
@@ -4502,6 +4527,11 @@ thread is promoted and becomes a Signal.</p><table class="ref-table"><thead><tr>
     <td><code>reviewNote</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>rejectReason</code></td>
+    <td><code>String</code></td>
+    <td>Structured rejection reason: &quot;spam&quot; | &quot;not_report&quot; | &quot;unusable&quot; |
+&quot;duplicate&quot;. Set only while reviewState is &quot;rejected&quot;; null otherwise.</td>
   </tr><tr>
     <td><code>promotedSignalId</code></td>
     <td><code>String</code></td>

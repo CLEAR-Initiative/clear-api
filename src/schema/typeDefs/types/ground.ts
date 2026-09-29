@@ -81,6 +81,9 @@ export const groundTypeDef = gql`
     reviewedBy: String
     reviewedAt: DateTime
     reviewNote: String
+    """Structured rejection reason: "spam" | "not_report" | "unusable" |
+    "duplicate". Set only while reviewState is "rejected"; null otherwise."""
+    rejectReason: String
     """Id of the \`signals\` row created when this thread was promoted
     (approved_public only)."""
     promotedSignalId: String
@@ -224,6 +227,20 @@ export const groundTypeDef = gql`
     groundSourceId. A promoted/terminal (or unknown/wrong-source) target
     is never mutated: a NEW thread is created instead, with a warning."""
     threadId: String
+  }
+
+  """Reviewer edits applied to the signal a thread is promoted into
+  (reviewGroundThread approve_public only). Omitted, null or blank fields
+  keep the default derived from the thread (thread title; the joined
+  message text as description; no severity; no location). The signal's
+  rawData provenance is never affected."""
+  input GroundPromotionOverridesInput {
+    title: String
+    description: String
+    """Integer 1-5."""
+    severity: Int
+    """An existing \`locations\` row id (any admin level)."""
+    locationId: String
   }
 
   """One enrichment draft from the Dagster hotline-enrichment job. Null

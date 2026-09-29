@@ -2022,6 +2022,10 @@ model groundThreads {
   reviewedAt  DateTime? @map("reviewed_at")
   /// Optional reviewer note (why rejected / what was corrected).
   reviewNote  String? @map("review_note")
+  /// Structured reason for a rejection: "spam" | "not_report" |
+  /// "unusable" | "duplicate" (REJECT_REASONS in services/ground-review.ts).
+  /// Set only while reviewState is "rejected"; cleared on any other decision.
+  rejectReason String? @map("reject_reason")
 
   /// Set when an approved_public thread has been promoted through
   /// createSignal — the id of the created `signals` row. One-shot: a

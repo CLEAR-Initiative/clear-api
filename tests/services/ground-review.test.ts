@@ -12,7 +12,9 @@ import { GraphQLError } from "graphql";
 import {
   canReviewSource,
   isReviewDecision,
+  reviewExtras,
   reviewTransition,
+  REJECT_REASONS,
   REVIEW_DECISIONS,
   REVIEW_STATES,
 } from "../../src/services/ground-review.js";
@@ -113,9 +115,14 @@ interface StubThread {
 function buildContext(
   user: { id: string; role: string } | null,
   thread: StubThread | null,
+  knownLocationIds: string[] = [],
 ) {
-  const updates: unknown[] = [];
+  const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const prisma = {
+    locations: {
+      findUnique: async (args: { where: { id: string } }) =>
+        knownLocationIds.includes(args.where.id) ? { id: args.where.id } : null,
+    },
     groundThreads: {
       findUnique: async () => thread,
       update: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
@@ -135,6 +142,50 @@ function buildContext(
 }
 
 const reviewGroundThread = groundResolvers.Mutation.reviewGroundThread;
+
+describe("reviewExtras", () => {
+  it("accepts every known reject reason with reject, and nulls it otherwise", () => {
+    for (const reason of REJECT_REASONS) {
+      expect(reviewExtras("reject", { rejectReason: reason })).toEqual({
+        ok: true,
+        rejectReason: reason,
+        overrides: {},
+      });
+    }
+    expect(reviewExtras("approve_private", {})).toEqual({ ok: true, rejectReason: null, overrides: {} });
+  });
+
+  it("refuses a rejectReason that is unknown or sent with another decision", () => {
+    const unknown = reviewExtras("reject", { rejectReason: "boring" });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.reason).toMatch(/spam, not_report, unusable, duplicate/);
+    expect(reviewExtras("approve_private", { rejectReason: "spam" }).ok).toBe(false);
+  });
+
+  it("refuses overrides with any decision but approve_public", () => {
+    expect(reviewExtras("reject", { overrides: { title: "x" } }).ok).toBe(false);
+    expect(reviewExtras("approve_private", { overrides: {} }).ok).toBe(false);
+  });
+
+  it("requires an integer severity 1-5", () => {
+    for (const severity of [0, 6, 2.5, -1]) {
+      const result = reviewExtras("approve_public", { overrides: { severity } });
+      expect(result.ok).toBe(false);
+    }
+    expect(reviewExtras("approve_public", { overrides: { severity: 5 } })).toMatchObject({
+      ok: true,
+      overrides: { severity: 5 },
+    });
+  });
+
+  it("trims text overrides and treats blank or null as not overridden", () => {
+    expect(
+      reviewExtras("approve_public", {
+        overrides: { title: "  Flooding in Nyala  ", description: "   ", severity: null, locationId: "" },
+      }),
+    ).toEqual({ ok: true, rejectReason: null, overrides: { title: "Flooding in Nyala" } });
+  });
+});
 
 describe("reviewGroundThread resolver", () => {
   const thread: StubThread = {
@@ -188,6 +239,48 @@ describe("reviewGroundThread resolver", () => {
     await expect(
       reviewGroundThread(null, { id: "t1", decision: "reject" }, context),
     ).rejects.toThrow(/final/);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("stores the structured rejectReason on reject", async () => {
+    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread);
+    const result = await reviewGroundThread(
+      null,
+      { id: "t1", decision: "reject", rejectReason: "spam", note: "spam: Spam" },
+      context,
+    );
+    expect(result.reviewState).toBe("rejected");
+    expect(updates[0]!.data.rejectReason).toBe("spam");
+    expect(updates[0]!.data.reviewNote).toBe("spam: Spam");
+  });
+
+  it("clears rejectReason when a rejected thread is re-approved", async () => {
+    const rejected: StubThread = { ...thread, reviewState: "rejected" };
+    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, rejected);
+    await reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context);
+    expect(updates[0]!.data.rejectReason).toBeNull();
+  });
+
+  it("refuses a bad rejectReason or overrides before touching the thread", async () => {
+    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread);
+    await expect(
+      reviewGroundThread(null, { id: "t1", decision: "reject", rejectReason: "boring" }, context),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(
+      reviewGroundThread(null, { id: "t1", decision: "reject", overrides: { title: "x" } }, context),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(updates).toHaveLength(0);
+  });
+
+  it("refuses an overrides.locationId that doesn't exist, before promoting", async () => {
+    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread, ["loc_known"]);
+    await expect(
+      reviewGroundThread(
+        null,
+        { id: "t1", decision: "approve_public", overrides: { locationId: "loc_ghost" } },
+        context,
+      ),
+    ).rejects.toThrow(/location not found/);
     expect(updates).toHaveLength(0);
   });
 

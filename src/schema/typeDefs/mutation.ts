@@ -580,8 +580,19 @@ export const mutationTypeDef = gql`
     admins always pass). Transitions follow the V1 state machine —
     notably approved_public is terminal. approve_public also promotes
     the thread into the standard signals graph via createSignal, with
-    all sender identity scrubbed."""
-    reviewGroundThread(id: String!, decision: String!, note: String): GroundThread!
+    all sender identity scrubbed.
+
+    \`overrides\` (approve_public only) carries the reviewer's edits into
+    the promoted signal. \`rejectReason\` (reject only) is one of "spam",
+    "not_report", "unusable", "duplicate"; any other decision clears it.
+    Either one sent with the wrong decision is BAD_USER_INPUT."""
+    reviewGroundThread(
+      id: String!
+      decision: String!
+      note: String
+      rejectReason: String
+      overrides: GroundPromotionOverridesInput
+    ): GroundThread!
 
     """PIPELINE CONTRACT (admin/pipeline only): write back
     classifications from the classify_ground_messages worker. Unknown
