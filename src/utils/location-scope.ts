@@ -3,15 +3,17 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { getLocationIdsWithDescendants } from "./geo-resolve.js";
 
 /**
- * Build a Prisma where clause that filters signals by a team's location scope.
- * Looks up the team's locations, expands the hierarchy using ancestorIds,
- * and returns the filter.
+ * Resolve a team's location scope to the flat set of location ids it covers:
+ * every bound location plus all of its administrative descendants.
  * Returns undefined if the team has no locations (global monitoring).
+ *
+ * Shared by the Prisma filter below and the raw-SQL `entityStats` path, so
+ * both apply the same scope.
  */
-export async function buildLocationFilterForTeam(
+export async function getTeamScopeLocationIds(
   prisma: PrismaClient,
   teamId: string,
-): Promise<Prisma.signalsWhereInput | undefined> {
+): Promise<string[] | undefined> {
   const teamLocations = await prisma.teamLocations.findMany({
     where: { teamId },
     select: { locationId: true },
@@ -29,7 +31,21 @@ export async function buildLocationFilterForTeam(
     for (const id of expanded) allIds.add(id);
   }
 
-  const expandedIds = [...allIds];
+  return [...allIds];
+}
+
+/**
+ * Build a Prisma where clause that filters signals by a team's location scope.
+ * Looks up the team's locations, expands the hierarchy using ancestorIds,
+ * and returns the filter.
+ * Returns undefined if the team has no locations (global monitoring).
+ */
+export async function buildLocationFilterForTeam(
+  prisma: PrismaClient,
+  teamId: string,
+): Promise<Prisma.signalsWhereInput | undefined> {
+  const expandedIds = await getTeamScopeLocationIds(prisma, teamId);
+  if (!expandedIds) return undefined;
 
   return {
     OR: [

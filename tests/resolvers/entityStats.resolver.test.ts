@@ -12,6 +12,10 @@
  * `locationId: parent`, so counts are exact regardless of other rows in the DB.
  * Each grouped total is also cross-checked against the Prisma-backed
  * groupBy=none path, which is the reference implementation of the filter.
+ *
+ * Team scope: one team is bound to the child location only, another has no
+ * bindings (global monitoring). Their ids are fixed up front because the
+ * `it.each` table below is built before `beforeAll` runs.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -34,11 +38,14 @@ type GroupBy = "none" | "type" | "severity" | "day" | "week" | "month";
 
 const RUN = `entity-stats-${Date.now()}`;
 const SOURCE_NAME = `${RUN}-source`;
+const CHILD_TEAM = `${RUN}-team-child`;
+const GLOBAL_TEAM = `${RUN}-team-global`;
 
 describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
   let parentId: string;
   let childId: string;
   let sourceId: string;
+  let organisationId: string;
   const eventIds: string[] = [];
   const signalIds: string[] = [];
   const alertIds: string[] = [];
@@ -70,6 +77,22 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     childId = child!.id;
 
     sourceId = (await prisma.dataSources.create({ data: { name: SOURCE_NAME, type: "test" } })).id;
+
+    organisationId = (
+      await prisma.organisations.create({ data: { name: `${RUN} org`, slug: `${RUN}-org` } })
+    ).id;
+    await prisma.teams.create({
+      data: {
+        id: CHILD_TEAM,
+        organisationId,
+        name: `${RUN} child team`,
+        slug: "child",
+        locations: { create: { locationId: childId } },
+      },
+    });
+    await prisma.teams.create({
+      data: { id: GLOBAL_TEAM, organisationId, name: `${RUN} global team`, slug: "global" },
+    });
 
     // Events — 3 real (two in parent, one in child) + 1 dummy.
     const ev = async (
@@ -135,6 +158,8 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     await prisma.signals.deleteMany({ where: { id: { in: signalIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     if (sourceId) await prisma.dataSources.delete({ where: { id: sourceId } });
+    // Cascades to the teams and their location bindings.
+    if (organisationId) await prisma.organisations.delete({ where: { id: organisationId } });
     await prisma.$executeRaw`DELETE FROM "locations" WHERE id = ANY(${[childId, parentId].filter(Boolean)}::text[])`;
     await prisma.$disconnect();
   });
@@ -209,6 +234,48 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     });
   });
 
+  describe("teamId", () => {
+    // The child team sees only the child location: 1 real event (DR, sev 2)
+    // + the dummy, 1 real signal (sev 1) + the dummy, and only the alert on
+    // the dummy event.
+    it("scopes grouped events to the team's locations", async () => {
+      expect(await stats("event", "type", { teamId: CHILD_TEAM })).toEqual({
+        total: 1,
+        buckets: { DR: 1 },
+      });
+      expect(await stats("event", "severity", { teamId: CHILD_TEAM, includeDummy: true })).toEqual(
+        { total: 2, buckets: { "2": 1, "5": 1 } },
+      );
+    });
+
+    it("scopes grouped signals and alerts to the team's locations", async () => {
+      expect(await stats("signal", "severity", { teamId: CHILD_TEAM })).toEqual({
+        total: 1,
+        buckets: { "1": 1 },
+      });
+      expect((await stats("alert", "type", { teamId: CHILD_TEAM })).total).toBe(0);
+      expect(await stats("alert", "type", { teamId: CHILD_TEAM, includeDummy: true })).toEqual({
+        total: 1,
+        buckets: { FL: 1 },
+      });
+    });
+
+    it("applies the team scope without a locationId", async () => {
+      // Nothing else in the DB sits under the fresh child location, so the
+      // team scope alone still gives exact counts.
+      expect(await stats("event", "week", { teamId: CHILD_TEAM, locationId: undefined })).toEqual({
+        total: 1,
+        buckets: { "2020-W03": 1 },
+      });
+    });
+
+    it("leaves a team with no location bindings unscoped", async () => {
+      expect(await stats("event", "type", { teamId: GLOBAL_TEAM })).toEqual(
+        await stats("event", "type"),
+      );
+    });
+  });
+
   it.each<[Entity, GroupBy, Record<string, unknown>]>([
     ["event", "type", {}],
     ["event", "week", { severityMin: 3, from: "2020-01-01T00:00:00Z" }],
@@ -216,6 +283,11 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     ["signal", "type", {}],
     ["signal", "day", { severityMax: 3 }],
     ["alert", "month", { includeDummy: true }],
+    ["event", "type", { teamId: CHILD_TEAM }],
+    ["event", "day", { teamId: CHILD_TEAM, locationId: undefined, includeDummy: true }],
+    ["signal", "week", { teamId: CHILD_TEAM }],
+    ["alert", "severity", { teamId: CHILD_TEAM, includeDummy: true }],
+    ["event", "month", { teamId: GLOBAL_TEAM }],
   ])("%s grouped by %s totals match the groupBy=none path (%o)", async (entity, groupBy, extra) => {
     const grouped = await stats(entity, groupBy, extra);
     const none = await stats(entity, "none", extra);
