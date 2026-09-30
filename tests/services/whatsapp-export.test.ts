@@ -140,6 +140,62 @@ describe("redactPhoneNumbers", () => {
     const text = "On 12.04.26 at 07:21, 3 vehicles and 120 people were reported";
     expect(redactPhoneNumbers(text)).toBe(text);
   });
+
+  // Hotline reporters are mostly Arabic speakers and write numbers in
+  // Arabic-Indic (U+0660–0669) or Eastern Arabic-Indic (U+06F0–06F9)
+  // digits, which `\d` never matches.
+  it("redacts local numbers in Arabic-Indic digits", () => {
+    expect(redactPhoneNumbers("اتصل ٠٩١٢٣٤٥٦٧٨ الآن")).toBe(
+      `اتصل ${PHONE_REDACTION_PLACEHOLDER} الآن`,
+    );
+  });
+
+  it("redacts international numbers in Arabic-Indic digits", () => {
+    expect(redactPhoneNumbers("الرقم +٢٤٩ ٩١ ٢٣٤ ٥٦٧٨ للتواصل")).toBe(
+      `الرقم ${PHONE_REDACTION_PLACEHOLDER} للتواصل`,
+    );
+  });
+
+  it("redacts numbers in Eastern Arabic-Indic digits", () => {
+    expect(redactPhoneNumbers("تماس ۰۹۱۲۳۴۵۶۷۸ لطفا")).toBe(
+      `تماس ${PHONE_REDACTION_PLACEHOLDER} لطفا`,
+    );
+    expect(redactPhoneNumbers("رقم ۰۹۱-۲۳۴-۵۶۷۸")).toBe(`رقم ${PHONE_REDACTION_PLACEHOLDER}`);
+  });
+
+  it("redacts numbers that mix ASCII and Arabic-Indic digits", () => {
+    expect(redactPhoneNumbers("اتصل 091٢٣٤٥٦٧٨")).toBe(`اتصل ${PHONE_REDACTION_PLACEHOLDER}`);
+    expect(redactPhoneNumbers("call +249 ٩١ ٢٣٤ 5678")).toBe(
+      `call ${PHONE_REDACTION_PLACEHOLDER}`,
+    );
+    expect(redactPhoneNumbers("رقم ٠٩١ ۲۳۴ 5678")).toBe(`رقم ${PHONE_REDACTION_PLACEHOLDER}`);
+  });
+
+  it("treats an adjacent non-ASCII digit as part of the run", () => {
+    // Without a Unicode-aware lookbehind, the ASCII tail of "٩0912345678"
+    // would be redacted alone and leave a stray leading digit behind.
+    expect(redactPhoneNumbers("x ٩0912345678 y")).toBe(`x ${PHONE_REDACTION_PLACEHOLDER} y`);
+  });
+
+  it("leaves Arabic-Indic dates, years, and small figures alone", () => {
+    const texts = [
+      "في ١٢.٠٤.٢٦ الساعة ٠٧:٢١، ٣ مركبات و١٢٠ شخصا",
+      "عام ٢٠٢٦",
+      "بتاريخ ١٢.٠٤.٢٠٢٦",
+      "بتاريخ ۱۲-۰۴-۲۰۲۶",
+      "قتل ١٢٠٠٠ شخص",
+    ];
+    for (const text of texts) {
+      expect(redactPhoneNumbers(text)).toBe(text);
+    }
+  });
+
+  it("leaves ASCII years, full dates, and 8-digit figures alone", () => {
+    const texts = ["since 2023", "on 12.04.2026", "on 2026-04-12", "about 12345678 people"];
+    for (const text of texts) {
+      expect(redactPhoneNumbers(text)).toBe(text);
+    }
+  });
 });
 
 describe("extractUncertaintyMarker", () => {
