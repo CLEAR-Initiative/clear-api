@@ -12,6 +12,7 @@ import {
   type TranslatableEntityType,
 } from "../utils/translation-loader.js";
 import { enqueueTranslation } from "../services/translation-queue.js";
+import { redactPhoneNumbers } from "../services/whatsapp-export.js";
 import { Prisma } from "../generated/prisma/client.js";
 
 interface LocaleTranslationInput {
@@ -45,6 +46,22 @@ const ON_DEMAND_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
 ]);
 
 const ENTITY_TYPE_LIST = [...VALID_ENTITY_TYPES].join(", ");
+
+/**
+ * The payload as stored. A groundMessage translation is hotline text, so it
+ * gets the same phone redaction as every other text entering the ground tier
+ * — the model can surface a number the source only spelt out or wrote in
+ * another script. Every other type is stored as received.
+ */
+function storedTranslationData(
+  entityType: TranslatableEntityType,
+  data: Record<string, unknown>,
+): Prisma.InputJsonValue {
+  if (entityType === "groundMessage" && typeof data.text === "string") {
+    return { ...data, text: redactPhoneNumbers(data.text) } as Prisma.InputJsonValue;
+  }
+  return data as Prisma.InputJsonValue;
+}
 
 /**
  * Case-insensitively resolve a caller-supplied entity type to its canonical
@@ -442,6 +459,7 @@ export const translationResolvers = {
           // entity's relation. The polymorphic columns stay populated
           // for the existing read paths until the loader is rewired.
           const typedFk = { [TRANSLATION_FK[entityType]]: input.entityId };
+          const data = storedTranslationData(entityType, t.data);
           return context.prisma.translations.upsert({
             where: {
               entityType_entityId_locale: {
@@ -455,11 +473,11 @@ export const translationResolvers = {
               entityId: input.entityId,
               ...typedFk,
               locale: t.locale.toLowerCase(),
-              data: t.data as Prisma.InputJsonValue,
+              data,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
             },
             update: {
-              data: t.data as Prisma.InputJsonValue,
+              data,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
               // Defensive backfill on update too — if an older row was
               // written before this migration, the next translation

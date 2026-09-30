@@ -589,6 +589,27 @@ describe("Mutation.upsertTranslations", () => {
     expect(arg.create.analysisId).toBeUndefined();
   });
 
+  it("phone-redacts a groundMessage translation's text, and only that type's", async () => {
+    const leaked = { text: "Call 0912 345 678 now" };
+    const ground = buildCtx(pipeline, { entityType: "groundMessage" });
+    await upsertTranslations(
+      null,
+      { input: { entityType: "groundMessage", entityId: "m1", translations: [{ locale: "en", data: leaked, sourceHashes: { text: "h" } }] } },
+      ground.ctx,
+    );
+    const stored = ground.upsert.mock.calls[0]![0] as UpsertArg;
+    expect(stored.create.data).toEqual({ text: "Call [phone redacted] now" });
+    expect(stored.update.data).toEqual({ text: "Call [phone redacted] now" });
+
+    const event = buildCtx(pipeline, { entityType: "event" });
+    await upsertTranslations(
+      null,
+      { input: { entityType: "event", entityId: "e1", translations: [{ locale: "ar", data: leaked, sourceHashes: { text: "h" } }] } },
+      event.ctx,
+    );
+    expect((event.upsert.mock.calls[0]![0] as UpsertArg).create.data).toEqual(leaked);
+  });
+
   it("allows the pipeline role", async () => {
     const { ctx, $transaction } = buildCtx(pipeline, { entityType: "event" });
     await upsertTranslations(

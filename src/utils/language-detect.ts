@@ -21,7 +21,9 @@ const MIN_LETTERS = 3;
 
 /** Stopwords distinctive to one language. Words the three share ("a", "de",
  * "la", "en", "no", "que", "un", "se", "on") are deliberately left out — they
- * would vote for two languages at once. */
+ * would vote for two languages at once. So are Spanish "el" / "al" / "lo" /
+ * "su": the Arabic article in romanised place names ("El Fasher",
+ * "al Geneina") and romanised Arabic ("ana fi el souq") would read as Spanish. */
 const STOPWORDS: Record<Exclude<DetectedLanguage, "ar">, ReadonlySet<string>> = {
   en: new Set([
     "the", "and", "is", "are", "was", "were", "of", "to", "in", "at", "with",
@@ -34,9 +36,8 @@ const STOPWORDS: Record<Exclude<DetectedLanguage, "ar">, ReadonlySet<string>> = 
     "il", "à", "été", "très", "l",
   ]),
   es: new Set([
-    "el", "los", "las", "del", "está", "están", "es", "y", "una", "por",
-    "para", "con", "pero", "hay", "muy", "al", "lo", "su", "sus", "fue",
-    "nosotros", "ellos",
+    "los", "las", "del", "está", "están", "es", "y", "una", "por", "para",
+    "con", "pero", "hay", "muy", "sus", "fue", "nosotros", "ellos",
   ]),
 };
 

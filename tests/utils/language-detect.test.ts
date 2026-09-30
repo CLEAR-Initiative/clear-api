@@ -31,6 +31,12 @@ describe("detectLanguage", () => {
     expect(detectLanguage("the casa y")).toBeNull();
   });
 
+  it("does not read the romanised Arabic article in place names as Spanish", () => {
+    expect(detectLanguage("Shelling near al Fashir and el Geneina")).toBe("en");
+    expect(detectLanguage("RSF attack el Obeid al Nuhud")).toBeNull();
+    expect(detectLanguage("ana fi el souq, al nas mayteen")).toBeNull();
+  });
+
   it("returns null when another script dominates", () => {
     // Tigrinya (Ethiopic script).
     expect(detectLanguage("ማይ የለን ኣብ ዓዲ")).toBeNull();
