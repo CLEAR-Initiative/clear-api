@@ -413,10 +413,18 @@ export const analysisResolvers = {
       if (input.teamId) {
         await resolveTeamMembership(context.prisma, user.id, input.teamId, user.role);
       }
+      // A pending request for the same frame may belong to another team: dedupe
+      // onto it, but never hand a non-admin that team's requester or error.
+      const ownView = <T extends { teamId: string | null; requestedByUserId: string | null; lastError: string | null }>(
+        row: T,
+      ): T =>
+        isPlatformAdmin(user) || (row.teamId ?? null) === (input.teamId ?? null)
+          ? row
+          : { ...row, teamId: null, requestedByUserId: null, lastError: null };
       const existing = await context.prisma.analysisRequest.findFirst({
         where: { ...frameWhere(input), status: "PENDING" },
       });
-      if (existing) return existing;
+      if (existing) return ownView(existing);
       try {
         return await context.prisma.analysisRequest.create({
           data: {
@@ -437,7 +445,7 @@ export const analysisResolvers = {
           const winner = await context.prisma.analysisRequest.findFirst({
             where: { ...frameWhere(input), status: "PENDING" },
           });
-          if (winner) return winner;
+          if (winner) return ownView(winner);
         }
         throw e;
       }

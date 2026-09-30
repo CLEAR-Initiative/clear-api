@@ -370,6 +370,22 @@ describe("analysis resolver", () => {
         await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-b") }, ctx(admin, prisma));
         expect(rq(prisma).create).toHaveBeenCalledOnce();
       });
+      it("dedupes onto another team's pending request without exposing its requester or error", async () => {
+        const prisma = makePrisma();
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom" };
+        rq(prisma).findFirst.mockResolvedValueOnce(foreign);
+        const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(analyst, prisma));
+        expect(res).toMatchObject({ id: "rq-b", teamId: null, requestedByUserId: null, lastError: null });
+        expect(rq(prisma).create).not.toHaveBeenCalled();
+      });
+
+      it("admin sees the pending request as stored", async () => {
+        const prisma = makePrisma();
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null };
+        rq(prisma).findFirst.mockResolvedValueOnce(foreign);
+        const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(admin, prisma));
+        expect(res).toMatchObject({ teamId: "team-b", requestedByUserId: "u-b" });
+      });
     });
   });
 
