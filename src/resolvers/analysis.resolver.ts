@@ -20,7 +20,12 @@ import { GraphQLError } from "graphql";
 import { Prisma } from "../generated/prisma/client.js";
 
 import type { Context } from "../context.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import {
+  isPlatformAdmin,
+  requireContentReader,
+  requireRole,
+  resolveTeamMembership,
+} from "../utils/auth-guard.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { deepMergeTranslation } from "../utils/translation-merge.js";
 
@@ -95,6 +100,44 @@ function nextScheduledRun(cadence: string, priorNextRunAt: Date | null, now: Dat
   return new Date(next);
 }
 
+/** Team-ownership gate for automation writes. A platform admin passes
+ *  unconditionally; anyone else must be a member of the owning team
+ *  (FORBIDDEN otherwise). A null team is a system/platform-level
+ *  automation and is admin-only. */
+async function requireAutomationTeamAccess(
+  context: Context,
+  user: NonNullable<Context["user"]>,
+  teamId: string | null | undefined,
+): Promise<void> {
+  if (isPlatformAdmin(user)) return;
+  if (!teamId) {
+    throw new GraphQLError("Only a platform admin can manage a team-less automation", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+  await resolveTeamMembership(context.prisma, user.id, teamId, user.role);
+}
+
+/** Load an automation's owning team for an id-addressed write, then apply
+ *  the team gate. Missing id → NOT_FOUND (checked before the gate, matching
+ *  what an admin would see). */
+async function requireAutomationAccessById(
+  context: Context,
+  user: NonNullable<Context["user"]>,
+  id: string,
+): Promise<void> {
+  const automation = await context.prisma.analysisAutomation.findUnique({
+    where: { id },
+    select: { teamId: true },
+  });
+  if (!automation) {
+    throw new GraphQLError("Analysis automation not found", {
+      extensions: { code: "NOT_FOUND" },
+    });
+  }
+  await requireAutomationTeamAccess(context, user, automation.teamId);
+}
+
 export const analysisResolvers = {
   // Overlay the active-locale translation onto the analysis `data` blob
   // (mirrors SituationAnalysis.data). The generation pipeline writes one
@@ -149,17 +192,34 @@ export const analysisResolvers = {
       return context.prisma.analysis.findUnique({ where: { id: args.id } });
     },
 
-    // Automation subscriptions. Admin sees all; a scoped listing per team is a
-    // later refinement (Phase 4 surfaces the scheduler + ownership UX).
+    // Automation subscriptions. A platform admin sees whatever is asked
+    // (all, or one team's). Anyone else is scoped to their own teams: a
+    // `teamId` they don't belong to is FORBIDDEN, and no `teamId` lists only
+    // the automations of teams they are a member of (never team-less/system
+    // rows). The pipeline drains via `dueAnalysisAutomations`, not this.
     analysisAutomations: async (
       _parent: unknown,
       args: { teamId?: string | null; enabledOnly?: boolean | null },
       context: Context,
     ) => {
-      requireContentReader(context);
+      const user = requireContentReader(context);
+      let teamFilter: Prisma.analysisAutomationWhereInput = args.teamId
+        ? { teamId: args.teamId }
+        : {};
+      if (!isPlatformAdmin(user)) {
+        if (args.teamId) {
+          await resolveTeamMembership(context.prisma, user.id, args.teamId, user.role);
+        } else {
+          const memberships = await context.prisma.teamMembers.findMany({
+            where: { userId: user.id },
+            select: { teamId: true },
+          });
+          teamFilter = { teamId: { in: memberships.map((m) => m.teamId) } };
+        }
+      }
       return context.prisma.analysisAutomation.findMany({
         where: {
-          ...(args.teamId ? { teamId: args.teamId } : {}),
+          ...teamFilter,
           ...(args.enabledOnly ? { enabled: true } : {}),
         },
         orderBy: { createdAt: "desc" },
@@ -270,8 +330,9 @@ export const analysisResolvers = {
       args: { input: CreateAnalysisAutomationInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      const user = requireRole(context, ["admin", "analyst"]);
       const { input } = args;
+      await requireAutomationTeamAccess(context, user, input.teamId);
       const data = {
         locationIds: canonicalizeArray(input.locationIds),
         eventTypes: canonicalizeArray(input.eventTypes),
@@ -314,7 +375,8 @@ export const analysisResolvers = {
       args: { id: string; input: UpdateAnalysisAutomationInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      const user = requireRole(context, ["admin", "analyst"]);
+      await requireAutomationAccessById(context, user, args.id);
       const { input } = args;
       return context.prisma.analysisAutomation.update({
         where: { id: args.id },
@@ -330,7 +392,8 @@ export const analysisResolvers = {
       args: { id: string },
       context: Context,
     ): Promise<boolean> => {
-      requireRole(context, ["admin", "analyst"]);
+      const user = requireRole(context, ["admin", "analyst"]);
+      await requireAutomationAccessById(context, user, args.id);
       await context.prisma.analysisAutomation.delete({ where: { id: args.id } });
       return true;
     },
@@ -343,8 +406,13 @@ export const analysisResolvers = {
       args: { input: FrameInput & { teamId?: string | null } },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      const user = requireRole(context, ["admin", "analyst"]);
       const { input } = args;
+      // A team-attributed request must come from a member of that team
+      // (admins bypass). A team-less request stays open to admin/analyst.
+      if (input.teamId) {
+        await resolveTeamMembership(context.prisma, user.id, input.teamId, user.role);
+      }
       const existing = await context.prisma.analysisRequest.findFirst({
         where: { ...frameWhere(input), status: "PENDING" },
       });
