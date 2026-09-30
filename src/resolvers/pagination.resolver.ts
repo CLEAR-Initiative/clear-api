@@ -4,6 +4,7 @@ import { requireContentReader } from "../utils/auth-guard.js";
 import {
   buildEventLocationFilterForTeam,
   buildLocationFilterForTeam,
+  getTeamScopeLocationIds,
 } from "../utils/location-scope.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -394,13 +395,18 @@ async function statsScope(
     // event.types is a text[] — use the && (overlap) operator.
     conds.push(Prisma.sql`${col("types")} && ${input.eventTypes}::text[]`);
   }
+  // origin / destination / general location in `ids` — same shape as
+  // locationWhereForEvent / buildLocationFilterForTeam.
+  const inLocations = (ids: string[]) =>
+    Prisma.sql`(${col("origin_id")} = ANY(${ids}::text[]) OR ${col("destination_id")} = ANY(${ids}::text[]) OR ${col("location_id")} = ANY(${ids}::text[]))`;
+  if (input.teamId) {
+    // undefined = team has no bindings (global monitoring) → no condition.
+    const ids = await getTeamScopeLocationIds(prisma, input.teamId);
+    if (ids) conds.push(inLocations(ids));
+  }
   if (input.locationId) {
     const ids = await getLocationIdsWithDescendants(prisma, input.locationId);
-    if (ids.length > 0) {
-      conds.push(
-        Prisma.sql`(${col("origin_id")} = ANY(${ids}::text[]) OR ${col("destination_id")} = ANY(${ids}::text[]) OR ${col("location_id")} = ANY(${ids}::text[]))`,
-      );
-    }
+    if (ids.length > 0) conds.push(inLocations(ids));
   }
 
   // Prisma.join keeps each condition's bound values attached.
