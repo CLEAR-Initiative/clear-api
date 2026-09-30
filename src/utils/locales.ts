@@ -1,3 +1,5 @@
+import type { TranslatableEntityType } from "./translation-loader.js";
+
 /**
  * Locale set the platform translates content for. `en` is the canonical
  * source; every other entry is a target locale stored in the
@@ -11,6 +13,24 @@ export const SUPPORTED_LOCALES = ["en", "ar", "fr", "es"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = "en";
+
+/**
+ * Entity types whose source text is NOT canonical English but whatever
+ * language its author wrote in — a hotline message is usually Arabic — so
+ * `en` is a valid translation target for them. Every other type is
+ * authored in English and `en` is never stored as a translation.
+ */
+const SOURCE_LANGUAGE_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
+  "groundMessage",
+]);
+
+/** True when `locale` (already lowercased) can be stored as a translation
+ * of `entityType`: a supported locale, and not `en` unless the type's
+ * source isn't English. */
+export function isTargetLocale(entityType: TranslatableEntityType, locale: string): boolean {
+  if (!isSupportedLocale(locale)) return false;
+  return locale !== DEFAULT_LOCALE || SOURCE_LANGUAGE_ENTITY_TYPES.has(entityType);
+}
 
 /**
  * BiDi direction for each locale. Used by server-side rendered HTML

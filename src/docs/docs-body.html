@@ -719,6 +719,12 @@ content, no sender identity.<div class="field-args"><span class="arg"><code>grou
     <td>PIPELINE CONTRACT (admin/pipeline only): active source ids for a
 given kind, minimal projection (no consent/policy fields) — used by
 the hotline enrichment job to enumerate sources to drain.<div class="field-args"><span class="arg"><code>kind: String</code></span><span class="arg"><code>isActive: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessageForTranslation</code></td>
+    <td><code>GroundMessageForTranslation</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): the translate drain's
+canonical fetch for a queued groundMessage translation — text and
+detected language, no sender identity. Null if the message is gone.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1419,6 +1425,17 @@ a warning. Returns the number of messages marked.<div class="field-args"><span c
     <td>Clear a message's failure marker for one stage (admin/analyst), so
 it re-enters that drain's queue on the next pipeline run. No-op when
 the stage isn't marked failed. Returns the message.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>stage: GroundPipelineStage!</code></span></div></td>
+  </tr><tr id="mutation-requestgroundmessagetranslation">
+    <td><code>requestGroundMessageTranslation</code></td>
+    <td><code>GroundMessageTranslation!</code></td>
+    <td>Translate one staged message's text into `locale` (admin/analyst)
+— any supported locale, `en` included (the source is the reporter's
+language). Queues it for the pipeline's translate drain and returns the
+current state; poll GroundMessage.translation(locale) while queued.
+Idempotent: a ready translation is returned as is, a queued one keeps
+its place, and a request after the drain gave up queues it again. A
+message with no text is unavailable. The message's own text is never
+changed.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1460,7 +1477,8 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
         <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
-enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
@@ -2518,7 +2536,8 @@ a crisis it carries the localized title/summary/scenarios/needs with
 the same keys/nesting the English columns use.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locale</code></td>
     <td><code>String!</code></td>
-    <td>BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical).</td>
+    <td>BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical) except
+for groundMessage, whose source is the reporter's language.</td>
   </tr><tr>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
@@ -3290,7 +3309,8 @@ ask for. Not defaulted, deliberately.</td>
   </tr></tbody></table><h3 id="type-upserttranslationsinput"><code>UpsertTranslationsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entityType</code></td>
     <td><code>String!</code></td>
-    <td>One of 'event' | 'crisis' | 'location' (case-insensitive).</td>
+    <td>One of 'event' | 'crisis' | 'location' | 'situationAnalysis' |
+'analysis' | 'groundMessage' (case-insensitive).</td>
   </tr><tr>
     <td><code>entityId</code></td>
     <td><code>String!</code></td>
@@ -4359,7 +4379,21 @@ is scrubbed from anything promoted to the signals graph.</p><table class="ref-ta
   </tr><tr>
     <td><code>text</code></td>
     <td><code>String!</code></td>
-    <td>Message text (redacted). Empty for caption-less media messages.</td>
+    <td>Message text (redacted). Empty for caption-less media messages.
+Always the reporter's original words — translations are a separate
+overlay (see `translation`), never written here.</td>
+  </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String</code></td>
+    <td>Language of `text` as a lowercased ISO 639-1 code (&quot;ar&quot;, &quot;en&quot;,
+&quot;fr&quot;, &quot;es&quot;), detected at intake without an LLM. Null when unknown
+(too short, another language, or ingested before detection).</td>
+  </tr><tr>
+    <td><code>translation</code></td>
+    <td><code>GroundMessageTranslation!</code></td>
+    <td>On-demand translation of `text` into `locale`. `unavailable`
+until requestGroundMessageTranslation queues it; poll while
+`queued`.<div class="field-args"><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr>
     <td><code>mediaKeys</code></td>
     <td><code>[String!]!</code></td>
@@ -4501,6 +4535,32 @@ markGroundMessagesFailed).</td>
     <td><code>transcribeError</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessagefortranslation"><code>GroundMessageForTranslation</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged message for the translate
+drain: text and detected language only — no sender identity.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>Message text (phone-redacted at persistence).</td>
+  </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String</code></td>
+    <td>Detected source language, null when unknown.</td>
+  </tr></tbody></table><h3 id="type-groundmessagetranslation"><code>GroundMessageTranslation</code> <span class="type-badge">object</span></h3><p>A staged message's translation into one locale — a read-only overlay;
+the original text stays canonical.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locale</code></td>
+    <td><code>String!</code></td>
+    <td>Lowercased BCP-47 locale, e.g. &quot;en&quot;.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>GroundTranslationStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String</code></td>
+    <td>Translated text. Null unless `status` is `ready`.</td>
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The
@@ -5845,7 +5905,8 @@ upsertTranslations (which clears the queue row).</p><table class="ref-table"><th
   </tr><tr>
     <td><code>entityType</code></td>
     <td><code>String!</code></td>
-    <td>'event' | 'crisis' | 'location'.</td>
+    <td>'event' | 'crisis' | 'location' | 'situationAnalysis' | 'analysis' |
+'groundMessage'.</td>
   </tr><tr>
     <td><code>entityId</code></td>
     <td><code>String!</code></td>

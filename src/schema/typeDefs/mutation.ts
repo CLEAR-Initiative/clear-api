@@ -643,6 +643,16 @@ export const mutationTypeDef = gql`
     it re-enters that drain's queue on the next pipeline run. No-op when
     the stage isn't marked failed. Returns the message."""
     retryGroundMessage(messageId: String!, stage: GroundPipelineStage!): GroundMessage!
+
+    """Translate one staged message's text into \`locale\` (admin/analyst)
+    — any supported locale, \`en\` included (the source is the reporter's
+    language). Queues it for the pipeline's translate drain and returns the
+    current state; poll GroundMessage.translation(locale) while queued.
+    Idempotent: a ready translation is returned as is, a queued one keeps
+    its place, and a request after the drain gave up queues it again. A
+    message with no text is unavailable. The message's own text is never
+    changed."""
+    requestGroundMessageTranslation(messageId: String!, locale: String!): GroundMessageTranslation!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────

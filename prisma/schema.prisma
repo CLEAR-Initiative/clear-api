@@ -163,13 +163,14 @@ model activityLogs {
 /// the affected field per locale instead of regenerating the whole blob.
 ///
 /// No SQL foreign key — `entityId` is polymorphic across (event, crisis,
-/// location). Cleanup on delete is handled in the app layer; dangling
+/// location, situationAnalysis, analysis, groundMessage). Cleanup on delete is handled in the app layer; dangling
 /// translations are harmless (nothing reads them) and can be GC'd by a
 /// periodic job if they ever accumulate.
 model translations {
   id String @id @default(cuid())
 
-  /// Discriminator: 'event' | 'crisis' | 'location' (extend as needed).
+  /// Discriminator: 'event' | 'crisis' | 'location' | 'situationAnalysis' |
+  /// 'analysis' | 'groundMessage' (extend as needed).
   /// Kept alongside the typed FK columns below for backwards compat with
   /// older write paths and the admin `entitiesMissingTranslation` query.
   /// New code should prefer the typed relations.
@@ -189,12 +190,18 @@ model translations {
   locationId          String? @map("location_id")
   situationAnalysisId String? @map("situation_analysis_id")
   analysisId          String? @map("analysis_id")
+  /// On-demand only: a hotline message is translated when a reviewer asks
+  /// (requestGroundMessageTranslation), never on read. Unlike every other
+  /// type the source is the reporter's language, so `en` is a valid locale
+  /// here. `data` is `{ text }`; ground_messages.text is never overwritten.
+  groundMessageId     String? @map("ground_message_id")
 
   event             events?            @relation(fields: [eventId], references: [id], onDelete: Cascade)
   crisis            crises?            @relation(fields: [crisisId], references: [id], onDelete: Cascade)
   location          locations?         @relation(fields: [locationId], references: [id], onDelete: Cascade)
   situationAnalysis situationAnalysis? @relation(fields: [situationAnalysisId], references: [id], onDelete: Cascade)
   analysis          analysis?          @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  groundMessage     groundMessages?    @relation(fields: [groundMessageId], references: [id], onDelete: Cascade)
 
   /// BCP-47 code (lowercased) — 'ar', 'fr', etc. Matches the
   /// `user.language` field; the resolver context derives locale from there.
@@ -217,6 +224,7 @@ model translations {
   @@unique([locationId, locale])
   @@unique([situationAnalysisId, locale])
   @@unique([analysisId, locale])
+  @@unique([groundMessageId, locale])
   /// Secondary admin queries ("what's covered in Arabic?") use this.
   @@index([entityType, locale])
   @@map("translations")
@@ -229,7 +237,8 @@ model translations {
 /// One row per (entityType, entityId, locale) — a re-enqueue is a no-op upsert.
 model translationQueue {
   id         String   @id @default(cuid())
-  /// 'event' | 'crisis' | 'location' — mirrors `translations.entityType`.
+  /// Mirrors `translations.entityType` ('event' | 'crisis' | 'location' |
+  /// 'situationAnalysis' | 'analysis' | 'groundMessage').
   entityType String   @map("entity_type")
   entityId   String   @map("entity_id")
   /// BCP-47 locale (lowercased), matching `translations.locale`.
@@ -2079,8 +2088,15 @@ model groundMessages {
   senderName String? @map("sender_name")
 
   /// Message text with phone numbers regex-redacted at persistence.
-  /// Empty string for caption-less media messages.
+  /// Empty string for caption-less media messages. Canonical for audit and
+  /// promotion: translations live in the `translations` overlay, never here.
   text String
+
+  /// Language of `text` as a lowercased ISO 639-1 code ("ar", "en", ...),
+  /// set at intake by a cheap script + stopword detector
+  /// (utils/language-detect.ts, no LLM). Null when the detector is unsure,
+  /// the text is empty, or the row predates detection.
+  language String?
 
   /// S3 keys of stored attachments (content-hashed under
   /// "ground/{groundSourceId}/…"). Presigned URLs are generated at read /
@@ -2123,6 +2139,10 @@ model groundMessages {
 
   threadId String?        @map("thread_id")
   thread   groundThreads? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  /// On-demand translations of `text` (entityType 'groundMessage');
+  /// cascade-delete with the message.
+  translations translations[]
 
   createdAt DateTime @default(now()) @map("created_at")
 

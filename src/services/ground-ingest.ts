@@ -28,6 +28,7 @@ import {
   deriveSenderRef,
   withExternalIds,
 } from "./whatsapp-export.js";
+import { detectLanguage } from "../utils/language-detect.js";
 
 export interface GroundMessageCreate {
   groundSourceId: string;
@@ -43,6 +44,9 @@ export interface GroundMessageCreate {
   mediaRefs: string[];
   omittedMediaCount: number;
   uncertainty: string | null;
+  /** Detected language of `text` (utils/language-detect.ts); null when
+   * unknown. Computed from the redacted text, like `uncertainty`. */
+  language: string | null;
   isEdited: boolean;
 }
 
@@ -199,6 +203,7 @@ export async function ingestWhatsAppExport(options: {
       mediaRefs: message.mediaRefs,
       omittedMediaCount: message.omittedMediaCount,
       uncertainty: extractUncertaintyMarker(text),
+      language: detectLanguage(text),
       isEdited: message.isEdited,
     };
 

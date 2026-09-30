@@ -47,6 +47,7 @@ import {
   redactPhoneNumbers,
 } from "./whatsapp-export.js";
 import { deriveThreadTitle, type GroundMessageCreate } from "./ground-ingest.js";
+import { detectLanguage } from "../utils/language-detect.js";
 
 /** The slice of a groundSources row the hotline gate judges. */
 export interface HotlineSourceRow {
@@ -266,6 +267,7 @@ export async function ingestHotlineMessage(options: {
     mediaRefs,
     omittedMediaCount: 0,
     uncertainty: extractUncertaintyMarker(text),
+    language: detectLanguage(text),
     isEdited: false,
   };
 

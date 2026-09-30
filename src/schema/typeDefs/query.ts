@@ -538,5 +538,10 @@ export const queryTypeDef = gql`
     given kind, minimal projection (no consent/policy fields) — used by
     the hotline enrichment job to enumerate sources to drain."""
     pipelineGroundSourceIds(kind: String, isActive: Boolean = true): [String!]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): the translate drain's
+    canonical fetch for a queued groundMessage translation — text and
+    detected language, no sender identity. Null if the message is gone."""
+    groundMessageForTranslation(id: String!): GroundMessageForTranslation
   }
 `;

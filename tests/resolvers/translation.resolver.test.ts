@@ -208,6 +208,14 @@ describe("Query.entitiesMissingTranslation", () => {
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
   });
 
+  it("rejects groundMessage — on-demand only, no backlog to list", async () => {
+    const { ctx, translationsFind } = buildCtx(admin);
+    await expect(
+      entitiesMissingTranslation(null, { entityType: "groundMessage", locale: "ar" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(translationsFind).not.toHaveBeenCalled();
+  });
+
   it("rejects locale 'en' as canonical (case-insensitive)", async () => {
     const { ctx, eventsFind } = buildCtx(admin);
     await expect(
@@ -277,8 +285,10 @@ describe("Query.translationCoverage", () => {
     }>;
 
     // 5 entity types x 3 target locales (ar, fr, es — 'en' excluded) = 15 rows.
+    // groundMessage is on-demand only, so it has no coverage row.
     expect(out).toHaveLength(15);
     expect(out.some((r) => r.locale === "en")).toBe(false);
+    expect(out.some((r) => r.entityType === "groundMessage")).toBe(false);
 
     // The one grouped row is reflected; every other cell zero-filled.
     const eventAr = out.find((r) => r.entityType === "event" && r.locale === "ar");
@@ -310,7 +320,7 @@ describe("Mutation.upsertTranslations", () => {
     user: User,
     opts: {
       entityExists?: boolean;
-      entityType?: "event" | "crisis" | "location";
+      entityType?: "event" | "crisis" | "location" | "groundMessage";
     } = {},
   ) {
     const { entityExists = true, entityType = "event" } = opts;
@@ -319,6 +329,9 @@ describe("Mutation.upsertTranslations", () => {
     const eventsFind = vi.fn().mockResolvedValue(entityType === "event" ? found : null);
     const crisesFind = vi.fn().mockResolvedValue(entityType === "crisis" ? found : null);
     const locationsFind = vi.fn().mockResolvedValue(entityType === "location" ? found : null);
+    const groundMessagesFind = vi
+      .fn()
+      .mockResolvedValue(entityType === "groundMessage" ? found : null);
 
     const upsert = vi.fn((arg: unknown) => ({ __upsert: arg }));
     // $transaction receives the array of upsert "operations" (here, the
@@ -332,6 +345,7 @@ describe("Mutation.upsertTranslations", () => {
       events: { findUnique: eventsFind },
       crises: { findUnique: crisesFind },
       locations: { findUnique: locationsFind },
+      groundMessages: { findUnique: groundMessagesFind },
       translations: { upsert },
       translationQueue: { deleteMany: queueDeleteMany },
       $transaction,
@@ -549,6 +563,30 @@ describe("Mutation.upsertTranslations", () => {
     expect(arg.create.locationId).toBe("l1");
     expect(arg.create.eventId).toBeUndefined();
     expect(arg.create.crisisId).toBeUndefined();
+  });
+
+  it("accepts 'en' for a groundMessage and sets only its groundMessageId FK", async () => {
+    const { ctx, upsert } = buildCtx(pipeline, { entityType: "groundMessage" });
+    await upsertTranslations(
+      null,
+      {
+        input: {
+          entityType: "groundMessage",
+          entityId: "m1",
+          translations: [{ locale: "EN", data: { text: "Shelling" }, sourceHashes: { text: "h" } }],
+        },
+      },
+      ctx,
+    );
+    const arg = upsert.mock.calls[0]![0] as UpsertArg;
+    expect(arg.where.entityType_entityId_locale).toEqual({
+      entityType: "groundMessage",
+      entityId: "m1",
+      locale: "en",
+    });
+    expect(arg.create).toMatchObject({ groundMessageId: "m1", locale: "en", data: { text: "Shelling" } });
+    expect(arg.create.eventId).toBeUndefined();
+    expect(arg.create.analysisId).toBeUndefined();
   });
 
   it("allows the pipeline role", async () => {

@@ -33,6 +33,8 @@ import {
   extractUncertaintyMarker,
   redactPhoneNumbers,
 } from "../services/whatsapp-export.js";
+import { enqueueTranslation } from "../services/translation-queue.js";
+import { isTargetLocale } from "../utils/locales.js";
 
 /** Hotline ingest labels each attachment `voice-{i}` or `media-{i}` in
  * mediaRefs (see hotline-ingest.ts). mediaRefs is set when the row is
@@ -83,6 +85,61 @@ const GROUND_LIFECYCLE_STATES = new Set([
   "corrected",
   "retracted",
 ]);
+
+/** GraphQL GroundMessageTranslation. `text` is set only when ready. */
+interface GroundTranslationState {
+  locale: string;
+  status: "queued" | "ready" | "unavailable";
+  text: string | null;
+}
+
+/** Lowercase and validate a requested translation locale. Any supported
+ * locale is a valid target for a hotline message — `en` included, since
+ * the source is the reporter's language (see isTargetLocale). */
+function groundTranslationLocale(raw: string): string {
+  const locale = raw.trim().toLowerCase();
+  if (!isTargetLocale("groundMessage", locale)) {
+    throw new GraphQLError(`Unsupported locale "${raw}".`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return locale;
+}
+
+/**
+ * Where one message's on-demand translation into `locale` stands:
+ *   ready       — the translations overlay row exists (its `data.text`).
+ *   queued      — requested; the Dagster translate drain hasn't written it.
+ *   unavailable — neither: never requested, the message has no text, or
+ *                 the drain gave up (it clears the queue row without a
+ *                 write). Requesting again re-queues it.
+ *
+ * Reads the queue BEFORE the overlay: the drain writes the overlay and
+ * then clears the queue row, so this order can never observe "neither"
+ * mid-completion — the other order could, and would report a finished
+ * translation as unavailable (stopping the inbox's poll).
+ */
+async function groundTranslationState(
+  context: Context,
+  message: { id: string; text: string },
+  locale: string,
+): Promise<GroundTranslationState> {
+  if (message.text.trim().length === 0) return { locale, status: "unavailable", text: null };
+
+  const queued = await context.prisma.translationQueue.findUnique({
+    where: {
+      entityType_entityId_locale: { entityType: "groundMessage", entityId: message.id, locale },
+    },
+    select: { id: true },
+  });
+  const row = await context.prisma.translations.findUnique({
+    where: { groundMessageId_locale: { groundMessageId: message.id, locale } },
+    select: { data: true },
+  });
+  const data = row?.data as { text?: unknown } | null | undefined;
+  if (typeof data?.text === "string") return { locale, status: "ready", text: data.text };
+  return { locale, status: queued ? "queued" : "unavailable", text: null };
+}
 
 /**
  * Parse a date-string input into a Date, rejecting unparseable values
@@ -327,6 +384,24 @@ export const groundResolvers = {
             : {}),
         },
         orderBy: { createdAt: "asc" },
+      });
+    },
+
+    /**
+     * PIPELINE CONTRACT: the Dagster translate drain's canonical fetch for
+     * a queued groundMessage translation. Text + detected language only —
+     * no sender identity, no media. Null when the message is gone (the
+     * drain then drops its queue rows).
+     */
+    groundMessageForTranslation: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      return context.prisma.groundMessages.findUnique({
+        where: { id: args.id },
+        select: { id: true, text: true, language: true },
       });
     },
 
@@ -1040,6 +1115,45 @@ export const groundResolvers = {
     },
 
     /**
+     * Reviewer action: translate one message's text into `locale` (the
+     * reader's UI locale — usually `en`, the source being Arabic). Queues
+     * an (groundMessage, id, locale) row on the translation queue for the
+     * Dagster translate drain and returns the current state; poll
+     * GroundMessage.translation(locale) while it is queued.
+     *
+     * Idempotent: an already-ready translation is returned without
+     * re-queueing, and a re-request of a queued one keeps its place. A
+     * request after the drain gave up (unavailable) queues it again. A
+     * message without text has nothing to translate: unavailable, nothing
+     * queued. ground_messages.text is never touched — the translation is a
+     * read-only overlay row.
+     */
+    requestGroundMessageTranslation: async (
+      _parent: unknown,
+      args: { messageId: string; locale: string },
+      context: Context,
+    ): Promise<GroundTranslationState> => {
+      requireRole(context, ["admin", "analyst"]);
+      const locale = groundTranslationLocale(args.locale);
+
+      const message = await context.prisma.groundMessages.findUnique({
+        where: { id: args.messageId },
+        select: { id: true, text: true },
+      });
+      if (!message) {
+        throw new GraphQLError("Ground message not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      if (message.text.trim().length === 0) return { locale, status: "unavailable", text: null };
+
+      const current = await groundTranslationState(context, message, locale);
+      if (current.status === "ready") return current;
+      await enqueueTranslation(context.prisma, "groundMessage", message.id, locale);
+      return { locale, status: "queued", text: null };
+    },
+
+    /**
      * Reviewer action: clear one stage's failure marker so the message
      * re-enters that drain's queue on the next pipeline run (with a fresh
      * set of attempts — the pipeline resets its counter when it marks).
@@ -1085,6 +1199,13 @@ export const groundResolvers = {
      * and the failure markers need no resolver — they are read straight
      * off the row. */
     hasVoice: (parent: { mediaRefs: string[] }) => hasVoiceRef(parent.mediaRefs),
+    /** On-demand translation state for `locale`; see
+     * requestGroundMessageTranslation. */
+    translation: async (
+      parent: { id: string; text: string },
+      args: { locale: string },
+      context: Context,
+    ) => groundTranslationState(context, parent, groundTranslationLocale(args.locale)),
   },
 
   GroundThread: {
