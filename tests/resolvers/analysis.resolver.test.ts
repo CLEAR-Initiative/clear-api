@@ -25,6 +25,7 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   const analysisAutomation = {
     findMany: vi.fn(async () => []),
     findFirst: vi.fn(async () => null),
+    findUnique: vi.fn(async (): Promise<{ teamId: string | null } | null> => null),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "au-1", ...data })),
     update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "au-1", ...data })),
     delete: vi.fn(async () => ({ id: "au-1" })),
@@ -35,7 +36,18 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
     update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
   };
-  const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest };
+  // Membership fixture: analyst belongs to team-a only.
+  const MEMBERSHIPS: Record<string, string[]> = { "u-analyst": ["team-a"], "u-viewer": ["team-a"] };
+  const teamMembers = {
+    findUnique: vi.fn(async ({ where }: { where: { teamId_userId: { teamId: string; userId: string } } }) => {
+      const { teamId, userId } = where.teamId_userId;
+      return (MEMBERSHIPS[userId] ?? []).includes(teamId) ? { teamId, userId, role: "team_member" } : null;
+    }),
+    findMany: vi.fn(async ({ where }: { where: { userId: string } }) =>
+      (MEMBERSHIPS[where.userId] ?? []).map((teamId) => ({ teamId })),
+    ),
+  };
+  const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest, teamMembers };
   // upsert passes a callback (tx === the same mock); markRan passes an array.
   prisma.$transaction = vi.fn(async (arg: unknown) =>
     typeof arg === "function"
@@ -177,7 +189,7 @@ describe("analysis resolver", () => {
   });
 
   describe("createAnalysisAutomation — re-subscribe updates cadence", () => {
-    const input = () => ({ locationIds: ["a"], windowStart: new Date("2026-01-01"), cadence: "daily" });
+    const input = () => ({ locationIds: ["a"], windowStart: new Date("2026-01-01"), cadence: "daily", teamId: "team-a" });
 
     it("updates the existing (frame, owner) automation on a P2002 rather than throwing", async () => {
       const prisma = makePrisma();
@@ -189,6 +201,191 @@ describe("analysis resolver", () => {
       const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: input() }, ctx(analyst, prisma));
       expect(au.update).toHaveBeenCalledWith({ where: { id: "au-existing" }, data: { cadence: "daily", enabled: true } });
       expect(res.cadence).toBe("daily");
+    });
+  });
+
+  describe("team authorization (S1/S2)", () => {
+    type Fn = ReturnType<typeof vi.fn>;
+    const au = (prisma: Record<string, unknown>) => prisma.analysisAutomation as Record<string, Fn>;
+    const createInput = (teamId: string | null) => ({
+      locationIds: ["a"], windowStart: new Date("2026-01-01"), cadence: "daily", teamId,
+    });
+
+    describe("analysisAutomations — list scoping", () => {
+      it("admin with no teamId sees everything (no team filter)", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.analysisAutomations(null, {}, ctx(admin, prisma));
+        expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({});
+      });
+
+      it("admin can list any team without membership", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.analysisAutomations(null, { teamId: "team-b" }, ctx(admin, prisma));
+        expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({ teamId: "team-b" });
+      });
+
+      it("member can list their team", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.analysisAutomations(null, { teamId: "team-a", enabledOnly: true }, ctx(viewer, prisma));
+        expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({ teamId: "team-a", enabled: true });
+      });
+
+      it("non-member is FORBIDDEN for another team", async () => {
+        const prisma = makePrisma();
+        await expect(
+          analysisResolvers.Query.analysisAutomations(null, { teamId: "team-b" }, ctx(viewer, prisma)),
+        ).rejects.toThrow(/not a member/i);
+        expect(au(prisma).findMany).not.toHaveBeenCalled();
+      });
+
+      it("non-admin with no teamId is scoped to their own teams", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.analysisAutomations(null, {}, ctx(analyst, prisma));
+        expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({ teamId: { in: ["team-a"] } });
+      });
+
+      it("non-admin with no memberships gets an empty scope", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.analysisAutomations(null, {}, ctx({ id: "u-lonely", role: "viewer" }, prisma));
+        expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({ teamId: { in: [] } });
+      });
+    });
+
+    describe("createAnalysisAutomation", () => {
+      it("member analyst can create for their team", async () => {
+        const prisma = makePrisma();
+        const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(analyst, prisma));
+        expect(res.teamId).toBe("team-a");
+      });
+
+      it("non-member analyst is FORBIDDEN", async () => {
+        const prisma = makePrisma();
+        await expect(
+          analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-b") }, ctx(analyst, prisma)),
+        ).rejects.toThrow(/not a member/i);
+        expect(au(prisma).create).not.toHaveBeenCalled();
+      });
+
+      it("team-less (system) automation is admin-only", async () => {
+        const prisma = makePrisma();
+        await expect(
+          analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput(null) }, ctx(analyst, prisma)),
+        ).rejects.toThrow(/platform admin/i);
+        expect(au(prisma).create).not.toHaveBeenCalled();
+      });
+
+      it("admin bypasses membership (any team, or none)", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-b") }, ctx(admin, prisma));
+        await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput(null) }, ctx(admin, prisma));
+        expect(au(prisma).create).toHaveBeenCalledTimes(2);
+      });
+
+      it("viewer is still rejected by the role gate", async () => {
+        await expect(
+          analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(viewer)),
+        ).rejects.toThrow(/insufficient permissions/i);
+      });
+    });
+
+    describe("update / delete by id", () => {
+      const cases = [
+        ["updateAnalysisAutomation", (c: Context) =>
+          analysisResolvers.Mutation.updateAnalysisAutomation(null, { id: "au-1", input: { enabled: false } }, c)],
+        ["deleteAnalysisAutomation", (c: Context) =>
+          analysisResolvers.Mutation.deleteAnalysisAutomation(null, { id: "au-1" }, c)],
+      ] as const;
+      const writeFn = (prisma: Record<string, unknown>, name: string) =>
+        name === "updateAnalysisAutomation" ? au(prisma).update : au(prisma).delete;
+
+      for (const [name, call] of cases) {
+        describe(name, () => {
+          it("missing id is NOT_FOUND", async () => {
+            const prisma = makePrisma();
+            await expect(call(ctx(analyst, prisma))).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+            expect(writeFn(prisma, name)).not.toHaveBeenCalled();
+          });
+
+          it("member of the owning team is allowed", async () => {
+            const prisma = makePrisma();
+            au(prisma).findUnique.mockResolvedValue({ teamId: "team-a" });
+            await call(ctx(analyst, prisma));
+            expect(writeFn(prisma, name)).toHaveBeenCalledOnce();
+          });
+
+          it("non-member is FORBIDDEN", async () => {
+            const prisma = makePrisma();
+            au(prisma).findUnique.mockResolvedValue({ teamId: "team-b" });
+            await expect(call(ctx(analyst, prisma))).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+            expect(writeFn(prisma, name)).not.toHaveBeenCalled();
+          });
+
+          it("null-team (system) automation is admin-only", async () => {
+            const prisma = makePrisma();
+            au(prisma).findUnique.mockResolvedValue({ teamId: null });
+            await expect(call(ctx(analyst, prisma))).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+            expect(writeFn(prisma, name)).not.toHaveBeenCalled();
+          });
+
+          it("admin bypasses membership", async () => {
+            const prisma = makePrisma();
+            au(prisma).findUnique.mockResolvedValue({ teamId: null });
+            await call(ctx(admin, prisma));
+            au(prisma).findUnique.mockResolvedValue({ teamId: "team-b" });
+            await call(ctx(admin, prisma));
+            expect(writeFn(prisma, name)).toHaveBeenCalledTimes(2);
+          });
+        });
+      }
+    });
+
+    describe("requestAnalysis — team attribution", () => {
+      const input = (teamId?: string | null) => ({
+        locationIds: ["a"], windowStart: new Date("2026-01-01"), teamId,
+      });
+      const rq = (prisma: Record<string, unknown>) => prisma.analysisRequest as Record<string, Fn>;
+
+      it("member can request for their team", async () => {
+        const prisma = makePrisma();
+        const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(analyst, prisma));
+        expect(res.teamId).toBe("team-a");
+      });
+
+      it("non-member is FORBIDDEN", async () => {
+        const prisma = makePrisma();
+        await expect(
+          analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-b") }, ctx(analyst, prisma)),
+        ).rejects.toThrow(/not a member/i);
+        expect(rq(prisma).create).not.toHaveBeenCalled();
+      });
+
+      it("team-less request stays open to analysts", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Mutation.requestAnalysis(null, { input: input(null) }, ctx(analyst, prisma));
+        expect(rq(prisma).create).toHaveBeenCalledOnce();
+      });
+
+      it("admin bypasses membership", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-b") }, ctx(admin, prisma));
+        expect(rq(prisma).create).toHaveBeenCalledOnce();
+      });
+      it("dedupes onto another team's pending request without exposing its requester or error", async () => {
+        const prisma = makePrisma();
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom" };
+        rq(prisma).findFirst.mockResolvedValueOnce(foreign);
+        const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(analyst, prisma));
+        expect(res).toMatchObject({ id: "rq-b", teamId: null, requestedByUserId: null, lastError: null });
+        expect(rq(prisma).create).not.toHaveBeenCalled();
+      });
+
+      it("admin sees the pending request as stored", async () => {
+        const prisma = makePrisma();
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null };
+        rq(prisma).findFirst.mockResolvedValueOnce(foreign);
+        const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(admin, prisma));
+        expect(res).toMatchObject({ teamId: "team-b", requestedByUserId: "u-b" });
+      });
     });
   });
 
