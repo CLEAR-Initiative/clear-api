@@ -784,8 +784,9 @@ Approved users only.<div class="field-args"><span class="arg"><code>input: Upser
     <td><code>upsertConversationMessages</code></td>
     <td><code>[ConversationMessage!]!</code></td>
     <td>Create or replace messages in one of your Conversations, matched by id
-(at most 200 per call). Only the owner can write, admins included.
-Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+(at most 200 per call). Only the owner can write, admins included, and
+only with a session (not an API key). An Answer whose usage is recorded
+can't change. Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
   </tr><tr id="mutation-saveagentworkingmemory">
     <td><code>saveAgentWorkingMemory</code></td>
     <td><code>AgentWorkingMemory!</code></td>
@@ -795,7 +796,8 @@ Returns the messages in input order.<div class="field-args"><span class="arg"><c
     <td><code>ConversationMessage!</code></td>
     <td>Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
 its Answer, an `assistant` message in one of your Conversations. The
-cost counts toward your daily Agent budget. Owner only.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
+cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+turn's usage is already recorded. Owner only, with a session.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>

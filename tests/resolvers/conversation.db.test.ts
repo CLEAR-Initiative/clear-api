@@ -136,6 +136,39 @@ describeIfDb("Conversations against the real schema", () => {
     const after = await myAgentBudget(null, {}, ctx);
     expect(after.spentTodayUsd - before.spentTodayUsd).toBeCloseTo(0.25);
     expect(after.resetsAt.getTime()).toBeGreaterThan(Date.now());
+
+    // Charged once: neither a lower re-record nor a rewrite of the Answer.
+    await expect(
+      recordConversationTurnUsage(
+        null,
+        {
+          messageId: `${RUN}-m2`,
+          usage: { model: "test/model", inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 0 },
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: T1, messages: [{ id: `${RUN}-m2`, role: "assistant", content: text("Forged") }] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect((await myAgentBudget(null, {}, ctx)).spentTodayUsd).toBeCloseTo(after.spentTodayUsd);
+  });
+
+  it("never writes a message id that lives in another Conversation", async () => {
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: T2, messages: [{ id: `${RUN}-m1`, role: "user", content: text("Hijack") }] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const original = await prisma.conversationMessages.findUniqueOrThrow({ where: { id: `${RUN}-m1` } });
+    expect(original.conversationId).toBe(T1);
+    expect(original.content).toEqual(text("Access in Darfur?"));
   });
 
   it("upserts working memory, one row per user", async () => {

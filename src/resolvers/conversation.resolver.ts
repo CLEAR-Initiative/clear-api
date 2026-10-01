@@ -80,6 +80,12 @@ function jsonOrDbNull(value: unknown): InputJsonValue | typeof Prisma.DbNull {
   return value === null ? Prisma.DbNull : (value as InputJsonValue);
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
+  );
+}
+
 function badInput(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
 }
@@ -116,6 +122,22 @@ function assertId(id: string, what: string): void {
   if (!id || id.length > MAX_ID_LENGTH) {
     throw badInput(`${what} id must be 1–${MAX_ID_LENGTH} characters`);
   }
+}
+
+/**
+ * Gate for every write. Conversations are written by the CLEAR Agent in
+ * clear-mvp with the user's session, never with an API key: a key is for
+ * reading CLEAR from scripts, and accepting it here would let any approved
+ * user script edits to their own audit record.
+ */
+function requireConversationWriter(context: Context): User {
+  const user = requireContentReader(context);
+  if (context.authMethod !== "session") {
+    throw forbidden(
+      "Conversations are written by the CLEAR Agent in the app, not with an API key",
+    );
+  }
+  return user;
 }
 
 /**
@@ -237,7 +259,7 @@ export const conversationResolvers = {
       args: { input: UpsertConversationInput },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireConversationWriter(context);
       const { id, title, metadata, createdAt } = args.input;
       assertId(id, "Conversation");
 
@@ -277,7 +299,7 @@ export const conversationResolvers = {
       args: { conversationId: string; messages: ConversationMessageInput[] },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireConversationWriter(context);
       const { conversationId, messages } = args;
       if (messages.length > MAX_MESSAGES_PER_CALL) {
         throw badInput(
@@ -291,17 +313,22 @@ export const conversationResolvers = {
       await loadWritableConversation(context, user, conversationId);
       if (messages.length === 0) return [];
 
-      // A message id already used in another Conversation (possibly another
-      // user's) must never be overwritten through this one.
       const ids = messages.map((m) => m.id);
-      const elsewhere = await context.prisma.conversationMessages.findFirst({
-        where: { id: { in: ids }, conversationId: { not: conversationId } },
-        select: { id: true },
+      const existing = await context.prisma.conversationMessages.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, conversationId: true, usageRecordedAt: true },
       });
-      if (elsewhere) {
-        throw forbidden(
-          `Message ${elsewhere.id} belongs to another Conversation`,
-        );
+      for (const row of existing) {
+        // A message id already used in another Conversation (possibly
+        // another user's) must never be overwritten through this one.
+        if (row.conversationId !== conversationId) {
+          throw forbidden(`Message ${row.id} belongs to another Conversation`);
+        }
+        // Once a turn is charged its Answer is the record of what the Agent
+        // said; it can't be rewritten afterwards.
+        if (row.usageRecordedAt) {
+          throw forbidden(`Message ${row.id} is a recorded Answer and can't change`);
+        }
       }
 
       const writes = messages.map((m) => {
@@ -311,8 +338,11 @@ export const conversationResolvers = {
           type: m.type ?? null,
           content: m.content as InputJsonValue,
         };
+        // Scoping the upsert to this Conversation makes the check above
+        // atomic: an id claimed elsewhere in the meantime fails the insert
+        // (P2002) instead of updating the other Conversation's row.
         return context.prisma.conversationMessages.upsert({
-          where: { id: m.id },
+          where: { id: m.id, conversationId },
           create: { id: m.id, conversationId, ...fields, createdAt },
           update: { ...fields, ...(createdAt ? { createdAt } : {}) },
         });
@@ -322,8 +352,15 @@ export const conversationResolvers = {
         where: { id: conversationId },
         data: { updatedAt: new Date() },
       });
-      const results = await context.prisma.$transaction([...writes, touch]);
-      return results.slice(0, writes.length);
+      try {
+        const results = await context.prisma.$transaction([...writes, touch]);
+        return results.slice(0, writes.length);
+      } catch (err) {
+        if (isUniqueViolation(err)) {
+          throw forbidden("A message id belongs to another Conversation");
+        }
+        throw err;
+      }
     },
 
     saveAgentWorkingMemory: (
@@ -331,7 +368,7 @@ export const conversationResolvers = {
       args: { input: SaveAgentWorkingMemoryInput },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireConversationWriter(context);
       const { workingMemory, metadata } = args.input;
       if (workingMemory && workingMemory.length > MAX_WORKING_MEMORY_LENGTH) {
         throw badInput(
@@ -357,7 +394,7 @@ export const conversationResolvers = {
       args: { messageId: string; usage: ConversationTurnUsageInput },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireConversationWriter(context);
       const { model, inputTokens, outputTokens, costUsd, latencyMs } =
         args.usage;
       if (!model) throw badInput("model is required");
@@ -378,7 +415,6 @@ export const conversationResolvers = {
         where: { id: args.messageId },
         select: {
           role: true,
-          usageRecordedAt: true,
           conversation: { select: { userId: true } },
         },
       });
@@ -393,17 +429,24 @@ export const conversationResolvers = {
       if (message.role !== "assistant") {
         throw badInput("Usage is recorded on assistant messages only");
       }
-      return context.prisma.conversationMessages.update({
-        where: { id: args.messageId },
+      // Write-once, atomically: a turn is charged exactly once, so recorded
+      // spend can never be lowered afterwards to reopen the budget.
+      const { count } = await context.prisma.conversationMessages.updateMany({
+        where: { id: args.messageId, usageRecordedAt: null },
         data: {
           model,
           inputTokens,
           outputTokens,
           costUsd,
           latencyMs,
-          // A correction keeps the turn on the day it was first charged.
-          usageRecordedAt: message.usageRecordedAt ?? new Date(),
+          usageRecordedAt: new Date(),
         },
+      });
+      if (count === 0) {
+        throw forbidden("Usage for this turn is already recorded");
+      }
+      return context.prisma.conversationMessages.findUniqueOrThrow({
+        where: { id: args.messageId },
       });
     },
   },

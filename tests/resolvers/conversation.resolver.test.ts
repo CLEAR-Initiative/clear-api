@@ -31,7 +31,11 @@ interface PrismaStub {
   $transaction?: unknown;
 }
 
-function buildContext(user: User, prisma: PrismaStub = {}): Context {
+function buildContext(
+  user: User,
+  prisma: PrismaStub = {},
+  authMethod: "session" | "api-key" = "session",
+): Context {
   return {
     prisma: {
       conversations: {},
@@ -41,7 +45,7 @@ function buildContext(user: User, prisma: PrismaStub = {}): Context {
     } as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
-    authMethod: user ? "session" : null,
+    authMethod: user ? authMethod : null,
   } as Context;
 }
 
@@ -227,6 +231,12 @@ describe("Mutation.upsertConversation", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("is FORBIDDEN with an API key", async () => {
+    await expect(
+      upsertConversation(null, { input: { id: "t1" } }, buildContext(OWNER, {}, "api-key")),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
   it("rejects an over-long id", async () => {
     const ctx = buildContext(OWNER);
     await expect(
@@ -265,7 +275,7 @@ describe("Mutation.upsertConversationMessages", () => {
         update: touch,
       },
       conversationMessages: {
-        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
         upsert,
         ...extra,
       },
@@ -285,7 +295,7 @@ describe("Mutation.upsertConversationMessages", () => {
       create: Record<string, unknown>;
       update: Record<string, unknown>;
     };
-    expect(call.where).toEqual({ id: "m1" });
+    expect(call.where).toEqual({ id: "m1", conversationId: "t1" });
     expect(call.create).toMatchObject({
       id: "m1",
       conversationId: "t1",
@@ -303,7 +313,9 @@ describe("Mutation.upsertConversationMessages", () => {
 
   it("is FORBIDDEN when a message id belongs to another Conversation", async () => {
     const { ctx, upsert } = ownerContext({
-      findFirst: vi.fn().mockResolvedValue({ id: "m1" }),
+      findMany: vi
+        .fn()
+        .mockResolvedValue([{ id: "m1", conversationId: "other", usageRecordedAt: null }]),
     });
     await expect(
       upsertConversationMessages(
@@ -313,6 +325,53 @@ describe("Mutation.upsertConversationMessages", () => {
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("is FORBIDDEN to rewrite an Answer whose usage is recorded", async () => {
+    const { ctx, upsert } = ownerContext({
+      findMany: vi.fn().mockResolvedValue([
+        { id: "m1", conversationId: "t1", usageRecordedAt: new Date() },
+      ]),
+    });
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [userTurn] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("maps an id claimed concurrently elsewhere (P2002) to FORBIDDEN", async () => {
+    const { ctx } = ownerContext();
+    (ctx.prisma as unknown as { $transaction: unknown }).$transaction = () =>
+      Promise.reject(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint", {
+          code: "P2002",
+          clientVersion: "test",
+        }),
+      );
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [userTurn] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("is FORBIDDEN with an API key, before any lookup", async () => {
+    const findUnique = vi.fn();
+    const ctx = buildContext(OWNER, { conversations: { findUnique } }, "api-key");
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [userTurn] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN for another user, and writes nothing", async () => {
@@ -497,29 +556,29 @@ describe("Mutation.recordConversationTurnUsage", () => {
     costUsd: 0.0087,
     latencyMs: 4200,
   };
-  const answer = {
-    role: "assistant",
-    usageRecordedAt: null,
-    conversation: { userId: "u1" },
-  };
+  const answer = { role: "assistant", conversation: { userId: "u1" } };
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("records usage on the owner's Answer, stamped with server time", async () => {
+  it("records usage once on the owner's Answer, stamped with server time", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-01T09:30:00.000Z"));
-    const update = vi.fn().mockResolvedValue({ id: "m2" });
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const findUniqueOrThrow = vi.fn().mockResolvedValue({ id: "m2" });
     const ctx = buildContext(OWNER, {
       conversationMessages: {
         findUnique: vi.fn().mockResolvedValue(answer),
-        update,
+        updateMany,
+        findUniqueOrThrow,
       },
     });
-    await recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx);
-    expect(update).toHaveBeenCalledWith({
-      where: { id: "m2" },
+    await expect(
+      recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx),
+    ).resolves.toEqual({ id: "m2" });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "m2", usageRecordedAt: null },
       data: {
         ...usage,
         usageRecordedAt: new Date("2026-10-01T09:30:00.000Z"),
@@ -527,32 +586,44 @@ describe("Mutation.recordConversationTurnUsage", () => {
     });
   });
 
-  it("keeps the first recording time when usage is corrected", async () => {
-    const first = new Date("2026-09-30T23:59:00.000Z");
-    const update = vi.fn().mockResolvedValue({ id: "m2" });
+  it("is FORBIDDEN to re-record (e.g. lower) a turn's usage", async () => {
     const ctx = buildContext(OWNER, {
       conversationMessages: {
-        findUnique: vi.fn().mockResolvedValue({ ...answer, usageRecordedAt: first }),
-        update,
+        findUnique: vi.fn().mockResolvedValue(answer),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
     });
-    await recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx);
-    expect(update.mock.calls[0][0].data.usageRecordedAt).toBe(first);
+    await expect(
+      recordConversationTurnUsage(
+        null,
+        { messageId: "m2", usage: { ...usage, costUsd: 0 } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("is FORBIDDEN with an API key", async () => {
+    const findUnique = vi.fn();
+    const ctx = buildContext(OWNER, { conversationMessages: { findUnique } }, "api-key");
+    await expect(
+      recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN for another user and for an admin, and writes nothing", async () => {
     for (const user of [OTHER, ADMIN]) {
-      const update = vi.fn();
+      const updateMany = vi.fn();
       const ctx = buildContext(user, {
         conversationMessages: {
           findUnique: vi.fn().mockResolvedValue(answer),
-          update,
+          updateMany,
         },
       });
       await expect(
         recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx),
       ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-      expect(update).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
     }
   });
 
@@ -696,6 +767,13 @@ describe("Agent working memory", () => {
     const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } });
     await saveAgentWorkingMemory(null, { input: { metadata: { v: 2 } } }, ctx);
     expect(upsert.mock.calls[0][0].update).toEqual({ metadata: { v: 2 } });
+  });
+
+  it("refuses a write with an API key", () => {
+    const upsert = vi.fn();
+    const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } }, "api-key");
+    expect(() => saveAgentWorkingMemory(null, { input: {} }, ctx)).toThrow(/API key/);
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("rejects an oversized working memory", async () => {

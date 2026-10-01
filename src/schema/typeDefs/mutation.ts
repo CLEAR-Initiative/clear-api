@@ -16,8 +16,9 @@ export const mutationTypeDef = gql`
     upsertConversation(input: UpsertConversationInput!): Conversation!
 
     """Create or replace messages in one of your Conversations, matched by id
-    (at most 200 per call). Only the owner can write, admins included.
-    Returns the messages in input order."""
+    (at most 200 per call). Only the owner can write, admins included, and
+    only with a session (not an API key). An Answer whose usage is recorded
+    can't change. Returns the messages in input order."""
     upsertConversationMessages(
       conversationId: String!
       messages: [ConversationMessageInput!]!
@@ -28,7 +29,8 @@ export const mutationTypeDef = gql`
 
     """Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
     its Answer, an \`assistant\` message in one of your Conversations. The
-    cost counts toward your daily Agent budget. Owner only."""
+    cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+    turn's usage is already recorded. Owner only, with a session."""
     recordConversationTurnUsage(
       messageId: String!
       usage: ConversationTurnUsageInput!
