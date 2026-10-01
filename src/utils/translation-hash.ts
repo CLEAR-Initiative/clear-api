@@ -91,6 +91,9 @@ const HASH_FIELDS: Record<TranslatableEntityType, readonly string[]> = {
     "changes",
     "scenarios",
   ],
+  // Hotline message text, translated on demand. Keep aligned with the
+  // pipeline's HASH_FIELDS["groundMessage"].
+  groundMessage: ["text"],
 };
 
 /**

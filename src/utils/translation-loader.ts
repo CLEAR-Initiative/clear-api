@@ -11,7 +11,25 @@ export type TranslatableEntityType =
   | "crisis"
   | "location"
   | "situationAnalysis"
-  | "analysis";
+  | "analysis"
+  | "groundMessage";
+
+/**
+ * The typed FK column on `translations` for each entity type. Exactly one
+ * is set per row (the migration's `translations_exactly_one_fk` CHECK).
+ * A Record, so adding an entity type without its column fails to compile
+ * instead of silently falling through to another type's column.
+ */
+export const TRANSLATION_FK = {
+  event: "eventId",
+  crisis: "crisisId",
+  location: "locationId",
+  situationAnalysis: "situationAnalysisId",
+  analysis: "analysisId",
+  groundMessage: "groundMessageId",
+} as const satisfies Record<TranslatableEntityType, string>;
+
+export type TranslationFkColumn = (typeof TRANSLATION_FK)[TranslatableEntityType];
 
 /**
  * Shape stored in `translations.data`. Mirrors the canonical entity's
@@ -116,29 +134,13 @@ export function createTranslationLoader(
         // and lets Prisma's planner reason about the typed relation.
         // The polymorphic columns stay populated as a fallback by
         // upsertTranslations, but reads go through the typed path.
-        const fkColumn =
-          entityType === "event"
-            ? "eventId"
-            : entityType === "crisis"
-              ? "crisisId"
-              : entityType === "location"
-                ? "locationId"
-                : entityType === "situationAnalysis"
-                  ? "situationAnalysisId"
-                  : "analysisId";
+        const fkColumn = TRANSLATION_FK[entityType];
         const rows = await prisma.translations.findMany({
           where: {
             [fkColumn]: { in: uniqueIds },
             locale,
           },
-          select: {
-            eventId: true,
-            crisisId: true,
-            locationId: true,
-            situationAnalysisId: true,
-            analysisId: true,
-            data: true,
-          },
+          select: { [fkColumn]: true, data: true },
         });
 
         const byId = new Map<string, TranslationData>();
@@ -146,16 +148,7 @@ export function createTranslationLoader(
           // Pull whichever typed FK column matches this entity type —
           // exactly one is populated per row (enforced by the CHECK
           // constraint added in 20260617150000_add_translation_entity_relations).
-          const id =
-            entityType === "event"
-              ? row.eventId
-              : entityType === "crisis"
-                ? row.crisisId
-                : entityType === "location"
-                  ? row.locationId
-                  : entityType === "situationAnalysis"
-                    ? row.situationAnalysisId
-                    : row.analysisId;
+          const id = (row as Partial<Record<TranslationFkColumn, string | null>>)[fkColumn];
           if (!id) continue;
           // Prisma types `data` as JsonValue which is wider than what we
           // know the pipeline writes. Cast at the loader boundary so

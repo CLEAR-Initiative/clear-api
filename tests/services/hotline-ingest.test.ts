@@ -162,6 +162,15 @@ describe("ingestHotlineMessage", () => {
     expect(message.uncertainty).toBe("unconfirmed");
   });
 
+  it("records the detected language of the text (null when unknown)", async () => {
+    const { db, threads } = makeDb(ACTIVE_HOTLINE);
+    await ingest(db, textMessage({ messageId: "SM-ar", text: "قصف على السوق الرئيسي، اتصلوا على +249 91 234 5678" }));
+    await ingest(db, textMessage({ messageId: "SM-en" }));
+    await ingest(db, textMessage({ messageId: "SM-none", text: "ok" }));
+
+    expect(threads.map((t) => t.message.language)).toEqual(["ar", "en", null]);
+  });
+
   it("redacts phone numbers in the text at persistence", async () => {
     const { db, threads } = makeDb(ACTIVE_HOTLINE);
     await ingest(db, textMessage({ text: "Call me back on +249 91 234 5678 please" }));

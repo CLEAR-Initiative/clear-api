@@ -120,8 +120,18 @@ export const groundTypeDef = gql`
     senderRef: String!
     """Raw sender display name. Private tier only — never promoted."""
     senderName: String
-    """Message text (redacted). Empty for caption-less media messages."""
+    """Message text (redacted). Empty for caption-less media messages.
+    Always the reporter's original words — translations are a separate
+    overlay (see \`translation\`), never written here."""
     text: String!
+    """Language of \`text\` as a lowercased ISO 639-1 code ("ar", "en",
+    "fr", "es"), detected at intake without an LLM. Null when unknown
+    (too short, another language, or ingested before detection)."""
+    language: String
+    """On-demand translation of \`text\` into \`locale\`. \`unavailable\`
+    until requestGroundMessageTranslation queues it; poll while
+    \`queued\`."""
+    translation(locale: String!): GroundMessageTranslation!
     """S3 keys of stored attachments."""
     mediaKeys: [String!]!
     """Presigned GET URLs for mediaKeys (1 h expiry), generated at read
@@ -163,6 +173,37 @@ export const groundTypeDef = gql`
     transcribeError: String
     threadId: String
     createdAt: DateTime!
+  }
+
+  """Where a message's on-demand translation stands."""
+  enum GroundTranslationStatus {
+    """Requested; the pipeline's translate drain hasn't written it yet."""
+    queued
+    """Translated — \`text\` holds it."""
+    ready
+    """Not requested, nothing to translate (no text), or the drain gave
+    up. Requesting again re-queues it."""
+    unavailable
+  }
+
+  """A staged message's translation into one locale — a read-only overlay;
+  the original text stays canonical."""
+  type GroundMessageTranslation {
+    """Lowercased BCP-47 locale, e.g. "en"."""
+    locale: String!
+    status: GroundTranslationStatus!
+    """Translated text. Null unless \`status\` is \`ready\`."""
+    text: String
+  }
+
+  """Pipeline-facing projection of a staged message for the translate
+  drain: text and detected language only — no sender identity."""
+  type GroundMessageForTranslation {
+    id: ID!
+    """Message text (phone-redacted at persistence)."""
+    text: String!
+    """Detected source language, null when unknown."""
+    language: String
   }
 
   """Result of a chat-export ingest (also returned by the REST upload

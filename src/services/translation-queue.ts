@@ -21,6 +21,7 @@
 
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
+import type { TranslatableEntityType } from "../utils/translation-loader.js";
 
 interface BufferedEnqueue {
   entityType: string;
@@ -111,4 +112,27 @@ async function flushBuffer(): Promise<void> {
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+/**
+ * Queue one (entity, locale) NOW and return the queue row — the on-demand
+ * counterpart of the batched `enqueueTranslationDurable`, for explicit
+ * requests (the `enqueueTranslation` mutation, a reviewer asking for a
+ * hotline message in English) where the caller needs to know it landed.
+ * Idempotent on the (entityType, entityId, locale) unique constraint: a
+ * repeat keeps the original enqueuedAt, so it holds its place in the
+ * oldest-first drain. Validation (entity exists, locale is a valid target)
+ * is the caller's job.
+ */
+export function enqueueTranslation(
+  prisma: PrismaClient,
+  entityType: TranslatableEntityType,
+  entityId: string,
+  locale: string,
+) {
+  return prisma.translationQueue.upsert({
+    where: { entityType_entityId_locale: { entityType, entityId, locale } },
+    create: { entityType, entityId, locale },
+    update: {},
+  });
 }

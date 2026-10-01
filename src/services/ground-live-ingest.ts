@@ -40,6 +40,7 @@ import {
   type GroundIngestDb,
   type GroundMessageCreate,
 } from "./ground-ingest.js";
+import { detectLanguage } from "../utils/language-detect.js";
 
 /** One captured gateway message, as posted by the live transport. */
 export interface LiveIngestMessage {
@@ -229,6 +230,7 @@ export async function ingestLiveMessages(options: {
         mediaRefs,
         omittedMediaCount: 0,
         uncertainty: extractUncertaintyMarker(text),
+        language: detectLanguage(text),
         isEdited: message.isEdited ?? false,
       };
 

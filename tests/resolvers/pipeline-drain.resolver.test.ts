@@ -270,6 +270,14 @@ describe("pendingTranslations", () => {
       take: 500,
     });
   });
+
+  it("normalises a camelCase entityType filter instead of lowercasing it", async () => {
+    const findMany = vi.fn(async () => []);
+    await translationResolvers.Query.pendingTranslations(
+      {}, { entityType: "groundmessage" }, ctx({ translationQueue: { findMany } }),
+    );
+    expect(findMany.mock.calls[0][0].where).toEqual({ entityType: "groundMessage" });
+  });
 });
 
 describe("enqueueTranslation", () => {
@@ -298,6 +306,21 @@ describe("enqueueTranslation", () => {
       ),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts 'en' for a groundMessage (its source is the reporter's language)", async () => {
+    const findUnique = vi.fn(async () => ({ id: "m1" }));
+    const upsert = vi.fn(async () => ({ id: "q1" }));
+    await translationResolvers.Mutation.enqueueTranslation(
+      {},
+      { entityType: "groundMessage", entityId: "m1", locale: "en" },
+      ctx({ groundMessages: { findUnique }, translationQueue: { upsert } }),
+    );
+    expect(upsert.mock.calls[0][0].create).toEqual({
+      entityType: "groundMessage",
+      entityId: "m1",
+      locale: "en",
+    });
   });
 
   it("rejects an unsupported locale", async () => {
