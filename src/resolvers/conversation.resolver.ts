@@ -102,19 +102,46 @@ function pageSize(first: number | null | undefined): number {
   return size;
 }
 
+/**
+ * A Conversation's position in "most recently active first" order. It
+ * carries the sort values rather than just the id: updatedAt moves whenever
+ * a Thread is continued, so an id cursor would jump to the top of the list
+ * and repeat a page.
+ */
+export function encodeConversationCursor(c: { updatedAt: Date; id: string }): string {
+  return Buffer.from(`${c.updatedAt.toISOString()}|${c.id}`).toString("base64url");
+}
+
+function decodeConversationCursor(cursor: string): { updatedAt: Date; id: string } {
+  const raw = Buffer.from(cursor, "base64url").toString("utf8");
+  const sep = raw.indexOf("|");
+  const updatedAt = new Date(raw.slice(0, sep));
+  const id = raw.slice(sep + 1);
+  if (sep < 0 || Number.isNaN(updatedAt.getTime()) || !id) {
+    throw badInput("after must be a Conversation cursor");
+  }
+  return { updatedAt, id };
+}
+
 /** One page of a user's Conversations, most recently active first. */
 function listConversations(
   context: Context,
   userId: string,
   args: { first?: number | null; after?: string | null },
 ) {
-  // `id` breaks updatedAt ties so the cursor is stable. `after` = the last
-  // id of the previous page; skip:1 steps past it.
+  const take = pageSize(args.first);
+  // `id` breaks updatedAt ties so the order is total.
+  let olderThan = {};
+  if (args.after) {
+    const { updatedAt, id } = decodeConversationCursor(args.after);
+    olderThan = {
+      OR: [{ updatedAt: { lt: updatedAt } }, { updatedAt, id: { lt: id } }],
+    };
+  }
   return context.prisma.conversations.findMany({
-    where: { userId },
+    where: { userId, ...olderThan },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    take: pageSize(args.first),
-    ...(args.after ? { cursor: { id: args.after }, skip: 1 } : {}),
+    take,
   });
 }
 
@@ -460,6 +487,9 @@ export const conversationResolvers = {
   // Field resolvers inherit access from the parent: a Conversation object is
   // only ever returned to someone allowed to read it.
   Conversation: {
+    cursor: (parent: { updatedAt: Date; id: string }) =>
+      encodeConversationCursor(parent),
+
     messageCount: (parent: { id: string }, _args: unknown, context: Context) =>
       context.prisma.conversationMessages.count({
         where: { conversationId: parent.id },

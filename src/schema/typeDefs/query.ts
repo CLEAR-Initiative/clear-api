@@ -138,8 +138,8 @@ export const queryTypeDef = gql`
     myConversations(
       """Max rows to return (1–100, default 20)."""
       first: Int = 20
-      """Cursor: the \`id\` of the last Conversation on the previous page.
-      Omit for the first page."""
+      """The \`cursor\` of the last Conversation on the previous page. Omit
+      for the first page."""
       after: String
     ): [Conversation!]!
 
@@ -157,7 +157,7 @@ export const queryTypeDef = gql`
       userId: String!
       """Max rows to return (1–100, default 20)."""
       first: Int = 20
-      """Cursor: the \`id\` of the last Conversation on the previous page."""
+      """The \`cursor\` of the last Conversation on the previous page."""
       after: String
     ): [Conversation!]!
 

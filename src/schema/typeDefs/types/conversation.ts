@@ -19,6 +19,9 @@ export const conversationTypeDef = gql`
     createdAt: DateTime!
     """Last time the Conversation or any of its messages was written."""
     updatedAt: DateTime!
+    """Opaque position in "most recently active first" order. Pass the last
+    one of a page as \`after\` to get the next page."""
+    cursor: String!
     """Number of messages in the Conversation."""
     messageCount: Int!
     """

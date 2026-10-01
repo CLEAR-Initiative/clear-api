@@ -15,7 +15,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
-import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
+import {
+  conversationResolvers,
+  encodeConversationCursor,
+} from "../../src/resolvers/conversation.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
@@ -119,7 +122,15 @@ describeIfDb("Conversations against the real schema", () => {
     );
     const page1 = await myConversations(null, { first: 1 }, ctx);
     expect(ids(page1)).toEqual([T1]);
-    const page2 = await myConversations(null, { first: 1, after: T1 }, ctx);
+    const cursor = encodeConversationCursor(page1[0]!);
+    // Continuing the cursor's Thread between page loads must not make the
+    // next page repeat or skip anything.
+    await upsertConversationMessages(
+      null,
+      { conversationId: T1, messages: [{ id: `${RUN}-m4`, role: "user", content: text("And?") }] },
+      ctx,
+    );
+    const page2 = await myConversations(null, { first: 1, after: cursor }, ctx);
     expect(ids(page2)).toEqual([T2]);
   });
 

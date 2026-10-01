@@ -17,7 +17,10 @@ vi.mock("../../src/utils/env.js", () => ({
   env: { AGENT_DAILY_BUDGET_USD: 2.5 },
 }));
 
-import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
+import {
+  conversationResolvers,
+  encodeConversationCursor,
+} from "../../src/resolvers/conversation.resolver.js";
 import { Prisma } from "../../src/generated/prisma/client.js";
 import { logActivityOrThrow as logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
@@ -468,17 +471,25 @@ describe("Query.myConversations", () => {
     });
   });
 
-  it("pages from the cursor, skipping the cursor row itself", async () => {
+  it("pages strictly after the cursor's (updatedAt, id) position", async () => {
+    const at = new Date("2026-10-01T08:00:00.000Z");
     const findMany = vi.fn().mockResolvedValue([]);
     const ctx = buildContext(OWNER, { conversations: { findMany } });
-    await myConversations(null, { first: 5, after: "t9" }, ctx);
+    const after = encodeConversationCursor({ updatedAt: at, id: "t9" });
+    await myConversations(null, { first: 5, after }, ctx);
     expect(findMany).toHaveBeenCalledWith({
-      where: { userId: "u1" },
+      where: {
+        userId: "u1",
+        OR: [{ updatedAt: { lt: at } }, { updatedAt: at, id: { lt: "t9" } }],
+      },
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: 5,
-      cursor: { id: "t9" },
-      skip: 1,
     });
+  });
+
+  it("rejects a malformed cursor", () => {
+    const ctx = buildContext(OWNER, { conversations: { findMany: vi.fn() } });
+    expect(() => myConversations(null, { after: "t9" }, ctx)).toThrow(/cursor/);
   });
 
   it("scopes to the caller even for a platform admin", async () => {

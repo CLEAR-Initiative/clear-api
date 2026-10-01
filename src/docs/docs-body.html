@@ -357,8 +357,8 @@ Approved users only.<div class="field-args"><span class="arg"><code>id: String!<
     <td><code>myConversations</code></td>
     <td><code>[Conversation!]!</code></td>
     <td>Your CLEAR Agent Conversations, most recently active first. Approved
-users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.
-Omit for the first page.</span></div></td>
+users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page. Omit
+for the first page.</span></div></td>
   </tr><tr>
     <td><code>myAgentBudget</code></td>
     <td><code>AgentBudget!</code></td>
@@ -373,7 +373,7 @@ Approved users only.</td>
     <td><code>userConversations</code></td>
     <td><code>[Conversation!]!</code></td>
     <td>Admin audit: one user's Conversations, most recently active first.
-Read-only; each call is logged as `conversation.admin_read`. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.</span></div></td>
+Read-only; each call is logged as `conversation.admin_read`. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page.</span></div></td>
   </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
@@ -4051,6 +4051,11 @@ CLEAR Agent's memory adapter in clear-mvp; there is no delete.</p><table class="
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>Last time the Conversation or any of its messages was written.</td>
+  </tr><tr>
+    <td><code>cursor</code></td>
+    <td><code>String!</code></td>
+    <td>Opaque position in &quot;most recently active first&quot; order. Pass the last
+one of a page as `after` to get the next page.</td>
   </tr><tr>
     <td><code>messageCount</code></td>
     <td><code>Int!</code></td>
