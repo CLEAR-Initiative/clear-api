@@ -428,33 +428,47 @@ export const conversationResolvers = {
         }
       }
 
-      const writes = messages.map((m) => {
-        const createdAt = m.createdAt ? new Date(m.createdAt) : undefined;
-        const fields = {
-          role: m.role,
-          type: m.type ?? null,
-          content: m.content as InputJsonValue,
-        };
-        // Scoping the upsert to this Conversation makes the check above
-        // atomic: an id claimed elsewhere in the meantime fails the insert
-        // (P2002) instead of updating the other Conversation's row.
-        return context.prisma.conversationMessages.upsert({
-          where: { id: m.id, conversationId },
-          create: { id: m.id, conversationId, ...fields, createdAt },
-          update: { ...fields, ...(createdAt ? { createdAt } : {}) },
-        });
-      });
-      // Touch the Conversation so "newest first" means "most recently active".
-      const touch = context.prisma.conversations.update({
-        where: { id: conversationId },
-        data: { updatedAt: new Date() },
-      });
       try {
-        const results = await context.prisma.$transaction([...writes, touch]);
-        return results.slice(0, writes.length);
+        return await context.prisma.$transaction(async (tx) => {
+          for (const m of messages) {
+            const createdAt = m.createdAt ? new Date(m.createdAt) : undefined;
+            const fields = {
+              role: m.role,
+              type: m.type ?? null,
+              content: m.content as InputJsonValue,
+            };
+            // The checks above give a precise error; this makes them atomic.
+            // One UPDATE scoped to this Conversation and to an Answer not yet
+            // charged, so neither can change between a check and the write.
+            const { count } = await tx.conversationMessages.updateMany({
+              where: { id: m.id, conversationId, usageRecordedAt: null },
+              data: { ...fields, ...(createdAt ? { createdAt } : {}) },
+            });
+            // Nothing matched: the id is new, or it was claimed elsewhere or
+            // charged in the meantime, in which case the insert fails (P2002)
+            // instead of touching that row.
+            if (count === 0) {
+              await tx.conversationMessages.create({
+                data: { id: m.id, conversationId, ...fields, createdAt },
+              });
+            }
+          }
+          // Touch the Conversation so "newest first" means "most recently active".
+          await tx.conversations.update({
+            where: { id: conversationId },
+            data: { updatedAt: new Date() },
+          });
+          const rows = await tx.conversationMessages.findMany({
+            where: { id: { in: ids } },
+          });
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          return messages.map((m) => byId.get(m.id)!);
+        });
       } catch (err) {
         if (isUniqueViolation(err)) {
-          throw forbidden("A message id belongs to another Conversation");
+          throw forbidden(
+            "A message id belongs to another Conversation or to a recorded Answer",
+          );
         }
         throw err;
       }
@@ -587,7 +601,7 @@ export const conversationResolvers = {
       const rows = await context.prisma.conversationMessages.findMany({
         where: { conversationId: parent.id, ...olderThan },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        ...(first != null ? { take: first } : {}),
+        take: first ?? MAX_MESSAGES_WINDOW,
       });
       return rows.reverse();
     },
