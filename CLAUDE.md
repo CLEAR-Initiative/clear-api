@@ -23,6 +23,7 @@ bun dev              # Start dev server (tsx watch)
 bun run build        # TypeScript compile to dist/
 bun start            # Run compiled server
 bun test             # Run tests (vitest)
+bun run test:db      # Same, against a throwaway migrated Postgres (PostGIS + pgvector, needs Docker); what CI runs
 bun run lint         # ESLint
 bun run typecheck    # TypeScript type checking
 ```

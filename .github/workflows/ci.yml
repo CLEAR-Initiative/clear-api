@@ -28,16 +28,31 @@ jobs:
       - run: bun run build
 
       # Run the DB-free test suite WITH coverage, and gate on the thresholds in
-      # vitest.config.ts (calibrated to the DB-free baseline). The DB-backed
-      # integration tests need a seeded Postgres + PostGIS (specific dev-DB
-      # UUIDs and Sudan admin polygons), so they're skipped here via
-      # SKIP_DB_TESTS=1. The dummy env vars below only need to satisfy the
-      # src/utils/env.ts schema parse at import time — no real services are
-      # contacted, since those describe blocks are skipped. Running the full
-      # DB-backed suite in CI (reusing the E2E Postgres) is a noted fast follow.
+      # vitest.config.ts (calibrated to the DB-free baseline). DB-backed suites
+      # are skipped here via SKIP_DB_TESTS=1 and run in the db-tests job below.
+      # The dummy env vars only need to satisfy the src/utils/env.ts schema
+      # parse at import time — no real services are contacted.
       - name: Test (DB-free) + coverage gate
         run: bun run test:ci:coverage
         env:
           DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
           BETTER_AUTH_SECRET: ci-dummy-secret-at-least-32-chars-long-xxxx
           BETTER_AUTH_URL: http://localhost:4000
+
+  # The suite again, against a fresh Postgres built like production's (PostGIS
+  # + pgvector) with every migration applied from empty — so migrations and
+  # the self-seeding DB suites (`describeIfDb`) are checked on every PR.
+  # Suites that need dev seed data (`describeIfSeededDb`) stay skipped.
+  # No coverage gate: the thresholds are calibrated to the DB-free run.
+  db-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma generate
+      - name: Test against a migrated scratch database
+        run: bun run test:db
