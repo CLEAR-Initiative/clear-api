@@ -61,6 +61,7 @@ bun dev              # Start dev server with hot reload
 bun run typecheck    # Type check
 bun run lint         # Lint
 bun test             # Run tests
+bun run test:db      # Run tests against a throwaway migrated Postgres (needs Docker)
 bun run build        # Compile to dist/ (also builds GraphQL docs)
 ```
 
