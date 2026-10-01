@@ -25,12 +25,12 @@ export const conversationTypeDef = gql`
     """Number of messages in the Conversation."""
     messageCount: Int!
     """
-    Messages in chronological order. With \`first\`, only the most recent
-    \`first\` messages (before \`before\`, if given) — the window an Agent
-    loads as history.
+    The most recent messages (before \`before\`, if given), in chronological
+    order — the window an Agent loads as history. Page back with \`before\`
+    for older ones.
     """
     messages(
-      """Max messages to return (1–500). Omit for all of them."""
+      """Max messages to return (1–500). Defaults to 500."""
       first: Int
       """Message id: return only messages older than this one. Pass the
       oldest id from the previous window to page back through history."""
