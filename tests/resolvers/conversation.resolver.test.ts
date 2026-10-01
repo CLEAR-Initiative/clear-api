@@ -294,6 +294,20 @@ describe("Mutation.upsertConversation", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
+  it("rejects an over-long title or oversized metadata", async () => {
+    const ctx = buildContext(OWNER);
+    await expect(
+      upsertConversation(null, { input: { id: "t1", title: "x".repeat(501) } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(
+      upsertConversation(
+        null,
+        { input: { id: "t1", metadata: { blob: "x".repeat(100_001) } } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
   it("rejects an over-long id", async () => {
     const ctx = buildContext(OWNER);
     await expect(
@@ -474,6 +488,24 @@ describe("Mutation.upsertConversationMessages", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it.each([
+    ["oversized content", { content: { text: "x".repeat(1_000_001) } }],
+    ["an over-long role", { role: "r".repeat(33) }],
+    ["an over-long type", { type: "t".repeat(33) }],
+  ])("rejects %s before any lookup", async (_name, bad) => {
+    const { ctx } = ownerContext();
+    const findUnique = vi.fn();
+    (ctx.prisma.conversations as unknown as { findUnique: unknown }).findUnique = findUnique;
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [{ ...userTurn, ...bad }] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("rejects more than 200 messages per call", async () => {

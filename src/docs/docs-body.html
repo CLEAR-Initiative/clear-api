@@ -1737,7 +1737,7 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
   </tr><tr>
     <td><code>content</code></td>
     <td><code>JSON!</code></td>
-    <td>—</td>
+    <td>The message parts. At most 1,000,000 characters as JSON.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime</code></td>
@@ -3268,11 +3268,11 @@ row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
   </tr><tr>
     <td><code>title</code></td>
     <td><code>String</code></td>
-    <td>Omit to leave the title unchanged.</td>
+    <td>Omit to leave the title unchanged. At most 500 characters.</td>
   </tr><tr>
     <td><code>metadata</code></td>
     <td><code>JSON</code></td>
-    <td>Omit to leave the metadata unchanged.</td>
+    <td>Omit to leave the metadata unchanged. At most 100,000 characters as JSON.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime</code></td>

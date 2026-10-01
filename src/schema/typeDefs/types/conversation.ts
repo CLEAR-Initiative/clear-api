@@ -117,9 +117,9 @@ export const conversationTypeDef = gql`
   input UpsertConversationInput {
     """The Agent's thread id. Rejected if it belongs to another user's Conversation."""
     id: String!
-    """Omit to leave the title unchanged."""
+    """Omit to leave the title unchanged. At most 500 characters."""
     title: String
-    """Omit to leave the metadata unchanged."""
+    """Omit to leave the metadata unchanged. At most 100,000 characters as JSON."""
     metadata: JSON
     """Creation time from the Agent. Ignored on update. Defaults to now."""
     createdAt: DateTime
@@ -132,6 +132,7 @@ export const conversationTypeDef = gql`
     """\`user\`, \`assistant\`, \`system\`, \`tool\` or \`signal\`."""
     role: String!
     type: String
+    """The message parts. At most 1,000,000 characters as JSON."""
     content: JSON!
     """Ordering key for history. Defaults to now on create; omit on update to keep it."""
     createdAt: DateTime

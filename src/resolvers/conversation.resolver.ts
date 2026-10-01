@@ -35,6 +35,13 @@ const MAX_CONVERSATIONS_PAGE = 100;
 const MAX_MESSAGES_WINDOW = 500;
 /** Working memory is a short Markdown profile, not a document store. */
 const MAX_WORKING_MEMORY_LENGTH = 100_000;
+/** One message, Source documents included, serialised. Generous for an
+ *  Answer citing a dozen NRC Find passages; stops a 50 MB body. */
+const MAX_MESSAGE_CONTENT_LENGTH = 1_000_000;
+const MAX_METADATA_LENGTH = 100_000;
+const MAX_TITLE_LENGTH = 500;
+/** role and type are short tags (`assistant`, `v2`). */
+const MAX_TAG_LENGTH = 32;
 
 type User = NonNullable<Context["user"]>;
 
@@ -143,6 +150,23 @@ function listConversations(
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     take,
   });
+}
+
+function assertMaxLength(
+  value: string | null | undefined,
+  max: number,
+  what: string,
+): void {
+  if (value && value.length > max) {
+    throw badInput(`${what} must be at most ${max} characters`);
+  }
+}
+
+/** Size of a JSON value as stored, so one write can't be arbitrarily large. */
+function assertJsonSize(value: unknown, max: number, what: string): void {
+  if (value != null && JSON.stringify(value).length > max) {
+    throw badInput(`${what} must be at most ${max} characters as JSON`);
+  }
 }
 
 function assertId(id: string, what: string): void {
@@ -295,6 +319,8 @@ export const conversationResolvers = {
       const user = requireConversationWriter(context);
       const { id, title, metadata, createdAt } = args.input;
       assertId(id, "Conversation");
+      assertMaxLength(title, MAX_TITLE_LENGTH, "title");
+      assertJsonSize(metadata, MAX_METADATA_LENGTH, "metadata");
 
       const existing = await context.prisma.conversations.findUnique({
         where: { id },
@@ -359,6 +385,9 @@ export const conversationResolvers = {
       for (const message of messages) {
         assertId(message.id, "Message");
         if (!message.role) throw badInput("Message role is required");
+        assertMaxLength(message.role, MAX_TAG_LENGTH, "role");
+        assertMaxLength(message.type, MAX_TAG_LENGTH, "type");
+        assertJsonSize(message.content, MAX_MESSAGE_CONTENT_LENGTH, "content");
       }
       await loadWritableConversation(context, user, conversationId);
       if (messages.length === 0) return [];
@@ -420,11 +449,8 @@ export const conversationResolvers = {
     ) => {
       const user = requireConversationWriter(context);
       const { workingMemory, metadata } = args.input;
-      if (workingMemory && workingMemory.length > MAX_WORKING_MEMORY_LENGTH) {
-        throw badInput(
-          `workingMemory must be at most ${MAX_WORKING_MEMORY_LENGTH} characters`,
-        );
-      }
+      assertMaxLength(workingMemory, MAX_WORKING_MEMORY_LENGTH, "workingMemory");
+      assertJsonSize(metadata, MAX_METADATA_LENGTH, "metadata");
       // Omitted fields stay as they are; an explicit null clears them.
       const changes = {
         ...(workingMemory !== undefined ? { workingMemory } : {}),
@@ -448,6 +474,7 @@ export const conversationResolvers = {
       const { model, inputTokens, outputTokens, costUsd, latencyMs } =
         args.usage;
       if (!model) throw badInput("model is required");
+      assertMaxLength(model, MAX_TITLE_LENGTH, "model");
       for (const [name, value] of Object.entries({
         inputTokens,
         outputTokens,
