@@ -9,6 +9,33 @@ export const mutationTypeDef = gql`
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 
+    # ─── Agent Conversations ───────────────────────────────────────────────────
+    """Create one of your Conversations with the CLEAR Agent's thread id, or
+    update its title or metadata. FORBIDDEN if the id belongs to another user.
+    Approved users only."""
+    upsertConversation(input: UpsertConversationInput!): Conversation!
+
+    """Create or replace messages in one of your Conversations, matched by id
+    (at most 200 per call). Only the owner can write, admins included, and
+    only with a session (not an API key). An Answer whose usage is recorded
+    can't change. Returns the messages in input order."""
+    upsertConversationMessages(
+      conversationId: String!
+      messages: [ConversationMessageInput!]!
+    ): [ConversationMessage!]!
+
+    """Create or update your CLEAR Agent working memory. Approved users only."""
+    saveAgentWorkingMemory(input: SaveAgentWorkingMemoryInput!): AgentWorkingMemory!
+
+    """Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+    its Answer, an \`assistant\` message in one of your Conversations. The
+    cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+    turn's usage is already recorded. Owner only, with a session."""
+    recordConversationTurnUsage(
+      messageId: String!
+      usage: ConversationTurnUsageInput!
+    ): ConversationMessage!
+
     # ─── Public Event Share Links ──────────────────────────────────────────────
     """
     Mint a Redis-backed share token for an event. The snapshot of the

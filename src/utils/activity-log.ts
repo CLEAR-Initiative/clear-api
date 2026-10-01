@@ -31,7 +31,11 @@ export type ActivityAction =
   | "dev_user.provisioned"
   | "dev_user.api_key_rotated"
   | "user.approved"
-  | "user.role_updated";
+  | "user.role_updated"
+  // A platform admin read another user's Conversation (or listed them).
+  // The first logged *read*: Conversations are an audit record of what the
+  // CLEAR Agent told their owner, so reading them is itself audited.
+  | "conversation.admin_read";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -44,7 +48,8 @@ export type ActivityResourceType =
   | "crisis"
   | "feedback"
   | "session"
-  | "user";
+  | "user"
+  | "conversation";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */
@@ -96,4 +101,27 @@ export async function logActivity(
       err,
     );
   }
+}
+
+/**
+ * Audit variant of {@link logActivity} for reads that may only happen if
+ * they are recorded (an admin reading another user's Conversation). Throws
+ * if the row can't be written, so the caller returns no data rather than
+ * serve an unaudited read. Await it before returning anything.
+ */
+export async function logActivityOrThrow(
+  prisma: PrismaClient,
+  opts: LogActivityOptions,
+): Promise<void> {
+  await prisma.activityLogs.create({
+    data: {
+      userId: opts.userId,
+      action: opts.action,
+      resourceType: opts.resourceType ?? null,
+      resourceId: opts.resourceId ?? null,
+      metadata: opts.metadata ? (opts.metadata as InputJsonValue) : undefined,
+      ipAddress: opts.ipAddress ?? null,
+      userAgent: opts.userAgent ?? null,
+    },
+  });
 }

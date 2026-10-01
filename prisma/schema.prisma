@@ -105,6 +105,8 @@ model user {
   commentTags           commentTags[]
   invitationsSent       invitations[]           @relation("InvitedBy")
   activityLogs          activityLogs[]
+  conversations         conversations[]
+  agentWorkingMemory    agentWorkingMemory?
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -2163,3 +2165,88 @@ model groundMessages {
   @@map("ground_messages")
 }
 
+// ─── Agent Conversations ─────────────────────────────────────────────────────
+
+/// One CLEAR Agent Thread, stored as the audit record of what the Agent told
+/// its owner (ADR-0009). Written by clear-mvp's Mastra memory adapter through
+/// GraphQL, never directly. Readable by the owner and, read-only, by platform
+/// admins (every admin read is logged). Deleting the user deletes their
+/// Conversations.
+model conversations {
+  /// Caller-supplied: Mastra creates thread ids before the first write.
+  id       String  @id @default(cuid())
+  userId   String  @map("user_id")
+  title    String?
+  /// Opaque Mastra thread metadata.
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Bumped whenever messages are written, so "newest first" means "most
+  /// recently active".
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     user                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages conversationMessages[]
+
+  @@index([userId, updatedAt])
+  @@map("conversations")
+}
+
+/// One turn of a Conversation: a user turn, an Answer, or a system/tool
+/// message, as Mastra stores it.
+model conversationMessages {
+  /// Caller-supplied: Mastra upserts messages by its own ids.
+  id             String  @id @default(cuid())
+  conversationId String  @map("conversation_id")
+  /// `user` | `assistant` | `system` | `tool` | `signal` (Mastra's message
+  /// roles). A free string so a Mastra upgrade never needs a migration.
+  role           String
+  /// Mastra's message `type` (e.g. `v2`), round-tripped untouched.
+  type           String?
+  /// Mastra's message content (format 2: text, tool and source-document
+  /// parts). Opaque to clear-api.
+  content        Json
+  /// User turns only: the page, entity ids and filters the user was looking
+  /// at when they sent the turn — identifiers, never data.
+  currentView    Json?   @map("current_view")
+
+  /// Per-turn usage, set on Answers by recordConversationTurnUsage. Cost is
+  /// computed by the caller from its price table, like generationCostUsd.
+  model           String?
+  inputTokens     Int?      @map("input_tokens")
+  outputTokens    Int?      @map("output_tokens")
+  costUsd         Float?    @map("cost_usd")
+  latencyMs       Int?      @map("latency_ms")
+  /// Server time the usage was recorded; the daily Agent budget sums
+  /// costUsd by this, not by the caller-supplied createdAt.
+  usageRecordedAt DateTime? @map("usage_recorded_at")
+
+  /// Caller-supplied (Mastra orders history by it); defaults to now.
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  conversation conversations @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([usageRecordedAt])
+  @@map("conversation_messages")
+}
+
+/// The CLEAR Agent's working memory for one user: what it keeps about the
+/// user across Threads (Mastra's "resource", whose id is the user id).
+/// Read and written only by that user, through the Agent's memory adapter.
+model agentWorkingMemory {
+  id            String  @id @default(cuid())
+  userId        String  @unique @map("user_id")
+  /// The Agent's working-memory document (Markdown).
+  workingMemory String? @map("working_memory")
+  /// Opaque Mastra resource metadata.
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_working_memory")
+}

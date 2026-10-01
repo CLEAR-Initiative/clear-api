@@ -126,6 +126,46 @@ export const queryTypeDef = gql`
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
 
+    # ─── Agent Conversations ───────────────────────────────────────────────────
+    """A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+    admin (read-only, and logged as \`conversation.admin_read\`). Null if no
+    Conversation has that id; FORBIDDEN if it belongs to another user.
+    Approved users only."""
+    conversation(id: String!): Conversation
+
+    """Your CLEAR Agent Conversations, most recently active first. Approved
+    users only."""
+    myConversations(
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """The \`cursor\` of the last Conversation on the previous page. Omit
+      for the first page."""
+      after: String
+    ): [Conversation!]!
+
+    """Messages from your own Conversations by id (at most 200), oldest
+    first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+    to resolve messages it knows only by id. Approved users only."""
+    conversationMessagesByIds(ids: [String!]!): [ConversationMessage!]!
+
+    """Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+    midnight, and when it resets. Approved users only."""
+    myAgentBudget: AgentBudget!
+
+    """Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+    Approved users only."""
+    myAgentWorkingMemory: AgentWorkingMemory
+
+    """Admin audit: one user's Conversations, most recently active first.
+    Read-only; each call is logged as \`conversation.admin_read\`. Admin only."""
+    userConversations(
+      userId: String!
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """The \`cursor\` of the last Conversation on the previous page."""
+      after: String
+    ): [Conversation!]!
+
     # ─── Organisations & Teams ─────────────────────────────────────────────────
     """List organisations the authenticated user belongs to."""
     myOrganisations: [Organisation!]!

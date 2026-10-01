@@ -33,6 +33,7 @@ import { analysisResolvers } from "./analysis.resolver.js";
 import { reportFigureResolvers } from "./reportFigure.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
 import { groundResolvers } from "./ground.resolver.js";
+import { conversationResolvers } from "./conversation.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -69,4 +70,5 @@ export const resolvers: IResolvers[] = [
   reportFigureResolvers,
   webhookResolvers,
   groundResolvers,
+  conversationResolvers,
 ];

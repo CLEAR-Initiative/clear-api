@@ -347,6 +347,40 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
     <td><code>[ApiKey!]!</code></td>
     <td>List all API keys belonging to the authenticated user. Requires authentication.</td>
   </tr><tr>
+    <td><code>conversation</code></td>
+    <td><code>Conversation</code></td>
+    <td>A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+admin (read-only, and logged as `conversation.admin_read`). Null if no
+Conversation has that id; FORBIDDEN if it belongs to another user.
+Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>myConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Your CLEAR Agent Conversations, most recently active first. Approved
+users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page. Omit
+for the first page.</span></div></td>
+  </tr><tr>
+    <td><code>conversationMessagesByIds</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Messages from your own Conversations by id (at most 200), oldest
+first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+to resolve messages it knows only by id. Approved users only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
+  </tr><tr>
+    <td><code>myAgentBudget</code></td>
+    <td><code>AgentBudget!</code></td>
+    <td>Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+midnight, and when it resets. Approved users only.</td>
+  </tr><tr>
+    <td><code>myAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory</code></td>
+    <td>Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+Approved users only.</td>
+  </tr><tr>
+    <td><code>userConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Admin audit: one user's Conversations, most recently active first.
+Read-only; each call is logged as `conversation.admin_read`. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page.</span></div></td>
+  </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
     <td>List organisations the authenticated user belongs to.</td>
@@ -746,6 +780,30 @@ detected language, no sender identity. Null if the message is gone.<div class="f
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
     <td>Revoke an API key by ID. Only the key owner or an admin can revoke.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversation">
+    <td><code>upsertConversation</code></td>
+    <td><code>Conversation!</code></td>
+    <td>Create one of your Conversations with the CLEAR Agent's thread id, or
+update its title or metadata. FORBIDDEN if the id belongs to another user.
+Approved users only.<div class="field-args"><span class="arg"><code>input: UpsertConversationInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversationmessages">
+    <td><code>upsertConversationMessages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Create or replace messages in one of your Conversations, matched by id
+(at most 200 per call). Only the owner can write, admins included, and
+only with a session (not an API key). An Answer whose usage is recorded
+can't change. Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+  </tr><tr id="mutation-saveagentworkingmemory">
+    <td><code>saveAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory!</code></td>
+    <td>Create or update your CLEAR Agent working memory. Approved users only.<div class="field-args"><span class="arg"><code>input: SaveAgentWorkingMemoryInput!</code></span></div></td>
+  </tr><tr id="mutation-recordconversationturnusage">
+    <td><code>recordConversationTurnUsage</code></td>
+    <td><code>ConversationMessage!</code></td>
+    <td>Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+its Answer, an `assistant` message in one of your Conversations. The
+cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+turn's usage is already recorded. Owner only, with a session.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
@@ -1669,6 +1727,46 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
   </tr><tr>
     <td><code>windowEnd</code></td>
     <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-conversationmessageinput"><code>ConversationMessageInput</code> <span class="type-badge">input</span></h3><p>One message to create or replace, matched by id.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's message id. Rejected if it belongs to another Conversation.</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>The message parts. At most 1,000,000 characters as JSON.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Ordering key for history. Defaults to now on create; omit on update to keep it.</td>
+  </tr></tbody></table><h3 id="type-conversationturnusageinput"><code>ConversationTurnUsageInput</code> <span class="type-badge">input</span></h3><p>What one CLEAR Agent turn used. Recorded on its Answer.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>The model id the turn ran on, e.g. `anthropic/claude-sonnet-5-5`.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Cost in USD, computed by the caller from its price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
@@ -2661,6 +2759,14 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>Boolean</code></td>
     <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
 Admin only — a non-admin passing `true` is rejected.</td>
+  </tr></tbody></table><h3 id="type-saveagentworkingmemoryinput"><code>SaveAgentWorkingMemoryInput</code> <span class="type-badge">input</span></h3><p>Replace your Agent working memory. Omitted fields stay unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown, at most 100,000 characters).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -3161,6 +3267,22 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td>Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
 an admin-forced request. Omitted/false: a write within 24h of the current
 row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
+  </tr></tbody></table><h3 id="type-upsertconversationinput"><code>UpsertConversationInput</code> <span class="type-badge">input</span></h3><p>Create a Conversation with a caller-supplied id, or update its title or metadata.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's thread id. Rejected if it belongs to another user's Conversation.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Omit to leave the title unchanged. At most 500 characters.</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Omit to leave the metadata unchanged. At most 100,000 characters as JSON.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Creation time from the Agent. Ignored on update. Defaults to now.</td>
   </tr></tbody></table><h3 id="type-upsertlocationmetadatainput"><code>UpsertLocationMetadataInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationId</code></td>
     <td><code>String!</code></td>
@@ -3432,6 +3554,40 @@ the top 50 most-active users in the window.</td>
     <td><code>byDay</code></td>
     <td><code>[DailyActivityCount!]!</code></td>
     <td>Daily activity counts across the window (UTC dates).</td>
+  </tr></tbody></table><h3 id="type-agentbudget"><code>AgentBudget</code> <span class="type-badge">object</span></h3><p>Your daily CLEAR Agent budget. Spend is the sum of your turns' cost since
+UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>limitUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>The daily limit in USD.</td>
+  </tr><tr>
+    <td><code>spentTodayUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>What your turns have cost since UTC midnight, in USD.</td>
+  </tr><tr>
+    <td><code>resetsAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When spend resets to zero: the next UTC midnight.</td>
+  </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
+Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket - the roll-up of every contributing
 `report_datapoint` for a scope (window × window_kind × location).
 Consumed by the situation-analysis dashboard tiles and by chatbot
@@ -3872,6 +4028,101 @@ while the list swap succeeded). Empty on the happy path.</td>
   </tr><tr>
     <td><code>comment</code></td>
     <td><code>UserComment!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
+owner: the user's turns, the Answers, and the tools and Source documents
+each Answer drew on. Readable by its owner and, read-only, by platform
+admins (every admin read is logged). Written only by its owner, through the
+CLEAR Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's thread id).</td>
+  </tr><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>The owner. Every Conversation belongs to exactly one user.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque thread metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Last time the Conversation or any of its messages was written.</td>
+  </tr><tr>
+    <td><code>cursor</code></td>
+    <td><code>String!</code></td>
+    <td>Opaque position in &quot;most recently active first&quot; order. Pass the last
+one of a page as `after` to get the next page.</td>
+  </tr><tr>
+    <td><code>messageCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of messages in the Conversation.</td>
+  </tr><tr>
+    <td><code>messages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Messages in chronological order. With `first`, only the most recent
+`first` messages (before `before`, if given) — the window an Agent
+loads as history.<div class="field-args"><span class="arg"><code>first: Int</code> — Max messages to return (1–500). Omit for all of them.</span><span class="arg"><code>before: String</code> — Message id: return only messages older than this one. Pass the
+oldest id from the previous window to page back through history.</span></div></td>
+  </tr></tbody></table><h3 id="type-conversationmessage"><code>ConversationMessage</code> <span class="type-badge">object</span></h3><p>One turn of a Conversation, as the CLEAR Agent stores it. `content` holds
+the Agent's message parts (text, tool calls and results, Source documents)
+and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's message id).</td>
+  </tr><tr>
+    <td><code>conversationId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>The Agent's message format tag, returned as stored.</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>The message parts. Text that came from outside CLEAR (documents,
+signal bodies) is data, never instructions.</td>
+  </tr><tr>
+    <td><code>model</code></td>
+    <td><code>String</code></td>
+    <td>Answers only: the model that wrote it.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: input tokens across the whole turn, tool steps included.</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: output tokens across the whole turn.</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Answers only: what the turn cost in USD, from the caller's price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: time from the user's turn to the finished Answer.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-createapikeypayload"><code>CreateApiKeyPayload</code> <span class="type-badge">object</span></h3><p>Returned only from createApiKey. Contains the full plaintext
 key that will never be retrievable again.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
