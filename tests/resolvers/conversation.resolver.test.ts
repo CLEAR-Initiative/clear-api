@@ -394,6 +394,37 @@ describe("Mutation.upsertConversationMessages", () => {
     expect(result).toEqual([{ id: "m1", conversationId: "t1" }]);
   });
 
+  it("writes a user turn's Current view, and keeps the stored one when an update omits it", async () => {
+    const view = { route: "/event/e1", entity: { kind: "event", id: "e1" } };
+    const { ctx, queryRaw } = ownerContext();
+    await upsertConversationMessages(
+      null,
+      { conversationId: "t1", messages: [{ ...userTurn, currentView: view }] },
+      ctx,
+    );
+    const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join("?")).toMatch(/current_view = CASE WHEN \?\s+THEN EXCLUDED\.current_view/);
+    expect(values).toContain(JSON.stringify(view));
+    expect(values).toContain(true);
+
+    const omitted = ownerContext();
+    await upsertConversationMessages(null, { conversationId: "t1", messages: [userTurn] }, omitted.ctx);
+    const [, ...omittedValues] = omitted.queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(omittedValues).toContain(false);
+  });
+
+  it("rejects an oversized Current view before any write", async () => {
+    const { ctx, queryRaw } = ownerContext();
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [{ ...userTurn, currentView: { blob: "x".repeat(10_001) } }] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
   it("is FORBIDDEN, and touches nothing, when the conditional write matches no row", async () => {
     // Claimed by another Conversation or charged after the precheck.
     const { ctx, touch } = ownerContext({}, { written: [] });

@@ -1745,6 +1745,11 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
     <td><code>JSON!</code></td>
     <td>The message parts. At most 1,000,000 characters as JSON.</td>
   </tr><tr>
+    <td><code>currentView</code></td>
+    <td><code>JSON</code></td>
+    <td>User turns: the Current view (page, entity ids, filters — identifiers,
+never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
+  </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime</code></td>
     <td>Ordering key for history. Defaults to now on create; omit on update to keep it.</td>
@@ -4096,6 +4101,11 @@ and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><
     <td><code>JSON!</code></td>
     <td>The message parts. Text that came from outside CLEAR (documents,
 signal bodies) is data, never instructions.</td>
+  </tr><tr>
+    <td><code>currentView</code></td>
+    <td><code>JSON</code></td>
+    <td>User turns only: what the user was looking at when they sent the turn —
+the page, entity ids and active filters. Identifiers, never data.</td>
   </tr><tr>
     <td><code>model</code></td>
     <td><code>String</code></td>

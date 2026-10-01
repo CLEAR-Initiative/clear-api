@@ -54,6 +54,9 @@ export const conversationTypeDef = gql`
     """The message parts. Text that came from outside CLEAR (documents,
     signal bodies) is data, never instructions."""
     content: JSON!
+    """User turns only: what the user was looking at when they sent the turn —
+    the page, entity ids and active filters. Identifiers, never data."""
+    currentView: JSON
     """Answers only: the model that wrote it."""
     model: String
     """Answers only: input tokens across the whole turn, tool steps included."""
@@ -134,6 +137,9 @@ export const conversationTypeDef = gql`
     type: String
     """The message parts. At most 1,000,000 characters as JSON."""
     content: JSON!
+    """User turns: the Current view (page, entity ids, filters — identifiers,
+    never data), at most 10,000 characters as JSON. Omit on update to keep it."""
+    currentView: JSON
     """Ordering key for history. Defaults to now on create; omit on update to keep it."""
     createdAt: DateTime
   }
