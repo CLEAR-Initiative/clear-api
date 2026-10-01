@@ -360,6 +360,11 @@ Approved users only.<div class="field-args"><span class="arg"><code>id: String!<
 users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.
 Omit for the first page.</span></div></td>
   </tr><tr>
+    <td><code>myAgentBudget</code></td>
+    <td><code>AgentBudget!</code></td>
+    <td>Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+midnight, and when it resets. Approved users only.</td>
+  </tr><tr>
     <td><code>userConversations</code></td>
     <td><code>[Conversation!]!</code></td>
     <td>Admin audit: one user's Conversations, most recently active first.
@@ -776,6 +781,12 @@ Approved users only.<div class="field-args"><span class="arg"><code>input: Upser
     <td>Create or replace messages in one of your Conversations, matched by id
 (at most 200 per call). Only the owner can write, admins included.
 Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+  </tr><tr id="mutation-recordconversationturnusage">
+    <td><code>recordConversationTurnUsage</code></td>
+    <td><code>ConversationMessage!</code></td>
+    <td>Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+its Answer, an `assistant` message in one of your Conversations. The
+cost counts toward your daily Agent budget. Owner only.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
@@ -1720,6 +1731,26 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
     <td><code>createdAt</code></td>
     <td><code>DateTime</code></td>
     <td>Ordering key for history. Defaults to now on create; omit on update to keep it.</td>
+  </tr></tbody></table><h3 id="type-conversationturnusageinput"><code>ConversationTurnUsageInput</code> <span class="type-badge">input</span></h3><p>What one CLEAR Agent turn used. Recorded on its Answer.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>The model id the turn ran on, e.g. `anthropic/claude-sonnet-5-5`.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Cost in USD, computed by the caller from its price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -3498,6 +3529,19 @@ the top 50 most-active users in the window.</td>
     <td><code>byDay</code></td>
     <td><code>[DailyActivityCount!]!</code></td>
     <td>Daily activity counts across the window (UTC dates).</td>
+  </tr></tbody></table><h3 id="type-agentbudget"><code>AgentBudget</code> <span class="type-badge">object</span></h3><p>Your daily CLEAR Agent budget. Spend is the sum of your turns' cost since
+UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>limitUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>The daily limit in USD.</td>
+  </tr><tr>
+    <td><code>spentTodayUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>What your turns have cost since UTC midnight, in USD.</td>
+  </tr><tr>
+    <td><code>resetsAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When spend resets to zero: the next UTC midnight.</td>
   </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket - the roll-up of every contributing
 `report_datapoint` for a scope (window × window_kind × location).
 Consumed by the situation-analysis dashboard tiles and by chatbot
@@ -4001,6 +4045,26 @@ and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><
     <td><code>JSON!</code></td>
     <td>The message parts. Text that came from outside CLEAR (documents,
 signal bodies) is data, never instructions.</td>
+  </tr><tr>
+    <td><code>model</code></td>
+    <td><code>String</code></td>
+    <td>Answers only: the model that wrote it.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: input tokens across the whole turn, tool steps included.</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: output tokens across the whole turn.</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Answers only: what the turn cost in USD, from the caller's price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: time from the user's turn to the finished Answer.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>

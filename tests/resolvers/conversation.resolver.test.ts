@@ -8,10 +8,13 @@
  * id-ownership rules on upserts.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/utils/activity-log.js", () => ({
   logActivity: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../src/utils/env.js", () => ({
+  env: { AGENT_DAILY_BUDGET_USD: 2.5 },
 }));
 
 import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
@@ -49,10 +52,13 @@ beforeEach(() => {
   vi.mocked(logActivity).mockClear();
 });
 
-const { conversation, myConversations, userConversations } =
+const { conversation, myConversations, userConversations, myAgentBudget } =
   conversationResolvers.Query;
-const { upsertConversation, upsertConversationMessages } =
-  conversationResolvers.Mutation;
+const {
+  upsertConversation,
+  upsertConversationMessages,
+  recordConversationTurnUsage,
+} = conversationResolvers.Mutation;
 const { messages, messageCount } = conversationResolvers.Conversation;
 
 const owned = { id: "t1", userId: "u1", title: null, metadata: null };
@@ -460,6 +466,185 @@ describe("Query.userConversations", () => {
     expect(() =>
       userConversations(null, { userId: "u1" }, buildContext(null)),
     ).toThrow(/logged in/);
+  });
+});
+
+describe("Mutation.recordConversationTurnUsage", () => {
+  const usage = {
+    model: "anthropic/claude-sonnet-5-5",
+    inputTokens: 1200,
+    outputTokens: 340,
+    costUsd: 0.0087,
+    latencyMs: 4200,
+  };
+  const answer = {
+    role: "assistant",
+    usageRecordedAt: null,
+    conversation: { userId: "u1" },
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("records usage on the owner's Answer, stamped with server time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T09:30:00.000Z"));
+    const update = vi.fn().mockResolvedValue({ id: "m2" });
+    const ctx = buildContext(OWNER, {
+      conversationMessages: {
+        findUnique: vi.fn().mockResolvedValue(answer),
+        update,
+      },
+    });
+    await recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "m2" },
+      data: {
+        ...usage,
+        usageRecordedAt: new Date("2026-10-01T09:30:00.000Z"),
+      },
+    });
+  });
+
+  it("keeps the first recording time when usage is corrected", async () => {
+    const first = new Date("2026-09-30T23:59:00.000Z");
+    const update = vi.fn().mockResolvedValue({ id: "m2" });
+    const ctx = buildContext(OWNER, {
+      conversationMessages: {
+        findUnique: vi.fn().mockResolvedValue({ ...answer, usageRecordedAt: first }),
+        update,
+      },
+    });
+    await recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx);
+    expect(update.mock.calls[0][0].data.usageRecordedAt).toBe(first);
+  });
+
+  it("is FORBIDDEN for another user and for an admin, and writes nothing", async () => {
+    for (const user of [OTHER, ADMIN]) {
+      const update = vi.fn();
+      const ctx = buildContext(user, {
+        conversationMessages: {
+          findUnique: vi.fn().mockResolvedValue(answer),
+          update,
+        },
+      });
+      await expect(
+        recordConversationTurnUsage(null, { messageId: "m2", usage }, ctx),
+      ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects usage on a user turn", async () => {
+    const ctx = buildContext(OWNER, {
+      conversationMessages: {
+        findUnique: vi.fn().mockResolvedValue({ ...answer, role: "user" }),
+      },
+    });
+    await expect(
+      recordConversationTurnUsage(null, { messageId: "m1", usage }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
+  it("is NOT_FOUND for an unknown message", async () => {
+    const ctx = buildContext(OWNER, {
+      conversationMessages: { findUnique: vi.fn().mockResolvedValue(null) },
+    });
+    await expect(
+      recordConversationTurnUsage(null, { messageId: "nope", usage }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it.each([
+    ["a negative cost", { costUsd: -0.01 }],
+    ["a non-finite cost", { costUsd: Number.POSITIVE_INFINITY }],
+    ["fractional tokens", { inputTokens: 1.5 }],
+    ["negative latency", { latencyMs: -1 }],
+    ["an empty model", { model: "" }],
+  ])("rejects %s before any lookup", async (_name, bad) => {
+    const findUnique = vi.fn();
+    const ctx = buildContext(OWNER, { conversationMessages: { findUnique } });
+    await expect(
+      recordConversationTurnUsage(
+        null,
+        { messageId: "m2", usage: { ...usage, ...bad } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("is FORBIDDEN for a pending user", async () => {
+    await expect(
+      recordConversationTurnUsage(
+        null,
+        { messageId: "m2", usage },
+        buildContext(PENDING),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+});
+
+describe("Query.myAgentBudget", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function budgetContext(user: User, sum: number | null) {
+    const aggregate = vi.fn().mockResolvedValue({ _sum: { costUsd: sum } });
+    return {
+      aggregate,
+      ctx: buildContext(user, { conversationMessages: { aggregate } }),
+    };
+  }
+
+  it("sums the caller's cost since UTC midnight, and resets at the next one", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T17:45:00.000Z"));
+    const { ctx, aggregate } = budgetContext(OWNER, 0.42);
+    await expect(myAgentBudget(null, {}, ctx)).resolves.toEqual({
+      limitUsd: 2.5,
+      spentTodayUsd: 0.42,
+      resetsAt: new Date("2026-10-02T00:00:00.000Z"),
+    });
+    expect(aggregate).toHaveBeenCalledWith({
+      where: {
+        conversation: { userId: "u1" },
+        usageRecordedAt: { gte: new Date("2026-10-01T00:00:00.000Z") },
+      },
+      _sum: { costUsd: true },
+    });
+  });
+
+  it("uses the UTC day, not the server's local day, just after midnight", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-02T00:00:00.001Z"));
+    const { ctx, aggregate } = budgetContext(OWNER, null);
+    const budget = await myAgentBudget(null, {}, ctx);
+    expect(aggregate.mock.calls[0][0].where.usageRecordedAt).toEqual({
+      gte: new Date("2026-10-02T00:00:00.000Z"),
+    });
+    expect(budget.resetsAt).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+  });
+
+  it("reports zero spend when nothing has been recorded today", async () => {
+    const { ctx } = budgetContext(OWNER, null);
+    await expect(myAgentBudget(null, {}, ctx)).resolves.toMatchObject({
+      spentTodayUsd: 0,
+    });
+  });
+
+  it("is FORBIDDEN for a pending user", async () => {
+    await expect(myAgentBudget(null, {}, buildContext(PENDING))).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+  });
+
+  it("is UNAUTHENTICATED without a session", async () => {
+    await expect(myAgentBudget(null, {}, buildContext(null))).rejects.toMatchObject({
+      extensions: { code: "UNAUTHENTICATED" },
+    });
   });
 });
 

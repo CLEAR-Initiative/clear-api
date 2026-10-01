@@ -143,6 +143,10 @@ export const queryTypeDef = gql`
       after: String
     ): [Conversation!]!
 
+    """Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+    midnight, and when it resets. Approved users only."""
+    myAgentBudget: AgentBudget!
+
     """Admin audit: one user's Conversations, most recently active first.
     Read-only; each call is logged as \`conversation.admin_read\`. Admin only."""
     userConversations(

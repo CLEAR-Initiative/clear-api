@@ -16,6 +16,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { logActivity } from "../utils/activity-log.js";
+import { env } from "../utils/env.js";
 import {
   canSeeUserPrivate,
   requireContentReader,
@@ -44,6 +45,23 @@ interface ConversationMessageInput {
   type?: string | null;
   content: unknown;
   createdAt?: string | Date | null;
+}
+
+interface ConversationTurnUsageInput {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  latencyMs: number;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Start of the current UTC day: the Agent budget's reset boundary. */
+function utcMidnight(now: Date): Date {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
 }
 
 function badInput(message: string): GraphQLError {
@@ -142,6 +160,29 @@ export const conversationResolvers = {
     ) => {
       const user = requireContentReader(context);
       return listConversations(context, user.id, args);
+    },
+
+    myAgentBudget: async (
+      _parent: unknown,
+      _args: unknown,
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const since = utcMidnight(new Date());
+      // Summed by usageRecordedAt (server time), never the caller-supplied
+      // createdAt, so a back-dated message can't escape today's budget.
+      const spent = await context.prisma.conversationMessages.aggregate({
+        where: {
+          conversation: { userId: user.id },
+          usageRecordedAt: { gte: since },
+        },
+        _sum: { costUsd: true },
+      });
+      return {
+        limitUsd: env.AGENT_DAILY_BUDGET_USD,
+        spentTodayUsd: spent._sum.costUsd ?? 0,
+        resetsAt: new Date(since.getTime() + DAY_MS),
+      };
     },
 
     userConversations: (
@@ -256,6 +297,61 @@ export const conversationResolvers = {
       });
       const results = await context.prisma.$transaction([...writes, touch]);
       return results.slice(0, writes.length);
+    },
+
+    recordConversationTurnUsage: async (
+      _parent: unknown,
+      args: { messageId: string; usage: ConversationTurnUsageInput },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const { model, inputTokens, outputTokens, costUsd, latencyMs } =
+        args.usage;
+      if (!model) throw badInput("model is required");
+      for (const [name, value] of Object.entries({
+        inputTokens,
+        outputTokens,
+        latencyMs,
+      })) {
+        if (!Number.isInteger(value) || value < 0) {
+          throw badInput(`${name} must be a non-negative integer`);
+        }
+      }
+      if (!Number.isFinite(costUsd) || costUsd < 0) {
+        throw badInput("costUsd must be a non-negative number");
+      }
+
+      const message = await context.prisma.conversationMessages.findUnique({
+        where: { id: args.messageId },
+        select: {
+          role: true,
+          usageRecordedAt: true,
+          conversation: { select: { userId: true } },
+        },
+      });
+      if (!message) {
+        throw new GraphQLError("Message not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      if (message.conversation.userId !== user.id) {
+        throw forbidden("Only the owner can change a Conversation");
+      }
+      if (message.role !== "assistant") {
+        throw badInput("Usage is recorded on assistant messages only");
+      }
+      return context.prisma.conversationMessages.update({
+        where: { id: args.messageId },
+        data: {
+          model,
+          inputTokens,
+          outputTokens,
+          costUsd,
+          latencyMs,
+          // A correction keeps the turn on the day it was first charged.
+          usageRecordedAt: message.usageRecordedAt ?? new Date(),
+        },
+      });
     },
   },
 

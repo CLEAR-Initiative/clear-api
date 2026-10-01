@@ -175,6 +175,16 @@ const envSchema = z.object({
    *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
    *  when set (`openssl rand -hex 32`). */
   GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
+
+  // ─── CLEAR Agent ─────────────────────────────────────────────────
+  /** Daily Agent budget per user, in USD. Once a user's turns since UTC
+   *  midnight cost this much, `myAgentBudget` reports it spent and
+   *  clear-mvp declines new turns until the next UTC midnight. The
+   *  amount is provisional until it is decided; empty means default. */
+  AGENT_DAILY_BUDGET_USD: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().nonnegative().default(2),
+  ),
 });
 
 const parsed = envSchema.parse(process.env);

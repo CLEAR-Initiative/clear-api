@@ -23,6 +23,14 @@ export const mutationTypeDef = gql`
       messages: [ConversationMessageInput!]!
     ): [ConversationMessage!]!
 
+    """Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+    its Answer, an \`assistant\` message in one of your Conversations. The
+    cost counts toward your daily Agent budget. Owner only."""
+    recordConversationTurnUsage(
+      messageId: String!
+      usage: ConversationTurnUsageInput!
+    ): ConversationMessage!
+
     # ─── Public Event Share Links ──────────────────────────────────────────────
     """
     Mint a Redis-backed share token for an event. The snapshot of the
