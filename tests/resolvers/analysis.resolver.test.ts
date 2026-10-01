@@ -8,7 +8,7 @@
  * supersede ordering, the on-demand dedupe, the P2002 races, and cadence
  * anchoring (the things the review's A5–A9 turned on).
  */
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../../src/generated/prisma/client.js";
 
@@ -208,16 +208,6 @@ describe("analysis resolver", () => {
 
   describe("frameEvidenceWatermark (ADR-0008)", () => {
     const frame = { locationIds: ["sudan-a0"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-12-31") };
-    let saved: { p?: string; m?: string };
-    beforeAll(() => {
-      saved = { p: process.env.EMBEDDING_PROVIDER, m: process.env.EMBEDDING_MODEL };
-      process.env.EMBEDDING_PROVIDER = "voyage";
-      process.env.EMBEDDING_MODEL = "voyage-3";
-    });
-    afterAll(() => {
-      process.env.EMBEDDING_PROVIDER = saved.p;
-      process.env.EMBEDDING_MODEL = saved.m;
-    });
 
     it("requires admin/pipeline", async () => {
       await expect(
@@ -234,6 +224,9 @@ describe("analysis resolver", () => {
       const sql = (prisma.$queryRawUnsafe as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
       expect(sql).toContain('FROM "knowledgebase"');
       expect(sql).toContain("ancestor_ids"); // single A0 → subtree expansion
+      // Freshness counts all ingestion regardless of embedding model — so the
+      // query must NOT depend on EMBEDDING_* config (no embedding_provider filter).
+      expect(sql).not.toContain("embedding_provider");
     });
   });
 

@@ -78,6 +78,10 @@ function frameToKbFilters(frame: FrameInput) {
         : {}),
     ...(eventTypes.length > 0 ? { eventTypes } : {}),
     ...(needSectors.length > 0 ? { needSectors } : {}),
+    // Freshness is about INGESTION, not retrievability by the current embedding
+    // model — count all KB rows for the frame regardless of embedding config.
+    // (Also avoids pulling EMBEDDING_* env into a plain count query.)
+    currentEmbeddingModelOnly: false,
   };
 }
 
