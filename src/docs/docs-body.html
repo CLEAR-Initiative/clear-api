@@ -360,6 +360,12 @@ Approved users only.<div class="field-args"><span class="arg"><code>id: String!<
 users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page. Omit
 for the first page.</span></div></td>
   </tr><tr>
+    <td><code>conversationMessagesByIds</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Messages from your own Conversations by id (at most 200), oldest
+first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+to resolve messages it knows only by id. Approved users only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
+  </tr><tr>
     <td><code>myAgentBudget</code></td>
     <td><code>AgentBudget!</code></td>
     <td>Your daily CLEAR Agent budget: the limit, what you've spent since UTC

@@ -143,6 +143,11 @@ export const queryTypeDef = gql`
       after: String
     ): [Conversation!]!
 
+    """Messages from your own Conversations by id (at most 200), oldest
+    first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+    to resolve messages it knows only by id. Approved users only."""
+    conversationMessagesByIds(ids: [String!]!): [ConversationMessage!]!
+
     """Your daily CLEAR Agent budget: the limit, what you've spent since UTC
     midnight, and when it resets. Approved users only."""
     myAgentBudget: AgentBudget!

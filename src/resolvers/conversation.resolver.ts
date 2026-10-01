@@ -252,6 +252,24 @@ export const conversationResolvers = {
       return listConversations(context, user.id, args);
     },
 
+    conversationMessagesByIds: async (
+      _parent: unknown,
+      args: { ids: string[] },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      if (args.ids.length > MAX_MESSAGES_PER_CALL) {
+        throw badInput(`At most ${MAX_MESSAGES_PER_CALL} ids per call`);
+      }
+      if (args.ids.length === 0) return [];
+      // Only the caller's own: other users' ids are silently absent, so the
+      // result never confirms that someone else's message exists.
+      return context.prisma.conversationMessages.findMany({
+        where: { id: { in: args.ids }, conversation: { userId: user.id } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+    },
+
     myAgentBudget: async (
       _parent: unknown,
       _args: unknown,

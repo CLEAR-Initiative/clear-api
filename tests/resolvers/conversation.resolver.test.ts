@@ -67,6 +67,7 @@ const {
   userConversations,
   myAgentBudget,
   myAgentWorkingMemory,
+  conversationMessagesByIds,
 } = conversationResolvers.Query;
 const {
   upsertConversation,
@@ -903,6 +904,41 @@ describe("Agent working memory", () => {
     expect(() =>
       saveAgentWorkingMemory(null, { input: {} }, buildContext(null)),
     ).toThrow(/logged in/);
+  });
+});
+
+describe("Query.conversationMessagesByIds", () => {
+  it("returns only messages in the caller's own Conversations", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(OWNER, { conversationMessages: { findMany } });
+    await conversationMessagesByIds(null, { ids: ["m1", "m9"] }, ctx);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["m1", "m9"] }, conversation: { userId: "u1" } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  });
+
+  it("scopes a platform admin to their own messages too", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(ADMIN, { conversationMessages: { findMany } });
+    await conversationMessagesByIds(null, { ids: ["m1"] }, ctx);
+    expect(findMany.mock.calls[0][0].where.conversation).toEqual({ userId: "a1" });
+  });
+
+  it("rejects more than 200 ids, and skips the query for none", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(OWNER, { conversationMessages: { findMany } });
+    await expect(
+      conversationMessagesByIds(null, { ids: Array.from({ length: 201 }, (_, i) => `m${i}`) }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(conversationMessagesByIds(null, { ids: [] }, ctx)).resolves.toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("is FORBIDDEN for a pending user", async () => {
+    await expect(
+      conversationMessagesByIds(null, { ids: ["m1"] }, buildContext(PENDING)),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 });
 

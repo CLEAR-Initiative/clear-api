@@ -22,8 +22,13 @@ import {
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { conversation, myConversations, myAgentBudget, myAgentWorkingMemory } =
-  conversationResolvers.Query;
+const {
+  conversation,
+  myConversations,
+  myAgentBudget,
+  myAgentWorkingMemory,
+  conversationMessagesByIds,
+} = conversationResolvers.Query;
 const {
   upsertConversation,
   upsertConversationMessages,
@@ -89,6 +94,13 @@ describeIfDb("Conversations against the real schema", () => {
     expect(rows[1]!.content).toEqual(text("Final"));
     // An update without createdAt keeps the original ordering key.
     expect(rows[1]!.createdAt.toISOString()).toBe("2026-10-01T08:00:05.000Z");
+
+    const byId = await conversationMessagesByIds(
+      null,
+      { ids: [`${RUN}-m2`, `${RUN}-m1`, "not-a-message"] },
+      ctx,
+    );
+    expect(ids(byId)).toEqual([`${RUN}-m1`, `${RUN}-m2`]);
   });
 
   it("windows history newest-last and pages back across equal timestamps", async () => {
