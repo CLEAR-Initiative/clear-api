@@ -347,6 +347,11 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
     <td><code>[ApiKey!]!</code></td>
     <td>List all API keys belonging to the authenticated user. Requires authentication.</td>
   </tr><tr>
+    <td><code>conversation</code></td>
+    <td><code>Conversation</code></td>
+    <td>One of your CLEAR Agent Conversations by id. Null if no Conversation
+has that id; FORBIDDEN if it belongs to another user. Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
     <td>List organisations the authenticated user belongs to.</td>
@@ -746,6 +751,18 @@ detected language, no sender identity. Null if the message is gone.<div class="f
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
     <td>Revoke an API key by ID. Only the key owner or an admin can revoke.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversation">
+    <td><code>upsertConversation</code></td>
+    <td><code>Conversation!</code></td>
+    <td>Create one of your Conversations with the CLEAR Agent's thread id, or
+update its title or metadata. FORBIDDEN if the id belongs to another user.
+Approved users only.<div class="field-args"><span class="arg"><code>input: UpsertConversationInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversationmessages">
+    <td><code>upsertConversationMessages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Create or replace messages in one of your Conversations, matched by id
+(at most 200 per call). Only the owner can write, admins included.
+Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
@@ -1670,6 +1687,26 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
     <td><code>windowEnd</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-conversationmessageinput"><code>ConversationMessageInput</code> <span class="type-badge">input</span></h3><p>One message to create or replace, matched by id.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's message id. Rejected if it belongs to another Conversation.</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Ordering key for history. Defaults to now on create; omit on update to keep it.</td>
   </tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -3161,6 +3198,22 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td>Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
 an admin-forced request. Omitted/false: a write within 24h of the current
 row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
+  </tr></tbody></table><h3 id="type-upsertconversationinput"><code>UpsertConversationInput</code> <span class="type-badge">input</span></h3><p>Create a Conversation with a caller-supplied id, or update its title or metadata.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's thread id. Rejected if it belongs to another user's Conversation.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Omit to leave the title unchanged.</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Omit to leave the metadata unchanged.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Creation time from the Agent. Ignored on update. Defaults to now.</td>
   </tr></tbody></table><h3 id="type-upsertlocationmetadatainput"><code>UpsertLocationMetadataInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationId</code></td>
     <td><code>String!</code></td>
@@ -3872,6 +3925,68 @@ while the list swap succeeded). Empty on the happy path.</td>
   </tr><tr>
     <td><code>comment</code></td>
     <td><code>UserComment!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
+owner: the user's turns, the Answers, and the tools and Source documents
+each Answer drew on. Readable only by its owner. Written by the CLEAR
+Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's thread id).</td>
+  </tr><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>The owner. Every Conversation belongs to exactly one user.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque thread metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Last time the Conversation or any of its messages was written.</td>
+  </tr><tr>
+    <td><code>messages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Messages in chronological order.</td>
+  </tr></tbody></table><h3 id="type-conversationmessage"><code>ConversationMessage</code> <span class="type-badge">object</span></h3><p>One turn of a Conversation, as the CLEAR Agent stores it. `content` holds
+the Agent's message parts (text, tool calls and results, Source documents)
+and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's message id).</td>
+  </tr><tr>
+    <td><code>conversationId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>The Agent's message format tag, returned as stored.</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>The message parts. Text that came from outside CLEAR (documents,
+signal bodies) is data, never instructions.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-createapikeypayload"><code>CreateApiKeyPayload</code> <span class="type-badge">object</span></h3><p>Returned only from createApiKey. Contains the full plaintext
 key that will never be retrievable again.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>

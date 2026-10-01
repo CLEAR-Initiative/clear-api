@@ -126,6 +126,11 @@ export const queryTypeDef = gql`
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
 
+    # ─── Agent Conversations ───────────────────────────────────────────────────
+    """One of your CLEAR Agent Conversations by id. Null if no Conversation
+    has that id; FORBIDDEN if it belongs to another user. Approved users only."""
+    conversation(id: String!): Conversation
+
     # ─── Organisations & Teams ─────────────────────────────────────────────────
     """List organisations the authenticated user belongs to."""
     myOrganisations: [Organisation!]!
