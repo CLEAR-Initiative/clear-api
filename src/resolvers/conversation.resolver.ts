@@ -6,15 +6,21 @@
  * runs as that user. Ids are caller-supplied because Mastra mints thread
  * and message ids before the first write.
  *
- * Access: an approved user reads and writes only their own Conversations.
- * There is no delete — a Conversation is the audit record of what the Agent
- * said.
+ * Access: an approved user reads and writes their own Conversations.
+ * Platform admins can read anyone's, read-only, and every such read is
+ * logged as `conversation.admin_read`. There is no delete — a Conversation
+ * is the audit record of what the Agent said.
  */
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { requireContentReader } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
+import {
+  canSeeUserPrivate,
+  requireContentReader,
+  requireRole,
+} from "../utils/auth-guard.js";
 
 /** Mastra ids are UUIDs; anything much longer is not one of ours. */
 const MAX_ID_LENGTH = 128;
@@ -46,6 +52,30 @@ function badInput(message: string): GraphQLError {
 
 function forbidden(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "FORBIDDEN" } });
+}
+
+function pageSize(first: number | null | undefined): number {
+  const size = first ?? 20;
+  if (size < 1 || size > MAX_CONVERSATIONS_PAGE) {
+    throw badInput(`first must be 1–${MAX_CONVERSATIONS_PAGE}`);
+  }
+  return size;
+}
+
+/** One page of a user's Conversations, most recently active first. */
+function listConversations(
+  context: Context,
+  userId: string,
+  args: { first?: number | null; after?: string | null },
+) {
+  // `id` breaks updatedAt ties so the cursor is stable. `after` = the last
+  // id of the previous page; skip:1 steps past it.
+  return context.prisma.conversations.findMany({
+    where: { userId },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    take: pageSize(args.first),
+    ...(args.after ? { cursor: { id: args.after }, skip: 1 } : {}),
+  });
 }
 
 function assertId(id: string, what: string): void {
@@ -89,8 +119,18 @@ export const conversationResolvers = {
         where: { id: args.id },
       });
       if (!conversation) return null;
-      if (conversation.userId !== user.id) {
+      // Self or platform admin; sharing a team or org is not enough.
+      if (!canSeeUserPrivate(context, conversation.userId)) {
         throw forbidden("This Conversation belongs to another user");
+      }
+      if (conversation.userId !== user.id) {
+        void logActivity(context.prisma, {
+          userId: user.id,
+          action: "conversation.admin_read",
+          resourceType: "conversation",
+          resourceId: conversation.id,
+          metadata: { ownerId: conversation.userId },
+        });
       }
       return conversation;
     },
@@ -101,18 +141,25 @@ export const conversationResolvers = {
       context: Context,
     ) => {
       const user = requireContentReader(context);
-      const first = args.first ?? 20;
-      if (first < 1 || first > MAX_CONVERSATIONS_PAGE) {
-        throw badInput(`first must be 1–${MAX_CONVERSATIONS_PAGE}`);
+      return listConversations(context, user.id, args);
+    },
+
+    userConversations: (
+      _parent: unknown,
+      args: { userId: string; first?: number | null; after?: string | null },
+      context: Context,
+    ) => {
+      const admin = requireRole(context, ["admin"]);
+      const page = listConversations(context, args.userId, args);
+      if (args.userId !== admin.id) {
+        void logActivity(context.prisma, {
+          userId: admin.id,
+          action: "conversation.admin_read",
+          resourceType: "conversation",
+          metadata: { ownerId: args.userId, listing: true },
+        });
       }
-      // `id` breaks updatedAt ties so the cursor is stable. `after` = the
-      // last id of the previous page; skip:1 steps past it.
-      return context.prisma.conversations.findMany({
-        where: { userId: user.id },
-        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-        take: first,
-        ...(args.after ? { cursor: { id: args.after }, skip: 1 } : {}),
-      });
+      return page;
     },
   },
 

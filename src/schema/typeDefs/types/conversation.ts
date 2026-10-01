@@ -4,8 +4,9 @@ export const conversationTypeDef = gql`
   """
   One CLEAR Agent Thread, stored as the record of what the Agent told its
   owner: the user's turns, the Answers, and the tools and Source documents
-  each Answer drew on. Readable only by its owner. Written by the CLEAR
-  Agent's memory adapter in clear-mvp; there is no delete.
+  each Answer drew on. Readable by its owner and, read-only, by platform
+  admins (every admin read is logged). Written only by its owner, through the
+  CLEAR Agent's memory adapter in clear-mvp; there is no delete.
   """
   type Conversation {
     """Caller-supplied id (the Agent's thread id)."""

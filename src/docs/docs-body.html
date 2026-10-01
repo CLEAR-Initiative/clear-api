@@ -349,14 +349,21 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
   </tr><tr>
     <td><code>conversation</code></td>
     <td><code>Conversation</code></td>
-    <td>One of your CLEAR Agent Conversations by id. Null if no Conversation
-has that id; FORBIDDEN if it belongs to another user. Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+admin (read-only, and logged as `conversation.admin_read`). Null if no
+Conversation has that id; FORBIDDEN if it belongs to another user.
+Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
     <td><code>myConversations</code></td>
     <td><code>[Conversation!]!</code></td>
     <td>Your CLEAR Agent Conversations, most recently active first. Approved
 users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.
 Omit for the first page.</span></div></td>
+  </tr><tr>
+    <td><code>userConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Admin audit: one user's Conversations, most recently active first.
+Read-only; each call is logged as `conversation.admin_read`. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.</span></div></td>
   </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
@@ -3934,8 +3941,9 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
 owner: the user's turns, the Answers, and the tools and Source documents
-each Answer drew on. Readable only by its owner. Written by the CLEAR
-Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+each Answer drew on. Readable by its owner and, read-only, by platform
+admins (every admin read is logged). Written only by its owner, through the
+CLEAR Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>Caller-supplied id (the Agent's thread id).</td>

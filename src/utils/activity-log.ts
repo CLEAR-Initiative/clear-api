@@ -31,7 +31,11 @@ export type ActivityAction =
   | "dev_user.provisioned"
   | "dev_user.api_key_rotated"
   | "user.approved"
-  | "user.role_updated";
+  | "user.role_updated"
+  // A platform admin read another user's Conversation (or listed them).
+  // The first logged *read*: Conversations are an audit record of what the
+  // CLEAR Agent told their owner, so reading them is itself audited.
+  | "conversation.admin_read";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -44,7 +48,8 @@ export type ActivityResourceType =
   | "crisis"
   | "feedback"
   | "session"
-  | "user";
+  | "user"
+  | "conversation";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */

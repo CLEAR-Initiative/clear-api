@@ -2,12 +2,20 @@
  * Unit tests for `conversation.resolver.ts`.
  *
  * DB-free: `context.prisma.conversations` / `conversationMessages` are stubbed
- * per test. Covers the auth matrix (unauthenticated / pending / owner / other
- * user) for every operation and the id-ownership rules on upserts.
+ * per test, and the activity-log writer is mocked. Covers the auth matrix
+ * (unauthenticated / pending / owner / other user / admin) for every
+ * operation, the logged admin read, admin write rejection, and the
+ * id-ownership rules on upserts.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("../../src/utils/activity-log.js", () => ({
+  logActivity: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
+import { logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
 
 type User = { id: string; role: string } | null;
@@ -35,8 +43,14 @@ function buildContext(user: User, prisma: PrismaStub = {}): Context {
 const OWNER = { id: "u1", role: "viewer" };
 const OTHER = { id: "u2", role: "analyst" };
 const PENDING = { id: "u3", role: "pending" };
+const ADMIN = { id: "a1", role: "admin" };
 
-const { conversation, myConversations } = conversationResolvers.Query;
+beforeEach(() => {
+  vi.mocked(logActivity).mockClear();
+});
+
+const { conversation, myConversations, userConversations } =
+  conversationResolvers.Query;
 const { upsertConversation, upsertConversationMessages } =
   conversationResolvers.Mutation;
 const { messages, messageCount } = conversationResolvers.Conversation;
@@ -65,6 +79,36 @@ describe("Query.conversation", () => {
     await expect(conversation(null, { id: "t1" }, ctx)).rejects.toMatchObject({
       extensions: { code: "FORBIDDEN" },
     });
+  });
+
+  it("does not log the owner's own read", async () => {
+    const ctx = buildContext(OWNER, {
+      conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
+    });
+    await conversation(null, { id: "t1" }, ctx);
+    expect(logActivity).not.toHaveBeenCalled();
+  });
+
+  it("lets a platform admin read another user's Conversation, and logs it", async () => {
+    const ctx = buildContext(ADMIN, {
+      conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
+    });
+    await expect(conversation(null, { id: "t1" }, ctx)).resolves.toBe(owned);
+    expect(logActivity).toHaveBeenCalledWith(ctx.prisma, {
+      userId: "a1",
+      action: "conversation.admin_read",
+      resourceType: "conversation",
+      resourceId: "t1",
+      metadata: { ownerId: "u1" },
+    });
+  });
+
+  it("does not log a read that found nothing", async () => {
+    const ctx = buildContext(ADMIN, {
+      conversations: { findUnique: vi.fn().mockResolvedValue(null) },
+    });
+    await conversation(null, { id: "t1" }, ctx);
+    expect(logActivity).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN for a pending user, before any lookup", async () => {
@@ -141,6 +185,20 @@ describe("Mutation.upsertConversation", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(update).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("is FORBIDDEN for a platform admin on another user's Conversation", async () => {
+    const update = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      conversations: {
+        findUnique: vi.fn().mockResolvedValue({ userId: "u1" }),
+        update,
+      },
+    });
+    await expect(
+      upsertConversation(null, { input: { id: "t1", title: "x" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("rejects an over-long id", async () => {
@@ -247,6 +305,22 @@ describe("Mutation.upsertConversationMessages", () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  it("is FORBIDDEN for a platform admin, and writes nothing", async () => {
+    const upsert = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
+      conversationMessages: { upsert },
+    });
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [userTurn] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it("is NOT_FOUND when the Conversation does not exist", async () => {
     const ctx = buildContext(OWNER, {
       conversations: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -337,6 +411,55 @@ describe("Query.myConversations", () => {
     expect(() => myConversations(null, {}, buildContext(null))).toThrow(
       /logged in/,
     );
+  });
+});
+
+describe("Query.userConversations", () => {
+  it("lists the target user's Conversations for an admin, and logs the read", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(ADMIN, { conversations: { findMany } });
+    await userConversations(null, { userId: "u1", first: 10 }, ctx);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: 10,
+    });
+    expect(logActivity).toHaveBeenCalledWith(ctx.prisma, {
+      userId: "a1",
+      action: "conversation.admin_read",
+      resourceType: "conversation",
+      metadata: { ownerId: "u1", listing: true },
+    });
+  });
+
+  it("does not log an admin listing their own Conversations", () => {
+    const ctx = buildContext(ADMIN, {
+      conversations: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    void userConversations(null, { userId: "a1" }, ctx);
+    expect(logActivity).not.toHaveBeenCalled();
+  });
+
+  for (const [name, user] of [
+    ["an analyst", OTHER],
+    ["a viewer", OWNER],
+    ["a pending user", PENDING],
+  ] as const) {
+    it(`is FORBIDDEN for ${name}`, () => {
+      const findMany = vi.fn();
+      const ctx = buildContext(user, { conversations: { findMany } });
+      expect(() => userConversations(null, { userId: "u1" }, ctx)).toThrow(
+        expect.objectContaining({ extensions: expect.objectContaining({ code: "FORBIDDEN" }) }),
+      );
+      expect(findMany).not.toHaveBeenCalled();
+      expect(logActivity).not.toHaveBeenCalled();
+    });
+  }
+
+  it("is UNAUTHENTICATED without a session", () => {
+    expect(() =>
+      userConversations(null, { userId: "u1" }, buildContext(null)),
+    ).toThrow(/logged in/);
   });
 });
 

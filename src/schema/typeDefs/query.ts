@@ -127,8 +127,10 @@ export const queryTypeDef = gql`
     myApiKeys: [ApiKey!]!
 
     # ─── Agent Conversations ───────────────────────────────────────────────────
-    """One of your CLEAR Agent Conversations by id. Null if no Conversation
-    has that id; FORBIDDEN if it belongs to another user. Approved users only."""
+    """A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+    admin (read-only, and logged as \`conversation.admin_read\`). Null if no
+    Conversation has that id; FORBIDDEN if it belongs to another user.
+    Approved users only."""
     conversation(id: String!): Conversation
 
     """Your CLEAR Agent Conversations, most recently active first. Approved
@@ -138,6 +140,16 @@ export const queryTypeDef = gql`
       first: Int = 20
       """Cursor: the \`id\` of the last Conversation on the previous page.
       Omit for the first page."""
+      after: String
+    ): [Conversation!]!
+
+    """Admin audit: one user's Conversations, most recently active first.
+    Read-only; each call is logged as \`conversation.admin_read\`. Admin only."""
+    userConversations(
+      userId: String!
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """Cursor: the \`id\` of the last Conversation on the previous page."""
       after: String
     ): [Conversation!]!
 
