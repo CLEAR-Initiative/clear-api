@@ -39,6 +39,8 @@ const MAX_WORKING_MEMORY_LENGTH = 100_000;
  *  Answer citing a dozen NRC Find passages; stops a 50 MB body. */
 const MAX_MESSAGE_CONTENT_LENGTH = 1_000_000;
 const MAX_METADATA_LENGTH = 100_000;
+/** Identifiers and filters only; a Current view is never data. */
+const MAX_CURRENT_VIEW_LENGTH = 10_000;
 const MAX_TITLE_LENGTH = 500;
 /** role and type are short tags (`assistant`, `v2`). */
 const MAX_TAG_LENGTH = 32;
@@ -57,6 +59,8 @@ interface ConversationMessageInput {
   role: string;
   type?: string | null;
   content: unknown;
+  /** User turns: the Current view. Omitted on update keeps it; null clears it. */
+  currentView?: unknown;
   createdAt?: string | Date | null;
 }
 
@@ -406,6 +410,7 @@ export const conversationResolvers = {
         assertMaxLength(message.role, MAX_TAG_LENGTH, "role");
         assertMaxLength(message.type, MAX_TAG_LENGTH, "type");
         assertJsonSize(message.content, MAX_MESSAGE_CONTENT_LENGTH, "content");
+        assertJsonSize(message.currentView, MAX_CURRENT_VIEW_LENGTH, "currentView");
       }
       await loadWritableConversation(context, user, conversationId);
       if (messages.length === 0) return [];
@@ -437,6 +442,11 @@ export const conversationResolvers = {
             const createdAt = m.createdAt
               ? new Date(m.createdAt).toISOString()
               : null;
+            const setsCurrentView = m.currentView !== undefined;
+            const currentView =
+              m.currentView === undefined || m.currentView === null
+                ? null
+                : JSON.stringify(m.currentView);
             // The checks above give a precise error; this makes them atomic.
             // A conflicting id is updated only if it is in this Conversation
             // and not yet charged, in the same statement as the insert. A
@@ -444,10 +454,10 @@ export const conversationResolvers = {
             // and then updates, so retries stay idempotent.
             const written = await tx.$queryRaw<{ id: string }[]>`
               INSERT INTO conversation_messages
-                (id, conversation_id, role, type, content, created_at, updated_at)
+                (id, conversation_id, role, type, content, current_view, created_at, updated_at)
               VALUES (
                 ${m.id}, ${conversationId}, ${m.role}, ${m.type ?? null},
-                ${JSON.stringify(m.content)}::jsonb,
+                ${JSON.stringify(m.content)}::jsonb, ${currentView}::jsonb,
                 COALESCE(${createdAt}::timestamp, ${now}::timestamp),
                 ${now}::timestamp
               )
@@ -455,6 +465,8 @@ export const conversationResolvers = {
                 role = EXCLUDED.role,
                 type = EXCLUDED.type,
                 content = EXCLUDED.content,
+                current_view = CASE WHEN ${setsCurrentView}
+                  THEN EXCLUDED.current_view ELSE conversation_messages.current_view END,
                 created_at = COALESCE(${createdAt}::timestamp, conversation_messages.created_at),
                 updated_at = EXCLUDED.updated_at
               WHERE conversation_messages.conversation_id = ${conversationId}

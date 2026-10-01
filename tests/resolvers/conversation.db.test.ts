@@ -97,7 +97,14 @@ describeIfDb("Conversations against the real schema", () => {
       {
         conversationId: T1,
         messages: [
-          { id: `${RUN}-m1`, role: "user", type: "v2", content: text("Access in Darfur?"), createdAt: at },
+          {
+            id: `${RUN}-m1`,
+            role: "user",
+            type: "v2",
+            content: text("Access in Darfur?"),
+            currentView: { route: "/map", filters: { country: "Sudan" } },
+            createdAt: at,
+          },
           { id: `${RUN}-m2`, role: "assistant", type: "v2", content: text("Draft"), createdAt: "2026-10-01T08:00:05.000Z" },
         ],
       },
@@ -118,6 +125,7 @@ describeIfDb("Conversations against the real schema", () => {
     const rows = await messages({ id: T1 }, {}, ctx);
     expect(ids(rows)).toEqual([`${RUN}-m1`, `${RUN}-m2`]);
     expect(rows[1]!.content).toEqual(text("Final"));
+    expect(rows[0]!.currentView).toEqual({ route: "/map", filters: { country: "Sudan" } });
     // An update without createdAt keeps the original ordering key.
     expect(rows[1]!.createdAt.toISOString()).toBe("2026-10-01T08:00:05.000Z");
 
