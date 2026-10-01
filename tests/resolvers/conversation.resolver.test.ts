@@ -228,6 +228,52 @@ describe("Mutation.upsertConversation", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("settles a lost create race on the caller's own row", async () => {
+    const update = vi.fn().mockResolvedValue(owned);
+    const ctx = buildContext(OWNER, {
+      conversations: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ userId: "u1" }),
+        create: vi.fn().mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError("Unique constraint", {
+            code: "P2002",
+            clientVersion: "test",
+          }),
+        ),
+        update,
+      },
+    });
+    await expect(
+      upsertConversation(null, { input: { id: "t1", title: "x" } }, ctx),
+    ).resolves.toBe(owned);
+    expect(update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { title: "x" } });
+  });
+
+  it("is FORBIDDEN when another user won the create race", async () => {
+    const update = vi.fn();
+    const ctx = buildContext(OWNER, {
+      conversations: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ userId: "u2" }),
+        create: vi.fn().mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError("Unique constraint", {
+            code: "P2002",
+            clientVersion: "test",
+          }),
+        ),
+        update,
+      },
+    });
+    await expect(
+      upsertConversation(null, { input: { id: "t1" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("is FORBIDDEN for a platform admin on another user's Conversation", async () => {
     const update = vi.fn();
     const ctx = buildContext(ADMIN, {

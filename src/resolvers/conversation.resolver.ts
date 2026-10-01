@@ -317,14 +317,31 @@ export const conversationResolvers = {
           data: changes,
         });
       }
-      return context.prisma.conversations.create({
-        data: {
-          id,
-          userId: user.id,
-          ...changes,
-          ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
-        },
-      });
+      try {
+        return await context.prisma.conversations.create({
+          data: {
+            id,
+            userId: user.id,
+            ...changes,
+            ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
+          },
+        });
+      } catch (err) {
+        // Lost a create race for the same id (a double submit, or the Agent's
+        // get-or-create running twice): settle on the row that won.
+        if (!isUniqueViolation(err)) throw err;
+        const winner = await context.prisma.conversations.findUnique({
+          where: { id },
+          select: { userId: true },
+        });
+        if (winner?.userId !== user.id) {
+          throw forbidden("This Conversation belongs to another user");
+        }
+        return context.prisma.conversations.update({
+          where: { id },
+          data: changes,
+        });
+      }
     },
 
     upsertConversationMessages: async (
