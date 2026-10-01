@@ -64,6 +64,14 @@ _Avoid_: webhook source (mechanism, not concept), platform source
 A Signal whose raw input is a single X (Twitter) post from a **Push Feed**. Ungraded reliability by design — never treated as verified reporting.
 _Avoid_: tweet signal (in product copy)
 
+### Agent conversations
+
+**Conversation**:
+The stored record of one exchange between a user and the **CLEAR Agent** — what the user
+asked, what the Agent answered, and what it drew on to answer (tools run, Source documents
+cited). Owned by that user.
+_Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**
@@ -84,6 +92,11 @@ _Avoid_: tweet signal (in product copy)
 - A **Push Feed** is a **Data Source**; its Signals enter the same enrichment/event-clustering drain as any other Signal — no quarantine tier
 - **X Post Signals** are deduplicated by X post id; a re-delivered post is skipped, never refreshed (engagement metrics are a first-ingest snapshot)
 - Tagging by topic (e.g. Sudan/conflict) is expressed through the Signal→**Push Feed** relation, not a tag field
+
+- A **Conversation** belongs to exactly one user; clear-api is its system of record
+- A **Conversation** is readable by its owner and, read-only, by platform admins; every admin read is logged
+- A **Conversation** keeps what the Agent actually said, even if the owner's access later narrows
+- Each **Conversation** turn records what it cost (model, tokens, latency) alongside what was said
 
 ## Example dialogue
 
