@@ -180,17 +180,16 @@ function assertId(id: string, what: string): void {
 }
 
 /**
- * Gate for every write. Conversations are written by the CLEAR Agent in
- * clear-mvp with the user's session, never with an API key: a key is for
- * reading CLEAR from scripts, and accepting it here would let any approved
- * user script edits to their own audit record.
+ * Gate for every write. A Conversation is the record of what the CLEAR Agent
+ * told its owner, so only the Agent writes it: the request must carry the
+ * owner's session (who it is for) AND the `agent` service key (that it comes
+ * from clear-mvp's Agent, not from the owner calling the API directly). An
+ * API key alone, or the owner's session alone, is not enough.
  */
 function requireConversationWriter(context: Context): User {
   const user = requireContentReader(context);
-  if (context.authMethod !== "session") {
-    throw forbidden(
-      "Conversations are written by the CLEAR Agent in the app, not with an API key",
-    );
+  if (context.authMethod !== "session" || !context.viaAgent) {
+    throw forbidden("Conversations are written only by the CLEAR Agent in the app");
   }
   return user;
 }

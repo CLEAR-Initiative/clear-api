@@ -33,3 +33,11 @@ recall later if needed), but its storage never touches the database directly.
   Threads need them.
 - A Conversation keeps what the Agent actually said, even if its owner's access later narrows.
   Platform admins can read Conversations read-only, and every such read is logged.
+- Only the Agent writes Conversations. Each write carries two credentials: the end user's
+  session (whose Conversation it is) and the key of an `agent` service user in
+  `X-Clear-Agent-Key` (that it comes from clear-mvp's Agent). Either alone is rejected, so a
+  user can't author their own audit record by calling the API directly, and a leaked agent key
+  can't write as anyone without that user's session. The agent role reads no content by itself.
+  We chose this over a service key plus an "acting for user X" header, which would let anyone
+  holding the key write as any user, and over signed per-request delegations, which add a
+  shared secret and token minting for no extra protection while the session is already sent.

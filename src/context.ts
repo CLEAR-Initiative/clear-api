@@ -25,6 +25,12 @@ export interface Context {
   session: Session | null;
   authMethod: AuthMethod;
   /**
+   * The request came from clear-mvp's CLEAR Agent: it carried the `agent`
+   * service user's key in `X-Clear-Agent-Key` on top of the user's session.
+   * Only the Agent may write Conversations; `user` is still the end user.
+   */
+  viaAgent: boolean;
+  /**
    * Active locale for this request. Drives translation overlays in
    * resolvers and is fixed for the request's lifetime — switching
    * languages requires a new request.
@@ -91,7 +97,9 @@ function readCookie(rawHeader: string | string[] | undefined, name: string): str
 export async function createContext(
   args: ExpressContextFunctionArgument,
 ): Promise<Context> {
-  const { user, session, authMethod } = await resolveRequestAuth(args.req.headers);
+  const { user, session, authMethod, viaAgent } = await resolveRequestAuth(
+    args.req.headers,
+  );
 
   // Express normalises headers to lowercase string|string[]. Take the
   // first value if multi-valued — every reasonable client sends a
@@ -123,6 +131,7 @@ export async function createContext(
     user,
     session,
     authMethod,
+    viaAgent,
     locale,
     translationLoader: createTranslationLoader(
       prisma,
