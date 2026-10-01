@@ -32,6 +32,7 @@ interface PrismaStub {
   conversationMessages?: Record<string, unknown>;
   agentWorkingMemory?: Record<string, unknown>;
   $transaction?: unknown;
+  $queryRaw?: unknown;
 }
 
 function buildContext(
@@ -343,10 +344,9 @@ describe("Mutation.upsertConversationMessages", () => {
 
   function ownerContext(
     extra: Record<string, unknown> = {},
-    { matched = 0 }: { matched?: number } = {},
+    { written = [{ id: "m1" }] }: { written?: { id: string }[] } = {},
   ) {
-    const updateMany = vi.fn().mockResolvedValue({ count: matched });
-    const create = vi.fn().mockResolvedValue({});
+    const queryRaw = vi.fn().mockResolvedValue(written);
     const touch = vi.fn().mockResolvedValue(owned);
     const ctx = buildContext(OWNER, {
       conversations: {
@@ -359,52 +359,56 @@ describe("Mutation.upsertConversationMessages", () => {
           .fn()
           .mockResolvedValueOnce([])
           .mockResolvedValueOnce([{ id: "m1", conversationId: "t1" }]),
-        updateMany,
-        create,
         ...extra,
       },
+      $queryRaw: queryRaw,
     });
-    return { ctx, updateMany, create, touch };
+    return { ctx, queryRaw, touch };
   }
 
-  it("inserts a new message and touches the Conversation", async () => {
-    const { ctx, updateMany, create, touch } = ownerContext();
+  it("writes each message in one conditional upsert and touches the Conversation", async () => {
+    const { ctx, queryRaw, touch } = ownerContext();
     const result = await upsertConversationMessages(
       null,
       { conversationId: "t1", messages: [userTurn] },
       ctx,
     );
-    const data = create.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data).toMatchObject({
-      id: "m1",
-      conversationId: "t1",
-      role: "user",
-      type: "v2",
-      content: userTurn.content,
-    });
-    expect((data.createdAt as Date).toISOString()).toBe(userTurn.createdAt);
-    expect(updateMany).toHaveBeenCalledOnce();
+    expect(queryRaw).toHaveBeenCalledOnce();
+    const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    const sql = strings.join("?");
+    // The ownership and finalization conditions live in the statement itself,
+    // so they can't go stale between the check and the write.
+    expect(sql).toContain("ON CONFLICT (id) DO UPDATE");
+    expect(sql).toMatch(/WHERE conversation_messages\.conversation_id = \?\s+AND conversation_messages\.usage_recorded_at IS NULL/);
+    expect(values).toEqual(
+      expect.arrayContaining([
+        "m1",
+        "t1",
+        "user",
+        "v2",
+        JSON.stringify(userTurn.content),
+        userTurn.createdAt,
+      ]),
+    );
     expect(touch.mock.calls[0][0].where).toEqual({ id: "t1" });
     expect(result).toEqual([{ id: "m1", conversationId: "t1" }]);
   });
 
-  it("updates in place only within this Conversation and before usage is recorded", async () => {
-    const { ctx, updateMany, create } = ownerContext({}, { matched: 1 });
-    await upsertConversationMessages(
-      null,
-      { conversationId: "t1", messages: [userTurn] },
-      ctx,
-    );
-    const call = updateMany.mock.calls[0][0];
-    // Both conditions live in the UPDATE itself, so they can't go stale
-    // between the check and the write.
-    expect(call.where).toEqual({ id: "m1", conversationId: "t1", usageRecordedAt: null });
-    expect(call.data).toMatchObject({ role: "user", content: userTurn.content });
-    expect(create).not.toHaveBeenCalled();
+  it("is FORBIDDEN, and touches nothing, when the conditional write matches no row", async () => {
+    // Claimed by another Conversation or charged after the precheck.
+    const { ctx, touch } = ownerContext({}, { written: [] });
+    await expect(
+      upsertConversationMessages(
+        null,
+        { conversationId: "t1", messages: [userTurn] },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(touch).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN when a message id belongs to another Conversation", async () => {
-    const { ctx, updateMany } = ownerContext({
+    const { ctx, queryRaw } = ownerContext({
       findMany: vi
         .fn()
         .mockResolvedValue([{ id: "m1", conversationId: "other", usageRecordedAt: null }]),
@@ -416,11 +420,11 @@ describe("Mutation.upsertConversationMessages", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN to rewrite an Answer whose usage is recorded", async () => {
-    const { ctx, updateMany } = ownerContext({
+    const { ctx, queryRaw } = ownerContext({
       findMany: vi.fn().mockResolvedValue([
         { id: "m1", conversationId: "t1", usageRecordedAt: new Date() },
       ]),
@@ -432,24 +436,7 @@ describe("Mutation.upsertConversationMessages", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(updateMany).not.toHaveBeenCalled();
-  });
-
-  it("maps an id claimed or charged concurrently (P2002) to FORBIDDEN", async () => {
-    const { ctx, create } = ownerContext();
-    create.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("Unique constraint", {
-        code: "P2002",
-        clientVersion: "test",
-      }),
-    );
-    await expect(
-      upsertConversationMessages(
-        null,
-        { conversationId: "t1", messages: [userTurn] },
-        ctx,
-      ),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN with an API key, before any lookup", async () => {
@@ -466,10 +453,10 @@ describe("Mutation.upsertConversationMessages", () => {
   });
 
   it("is FORBIDDEN for another user, and writes nothing", async () => {
-    const updateMany = vi.fn();
+    const queryRaw = vi.fn();
     const ctx = buildContext(OTHER, {
       conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
-      conversationMessages: { updateMany },
+      $queryRaw: queryRaw,
     });
     await expect(
       upsertConversationMessages(
@@ -478,14 +465,14 @@ describe("Mutation.upsertConversationMessages", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it("is FORBIDDEN for a platform admin, and writes nothing", async () => {
-    const updateMany = vi.fn();
+    const queryRaw = vi.fn();
     const ctx = buildContext(ADMIN, {
       conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
-      conversationMessages: { updateMany },
+      $queryRaw: queryRaw,
     });
     await expect(
       upsertConversationMessages(
@@ -494,7 +481,7 @@ describe("Mutation.upsertConversationMessages", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it("is NOT_FOUND when the Conversation does not exist", async () => {

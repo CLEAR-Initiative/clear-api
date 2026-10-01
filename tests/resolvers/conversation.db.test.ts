@@ -254,6 +254,22 @@ describeIfDb("Conversations against the real schema", () => {
     }
   });
 
+  it("accepts the same new message written twice at once into one Conversation", async () => {
+    // An adapter retry racing its own first attempt must stay idempotent.
+    for (let i = 0; i < 10; i++) {
+      const id = `${RUN}-retry-m${i}`;
+      const write = () =>
+        upsertConversationMessages(
+          null,
+          { conversationId: `${RUN}-race-mine`, messages: [{ id, role: "assistant", content: text("same") }] },
+          ctx,
+        );
+      const results = await Promise.allSettled([write(), write()]);
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(await prisma.conversationMessages.count({ where: { id } })).toBe(1);
+    }
+  });
+
   it("never updates another owner's message claimed after the ownership check", async () => {
     const id = `${RUN}-late-claim`;
     const claim = () =>

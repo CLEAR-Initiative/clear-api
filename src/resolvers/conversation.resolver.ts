@@ -428,29 +428,44 @@ export const conversationResolvers = {
         }
       }
 
-      try {
-        return await context.prisma.$transaction(async (tx) => {
+      return context.prisma.$transaction(
+        async (tx) => {
+          // Timestamps go in as UTC text, the way Prisma stores them in these
+          // timezone-less columns, so the session timezone can't shift them.
+          const now = new Date().toISOString();
           for (const m of messages) {
-            const createdAt = m.createdAt ? new Date(m.createdAt) : undefined;
-            const fields = {
-              role: m.role,
-              type: m.type ?? null,
-              content: m.content as InputJsonValue,
-            };
+            const createdAt = m.createdAt
+              ? new Date(m.createdAt).toISOString()
+              : null;
             // The checks above give a precise error; this makes them atomic.
-            // One UPDATE scoped to this Conversation and to an Answer not yet
-            // charged, so neither can change between a check and the write.
-            const { count } = await tx.conversationMessages.updateMany({
-              where: { id: m.id, conversationId, usageRecordedAt: null },
-              data: { ...fields, ...(createdAt ? { createdAt } : {}) },
-            });
-            // Nothing matched: the id is new, or it was claimed elsewhere or
-            // charged in the meantime, in which case the insert fails (P2002)
-            // instead of touching that row.
-            if (count === 0) {
-              await tx.conversationMessages.create({
-                data: { id: m.id, conversationId, ...fields, createdAt },
-              });
+            // A conflicting id is updated only if it is in this Conversation
+            // and not yet charged, in the same statement as the insert. A
+            // concurrent write of the same new id in this Conversation waits
+            // and then updates, so retries stay idempotent.
+            const written = await tx.$queryRaw<{ id: string }[]>`
+              INSERT INTO conversation_messages
+                (id, conversation_id, role, type, content, created_at, updated_at)
+              VALUES (
+                ${m.id}, ${conversationId}, ${m.role}, ${m.type ?? null},
+                ${JSON.stringify(m.content)}::jsonb,
+                COALESCE(${createdAt}::timestamp, ${now}::timestamp),
+                ${now}::timestamp
+              )
+              ON CONFLICT (id) DO UPDATE SET
+                role = EXCLUDED.role,
+                type = EXCLUDED.type,
+                content = EXCLUDED.content,
+                created_at = COALESCE(${createdAt}::timestamp, conversation_messages.created_at),
+                updated_at = EXCLUDED.updated_at
+              WHERE conversation_messages.conversation_id = ${conversationId}
+                AND conversation_messages.usage_recorded_at IS NULL
+              RETURNING id`;
+            // No row: the id was claimed elsewhere or charged in the meantime.
+            // Throwing rolls back the whole batch.
+            if (written.length === 0) {
+              throw forbidden(
+                `Message ${m.id} belongs to another Conversation or is a recorded Answer`,
+              );
             }
           }
           // Touch the Conversation so "newest first" means "most recently active".
@@ -463,15 +478,11 @@ export const conversationResolvers = {
           });
           const byId = new Map(rows.map((row) => [row.id, row]));
           return messages.map((m) => byId.get(m.id)!);
-        });
-      } catch (err) {
-        if (isUniqueViolation(err)) {
-          throw forbidden(
-            "A message id belongs to another Conversation or to a recorded Answer",
-          );
-        }
-        throw err;
-      }
+        },
+        // One statement per message, up to MAX_MESSAGES_PER_CALL of them:
+        // more than Prisma's 5s interactive default allows for on a slow link.
+        { timeout: 15_000 },
+      );
     },
 
     saveAgentWorkingMemory: (
