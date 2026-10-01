@@ -10,10 +10,14 @@
  * Platform admins can read anyone's, read-only, and every such read is
  * logged as `conversation.admin_read`. There is no delete — a Conversation
  * is the audit record of what the Agent said.
+ *
+ * Also here: the Agent's per-user working memory (Mastra's "resource") and
+ * the daily Agent budget, both strictly the caller's own.
  */
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
+import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { logActivity } from "../utils/activity-log.js";
 import { env } from "../utils/env.js";
@@ -29,6 +33,8 @@ const MAX_ID_LENGTH = 128;
 const MAX_MESSAGES_PER_CALL = 200;
 const MAX_CONVERSATIONS_PAGE = 100;
 const MAX_MESSAGES_WINDOW = 500;
+/** Working memory is a short Markdown profile, not a document store. */
+const MAX_WORKING_MEMORY_LENGTH = 100_000;
 
 type User = NonNullable<Context["user"]>;
 
@@ -47,6 +53,11 @@ interface ConversationMessageInput {
   createdAt?: string | Date | null;
 }
 
+interface SaveAgentWorkingMemoryInput {
+  workingMemory?: string | null;
+  metadata?: unknown;
+}
+
 interface ConversationTurnUsageInput {
   model: string;
   inputTokens: number;
@@ -62,6 +73,11 @@ function utcMidnight(now: Date): Date {
   return new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
   );
+}
+
+/** A JSON column write where an explicit null means SQL NULL. */
+function jsonOrDbNull(value: unknown): InputJsonValue | typeof Prisma.DbNull {
+  return value === null ? Prisma.DbNull : (value as InputJsonValue);
 }
 
 function badInput(message: string): GraphQLError {
@@ -185,6 +201,17 @@ export const conversationResolvers = {
       };
     },
 
+    myAgentWorkingMemory: (
+      _parent: unknown,
+      _args: unknown,
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      return context.prisma.agentWorkingMemory.findUnique({
+        where: { userId: user.id },
+      });
+    },
+
     userConversations: (
       _parent: unknown,
       args: { userId: string; first?: number | null; after?: string | null },
@@ -226,7 +253,7 @@ export const conversationResolvers = {
       const changes = {
         ...(title !== undefined ? { title } : {}),
         ...(metadata !== undefined
-          ? { metadata: (metadata ?? undefined) as InputJsonValue | undefined }
+          ? { metadata: jsonOrDbNull(metadata) }
           : {}),
       };
       if (existing) {
@@ -297,6 +324,32 @@ export const conversationResolvers = {
       });
       const results = await context.prisma.$transaction([...writes, touch]);
       return results.slice(0, writes.length);
+    },
+
+    saveAgentWorkingMemory: (
+      _parent: unknown,
+      args: { input: SaveAgentWorkingMemoryInput },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const { workingMemory, metadata } = args.input;
+      if (workingMemory && workingMemory.length > MAX_WORKING_MEMORY_LENGTH) {
+        throw badInput(
+          `workingMemory must be at most ${MAX_WORKING_MEMORY_LENGTH} characters`,
+        );
+      }
+      // Omitted fields stay as they are; an explicit null clears them.
+      const changes = {
+        ...(workingMemory !== undefined ? { workingMemory } : {}),
+        ...(metadata !== undefined
+          ? { metadata: jsonOrDbNull(metadata) }
+          : {}),
+      };
+      return context.prisma.agentWorkingMemory.upsert({
+        where: { userId: user.id },
+        create: { userId: user.id, ...changes },
+        update: changes,
+      });
     },
 
     recordConversationTurnUsage: async (

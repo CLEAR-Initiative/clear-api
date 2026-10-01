@@ -106,6 +106,7 @@ model user {
   invitationsSent       invitations[]           @relation("InvitedBy")
   activityLogs          activityLogs[]
   conversations         conversations[]
+  agentWorkingMemory    agentWorkingMemory?
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -2229,4 +2230,23 @@ model conversationMessages {
   @@index([conversationId, createdAt])
   @@index([usageRecordedAt])
   @@map("conversation_messages")
+}
+
+/// The CLEAR Agent's working memory for one user: what it keeps about the
+/// user across Threads (Mastra's "resource", whose id is the user id).
+/// Read and written only by that user, through the Agent's memory adapter.
+model agentWorkingMemory {
+  id            String  @id @default(cuid())
+  userId        String  @unique @map("user_id")
+  /// The Agent's working-memory document (Markdown).
+  workingMemory String? @map("working_memory")
+  /// Opaque Mastra resource metadata.
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_working_memory")
 }

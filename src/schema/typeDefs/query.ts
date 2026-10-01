@@ -147,6 +147,10 @@ export const queryTypeDef = gql`
     midnight, and when it resets. Approved users only."""
     myAgentBudget: AgentBudget!
 
+    """Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+    Approved users only."""
+    myAgentWorkingMemory: AgentWorkingMemory
+
     """Admin audit: one user's Conversations, most recently active first.
     Read-only; each call is logged as \`conversation.admin_read\`. Admin only."""
     userConversations(

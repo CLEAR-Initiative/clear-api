@@ -23,6 +23,9 @@ export const mutationTypeDef = gql`
       messages: [ConversationMessageInput!]!
     ): [ConversationMessage!]!
 
+    """Create or update your CLEAR Agent working memory. Approved users only."""
+    saveAgentWorkingMemory(input: SaveAgentWorkingMemoryInput!): AgentWorkingMemory!
+
     """Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
     its Answer, an \`assistant\` message in one of your Conversations. The
     cost counts toward your daily Agent budget. Owner only."""

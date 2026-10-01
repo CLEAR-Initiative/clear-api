@@ -18,6 +18,7 @@ vi.mock("../../src/utils/env.js", () => ({
 }));
 
 import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
+import { Prisma } from "../../src/generated/prisma/client.js";
 import { logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
 
@@ -26,6 +27,7 @@ type User = { id: string; role: string } | null;
 interface PrismaStub {
   conversations?: Record<string, unknown>;
   conversationMessages?: Record<string, unknown>;
+  agentWorkingMemory?: Record<string, unknown>;
   $transaction?: unknown;
 }
 
@@ -52,12 +54,18 @@ beforeEach(() => {
   vi.mocked(logActivity).mockClear();
 });
 
-const { conversation, myConversations, userConversations, myAgentBudget } =
-  conversationResolvers.Query;
+const {
+  conversation,
+  myConversations,
+  userConversations,
+  myAgentBudget,
+  myAgentWorkingMemory,
+} = conversationResolvers.Query;
 const {
   upsertConversation,
   upsertConversationMessages,
   recordConversationTurnUsage,
+  saveAgentWorkingMemory,
 } = conversationResolvers.Mutation;
 const { messages, messageCount } = conversationResolvers.Conversation;
 
@@ -174,6 +182,18 @@ describe("Mutation.upsertConversation", () => {
       where: { id: "t1" },
       data: { title: "New" },
     });
+  });
+
+  it("clears metadata to SQL NULL on an explicit null", async () => {
+    const update = vi.fn().mockResolvedValue(owned);
+    const ctx = buildContext(OWNER, {
+      conversations: {
+        findUnique: vi.fn().mockResolvedValue({ userId: "u1" }),
+        update,
+      },
+    });
+    await upsertConversation(null, { input: { id: "t1", metadata: null } }, ctx);
+    expect(update.mock.calls[0][0].data).toEqual({ metadata: Prisma.DbNull });
   });
 
   it("is FORBIDDEN when the id belongs to another user, and writes nothing", async () => {
@@ -645,6 +665,59 @@ describe("Query.myAgentBudget", () => {
     await expect(myAgentBudget(null, {}, buildContext(null))).rejects.toMatchObject({
       extensions: { code: "UNAUTHENTICATED" },
     });
+  });
+});
+
+describe("Agent working memory", () => {
+  it("reads only the caller's working memory", async () => {
+    const findUnique = vi.fn().mockResolvedValue(null);
+    const ctx = buildContext(OWNER, { agentWorkingMemory: { findUnique } });
+    await expect(myAgentWorkingMemory(null, {}, ctx)).resolves.toBeNull();
+    expect(findUnique).toHaveBeenCalledWith({ where: { userId: "u1" } });
+  });
+
+  it("upserts the caller's working memory, keyed by user", async () => {
+    const upsert = vi.fn().mockResolvedValue({ userId: "u1" });
+    const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } });
+    await saveAgentWorkingMemory(
+      null,
+      { input: { workingMemory: "# User\n- Works on Sudan" } },
+      ctx,
+    );
+    expect(upsert).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      create: { userId: "u1", workingMemory: "# User\n- Works on Sudan" },
+      update: { workingMemory: "# User\n- Works on Sudan" },
+    });
+  });
+
+  it("leaves omitted fields unchanged", async () => {
+    const upsert = vi.fn().mockResolvedValue({ userId: "u1" });
+    const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } });
+    await saveAgentWorkingMemory(null, { input: { metadata: { v: 2 } } }, ctx);
+    expect(upsert.mock.calls[0][0].update).toEqual({ metadata: { v: 2 } });
+  });
+
+  it("rejects an oversized working memory", async () => {
+    const upsert = vi.fn();
+    const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } });
+    expect(() =>
+      saveAgentWorkingMemory(
+        null,
+        { input: { workingMemory: "x".repeat(100_001) } },
+        ctx,
+      ),
+    ).toThrow(/at most 100000 characters/);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("is FORBIDDEN for a pending user and UNAUTHENTICATED without a session", async () => {
+    expect(() => myAgentWorkingMemory(null, {}, buildContext(PENDING))).toThrow(
+      /awaiting admin approval/,
+    );
+    expect(() =>
+      saveAgentWorkingMemory(null, { input: {} }, buildContext(null)),
+    ).toThrow(/logged in/);
   });
 });
 

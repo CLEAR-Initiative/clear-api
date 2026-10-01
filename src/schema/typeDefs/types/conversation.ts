@@ -89,6 +89,27 @@ export const conversationTypeDef = gql`
     resetsAt: DateTime!
   }
 
+  """
+  What the CLEAR Agent keeps about you across Threads (its working memory).
+  Yours only: no one else, admins included, can read or write it.
+  """
+  type AgentWorkingMemory {
+    userId: String!
+    """The working-memory document (Markdown)."""
+    workingMemory: String
+    """Opaque metadata kept by the Agent."""
+    metadata: JSON
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  """Replace your Agent working memory. Omitted fields stay unchanged."""
+  input SaveAgentWorkingMemoryInput {
+    """The working-memory document (Markdown, at most 100,000 characters)."""
+    workingMemory: String
+    metadata: JSON
+  }
+
   """Create a Conversation with a caller-supplied id, or update its title or metadata."""
   input UpsertConversationInput {
     """The Agent's thread id. Rejected if it belongs to another user's Conversation."""

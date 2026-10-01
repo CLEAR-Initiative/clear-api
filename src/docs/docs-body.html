@@ -365,6 +365,11 @@ Omit for the first page.</span></div></td>
     <td>Your daily CLEAR Agent budget: the limit, what you've spent since UTC
 midnight, and when it resets. Approved users only.</td>
   </tr><tr>
+    <td><code>myAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory</code></td>
+    <td>Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+Approved users only.</td>
+  </tr><tr>
     <td><code>userConversations</code></td>
     <td><code>[Conversation!]!</code></td>
     <td>Admin audit: one user's Conversations, most recently active first.
@@ -781,6 +786,10 @@ Approved users only.<div class="field-args"><span class="arg"><code>input: Upser
     <td>Create or replace messages in one of your Conversations, matched by id
 (at most 200 per call). Only the owner can write, admins included.
 Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+  </tr><tr id="mutation-saveagentworkingmemory">
+    <td><code>saveAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory!</code></td>
+    <td>Create or update your CLEAR Agent working memory. Approved users only.<div class="field-args"><span class="arg"><code>input: SaveAgentWorkingMemoryInput!</code></span></div></td>
   </tr><tr id="mutation-recordconversationturnusage">
     <td><code>recordConversationTurnUsage</code></td>
     <td><code>ConversationMessage!</code></td>
@@ -2742,6 +2751,14 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>Boolean</code></td>
     <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
 Admin only — a non-admin passing `true` is rejected.</td>
+  </tr></tbody></table><h3 id="type-saveagentworkingmemoryinput"><code>SaveAgentWorkingMemoryInput</code> <span class="type-badge">input</span></h3><p>Replace your Agent working memory. Omitted fields stay unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown, at most 100,000 characters).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -3542,6 +3559,27 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>resetsAt</code></td>
     <td><code>DateTime!</code></td>
     <td>When spend resets to zero: the next UTC midnight.</td>
+  </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
+Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket - the roll-up of every contributing
 `report_datapoint` for a scope (window × window_kind × location).
 Consumed by the situation-analysis dashboard tiles and by chatbot
