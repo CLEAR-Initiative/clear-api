@@ -352,6 +352,12 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
     <td>One of your CLEAR Agent Conversations by id. Null if no Conversation
 has that id; FORBIDDEN if it belongs to another user. Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>myConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Your CLEAR Agent Conversations, most recently active first. Approved
+users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — Cursor: the `id` of the last Conversation on the previous page.
+Omit for the first page.</span></div></td>
+  </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
     <td>List organisations the authenticated user belongs to.</td>
@@ -3954,9 +3960,16 @@ Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-ta
     <td><code>DateTime!</code></td>
     <td>Last time the Conversation or any of its messages was written.</td>
   </tr><tr>
+    <td><code>messageCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of messages in the Conversation.</td>
+  </tr><tr>
     <td><code>messages</code></td>
     <td><code>[ConversationMessage!]!</code></td>
-    <td>Messages in chronological order.</td>
+    <td>Messages in chronological order. With `first`, only the most recent
+`first` messages (before `before`, if given) — the window an Agent
+loads as history.<div class="field-args"><span class="arg"><code>first: Int</code> — Max messages to return (1–500). Omit for all of them.</span><span class="arg"><code>before: String</code> — Message id: return only messages older than this one. Pass the
+oldest id from the previous window to page back through history.</span></div></td>
   </tr></tbody></table><h3 id="type-conversationmessage"><code>ConversationMessage</code> <span class="type-badge">object</span></h3><p>One turn of a Conversation, as the CLEAR Agent stores it. `content` holds
 the Agent's message parts (text, tool calls and results, Source documents)
 and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>

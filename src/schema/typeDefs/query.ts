@@ -131,6 +131,16 @@ export const queryTypeDef = gql`
     has that id; FORBIDDEN if it belongs to another user. Approved users only."""
     conversation(id: String!): Conversation
 
+    """Your CLEAR Agent Conversations, most recently active first. Approved
+    users only."""
+    myConversations(
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """Cursor: the \`id\` of the last Conversation on the previous page.
+      Omit for the first page."""
+      after: String
+    ): [Conversation!]!
+
     # ─── Organisations & Teams ─────────────────────────────────────────────────
     """List organisations the authenticated user belongs to."""
     myOrganisations: [Organisation!]!

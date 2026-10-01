@@ -20,6 +20,8 @@ import { requireContentReader } from "../utils/auth-guard.js";
 const MAX_ID_LENGTH = 128;
 /** One Agent turn writes a handful of messages; this only stops abuse. */
 const MAX_MESSAGES_PER_CALL = 200;
+const MAX_CONVERSATIONS_PAGE = 100;
+const MAX_MESSAGES_WINDOW = 500;
 
 type User = NonNullable<Context["user"]>;
 
@@ -91,6 +93,26 @@ export const conversationResolvers = {
         throw forbidden("This Conversation belongs to another user");
       }
       return conversation;
+    },
+
+    myConversations: (
+      _parent: unknown,
+      args: { first?: number | null; after?: string | null },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const first = args.first ?? 20;
+      if (first < 1 || first > MAX_CONVERSATIONS_PAGE) {
+        throw badInput(`first must be 1–${MAX_CONVERSATIONS_PAGE}`);
+      }
+      // `id` breaks updatedAt ties so the cursor is stable. `after` = the
+      // last id of the previous page; skip:1 steps past it.
+      return context.prisma.conversations.findMany({
+        where: { userId: user.id },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: first,
+        ...(args.after ? { cursor: { id: args.after }, skip: 1 } : {}),
+      });
     },
   },
 
@@ -190,11 +212,47 @@ export const conversationResolvers = {
     },
   },
 
+  // Field resolvers inherit access from the parent: a Conversation object is
+  // only ever returned to someone allowed to read it.
   Conversation: {
-    messages: (parent: { id: string }, _args: unknown, context: Context) =>
-      context.prisma.conversationMessages.findMany({
+    messageCount: (parent: { id: string }, _args: unknown, context: Context) =>
+      context.prisma.conversationMessages.count({
         where: { conversationId: parent.id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
+
+    messages: async (
+      parent: { id: string },
+      args: { first?: number | null; before?: string | null },
+      context: Context,
+    ) => {
+      const { first, before } = args;
+      if (first != null && (first < 1 || first > MAX_MESSAGES_WINDOW)) {
+        throw badInput(`first must be 1–${MAX_MESSAGES_WINDOW}`);
+      }
+      let olderThan = {};
+      if (before) {
+        const anchor = await context.prisma.conversationMessages.findUnique({
+          where: { id: before },
+          select: { conversationId: true, createdAt: true },
+        });
+        if (!anchor || anchor.conversationId !== parent.id) {
+          throw badInput("before must be a message in this Conversation");
+        }
+        olderThan = {
+          OR: [
+            { createdAt: { lt: anchor.createdAt } },
+            { createdAt: anchor.createdAt, id: { lt: before } },
+          ],
+        };
+      }
+      // Newest first so `take` keeps the most recent window, then flip back
+      // to chronological order.
+      const rows = await context.prisma.conversationMessages.findMany({
+        where: { conversationId: parent.id, ...olderThan },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...(first != null ? { take: first } : {}),
+      });
+      return rows.reverse();
+    },
   },
 };

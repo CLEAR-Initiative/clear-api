@@ -36,10 +36,10 @@ const OWNER = { id: "u1", role: "viewer" };
 const OTHER = { id: "u2", role: "analyst" };
 const PENDING = { id: "u3", role: "pending" };
 
-const { conversation } = conversationResolvers.Query;
+const { conversation, myConversations } = conversationResolvers.Query;
 const { upsertConversation, upsertConversationMessages } =
   conversationResolvers.Mutation;
-const { messages } = conversationResolvers.Conversation;
+const { messages, messageCount } = conversationResolvers.Conversation;
 
 const owned = { id: "t1", userId: "u1", title: null, metadata: null };
 
@@ -289,14 +289,122 @@ describe("Mutation.upsertConversationMessages", () => {
   });
 });
 
-describe("Conversation.messages", () => {
-  it("lists the Conversation's messages chronologically", async () => {
+describe("Query.myConversations", () => {
+  it("lists only the caller's Conversations, most recently active first", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(OWNER, { conversations: { findMany } });
+    await myConversations(null, {}, ctx);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: 20,
+    });
+  });
+
+  it("pages from the cursor, skipping the cursor row itself", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(OWNER, { conversations: { findMany } });
+    await myConversations(null, { first: 5, after: "t9" }, ctx);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: 5,
+      cursor: { id: "t9" },
+      skip: 1,
+    });
+  });
+
+  it("scopes to the caller even for a platform admin", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext({ id: "a1", role: "admin" }, { conversations: { findMany } });
+    await myConversations(null, {}, ctx);
+    expect(findMany.mock.calls[0][0].where).toEqual({ userId: "a1" });
+  });
+
+  it("rejects first outside 1–100", () => {
+    const ctx = buildContext(OWNER, { conversations: { findMany: vi.fn() } });
+    expect(() => myConversations(null, { first: 0 }, ctx)).toThrow(/first/);
+    expect(() => myConversations(null, { first: 101 }, ctx)).toThrow(/first/);
+  });
+
+  it("is FORBIDDEN for a pending user", () => {
+    expect(() => myConversations(null, {}, buildContext(PENDING))).toThrow(
+      /awaiting admin approval/,
+    );
+  });
+
+  it("is UNAUTHENTICATED without a session", () => {
+    expect(() => myConversations(null, {}, buildContext(null))).toThrow(
+      /logged in/,
+    );
+  });
+});
+
+describe("Conversation.messages", () => {
+  const rows = (...ids: string[]) => ids.map((id) => ({ id }));
+
+  it("returns every message chronologically when first is omitted", async () => {
+    const findMany = vi.fn().mockResolvedValue(rows("m3", "m2", "m1"));
     const ctx = buildContext(OWNER, { conversationMessages: { findMany } });
-    await messages({ id: "t1" }, {}, ctx);
+    const result = await messages({ id: "t1" }, {}, ctx);
+    expect(result.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
     expect(findMany).toHaveBeenCalledWith({
       where: { conversationId: "t1" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
+  });
+
+  it("keeps the most recent `first` messages, in chronological order", async () => {
+    const findMany = vi.fn().mockResolvedValue(rows("m9", "m8"));
+    const ctx = buildContext(OWNER, { conversationMessages: { findMany } });
+    const result = await messages({ id: "t1" }, { first: 2 }, ctx);
+    expect(findMany.mock.calls[0][0].take).toBe(2);
+    expect(result.map((m) => m.id)).toEqual(["m8", "m9"]);
+  });
+
+  it("pages back from `before` with an id tie-break on equal timestamps", async () => {
+    const at = new Date("2026-10-01T08:00:00.000Z");
+    const findMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(OWNER, {
+      conversationMessages: {
+        findUnique: vi.fn().mockResolvedValue({ conversationId: "t1", createdAt: at }),
+        findMany,
+      },
+    });
+    await messages({ id: "t1" }, { first: 10, before: "m5" }, ctx);
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      conversationId: "t1",
+      OR: [{ createdAt: { lt: at } }, { createdAt: at, id: { lt: "m5" } }],
+    });
+  });
+
+  it("rejects a `before` id from another Conversation", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(OWNER, {
+      conversationMessages: {
+        findUnique: vi.fn().mockResolvedValue({ conversationId: "other", createdAt: new Date() }),
+        findMany,
+      },
+    });
+    await expect(
+      messages({ id: "t1" }, { before: "m5" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects first outside 1–500", async () => {
+    const ctx = buildContext(OWNER);
+    await expect(messages({ id: "t1" }, { first: 501 }, ctx)).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  });
+});
+
+describe("Conversation.messageCount", () => {
+  it("counts the Conversation's messages", async () => {
+    const count = vi.fn().mockResolvedValue(4);
+    const ctx = buildContext(OWNER, { conversationMessages: { count } });
+    await expect(messageCount({ id: "t1" }, {}, ctx)).resolves.toBe(4);
+    expect(count).toHaveBeenCalledWith({ where: { conversationId: "t1" } });
   });
 });
