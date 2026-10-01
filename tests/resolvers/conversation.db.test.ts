@@ -49,6 +49,7 @@ const ctx = {
   user: { id: USER_ID, role: "viewer" },
   session: null,
   authMethod: "session",
+  viaAgent: true,
 } as unknown as Context;
 
 const rivalCtx = { ...ctx, user: { id: RIVAL_ID, role: "viewer" } } as unknown as Context;

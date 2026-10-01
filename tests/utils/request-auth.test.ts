@@ -24,6 +24,8 @@
  *  - precedence: session wins, API-key lookup never runs
  *  - active-account gate: isActive === false → null on both paths
  *  - lastUsedAt update rejection is swallowed (fire-and-forget)
+ *  - X-Clear-Agent-Key: viaAgent only for a live key of an active `agent`
+ *    user, and only when there is a user to act for
  *
  * Skipped (trivial, no logic): `hashKey`/`generateApiKey` in api-key.ts are
  * tested implicitly and have no branching worth a dedicated unit test here.
@@ -89,7 +91,7 @@ beforeEach(() => {
 describe("resolveRequestAuth — no credentials", () => {
   it("returns a fully-null result when there are no headers at all", async () => {
     const result = await resolveRequestAuth({} as IncomingHttpHeaders);
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
     expect(findUniqueMock).not.toHaveBeenCalled();
   });
 });
@@ -204,7 +206,7 @@ describe("resolveRequestAuth — API key (Bearer sk_live_)", () => {
       authorization: `Bearer ${plaintextKey}`,
     } as IncomingHttpHeaders);
 
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
     expect(updateMock).not.toHaveBeenCalled();
   });
 
@@ -254,7 +256,7 @@ describe("resolveRequestAuth — API key (Bearer sk_live_)", () => {
       authorization: `Bearer ${plaintextKey}`,
     } as IncomingHttpHeaders);
 
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
     expect(findUniqueMock).toHaveBeenCalledTimes(1);
     expect(updateMock).not.toHaveBeenCalled();
   });
@@ -267,7 +269,7 @@ describe("resolveRequestAuth — API key (Bearer sk_live_)", () => {
       authorization: `Bearer ${plaintextKey}`,
     } as IncomingHttpHeaders);
 
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
   });
 });
 
@@ -328,7 +330,7 @@ describe("resolveRequestAuth — active-account gate", () => {
       cookie: "better-auth.session_token=abc",
     } as IncomingHttpHeaders);
 
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
   });
 
   it("returns null for an inactive user authenticated via API key", async () => {
@@ -341,7 +343,7 @@ describe("resolveRequestAuth — active-account gate", () => {
       authorization: `Bearer ${plaintextKey}`,
     } as IncomingHttpHeaders);
 
-    expect(result).toEqual({ user: null, session: null, authMethod: null });
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
   });
 
   it("does not gate a user whose isActive is undefined (only an explicit false)", async () => {
@@ -355,5 +357,106 @@ describe("resolveRequestAuth — active-account gate", () => {
 
     expect(result.authMethod).toBe("session");
     expect(result.user).toEqual({ id: "u-session", role: "admin" });
+  });
+});
+
+describe("resolveRequestAuth — CLEAR Agent key (X-Clear-Agent-Key)", () => {
+  /** Key rows by hash, so the session lookup and agent lookup can differ. */
+  function keysByHash(rows: Record<string, ReturnType<typeof apiKeyRow>>) {
+    findUniqueMock.mockImplementation(
+      async ({ where }: { where: { keyHash: string } }) => rows[where.keyHash] ?? null,
+    );
+  }
+  const agentRow = (overrides: Record<string, unknown> = {}) =>
+    apiKeyRow({ id: 7, user: { id: "u-agent", role: "agent", isActive: true }, ...overrides });
+
+  it("marks a session request carrying a live agent key as viaAgent, keeping the session user", async () => {
+    const sess = sessionResult();
+    getSessionMock.mockResolvedValue(sess);
+    const { plaintextKey } = generateApiKey();
+    keysByHash({ [hashKey(plaintextKey)]: agentRow() });
+
+    const result = await resolveRequestAuth({
+      cookie: "better-auth.session_token=abc",
+      "x-clear-agent-key": plaintextKey,
+    } as IncomingHttpHeaders);
+
+    expect(result).toMatchObject({ authMethod: "session", viaAgent: true });
+    // The end user is still whoever the session says, never the agent.
+    expect(result.user).toBe(sess.user);
+    expect(updateMock.mock.calls[0][0].where).toEqual({ id: 7 });
+  });
+
+  it("is not viaAgent without the header, and does no key lookup", async () => {
+    getSessionMock.mockResolvedValue(sessionResult());
+    const result = await resolveRequestAuth({ cookie: "x=y" } as IncomingHttpHeaders);
+    expect(result.viaAgent).toBe(false);
+    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a key of a non-agent user", agentRow({ user: { id: "u-p", role: "pipeline", isActive: true } })],
+    ["a revoked agent key", agentRow({ revokedAt: new Date() })],
+    ["an expired agent key", agentRow({ expiresAt: new Date(Date.now() - 1000) })],
+    ["a key of an inactive agent user", agentRow({ user: { id: "u-agent", role: "agent", isActive: false } })],
+  ])("is not viaAgent for %s", async (_name, row) => {
+    getSessionMock.mockResolvedValue(sessionResult());
+    const { plaintextKey } = generateApiKey();
+    keysByHash({ [hashKey(plaintextKey)]: row });
+
+    const result = await resolveRequestAuth({
+      cookie: "x=y",
+      "x-clear-agent-key": plaintextKey,
+    } as IncomingHttpHeaders);
+
+    expect(result).toMatchObject({ authMethod: "session", viaAgent: false });
+  });
+
+  it("is not viaAgent for an unknown key or a value that isn't a sk_live_ key", async () => {
+    getSessionMock.mockResolvedValue(sessionResult());
+    const { plaintextKey } = generateApiKey();
+    for (const value of [plaintextKey, "not-a-key"]) {
+      const result = await resolveRequestAuth({
+        cookie: "x=y",
+        "x-clear-agent-key": value,
+      } as IncomingHttpHeaders);
+      expect(result.viaAgent).toBe(false);
+    }
+  });
+
+  it("is not viaAgent when the agent key lookup throws", async () => {
+    getSessionMock.mockResolvedValue(sessionResult());
+    findUniqueMock.mockRejectedValue(new Error("db down"));
+    const { plaintextKey } = generateApiKey();
+    const result = await resolveRequestAuth({
+      cookie: "x=y",
+      "x-clear-agent-key": plaintextKey,
+    } as IncomingHttpHeaders);
+    expect(result).toMatchObject({ authMethod: "session", viaAgent: false });
+  });
+
+  it("does not authenticate anyone from the agent key alone", async () => {
+    const { plaintextKey } = generateApiKey();
+    keysByHash({ [hashKey(plaintextKey)]: agentRow() });
+
+    const result = await resolveRequestAuth({
+      "x-clear-agent-key": plaintextKey,
+    } as IncomingHttpHeaders);
+
+    expect(result).toEqual({ user: null, session: null, authMethod: null, viaAgent: false });
+    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  it("still reports an API-key caller's authMethod, so writers can reject it", async () => {
+    const personal = generateApiKey().plaintextKey;
+    const agent = generateApiKey().plaintextKey;
+    keysByHash({ [hashKey(personal)]: apiKeyRow(), [hashKey(agent)]: agentRow() });
+
+    const result = await resolveRequestAuth({
+      authorization: `Bearer ${personal}`,
+      "x-clear-agent-key": agent,
+    } as IncomingHttpHeaders);
+
+    expect(result).toMatchObject({ authMethod: "api-key", viaAgent: true });
   });
 });

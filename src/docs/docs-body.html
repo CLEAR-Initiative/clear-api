@@ -785,25 +785,27 @@ detected language, no sender identity. Null if the message is gone.<div class="f
     <td><code>Conversation!</code></td>
     <td>Create one of your Conversations with the CLEAR Agent's thread id, or
 update its title or metadata. FORBIDDEN if the id belongs to another user.
-Approved users only.<div class="field-args"><span class="arg"><code>input: UpsertConversationInput!</code></span></div></td>
+CLEAR Agent only (the owner's session plus the agent key).<div class="field-args"><span class="arg"><code>input: UpsertConversationInput!</code></span></div></td>
   </tr><tr id="mutation-upsertconversationmessages">
     <td><code>upsertConversationMessages</code></td>
     <td><code>[ConversationMessage!]!</code></td>
     <td>Create or replace messages in one of your Conversations, matched by id
-(at most 200 per call). Only the owner can write, admins included, and
-only with a session (not an API key). An Answer whose usage is recorded
-can't change. Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+(at most 200 per call). Only the owner's Conversations, admins included,
+and CLEAR Agent only (the owner's session plus the agent key). An Answer
+whose usage is recorded can't change. Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
   </tr><tr id="mutation-saveagentworkingmemory">
     <td><code>saveAgentWorkingMemory</code></td>
     <td><code>AgentWorkingMemory!</code></td>
-    <td>Create or update your CLEAR Agent working memory. Approved users only.<div class="field-args"><span class="arg"><code>input: SaveAgentWorkingMemoryInput!</code></span></div></td>
+    <td>Create or update your CLEAR Agent working memory. CLEAR Agent only (your
+session plus the agent key).<div class="field-args"><span class="arg"><code>input: SaveAgentWorkingMemoryInput!</code></span></div></td>
   </tr><tr id="mutation-recordconversationturnusage">
     <td><code>recordConversationTurnUsage</code></td>
     <td><code>ConversationMessage!</code></td>
     <td>Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
 its Answer, an `assistant` message in one of your Conversations. The
 cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
-turn's usage is already recorded. Owner only, with a session.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
+turn's usage is already recorded. Owner only, CLEAR Agent only (the
+owner's session plus the agent key).<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
@@ -4032,8 +4034,9 @@ while the list swap succeeded). Empty on the happy path.</td>
   </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
 owner: the user's turns, the Answers, and the tools and Source documents
 each Answer drew on. Readable by its owner and, read-only, by platform
-admins (every admin read is logged). Written only by its owner, through the
-CLEAR Agent's memory adapter in clear-mvp; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+admins (every admin read is logged). Written only through the CLEAR Agent's
+memory adapter in clear-mvp — the owner's session plus the agent service
+key — never by the owner calling the API directly; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>Caller-supplied id (the Agent's thread id).</td>

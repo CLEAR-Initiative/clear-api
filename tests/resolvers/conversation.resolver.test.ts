@@ -39,6 +39,8 @@ function buildContext(
   user: User,
   prisma: PrismaStub = {},
   authMethod: "session" | "api-key" = "session",
+  // Writes come from the CLEAR Agent: the session plus the agent key.
+  viaAgent = true,
 ): Context {
   const client: Record<string, unknown> = {
     conversations: {},
@@ -53,6 +55,7 @@ function buildContext(
     user: user as Context["user"],
     session: null,
     authMethod: user ? authMethod : null,
+    viaAgent: user ? viaAgent : false,
   } as Context;
 }
 
@@ -330,6 +333,71 @@ describe("Mutation.upsertConversation", () => {
     await expect(
       upsertConversation(null, { input: { id: "t1" } }, buildContext(null)),
     ).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+});
+
+describe("Conversation writes outside the CLEAR Agent", () => {
+  // Every write, with the owner's own session but no agent key: the owner
+  // calling the API directly. Must be rejected before any database access.
+  const writes: [string, (ctx: Context) => Promise<unknown>][] = [
+    ["upsertConversation", (ctx) => upsertConversation(null, { input: { id: "t1" } }, ctx)],
+    [
+      "upsertConversationMessages",
+      (ctx) =>
+        upsertConversationMessages(
+          null,
+          { conversationId: "t1", messages: [{ id: "m1", role: "user", content: {} }] },
+          ctx,
+        ),
+    ],
+    [
+      "saveAgentWorkingMemory",
+      (ctx) => saveAgentWorkingMemory(null, { input: { workingMemory: "x" } }, ctx),
+    ],
+    [
+      "recordConversationTurnUsage",
+      (ctx) =>
+        recordConversationTurnUsage(
+          null,
+          {
+            messageId: "m1",
+            usage: { model: "m", inputTokens: 1, outputTokens: 1, costUsd: 0.1, latencyMs: 1 },
+          },
+          ctx,
+        ),
+    ],
+  ];
+
+  function untouchedPrisma() {
+    const anyCall = vi.fn();
+    const delegate = new Proxy({}, { get: () => anyCall });
+    return {
+      anyCall,
+      stubs: {
+        conversations: delegate,
+        conversationMessages: delegate,
+        agentWorkingMemory: delegate,
+        $transaction: anyCall,
+      } as PrismaStub,
+    };
+  }
+
+  it.each(writes)("%s is FORBIDDEN with the owner's session alone", async (_name, write) => {
+    const { anyCall, stubs } = untouchedPrisma();
+    // Some resolvers throw synchronously; run each inside a promise.
+    await expect(Promise.resolve().then(() => write(buildContext(OWNER, stubs, "session", false)))).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(anyCall).not.toHaveBeenCalled();
+  });
+
+  it.each(writes)("%s is FORBIDDEN with the agent key but no session", async (_name, write) => {
+    // An API key authenticates the caller, but it isn't the owner's session.
+    const { anyCall, stubs } = untouchedPrisma();
+    await expect(Promise.resolve().then(() => write(buildContext(OWNER, stubs, "api-key", true)))).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(anyCall).not.toHaveBeenCalled();
   });
 });
 
@@ -886,7 +954,7 @@ describe("Agent working memory", () => {
   it("refuses a write with an API key", () => {
     const upsert = vi.fn();
     const ctx = buildContext(OWNER, { agentWorkingMemory: { upsert } }, "api-key");
-    expect(() => saveAgentWorkingMemory(null, { input: {} }, ctx)).toThrow(/API key/);
+    expect(() => saveAgentWorkingMemory(null, { input: {} }, ctx)).toThrow(/only by the CLEAR Agent/);
     expect(upsert).not.toHaveBeenCalled();
   });
 
