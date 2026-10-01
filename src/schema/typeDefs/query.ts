@@ -413,6 +413,12 @@ export const queryTypeDef = gql`
     Admin / pipeline only."""
     dueAnalysisAutomations(limit: Int): [AnalysisAutomation!]!
 
+    """Latest-evidence watermark for a frame (ADR-0008) over the \`knowledgebase\`
+    retrieval corpus — \`latestEvidenceAt\` (max ingestion time) + \`evidenceCount\`.
+    The pipeline drains compare it to the live analysis's \`generatedAt\` to decide
+    whether new evidence warrants a regeneration. Admin / pipeline only."""
+    frameEvidenceWatermark(frame: AnalysisFrameInput!): FrameEvidenceWatermark!
+
     """Captured infographics (charts/maps/tables/composite panels) filtered by the
     SAME params as text — location / event type / need sector / time / kind — so a
     figure can be attached to an answer scoped to a place + topic + period. Powers

@@ -20,6 +20,7 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     findFirst: vi.fn(async () => null),
     findUnique: vi.fn(async () => null),
     updateMany: vi.fn(async () => ({ count: 0 })),
+    update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "an-1", ...data })),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "an-1", ...data })),
   };
   const analysisAutomation = {
@@ -118,7 +119,7 @@ describe("analysis resolver", () => {
       );
 
       expect(order).toEqual(["updateMany", "create"]); // validTo stamped first
-      expect(res).toEqual({ analysisId: "an-9", supersededPrevious: true });
+      expect(res).toEqual({ analysisId: "an-9", supersededPrevious: true, skipped: false, reason: null });
       // Frame arrays canonicalised (sorted + de-duped) on the create.
       const createArg = (prisma.analysis as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data;
       expect(createArg.locationIds).toEqual(["a", "b"]);
@@ -135,6 +136,125 @@ describe("analysis resolver", () => {
         null, { input: input() }, ctx(pipeline, prisma),
       );
       expect(res.supersededPrevious).toBe(false);
+    });
+  });
+
+  describe("regeneration gate — 24h floor + lastSyncedAt + force (ADR-0008)", () => {
+    const upInput = (over: Record<string, unknown> = {}) => ({
+      locationIds: ["a"], eventTypes: [], needSectors: [],
+      windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-12-31"),
+      data: {}, sourceReportIds: [], generatedByModel: "m", schemaVersion: "v4", ...over,
+    });
+    const a = (p: Record<string, unknown>) => p.analysis as Record<string, ReturnType<typeof vi.fn>>;
+
+    it("no-ops within 24h: bumps lastSyncedAt, writes no new version", async () => {
+      const prisma = makePrisma();
+      a(prisma).findFirst.mockResolvedValue({ id: "an-cur", generatedAt: new Date(Date.now() - 3_600_000) } as never);
+      const res = await analysisResolvers.Mutation.upsertAnalysis(null, { input: upInput() }, ctx(pipeline, prisma));
+      expect(res).toEqual({ analysisId: "an-cur", supersededPrevious: false, skipped: true, reason: "within-24h-floor" });
+      expect(a(prisma).update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "an-cur" }, data: expect.objectContaining({ lastSyncedAt: expect.any(Date) }) }),
+      );
+      expect(a(prisma).create).not.toHaveBeenCalled();
+      expect(a(prisma).updateMany).not.toHaveBeenCalled();
+    });
+
+    it("regenerates within 24h when forced", async () => {
+      const prisma = makePrisma();
+      a(prisma).findFirst.mockResolvedValue({ id: "an-cur", generatedAt: new Date() } as never);
+      const res = await analysisResolvers.Mutation.upsertAnalysis(null, { input: upInput({ force: true }) }, ctx(pipeline, prisma));
+      expect(res.skipped).toBe(false);
+      expect(a(prisma).create).toHaveBeenCalled();
+    });
+
+    it("regenerates past the floor and stamps lastSyncedAt on the new row", async () => {
+      const prisma = makePrisma();
+      a(prisma).findFirst.mockResolvedValue({ id: "an-cur", generatedAt: new Date(Date.now() - 48 * 3_600_000) } as never);
+      const res = await analysisResolvers.Mutation.upsertAnalysis(null, { input: upInput() }, ctx(pipeline, prisma));
+      expect(res.skipped).toBe(false);
+      expect(a(prisma).create.mock.calls[0][0].data.lastSyncedAt).toEqual(expect.any(Date));
+    });
+
+    it("first-ever generation (no current row) proceeds", async () => {
+      const prisma = makePrisma(); // findFirst → null by default
+      const res = await analysisResolvers.Mutation.upsertAnalysis(null, { input: upInput() }, ctx(pipeline, prisma));
+      expect(res.skipped).toBe(false);
+      expect(a(prisma).create).toHaveBeenCalled();
+    });
+  });
+
+  describe("touchAnalysisSynced (ADR-0008)", () => {
+    const frame = { locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-12-31") };
+    it("requires admin/pipeline", async () => {
+      await expect(
+        analysisResolvers.Mutation.touchAnalysisSynced(null, { frame }, ctx(analyst)),
+      ).rejects.toThrow(/insufficient permissions/i);
+    });
+    it("bumps lastSyncedAt on the current row; true when matched", async () => {
+      const prisma = makePrisma();
+      (prisma.analysis as { updateMany: ReturnType<typeof vi.fn> }).updateMany.mockResolvedValue({ count: 1 });
+      const res = await analysisResolvers.Mutation.touchAnalysisSynced(null, { frame }, ctx(pipeline, prisma));
+      expect(res).toBe(true);
+      const call = (prisma.analysis as { updateMany: ReturnType<typeof vi.fn> }).updateMany.mock.calls[0][0];
+      expect(call.where.validTo).toBeNull();
+      expect(call.data.lastSyncedAt).toEqual(expect.any(Date));
+    });
+    it("false when no current row matches", async () => {
+      const prisma = makePrisma();
+      (prisma.analysis as { updateMany: ReturnType<typeof vi.fn> }).updateMany.mockResolvedValue({ count: 0 });
+      expect(await analysisResolvers.Mutation.touchAnalysisSynced(null, { frame }, ctx(pipeline, prisma))).toBe(false);
+    });
+  });
+
+  describe("frameEvidenceWatermark (ADR-0008)", () => {
+    const frame = { locationIds: ["sudan-a0"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-12-31") };
+
+    it("requires admin/pipeline", async () => {
+      await expect(
+        analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(viewer)),
+      ).rejects.toThrow(/insufficient permissions/i);
+    });
+    it("returns max created_at + count; single-location frame expands to subtree", async () => {
+      const latest = new Date("2026-05-01");
+      const prisma = makePrisma({
+        $queryRawUnsafe: vi.fn(async () => [{ latestEvidenceAt: latest, evidenceCount: 7 }]),
+      });
+      const res = await analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(pipeline, prisma));
+      expect(res).toEqual({ latestEvidenceAt: latest, evidenceCount: 7 });
+      const sql = (prisma.$queryRawUnsafe as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      expect(sql).toContain('FROM "knowledgebase"');
+      expect(sql).toContain("ancestor_ids"); // single A0 → subtree expansion
+      // Freshness counts all ingestion regardless of embedding model — so the
+      // query must NOT depend on EMBEDDING_* config (no embedding_provider filter).
+      expect(sql).not.toContain("embedding_provider");
+    });
+  });
+
+  describe("requestAnalysis — force is admin-only (ADR-0008)", () => {
+    const input = (force?: boolean) => ({
+      locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30"), force,
+    });
+    it("rejects a non-admin forcing", async () => {
+      await expect(
+        analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(analyst)),
+      ).rejects.toThrow(/force/i);
+    });
+    it("admin force persists force=true on the new request", async () => {
+      const prisma = makePrisma();
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      expect((res as { force?: boolean }).force).toBe(true);
+      expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
+    });
+    it("upgrades an existing non-forced PENDING to forced", async () => {
+      const prisma = makePrisma();
+      (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+        id: "rq-x", teamId: null, requestedByUserId: null, lastError: null, force: false,
+      });
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      expect((prisma.analysisRequest as { update: ReturnType<typeof vi.fn> }).update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "rq-x" }, data: { force: true } }),
+      );
+      expect((res as { force?: boolean }).force).toBe(true);
     });
   });
 

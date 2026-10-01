@@ -28,6 +28,13 @@ import {
 } from "../utils/auth-guard.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { deepMergeTranslation } from "../utils/translation-merge.js";
+import { buildFilterClause } from "./knowledgebase.resolver.js";
+
+/** Minimum gap between two actual regenerations of a frame's analysis (ADR-0008).
+ *  A trigger inside this window no-ops (bumps `lastSyncedAt` only) unless forced.
+ *  Global across the manual + automation triggers — it's a property of the
+ *  frame's live analysis, not of a trigger. */
+const MIN_REGEN_GAP_MS = 24 * 60 * 60 * 1000;
 
 /** Sort + de-duplicate a frame array so identity is order-insensitive. A
  *  missing/null input canonicalises to `[]` (the "no filter on this axis"
@@ -50,6 +57,32 @@ interface UpsertAnalysisInput extends FrameInput {
   generatedByModel: string;
   generationCostUsd?: number | null;
   schemaVersion: string;
+  /** Bypass the 24h regeneration floor (ADR-0008). */
+  force?: boolean | null;
+}
+
+/** A frame → KnowledgebaseFilters, matching the pipeline's `build_rag_filters`:
+ *  a single-location frame scopes by SUBTREE (`countryLocationId`) since KB
+ *  chunks are tagged at leaf admin ids; a multi-location frame matches its ids
+ *  by overlap. Used by the freshness watermark so it sees the same corpus the
+ *  analysis is generated from. */
+function frameToKbFilters(frame: FrameInput) {
+  const locationIds = canonicalizeArray(frame.locationIds);
+  const eventTypes = canonicalizeArray(frame.eventTypes);
+  const needSectors = canonicalizeArray(frame.needSectors);
+  return {
+    ...(locationIds.length === 1
+      ? { countryLocationId: locationIds[0] }
+      : locationIds.length > 0
+        ? { locationIds }
+        : {}),
+    ...(eventTypes.length > 0 ? { eventTypes } : {}),
+    ...(needSectors.length > 0 ? { needSectors } : {}),
+    // Freshness is about INGESTION, not retrievability by the current embedding
+    // model — count all KB rows for the frame regardless of embedding config.
+    // (Also avoids pulling EMBEDDING_* env into a plain count query.)
+    currentEmbeddingModelOnly: false,
+  };
 }
 
 /** The frame columns as a Prisma `where` fragment (exact match on each axis).
@@ -261,6 +294,32 @@ export const analysisResolvers = {
         take: Math.min(Math.max(args.limit ?? 100, 1), 500),
       });
     },
+
+    // Freshness watermark for a frame (ADR-0008): the newest ingestion time +
+    // count over the `knowledgebase` corpus the analysis is generated from.
+    // Reuses the KB search's exact filter (incl. single-location → subtree
+    // expansion) so "new evidence" means what retrieval would actually see. The
+    // drain compares `latestEvidenceAt` to the live analysis's `generatedAt`.
+    frameEvidenceWatermark: async (
+      _parent: unknown,
+      args: { frame: FrameInput },
+      context: Context,
+    ): Promise<{ latestEvidenceAt: Date | null; evidenceCount: number }> => {
+      requireRole(context, ["admin", "pipeline"]);
+      const params: unknown[] = [];
+      const whereClause = buildFilterClause(frameToKbFilters(args.frame), params);
+      const sql =
+        `SELECT MAX("created_at") AS "latestEvidenceAt", ` +
+        `COUNT(*)::int AS "evidenceCount" FROM "knowledgebase" ${whereClause}`;
+      const rows = await context.prisma.$queryRawUnsafe<
+        { latestEvidenceAt: Date | null; evidenceCount: number }[]
+      >(sql, ...params);
+      const row = rows[0];
+      return {
+        latestEvidenceAt: row?.latestEvidenceAt ?? null,
+        evidenceCount: Number(row?.evidenceCount ?? 0),
+      };
+    },
   },
 
   Mutation: {
@@ -272,7 +331,12 @@ export const analysisResolvers = {
       _parent: unknown,
       args: { input: UpsertAnalysisInput },
       context: Context,
-    ): Promise<{ analysisId: string; supersededPrevious: boolean }> => {
+    ): Promise<{
+      analysisId: string;
+      supersededPrevious: boolean;
+      skipped: boolean;
+      reason: string | null;
+    }> => {
       requireRole(context, ["admin", "pipeline"]);
       const { input } = args;
 
@@ -287,18 +351,46 @@ export const analysisResolvers = {
       const eventTypes = canonicalizeArray(input.eventTypes);
       const needSectors = canonicalizeArray(input.needSectors);
       const windowEnd = input.windowEnd ?? null;
+      const frameMatch = {
+        locationIds: { equals: locationIds },
+        eventTypes: { equals: eventTypes },
+        needSectors: { equals: needSectors },
+        windowStart: input.windowStart,
+        windowEnd,
+        schemaVersion: input.schemaVersion,
+        validTo: null,
+      };
 
       return context.prisma.$transaction(async (tx) => {
+        // Authoritative 24h floor (ADR-0008): defends the write choke point
+        // against races / direct callers even if a drain's pre-check passed.
+        // Within 24h and not forced → no-op: bump lastSyncedAt on the current
+        // row, write no new version.
+        const current = await tx.analysis.findFirst({
+          where: frameMatch,
+          select: { id: true, generatedAt: true },
+        });
+        if (
+          current &&
+          !input.force &&
+          now.getTime() - current.generatedAt.getTime() < MIN_REGEN_GAP_MS
+        ) {
+          await tx.analysis.update({
+            where: { id: current.id },
+            data: { lastSyncedAt: now },
+          });
+          return {
+            analysisId: current.id,
+            supersededPrevious: false,
+            skipped: true,
+            reason: "within-24h-floor",
+          };
+        }
+
+        // Stamp validTo on the previous current row FIRST so the partial-unique
+        // index (WHERE valid_to IS NULL) doesn't reject the insert.
         const superseded = await tx.analysis.updateMany({
-          where: {
-            locationIds: { equals: locationIds },
-            eventTypes: { equals: eventTypes },
-            needSectors: { equals: needSectors },
-            windowStart: input.windowStart,
-            windowEnd,
-            schemaVersion: input.schemaVersion,
-            validTo: null,
-          },
+          where: frameMatch,
           data: { validTo: now },
         });
 
@@ -315,14 +407,34 @@ export const analysisResolvers = {
             generationCostUsd: input.generationCostUsd ?? null,
             schemaVersion: input.schemaVersion,
             validFrom: now,
+            lastSyncedAt: now,
           },
         });
 
         return {
           analysisId: created.id,
           supersededPrevious: superseded.count > 0,
+          skipped: false,
+          reason: null,
         };
       });
+    },
+
+    // Pipeline (ADR-0008): bump the current analysis row's lastSyncedAt for a
+    // frame WITHOUT regenerating — used when the drain's gate decides to skip
+    // (within 24h, or no new evidence). Returns false when no current row
+    // exists for the frame.
+    touchAnalysisSynced: async (
+      _parent: unknown,
+      args: { frame: FrameInput },
+      context: Context,
+    ): Promise<boolean> => {
+      requireRole(context, ["admin", "pipeline"]);
+      const updated = await context.prisma.analysis.updateMany({
+        where: { ...frameWhere(args.frame), validTo: null },
+        data: { lastSyncedAt: new Date() },
+      });
+      return updated.count > 0;
     },
 
     createAnalysisAutomation: async (
@@ -403,11 +515,18 @@ export const analysisResolvers = {
     // doesn't queue the same generation twice.
     requestAnalysis: async (
       _parent: unknown,
-      args: { input: FrameInput & { teamId?: string | null } },
+      args: { input: FrameInput & { teamId?: string | null; force?: boolean | null } },
       context: Context,
     ) => {
       const user = requireRole(context, ["admin", "analyst"]);
       const { input } = args;
+      // Force bypasses the regeneration gate (ADR-0008) — admin only.
+      const force = input.force ?? false;
+      if (force && !isPlatformAdmin(user)) {
+        throw new GraphQLError("Only a platform admin can force an analysis regeneration", {
+          extensions: { code: "FORBIDDEN" },
+        });
+      }
       // A team-attributed request must come from a member of that team
       // (admins bypass). A team-less request stays open to admin/analyst.
       if (input.teamId) {
@@ -424,7 +543,19 @@ export const analysisResolvers = {
       const existing = await context.prisma.analysisRequest.findFirst({
         where: { ...frameWhere(input), status: "PENDING" },
       });
-      if (existing) return ownView(existing);
+      if (existing) {
+        // Upgrade an existing non-forced PENDING to forced when an admin forces
+        // the same frame, so the drain honours the force rather than the first
+        // (gated) request winning.
+        if (force && !existing.force) {
+          const upgraded = await context.prisma.analysisRequest.update({
+            where: { id: existing.id },
+            data: { force: true },
+          });
+          return ownView(upgraded);
+        }
+        return ownView(existing);
+      }
       try {
         return await context.prisma.analysisRequest.create({
           data: {
@@ -435,6 +566,7 @@ export const analysisResolvers = {
             windowEnd: input.windowEnd ?? null,
             teamId: input.teamId ?? null,
             requestedByUserId: context.user?.id ?? null,
+            force,
           },
         });
       } catch (e) {

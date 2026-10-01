@@ -45,6 +45,11 @@ export const analysisTypeDef = gql`
     generationCostUsd: Float
     generatedAt: DateTime!
 
+    """Last time any trigger checked this frame (manual sync or automation),
+    whether or not it regenerated (ADR-0008). On a gate skip (within the 24h
+    floor, or no new evidence) this advances while \`generatedAt\` does not."""
+    lastSyncedAt: DateTime
+
     """Bitemporal validity — \`validTo\` is null while this is the current row
     for its frame, else the timestamp a regeneration superseded it."""
     validFrom: DateTime!
@@ -78,15 +83,38 @@ export const analysisTypeDef = gql`
     generatedByModel: String!
     generationCostUsd: Float
     schemaVersion: String!
+    """Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
+    an admin-forced request. Omitted/false: a write within 24h of the current
+    row's \`generatedAt\` is a no-op that only bumps \`lastSyncedAt\`."""
+    force: Boolean
   }
 
-  """Summary of an \`upsertAnalysis\` mutation — reports whether the write
-  superseded a previously-current row for the same frame."""
+  """Summary of an \`upsertAnalysis\` mutation — whether it superseded a previous
+  row, or was skipped by the 24h regeneration floor (ADR-0008)."""
   type UpsertAnalysisResult {
+    """The current analysis row for the frame after the call — the newly-created
+    row, or (on a skip) the existing current row."""
     analysisId: String!
     """\`true\` when the mutation stamped \`validTo\` on a previous current row
-    for the same frame, \`false\` when this was the first row for the frame."""
+    for the same frame, \`false\` when this was the first row or a skip."""
     supersededPrevious: Boolean!
+    """\`true\` when the 24h floor made this a no-op (only \`lastSyncedAt\` was
+    bumped, no new version written). \`false\` on an actual (re)generation."""
+    skipped: Boolean!
+    """Why the write was skipped (e.g. \`within-24h-floor\`), else null."""
+    reason: String
+  }
+
+  """Latest-evidence watermark for a frame (ADR-0008), over the \`knowledgebase\`
+  retrieval corpus the analysis is generated from. The drain compares
+  \`latestEvidenceAt\` to the live analysis's \`generatedAt\` to decide whether
+  anything new warrants a regeneration."""
+  type FrameEvidenceWatermark {
+    """Max ingestion time (\`created_at\`) across knowledgebase rows matching the
+    frame, or null when the frame has no evidence yet."""
+    latestEvidenceAt: DateTime
+    """Count of knowledgebase rows matching the frame."""
+    evidenceCount: Int!
   }
 
   """A subscription that keeps one frame's analysis current on a cadence
@@ -145,6 +173,9 @@ export const analysisTypeDef = gql`
     status: AnalysisRequestStatus!
     requestedByUserId: String
     teamId: String
+    """Admin force (ADR-0008): the drain bypasses the 24h floor + freshness
+    check for this request."""
+    force: Boolean!
     attempts: Int!
     lastError: String
     createdAt: DateTime!
@@ -159,5 +190,8 @@ export const analysisTypeDef = gql`
     windowEnd: DateTime
     """Owning team, for a team-scoped on-demand request."""
     teamId: String
+    """Force a regeneration past the 24h floor + freshness gate (ADR-0008).
+    Admin only — a non-admin passing \`true\` is rejected."""
+    force: Boolean
   }
 `;

@@ -480,6 +480,12 @@ export const mutationTypeDef = gql`
     canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only."""
     upsertAnalysis(input: UpsertAnalysisInput!): UpsertAnalysisResult!
 
+    """Pipeline: bump the current analysis row's \`lastSyncedAt\` for a frame
+    WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
+    (within the 24h floor, or no new evidence). Returns false when no current row
+    exists for the frame. Admin / pipeline only."""
+    touchAnalysisSynced(frame: AnalysisFrameInput!): Boolean!
+
     """Create an analysis automation — a subscription that keeps a frame's
     analysis current on a cadence (ADR-0007 §5). Admin / analyst."""
     createAnalysisAutomation(input: CreateAnalysisAutomationInput!): AnalysisAutomation!

@@ -623,6 +623,13 @@ requests, so the generation sensor can pick them up. Admin / pipeline only.<div 
 frame and regenerates each at the minimum cadence across subscribers.
 Admin / pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
+    <td><code>frameEvidenceWatermark</code></td>
+    <td><code>FrameEvidenceWatermark!</code></td>
+    <td>Latest-evidence watermark for a frame (ADR-0008) over the `knowledgebase`
+retrieval corpus — `latestEvidenceAt` (max ingestion time) + `evidenceCount`.
+The pipeline drains compare it to the live analysis's `generatedAt` to decide
+whether new evidence warrants a regeneration. Admin / pipeline only.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span></div></td>
+  </tr><tr>
     <td><code>reportFigures</code></td>
     <td><code>[ReportFigure!]!</code></td>
     <td>Captured infographics (charts/maps/tables/composite panels) filtered by the
@@ -1260,6 +1267,13 @@ frame columns (locationIds / eventTypes / needSectors / windowStart /
 windowEnd), stamping `validTo` on the previous current row for the same
 frame in the same transaction. History rows are preserved. Frame arrays are
 canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-touchanalysissynced">
+    <td><code>touchAnalysisSynced</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Pipeline: bump the current analysis row's `lastSyncedAt` for a frame
+WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
+(within the 24h floor, or no new evidence). Returns false when no current row
+exists for the frame. Admin / pipeline only.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span></div></td>
   </tr><tr id="mutation-createanalysisautomation">
     <td><code>createAnalysisAutomation</code></td>
     <td><code>AnalysisAutomation!</code></td>
@@ -2642,6 +2656,11 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Owning team, for a team-scoped on-demand request.</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean</code></td>
+    <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
+Admin only — a non-admin passing `true` is rejected.</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -3136,6 +3155,12 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td><code>schemaVersion</code></td>
     <td><code>String!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean</code></td>
+    <td>Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
+an admin-forced request. Omitted/false: a write within 24h of the current
+row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
   </tr></tbody></table><h3 id="type-upsertlocationmetadatainput"><code>UpsertLocationMetadataInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationId</code></td>
     <td><code>String!</code></td>
@@ -3651,6 +3676,12 @@ many aggregated-datapoints rows, so there is no single bucket reference.</td>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>lastSyncedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Last time any trigger checked this frame (manual sync or automation),
+whether or not it regenerated (ADR-0008). On a gate skip (within the 24h
+floor, or no new evidence) this advances while `generatedAt` does not.</td>
+  </tr><tr>
     <td><code>validFrom</code></td>
     <td><code>DateTime!</code></td>
     <td>Bitemporal validity — `validTo` is null while this is the current row
@@ -3758,6 +3789,11 @@ refreshes use `AnalysisAutomation` instead of this one-shot queue.</p><table cla
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Admin force (ADR-0008): the drain bypasses the 24h floor + freshness
+check for this request.</td>
   </tr><tr>
     <td><code>attempts</code></td>
     <td><code>Int!</code></td>
@@ -4288,6 +4324,18 @@ Null when the call aborted without producing a row.</td>
     <td><code>String</code></td>
     <td>Set to 'different_a2' when the candidate and source coords resolve to
 different containing A2s. Null on success.</td>
+  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over the `knowledgebase`
+retrieval corpus the analysis is generated from. The drain compares
+`latestEvidenceAt` to the live analysis's `generatedAt` to decide whether
+anything new warrants a regeneration.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>latestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Max ingestion time (`created_at`) across knowledgebase rows matching the
+frame, or null when the frame has no evidence yet.</td>
+  </tr><tr>
+    <td><code>evidenceCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Count of knowledgebase rows matching the frame.</td>
   </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A GeoNames gazetteer match for a place name. Coordinates come straight
 from GeoNames — callers still validate them (e.g. the same-A2 check
 against a signal's source coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -5944,16 +5992,26 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-upsertanalysisresult"><code>UpsertAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertAnalysis` mutation — reports whether the write
-superseded a previously-current row for the same frame.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-upsertanalysisresult"><code>UpsertAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertAnalysis` mutation — whether it superseded a previous
+row, or was skipped by the 24h regeneration floor (ADR-0008).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>analysisId</code></td>
     <td><code>String!</code></td>
-    <td>—</td>
+    <td>The current analysis row for the frame after the call — the newly-created
+row, or (on a skip) the existing current row.</td>
   </tr><tr>
     <td><code>supersededPrevious</code></td>
     <td><code>Boolean!</code></td>
     <td>`true` when the mutation stamped `validTo` on a previous current row
-for the same frame, `false` when this was the first row for the frame.</td>
+for the same frame, `false` when this was the first row or a skip.</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Boolean!</code></td>
+    <td>`true` when the 24h floor made this a no-op (only `lastSyncedAt` was
+bumped, no new version written). `false` on an actual (re)generation.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>String</code></td>
+    <td>Why the write was skipped (e.g. `within-24h-floor`), else null.</td>
   </tr></tbody></table><h3 id="type-upsertknowledgebaseresult"><code>UpsertKnowledgebaseResult</code> <span class="type-badge">object</span></h3><p>Result of a knowledgebase upsert — summary counts for logging.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
