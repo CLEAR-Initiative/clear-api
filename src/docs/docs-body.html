@@ -4069,9 +4069,9 @@ one of a page as `after` to get the next page.</td>
   </tr><tr>
     <td><code>messages</code></td>
     <td><code>[ConversationMessage!]!</code></td>
-    <td>Messages in chronological order. With `first`, only the most recent
-`first` messages (before `before`, if given) — the window an Agent
-loads as history.<div class="field-args"><span class="arg"><code>first: Int</code> — Max messages to return (1–500). Omit for all of them.</span><span class="arg"><code>before: String</code> — Message id: return only messages older than this one. Pass the
+    <td>The most recent messages (before `before`, if given), in chronological
+order — the window an Agent loads as history. Page back with `before`
+for older ones.<div class="field-args"><span class="arg"><code>first: Int</code> — Max messages to return (1–500). Defaults to 500.</span><span class="arg"><code>before: String</code> — Message id: return only messages older than this one. Pass the
 oldest id from the previous window to page back through history.</span></div></td>
   </tr></tbody></table><h3 id="type-conversationmessage"><code>ConversationMessage</code> <span class="type-badge">object</span></h3><p>One turn of a Conversation, as the CLEAR Agent stores it. `content` holds
 the Agent's message parts (text, tool calls and results, Source documents)
