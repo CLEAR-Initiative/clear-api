@@ -102,3 +102,26 @@ export async function logActivity(
     );
   }
 }
+
+/**
+ * Audit variant of {@link logActivity} for reads that may only happen if
+ * they are recorded (an admin reading another user's Conversation). Throws
+ * if the row can't be written, so the caller returns no data rather than
+ * serve an unaudited read. Await it before returning anything.
+ */
+export async function logActivityOrThrow(
+  prisma: PrismaClient,
+  opts: LogActivityOptions,
+): Promise<void> {
+  await prisma.activityLogs.create({
+    data: {
+      userId: opts.userId,
+      action: opts.action,
+      resourceType: opts.resourceType ?? null,
+      resourceId: opts.resourceId ?? null,
+      metadata: opts.metadata ? (opts.metadata as InputJsonValue) : undefined,
+      ipAddress: opts.ipAddress ?? null,
+      userAgent: opts.userAgent ?? null,
+    },
+  });
+}

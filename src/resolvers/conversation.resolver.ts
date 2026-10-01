@@ -19,7 +19,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { logActivity } from "../utils/activity-log.js";
+import { logActivityOrThrow } from "../utils/activity-log.js";
 import { env } from "../utils/env.js";
 import {
   canSeeUserPrivate,
@@ -179,8 +179,9 @@ export const conversationResolvers = {
       if (!canSeeUserPrivate(context, conversation.userId)) {
         throw forbidden("This Conversation belongs to another user");
       }
+      // The read is only served once it is on the audit log.
       if (conversation.userId !== user.id) {
-        void logActivity(context.prisma, {
+        await logActivityOrThrow(context.prisma, {
           userId: user.id,
           action: "conversation.admin_read",
           resourceType: "conversation",
@@ -234,19 +235,24 @@ export const conversationResolvers = {
       });
     },
 
-    userConversations: (
+    userConversations: async (
       _parent: unknown,
       args: { userId: string; first?: number | null; after?: string | null },
       context: Context,
     ) => {
       const admin = requireRole(context, ["admin"]);
-      const page = listConversations(context, args.userId, args);
-      if (args.userId !== admin.id) {
-        void logActivity(context.prisma, {
+      const page = await listConversations(context, args.userId, args);
+      // Log exactly which Conversations were handed over, before returning.
+      if (args.userId !== admin.id && page.length > 0) {
+        await logActivityOrThrow(context.prisma, {
           userId: admin.id,
           action: "conversation.admin_read",
           resourceType: "conversation",
-          metadata: { ownerId: args.userId, listing: true },
+          metadata: {
+            ownerId: args.userId,
+            listing: true,
+            conversationIds: page.map((c) => c.id),
+          },
         });
       }
       return page;

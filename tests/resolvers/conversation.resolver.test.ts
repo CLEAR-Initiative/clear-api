@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/utils/activity-log.js", () => ({
-  logActivity: vi.fn().mockResolvedValue(undefined),
+  logActivityOrThrow: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../src/utils/env.js", () => ({
   env: { AGENT_DAILY_BUDGET_USD: 2.5 },
@@ -19,7 +19,7 @@ vi.mock("../../src/utils/env.js", () => ({
 
 import { conversationResolvers } from "../../src/resolvers/conversation.resolver.js";
 import { Prisma } from "../../src/generated/prisma/client.js";
-import { logActivity } from "../../src/utils/activity-log.js";
+import { logActivityOrThrow as logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
 
 type User = { id: string; role: string } | null;
@@ -119,6 +119,14 @@ describe("Query.conversation", () => {
       resourceId: "t1",
       metadata: { ownerId: "u1" },
     });
+  });
+
+  it("serves nothing when the audit row can't be written", async () => {
+    vi.mocked(logActivity).mockRejectedValueOnce(new Error("pool exhausted"));
+    const ctx = buildContext(ADMIN, {
+      conversations: { findUnique: vi.fn().mockResolvedValue(owned) },
+    });
+    await expect(conversation(null, { id: "t1" }, ctx)).rejects.toThrow("pool exhausted");
   });
 
   it("does not log a read that found nothing", async () => {
@@ -500,8 +508,8 @@ describe("Query.myConversations", () => {
 });
 
 describe("Query.userConversations", () => {
-  it("lists the target user's Conversations for an admin, and logs the read", async () => {
-    const findMany = vi.fn().mockResolvedValue([]);
+  it("lists the target user's Conversations for an admin, and logs which", async () => {
+    const findMany = vi.fn().mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
     const ctx = buildContext(ADMIN, { conversations: { findMany } });
     await userConversations(null, { userId: "u1", first: 10 }, ctx);
     expect(findMany).toHaveBeenCalledWith({
@@ -513,15 +521,25 @@ describe("Query.userConversations", () => {
       userId: "a1",
       action: "conversation.admin_read",
       resourceType: "conversation",
-      metadata: { ownerId: "u1", listing: true },
+      metadata: { ownerId: "u1", listing: true, conversationIds: ["t1", "t2"] },
     });
   });
 
-  it("does not log an admin listing their own Conversations", () => {
+  it("serves nothing when the audit row can't be written", async () => {
+    vi.mocked(logActivity).mockRejectedValueOnce(new Error("pool exhausted"));
     const ctx = buildContext(ADMIN, {
-      conversations: { findMany: vi.fn().mockResolvedValue([]) },
+      conversations: { findMany: vi.fn().mockResolvedValue([{ id: "t1" }]) },
     });
-    void userConversations(null, { userId: "a1" }, ctx);
+    await expect(userConversations(null, { userId: "u1" }, ctx)).rejects.toThrow(
+      "pool exhausted",
+    );
+  });
+
+  it("does not log an admin listing their own Conversations", async () => {
+    const ctx = buildContext(ADMIN, {
+      conversations: { findMany: vi.fn().mockResolvedValue([{ id: "t1" }]) },
+    });
+    await userConversations(null, { userId: "a1" }, ctx);
     expect(logActivity).not.toHaveBeenCalled();
   });
 
@@ -530,21 +548,21 @@ describe("Query.userConversations", () => {
     ["a viewer", OWNER],
     ["a pending user", PENDING],
   ] as const) {
-    it(`is FORBIDDEN for ${name}`, () => {
+    it(`is FORBIDDEN for ${name}`, async () => {
       const findMany = vi.fn();
       const ctx = buildContext(user, { conversations: { findMany } });
-      expect(() => userConversations(null, { userId: "u1" }, ctx)).toThrow(
-        expect.objectContaining({ extensions: expect.objectContaining({ code: "FORBIDDEN" }) }),
-      );
+      await expect(userConversations(null, { userId: "u1" }, ctx)).rejects.toMatchObject({
+        extensions: { code: "FORBIDDEN" },
+      });
       expect(findMany).not.toHaveBeenCalled();
       expect(logActivity).not.toHaveBeenCalled();
     });
   }
 
-  it("is UNAUTHENTICATED without a session", () => {
-    expect(() =>
+  it("is UNAUTHENTICATED without a session", async () => {
+    await expect(
       userConversations(null, { userId: "u1" }, buildContext(null)),
-    ).toThrow(/logged in/);
+    ).rejects.toThrow(/logged in/);
   });
 });
 
