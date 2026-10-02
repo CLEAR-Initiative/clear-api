@@ -14,13 +14,65 @@ const optionalUrl = () =>
     z.string().url().optional(),
   );
 
+/**
+ * Reduce a server base URL to a bare origin.
+ *
+ * Everything this process serves — Better Auth at `/api/auth`, the
+ * Developer Portal at `/portal`, the docs at `/docs` — is mounted at the
+ * root of the express app (see `src/index.ts`), so a path component on
+ * `BETTER_AUTH_URL` is always a misconfiguration.
+ *
+ * It used to pass validation and then silently corrupt every link built
+ * by hand from it: with `BETTER_AUTH_URL=https://dev-api.example/auth`,
+ * the emailed password-reset link came out as
+ * `https://dev-api.example/auth/portal/reset-password?token=…` — a 404,
+ * with no way for the recipient to guess the working URL.
+ *
+ * Normalising here rather than at each call site means a stray path
+ * can't reach `buildResetUrl`, `portalLoginUrl`, or Better Auth's own
+ * `baseURL`. The warning keeps the bad value visible so it still gets
+ * fixed at source.
+ *
+ * Deliberately never throws. A value this function can't make sense of
+ * is returned close to as-given: an env var that can only produce dead
+ * links is already broken, and crash-looping the API over it would turn
+ * a degraded deployment into an outage.
+ */
+export function normaliseServerUrl(raw: string): string {
+  const url = new URL(raw);
+
+  // `z.string().url()` accepts any scheme, and `URL.origin` is the string
+  // "null" for every non-special one (`foo://bar` → "null"). Returning that
+  // would bake a literal "null" into every emailed link — harder to trace
+  // back to this env var than the original value was. Hand it back instead.
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    console.warn(
+      `[ENV] BETTER_AUTH_URL is "${raw}", which is not an http(s) URL. Leaving it ` +
+        `as-is; links built from it will not work until it is corrected.`,
+    );
+    return raw.replace(/\/+$/, "");
+  }
+
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    console.warn(
+      `[ENV] BETTER_AUTH_URL is "${raw}" but this server mounts every route at the ` +
+        `root; using origin "${url.origin}" instead. Set BETTER_AUTH_URL to a bare ` +
+        `origin to silence this.`,
+    );
+  }
+
+  return url.origin;
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "staging", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   DATABASE_URL: z.string(),
   BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.string().url(),
+  /** Server base URL. Always stored as a bare origin — see
+   *  {@link normaliseServerUrl} for why a path here is never valid. */
+  BETTER_AUTH_URL: z.string().url().transform(normaliseServerUrl),
 
   // Frontend URL (for verification links)
   FRONTEND_URL: z.string().default("http://localhost:3000"),
@@ -44,7 +96,21 @@ const envSchema = z.object({
   ELKS46_API_PASSWORD: z.string().optional(),
   ELKS46_FROM: z.string().optional(),
 
-  // Celery broker (Redis) — for sending tasks to clear-pipeline workers
+  // WhatsApp hotline webhook (Twilio transport POC — WhatsApp Signal
+  // Pipeline V3). All three must be set for the route to accept traffic;
+  // it answers 503 otherwise. HOTLINE_WEBHOOK_URL is the EXACT public
+  // URL Twilio calls (signature validation is defined over it);
+  // HOTLINE_PSEUDONYM_SECRET keys the per-conversation reporter
+  // pseudonyms (services/hotline-ingest.ts) — rotating it unlinks all
+  // prior pseudonyms.
+  HOTLINE_WEBHOOK_URL: optionalUrl(),
+  HOTLINE_PSEUDONYM_SECRET: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().min(16).optional(),
+  ),
+
+  // Shared Redis instance (name kept from the pre-Dagster Celery broker;
+  // renaming is an infra change, not a code one). Used by redis-cache.ts.
   CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),
 
   // S3 (for manual signal media uploads)
@@ -109,6 +175,16 @@ const envSchema = z.object({
    *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
    *  when set (`openssl rand -hex 32`). */
   GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
+
+  // ─── CLEAR Agent ─────────────────────────────────────────────────
+  /** Daily Agent budget per user, in USD. Once a user's turns since UTC
+   *  midnight cost this much, `myAgentBudget` reports it spent and
+   *  clear-mvp declines new turns until the next UTC midnight. The
+   *  amount is provisional until it is decided; empty means default. */
+  AGENT_DAILY_BUDGET_USD: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().nonnegative().default(2),
+  ),
 });
 
 const parsed = envSchema.parse(process.env);

@@ -28,6 +28,7 @@ import { groundIngestRouter } from "./routes/ground-ingest.js";
 import { xIngestRouter } from "./routes/x-ingest.js";
 import { groundMediaRouter } from "./routes/ground-media.js";
 import { webhooksRouter } from "./routes/webhooks.js";
+import { hotlineWebhookRouter } from "./routes/hotline-webhook.js";
 import { logieRouter } from "./routes/logie.js";
 import { usgsRouter } from "./routes/usgs.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
@@ -91,6 +92,11 @@ app.use("/api/x/ingest", xIngestRouter);
 // (multipart/form-data; machine auth, consent-gated — see
 // routes/ground-media.ts)
 app.use("/api/ground/media", groundMediaRouter);
+
+// Hotline webhook receiver (Twilio WhatsApp → ground staging tier).
+// Scoped urlencoded parser inside the router (Twilio sends form-encoded);
+// signature-validated, inbound-only — see routes/hotline-webhook.ts
+app.use("/api/webhooks/twilio/whatsapp", hotlineWebhookRouter);
 
 // External webhook receiver (GlitchTip → clear-api). Scoped
 // express.json() because the global GraphQL mount does its own — we

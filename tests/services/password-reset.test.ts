@@ -63,6 +63,14 @@ describe("buildResetUrl", () => {
   it("does not double up the slash when the base URL has a trailing one", () => {
     expect(buildResetUrl("t")).not.toContain("//portal");
   });
+
+  // Regression: a deployment with BETTER_AUTH_URL=https://host/auth used to
+  // emit https://host/auth/portal/reset-password — a 404. Asserting the exact
+  // pathname catches any base that smuggles a segment in front of /portal,
+  // which `toContain` above cannot.
+  it("puts the reset page at the host root, with nothing in front of /portal", () => {
+    expect(new URL(buildResetUrl("t")).pathname).toBe("/portal/reset-password");
+  });
 });
 
 describe("issueResetToken", () => {

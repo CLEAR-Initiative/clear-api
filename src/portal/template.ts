@@ -2625,7 +2625,7 @@ function formatNumber(n: number): string {
 
 function teamRoleSelectOptions(selected: string): string {
   const canonical = canonicalTeamRole(selected);
-  return ["team_member", "field_coordinator", "team_admin"]
+  return ["team_member", "field_coordinator", "emergency_response_manager", "team_admin"]
     .map(
       (r) => `<option value="${r}"${canonical === r ? " selected" : ""}>${r}</option>`,
     )

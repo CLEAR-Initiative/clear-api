@@ -12,7 +12,14 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
-import { canReviewSource, reviewTransition } from "../services/ground-review.js";
+import {
+  canReviewSource,
+  reviewExtras,
+  reviewTransition,
+  type PromotionOverrides,
+  type PromotionOverridesInput,
+  type ReviewDecision,
+} from "../services/ground-review.js";
 import {
   buildPromotedSignalInput,
   ensureWhatsAppDataSource,
@@ -22,6 +29,23 @@ import {
   GROUND_SOURCE_KINDS,
   missingConsentFields,
 } from "../services/ground-sources.js";
+import {
+  extractUncertaintyMarker,
+  redactPhoneNumbers,
+} from "../services/whatsapp-export.js";
+import { enqueueTranslation } from "../services/translation-queue.js";
+import { isTargetLocale } from "../utils/locales.js";
+
+/** Hotline ingest labels each attachment `voice-{i}` or `media-{i}` in
+ * mediaRefs (see hotline-ingest.ts). mediaRefs is set when the row is
+ * created, before mediaKeys is filled in, so it is the reliable voice
+ * signal while media is still being stored (or failed to store). */
+const VOICE_REF_PREFIX = "voice-";
+const isVoiceRef = (ref: string | undefined) => ref?.startsWith(VOICE_REF_PREFIX) ?? false;
+
+/** True when any of a message's attachments is a voice note. Shared by
+ * GroundMessageForClassification (pipeline) and GroundMessage (inbox). */
+const hasVoiceRef = (mediaRefs: string[]) => mediaRefs.some((ref) => isVoiceRef(ref));
 
 /** Callers of the pipeline-facing contract surface (the
  * classify_ground_messages worker authenticates as a pipeline-role
@@ -35,6 +59,25 @@ const GROUND_CLASSIFICATIONS = new Set([
   "chatter",
 ]);
 
+/** A clear-pipeline ground drain that can give up on a message
+ * (GraphQL enum GroundPipelineStage). */
+type GroundPipelineStage = "ENRICH" | "TRANSCRIBE";
+
+/** Stored failure text cap. Exception text can be arbitrarily long (an
+ * HTTP body, a stack) and only needs to tell a reviewer why it failed. */
+const FAILURE_ERROR_MAX_CHARS = 500;
+
+/** Exception text can echo message content (a transcript, a rejected
+ * input), so it gets the same phone redaction as `text` — no phone number
+ * is ever stored. Redacted before truncation so a cut can't leave a
+ * partial number the pattern no longer matches. */
+function failureErrorText(error: string): string {
+  const redacted = redactPhoneNumbers(error);
+  return redacted.length > FAILURE_ERROR_MAX_CHARS
+    ? `${redacted.slice(0, FAILURE_ERROR_MAX_CHARS - 1)}…`
+    : redacted;
+}
+
 const GROUND_LIFECYCLE_STATES = new Set([
   "reported",
   "updated",
@@ -42,6 +85,61 @@ const GROUND_LIFECYCLE_STATES = new Set([
   "corrected",
   "retracted",
 ]);
+
+/** GraphQL GroundMessageTranslation. `text` is set only when ready. */
+interface GroundTranslationState {
+  locale: string;
+  status: "queued" | "ready" | "unavailable";
+  text: string | null;
+}
+
+/** Lowercase and validate a requested translation locale. Any supported
+ * locale is a valid target for a hotline message — `en` included, since
+ * the source is the reporter's language (see isTargetLocale). */
+function groundTranslationLocale(raw: string): string {
+  const locale = raw.trim().toLowerCase();
+  if (!isTargetLocale("groundMessage", locale)) {
+    throw new GraphQLError(`Unsupported locale "${raw}".`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return locale;
+}
+
+/**
+ * Where one message's on-demand translation into `locale` stands:
+ *   ready       — the translations overlay row exists (its `data.text`).
+ *   queued      — requested; the Dagster translate drain hasn't written it.
+ *   unavailable — neither: never requested, the message has no text, or
+ *                 the drain gave up (it clears the queue row without a
+ *                 write). Requesting again re-queues it.
+ *
+ * Reads the queue BEFORE the overlay: the drain writes the overlay and
+ * then clears the queue row, so this order can never observe "neither"
+ * mid-completion — the other order could, and would report a finished
+ * translation as unavailable (stopping the inbox's poll).
+ */
+async function groundTranslationState(
+  context: Context,
+  message: { id: string; text: string },
+  locale: string,
+): Promise<GroundTranslationState> {
+  if (message.text.trim().length === 0) return { locale, status: "unavailable", text: null };
+
+  const queued = await context.prisma.translationQueue.findUnique({
+    where: {
+      entityType_entityId_locale: { entityType: "groundMessage", entityId: message.id, locale },
+    },
+    select: { id: true },
+  });
+  const row = await context.prisma.translations.findUnique({
+    where: { groundMessageId_locale: { groundMessageId: message.id, locale } },
+    select: { data: true },
+  });
+  const data = row?.data as { text?: unknown } | null | undefined;
+  if (typeof data?.text === "string") return { locale, status: "ready", text: data.text };
+  return { locale, status: queued ? "queued" : "unavailable", text: null };
+}
 
 /**
  * Parse a date-string input into a Date, rejecting unparseable values
@@ -66,8 +164,13 @@ function parseDateInput(value: string, field: string): Date {
  *
  * Identity scrubbing happens structurally: buildPromotedSignalInput's
  * message type has no sender fields at all (see ground-promotion.ts).
+ * `overrides` are the reviewer's already-validated edits.
  */
-async function promoteThread(context: Context, threadId: string): Promise<string> {
+async function promoteThread(
+  context: Context,
+  threadId: string,
+  overrides: PromotionOverrides = {},
+): Promise<string> {
   const thread = await context.prisma.groundThreads.findUnique({
     where: { id: threadId },
     include: { messages: { orderBy: { sentAt: "asc" } } },
@@ -108,6 +211,7 @@ async function promoteThread(context: Context, threadId: string): Promise<string
       isEdited: m.isEdited,
     })),
     mediaUrls,
+    overrides,
   });
 
   const signal = await signalResolvers.Mutation.createSignal(null, { input }, context);
@@ -177,19 +281,62 @@ export const groundResolvers = {
      * messages for the source, oldest first, so the worker can both
      * label unclassified rows and assemble threads (clusters of staged
      * Signals) with full context.
+     *
+     * Drains pass `unclassifiedOnly` / `awaitingTranscript` so the window
+     * holds only their work queue. Without them the window is the source's
+     * oldest N messages, which stops moving once N are all done. Both
+     * queues exclude messages the drain has marked failed
+     * (markGroundMessagesFailed), so a message that can never succeed
+     * doesn't hold a slot in the window or incur another paid call.
      */
     groundMessagesForClassification: async (
       _parent: unknown,
-      args: { groundSourceId: string; limit?: number | null },
+      args: {
+        groundSourceId: string;
+        limit?: number | null;
+        unclassifiedOnly?: boolean | null;
+        awaitingTranscript?: boolean | null;
+      },
       context: Context,
     ) => {
       requireRole(context, PIPELINE_ROLES);
+      // Clamp to [1, 2000]: zero/negative limits must never reach
+      // Prisma's `take` (negative take reverses the query).
+      const take = Math.min(Math.max(args.limit ?? 500, 1), 2000);
+
+      // Prisma can't prefix-match elements of a String[] column, so the
+      // voice-ref condition is a raw pre-select of ids.
+      let awaitingIds: string[] | null = null;
+      if (args.awaitingTranscript) {
+        const idRows = await context.prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "ground_messages"
+          WHERE "ground_source_id" = ${args.groundSourceId}
+            AND "transcript" IS NULL
+            AND "transcribe_failed_at" IS NULL
+            AND EXISTS (
+              SELECT 1 FROM unnest("media_refs") AS ref
+              WHERE ref LIKE ${VOICE_REF_PREFIX + "%"}
+            )
+          ORDER BY "sent_at" ASC
+          LIMIT ${take}
+        `;
+        awaitingIds = idRows.map((r) => r.id);
+        if (awaitingIds.length === 0) return [];
+      }
+
       const rows = await context.prisma.groundMessages.findMany({
-        where: { groundSourceId: args.groundSourceId },
+        where: {
+          groundSourceId: args.groundSourceId,
+          // A voice note whose transcription failed has no content to
+          // enrich until a retry transcribes it, so it leaves the
+          // enrichment queue too rather than being held out forever.
+          ...(args.unclassifiedOnly
+            ? { classification: null, enrichFailedAt: null, transcribeFailedAt: null }
+            : {}),
+          ...(awaitingIds ? { id: { in: awaitingIds } } : {}),
+        },
         orderBy: { sentAt: "asc" },
-        // Clamp to [1, 2000]: zero/negative limits must never reach
-        // Prisma's `take` (negative take reverses the query).
-        take: Math.min(Math.max(args.limit ?? 500, 1), 2000),
+        take,
       });
       return rows.map((m) => ({
         id: m.id,
@@ -198,8 +345,18 @@ export const groundResolvers = {
         senderRef: m.senderRef,
         hasMedia:
           m.mediaKeys.length > 0 || m.mediaRefs.length > 0 || m.omittedMediaCount > 0,
+        // mediaKeys[i] pairs with mediaRefs[i] (see hotline-ingest.ts); the
+        // "voice-" prefix is the hotline ingest's own convention for audio
+        // attachments, so this only ever finds matches on hotline sources.
+        voiceMediaKeys: m.mediaKeys.filter((_key, i) => isVoiceRef(m.mediaRefs[i])),
+        hasVoice: hasVoiceRef(m.mediaRefs),
+        transcript: m.transcript,
         classification: m.classification,
         threadId: m.threadId,
+        enrichFailedAt: m.enrichFailedAt,
+        enrichError: m.enrichError,
+        transcribeFailedAt: m.transcribeFailedAt,
+        transcribeError: m.transcribeError,
       }));
     },
 
@@ -228,6 +385,46 @@ export const groundResolvers = {
         },
         orderBy: { createdAt: "asc" },
       });
+    },
+
+    /**
+     * PIPELINE CONTRACT: the Dagster translate drain's canonical fetch for
+     * a queued groundMessage translation. Text + detected language only —
+     * no sender identity, no media. Null when the message is gone (the
+     * drain then drops its queue rows).
+     */
+    groundMessageForTranslation: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      return context.prisma.groundMessages.findUnique({
+        where: { id: args.id },
+        select: { id: true, text: true, language: true },
+      });
+    },
+
+    /**
+     * PIPELINE CONTRACT: minimal source-enumeration query for workers
+     * that need to know WHICH sources to drain (e.g. the hotline
+     * enrichment job) without the private-tier consent/policy fields
+     * the admin/analyst-only `groundSources` query returns.
+     */
+    pipelineGroundSourceIds: async (
+      _parent: unknown,
+      args: { kind?: string | null; isActive?: boolean | null },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const rows = await context.prisma.groundSources.findMany({
+        where: {
+          ...(args.kind != null ? { kind: args.kind } : {}),
+          ...(args.isActive != null ? { isActive: args.isActive } : {}),
+        },
+        select: { id: true },
+      });
+      return rows.map((r) => r.id);
     },
   },
 
@@ -405,7 +602,13 @@ export const groundResolvers = {
     },
     reviewGroundThread: async (
       _parent: unknown,
-      args: { id: string; decision: string; note?: string | null },
+      args: {
+        id: string;
+        decision: string;
+        note?: string | null;
+        rejectReason?: string | null;
+        overrides?: PromotionOverridesInput | null;
+      },
       context: Context,
     ) => {
       // Coarse gate first (viewers/pending never reach the queue), then
@@ -436,6 +639,30 @@ export const groundResolvers = {
         });
       }
 
+      // reviewTransition has validated the decision string.
+      const extras = reviewExtras(args.decision as ReviewDecision, {
+        rejectReason: args.rejectReason,
+        overrides: args.overrides,
+      });
+      if (!extras.ok) {
+        throw new GraphQLError(extras.reason, {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      // signals.location_id is an FK: check up front so a bad id is a clear
+      // BAD_USER_INPUT rather than an opaque P2003 out of createSignal.
+      if (extras.overrides.locationId) {
+        const location = await context.prisma.locations.findUnique({
+          where: { id: extras.overrides.locationId },
+          select: { id: true },
+        });
+        if (!location) {
+          throw new GraphQLError("overrides.locationId: location not found", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
       // approve_public promotes BEFORE the state flips: if promotion
       // fails, the thread stays reviewable and the decision can be
       // retried. createSignal's (sourceId, externalId) dedupe makes the
@@ -444,7 +671,7 @@ export const groundResolvers = {
       // terminal, so a thread cannot be promoted twice.
       let promotedSignalId: string | null = null;
       if (transition.next === "approved_public" && !thread.promotedSignalId) {
-        promotedSignalId = await promoteThread(context, thread.id);
+        promotedSignalId = await promoteThread(context, thread.id, extras.overrides);
       }
 
       return context.prisma.groundThreads.update({
@@ -454,6 +681,7 @@ export const groundResolvers = {
           reviewedBy: user.id,
           reviewedAt: new Date(),
           reviewNote: args.note ?? null,
+          rejectReason: extras.rejectReason,
           ...(promotedSignalId ? { promotedSignalId } : {}),
         },
       });
@@ -517,6 +745,55 @@ export const groundResolvers = {
             },
           }),
         ),
+      );
+      return valid.length;
+    },
+
+    /**
+     * PIPELINE CONTRACT: transcription write-back from the
+     * ground_transcribe worker. Unknown messageIds are skipped with a
+     * warning (a message can be deleted between read and write — the
+     * batch must not fail for it). Returns the number of rows updated.
+     *
+     * Transcripts get the same phone-number redaction hotline ingest
+     * applies to `text`, so a spoken number can't bypass it. An
+     * uncertainty marker found in the transcript fills `uncertainty` only
+     * when ingest found none in `text`.
+     */
+    upsertGroundMessageTranscripts: async (
+      _parent: unknown,
+      args: { inputs: Array<{ messageId: string; transcript: string }> },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true, uncertainty: true },
+      });
+      const uncertaintyById = new Map(existing.map((row) => [row.id, row.uncertainty]));
+
+      const valid = inputs.filter((i) => uncertaintyById.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundMessageTranscripts] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      await context.prisma.$transaction(
+        valid.map((input) => {
+          const transcript = redactPhoneNumbers(input.transcript);
+          const marker = uncertaintyById.get(input.messageId)
+            ? null
+            : extractUncertaintyMarker(transcript);
+          return context.prisma.groundMessages.update({
+            where: { id: input.messageId },
+            data: { transcript, ...(marker ? { uncertainty: marker } : {}) },
+          });
+        }),
       );
       return valid.length;
     },
@@ -687,6 +964,226 @@ export const groundResolvers = {
         { timeout: 60_000, maxWait: 10_000 },
       );
     },
+
+    /**
+     * PIPELINE CONTRACT: enrichment write-back from the hotline
+     * enrichment job. Unknown threadIds are skipped with a warning (a
+     * thread can be deleted/re-threaded between read and write — the
+     * batch must not fail for it). Null fields on an input leave the
+     * existing draft value untouched. Returns the number of rows updated.
+     */
+    upsertGroundThreadDrafts: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{
+          threadId: string;
+          draftTitle?: string | null;
+          draftSeverity?: number | null;
+          draftLocationId?: string | null;
+          draftDisasterType?: string | null;
+        }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      for (const input of inputs) {
+        if (
+          input.draftSeverity != null &&
+          (input.draftSeverity < 1 || input.draftSeverity > 5)
+        ) {
+          throw new GraphQLError("draftSeverity must be between 1 and 5", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      const existing = await context.prisma.groundThreads.findMany({
+        where: { id: { in: inputs.map((i) => i.threadId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.threadId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[upsertGroundThreadDrafts] skipping ${inputs.length - valid.length} unknown threadId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      // draft_location_id has an FK to locations — an unknown id would throw
+      // P2003 inside the transaction and roll back the whole batch. Drop just
+      // that field for the affected inputs instead.
+      const locIds = [
+        ...new Set(valid.flatMap((i) => (i.draftLocationId ? [i.draftLocationId] : []))),
+      ];
+      const knownLocs = new Set(
+        locIds.length === 0
+          ? []
+          : (
+              await context.prisma.locations.findMany({
+                where: { id: { in: locIds } },
+                select: { id: true },
+              })
+            ).map((row) => row.id),
+      );
+      const badLocs = valid.filter(
+        (i) => i.draftLocationId != null && !knownLocs.has(i.draftLocationId),
+      ).length;
+      if (badLocs > 0) {
+        console.warn(
+          `[upsertGroundThreadDrafts] dropping ${badLocs} unknown draftLocationId(s)`,
+        );
+      }
+
+      await context.prisma.$transaction(
+        valid.map((input) =>
+          context.prisma.groundThreads.update({
+            where: { id: input.threadId },
+            data: {
+              ...(input.draftTitle != null ? { draftTitle: input.draftTitle } : {}),
+              ...(input.draftSeverity != null
+                ? { draftSeverity: input.draftSeverity }
+                : {}),
+              ...(input.draftLocationId != null && knownLocs.has(input.draftLocationId)
+                ? { draftLocationId: input.draftLocationId }
+                : {}),
+              ...(input.draftDisasterType != null
+                ? { draftDisasterType: input.draftDisasterType }
+                : {}),
+            },
+          }),
+        ),
+      );
+      return valid.length;
+    },
+
+    /**
+     * PIPELINE CONTRACT: durable failure marker from the ground drains,
+     * called once a message exhausts its attempts (or can never succeed).
+     * The marker takes the message out of that stage's queue until
+     * retryGroundMessage clears it. Unknown messageIds are skipped with a
+     * warning (a message can be deleted between read and write — the batch
+     * must not fail for it). A message whose stage has already succeeded
+     * is left unmarked, so a late mark can't flag finished work. Returns
+     * the number of messages marked.
+     */
+    markGroundMessagesFailed: async (
+      _parent: unknown,
+      args: {
+        inputs: Array<{ messageId: string; stage: GroundPipelineStage; error: string }>;
+      },
+      context: Context,
+    ) => {
+      requireRole(context, PIPELINE_ROLES);
+      const { inputs } = args;
+      if (inputs.length === 0) return 0;
+
+      const existing = await context.prisma.groundMessages.findMany({
+        where: { id: { in: inputs.map((i) => i.messageId) } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((row) => row.id));
+
+      const valid = inputs.filter((i) => known.has(i.messageId));
+      if (valid.length < inputs.length) {
+        console.warn(
+          `[markGroundMessagesFailed] skipping ${inputs.length - valid.length} unknown messageId(s)`,
+        );
+      }
+      if (valid.length === 0) return 0;
+
+      const failedAt = new Date();
+      const results = await context.prisma.$transaction(
+        valid.map((input) => {
+          const error = failureErrorText(input.error);
+          return input.stage === "ENRICH"
+            ? context.prisma.groundMessages.updateMany({
+                where: { id: input.messageId, classification: null },
+                data: { enrichFailedAt: failedAt, enrichError: error },
+              })
+            : context.prisma.groundMessages.updateMany({
+                where: { id: input.messageId, transcript: null },
+                data: { transcribeFailedAt: failedAt, transcribeError: error },
+              });
+        }),
+      );
+      return results.reduce((total, result) => total + result.count, 0);
+    },
+
+    /**
+     * Reviewer action: translate one message's text into `locale` (the
+     * reader's UI locale — usually `en`, the source being Arabic). Queues
+     * an (groundMessage, id, locale) row on the translation queue for the
+     * Dagster translate drain and returns the current state; poll
+     * GroundMessage.translation(locale) while it is queued.
+     *
+     * Idempotent: an already-ready translation is returned without
+     * re-queueing, and a re-request of a queued one keeps its place. A
+     * request after the drain gave up (unavailable) queues it again. A
+     * message without text has nothing to translate: unavailable, nothing
+     * queued. ground_messages.text is never touched — the translation is a
+     * read-only overlay row.
+     */
+    requestGroundMessageTranslation: async (
+      _parent: unknown,
+      args: { messageId: string; locale: string },
+      context: Context,
+    ): Promise<GroundTranslationState> => {
+      requireRole(context, ["admin", "analyst"]);
+      const locale = groundTranslationLocale(args.locale);
+
+      const message = await context.prisma.groundMessages.findUnique({
+        where: { id: args.messageId },
+        select: { id: true, text: true },
+      });
+      if (!message) {
+        throw new GraphQLError("Ground message not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+      if (message.text.trim().length === 0) return { locale, status: "unavailable", text: null };
+
+      const current = await groundTranslationState(context, message, locale);
+      if (current.status === "ready") return current;
+      await enqueueTranslation(context.prisma, "groundMessage", message.id, locale);
+      return { locale, status: "queued", text: null };
+    },
+
+    /**
+     * Reviewer action: clear one stage's failure marker so the message
+     * re-enters that drain's queue on the next pipeline run (with a fresh
+     * set of attempts — the pipeline resets its counter when it marks).
+     * Idempotent: clearing an unmarked stage is a no-op.
+     */
+    retryGroundMessage: async (
+      _parent: unknown,
+      args: { messageId: string; stage: GroundPipelineStage },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "analyst"]);
+
+      const existing = await context.prisma.groundMessages.findUnique({
+        where: { id: args.messageId },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Ground message not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.groundMessages.update({
+        where: { id: existing.id },
+        data:
+          args.stage === "ENRICH"
+            ? { enrichFailedAt: null, enrichError: null }
+            : { transcribeFailedAt: null, transcribeError: null },
+      });
+    },
   },
 
   GroundMessage: {
@@ -697,6 +1194,18 @@ export const groundResolvers = {
       if (parent.mediaKeys.length === 0) return [];
       return getPresignedUrls(parent.mediaKeys);
     },
+    /** Derived from mediaRefs (set at row creation), so it is true even
+     * while the voice note's media is still being stored. `transcript`
+     * and the failure markers need no resolver — they are read straight
+     * off the row. */
+    hasVoice: (parent: { mediaRefs: string[] }) => hasVoiceRef(parent.mediaRefs),
+    /** On-demand translation state for `locale`; see
+     * requestGroundMessageTranslation. */
+    translation: async (
+      parent: { id: string; text: string },
+      args: { locale: string },
+      context: Context,
+    ) => groundTranslationState(context, parent, groundTranslationLocale(args.locale)),
   },
 
   GroundThread: {

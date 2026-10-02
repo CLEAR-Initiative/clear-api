@@ -1,14 +1,14 @@
 /**
  * Generic Redis key-value cache for short-lived, non-critical state.
  *
- * Uses the same connection that `celery.ts` already opens to the broker
- * Redis at `CELERY_BROKER_URL` — adding another client just for cache
- * reads would double the connection footprint for no benefit.
+ * Points at the same Redis instance as `CELERY_BROKER_URL` (kept as the
+ * env var name — it's just "the shared Redis" now, post Celery→Dagster
+ * cutover; renaming it is an infra change, not a code one).
  *
  * Every entry written through this module is namespaced with the
- * `cache:` prefix so it can't collide with Celery's task queues. Use
- * the `publicEventCacheKey` helper below for the public-event link
- * keys specifically.
+ * `cache:` prefix so it can't collide with anything else on that
+ * instance. Use the `publicEventCacheKey` helper below for the
+ * public-event link keys specifically.
  *
  * Everything here is best-effort. A Redis outage or an evicted key
  * results in a typed `null` from `get` — callers treat that the same

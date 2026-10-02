@@ -10,7 +10,8 @@
  *
  * Runs against the real database (uses DATABASE_URL from .env). All
  * fixture rows are tracked and DELETEd in afterAll so the suite is
- * idempotent. Skipped automatically when DATABASE_URL is missing.
+ * idempotent. Needs the dev seed's Sudan admin polygons (Al Kurmuk), so it
+ * is skipped on a scratch database (`bun run test:db`, CI).
  */
 
 import { describe, it, expect, afterAll } from "vitest";
@@ -20,7 +21,7 @@ import {
   createPointLocation,
   resolvePointsToCommonAncestor,
 } from "../../src/utils/geo-resolve.js";
-import { describeIfDb } from "../helpers/db.js";
+import { describeIfSeededDb } from "../helpers/db.js";
 
 // Inside Al Kurmuk district (Blue Nile state, Sudan). Same coordinates we
 // debugged when the L4-cascade bug surfaced. Picked because it sits well
@@ -32,7 +33,7 @@ const AL_KURMUK_NAME = "Al Kurmuk";
 const BLUE_NILE_NAME = "Blue Nile";
 const SUDAN_NAME = "Sudan";
 
-describeIfDb("geo-resolve — L4 parent + ancestor resolution", () => {
+describeIfSeededDb("geo-resolve — L4 parent + ancestor resolution", () => {
   const createdIds: string[] = [];
 
   afterAll(async () => {

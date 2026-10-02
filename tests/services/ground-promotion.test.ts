@@ -66,6 +66,44 @@ describe("buildPromotedSignalInput", () => {
     expect(input.title).toBe("Strike at the market");
   });
 
+  it("applies reviewer overrides without touching rawData", () => {
+    const base = buildPromotedSignalInput({
+      dataSourceId: "ds_whatsapp",
+      thread,
+      messages: makeMessages(),
+    });
+    const overridden = buildPromotedSignalInput({
+      dataSourceId: "ds_whatsapp",
+      thread,
+      messages: makeMessages(),
+      overrides: {
+        title: "Market strike, Nyala",
+        description: "ERM summary of the reports",
+        severity: 4,
+        locationId: "loc_nyala",
+      },
+    });
+    expect(overridden.title).toBe("Market strike, Nyala");
+    expect(overridden.description).toBe("ERM summary of the reports");
+    expect(overridden.severity).toBe(4);
+    expect(overridden.locationId).toBe("loc_nyala");
+    expect(overridden.rawData).toEqual(base.rawData);
+    expect(overridden.externalId).toBe(base.externalId);
+  });
+
+  it("without overrides, adds no severity or location", () => {
+    const input = buildPromotedSignalInput({
+      dataSourceId: "ds_whatsapp",
+      thread,
+      messages: makeMessages(),
+      overrides: { title: "Only the title" },
+    });
+    expect(input.title).toBe("Only the title");
+    expect(input.description).toContain("Initial report from the field team");
+    expect(input).not.toHaveProperty("severity");
+    expect(input).not.toHaveProperty("locationId");
+  });
+
   it("carries thread provenance and message content in rawData", () => {
     const input = buildPromotedSignalInput({
       dataSourceId: "ds_whatsapp",
@@ -168,6 +206,10 @@ function makePromotionContext() {
   const threadUpdates: Array<Record<string, unknown>> = [];
 
   const prisma = {
+    locations: {
+      findUnique: async (args: { where: { id: string } }) =>
+        args.where.id === "loc_nyala" ? { id: "loc_nyala" } : null,
+    },
     groundThreads: {
       findUnique: async () => staged,
       update: async (args: { data: Record<string, unknown> }) => {
@@ -226,6 +268,50 @@ describe("reviewGroundThread → approve_public promotes via createSignal", () =
     expect(threadUpdates[0]!.reviewState).toBe("approved_public");
     expect(threadUpdates[0]!.promotedSignalId).toBe("sig_1");
     expect(result.promotedSignalId).toBe("sig_1");
+  });
+
+  it("carries the reviewer's overrides into the created signal", async () => {
+    const { context, createdSignals, threadUpdates } = makePromotionContext();
+
+    await groundResolvers.Mutation.reviewGroundThread(
+      null,
+      {
+        id: "t1",
+        decision: "approve_public",
+        overrides: {
+          title: "Market strike, Nyala",
+          description: "ERM-edited summary",
+          severity: 4,
+          locationId: "loc_nyala",
+        },
+      },
+      context,
+    );
+
+    expect(createdSignals).toHaveLength(1);
+    const signal = createdSignals[0]!;
+    expect(signal.title).toBe("Market strike, Nyala");
+    expect(signal.description).toBe("ERM-edited summary");
+    expect(signal.severity).toBe(4);
+    expect(signal.locationId).toBe("loc_nyala");
+    // Provenance is the verbatim field report, not the reviewer's edit.
+    const raw = signal.rawData as { messages: Array<{ text: string }> };
+    expect(raw.messages[0]!.text).toBe("Initial report, phone was [phone redacted]");
+    expect(threadUpdates[0]!.rejectReason).toBeNull();
+  });
+
+  it("without overrides, promotes exactly as before", async () => {
+    const { context, createdSignals } = makePromotionContext();
+    await groundResolvers.Mutation.reviewGroundThread(
+      null,
+      { id: "t1", decision: "approve_public" },
+      context,
+    );
+    const signal = createdSignals[0]!;
+    expect(signal.title).toBe("Strike at the market");
+    expect(signal.description).toBe("Initial report, phone was [phone redacted]");
+    expect(signal.severity).toBeUndefined();
+    expect(signal.locationId).toBeUndefined();
   });
 
   it("approve_private does NOT touch the signals graph", async () => {

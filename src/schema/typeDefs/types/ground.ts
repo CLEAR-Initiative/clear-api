@@ -81,9 +81,22 @@ export const groundTypeDef = gql`
     reviewedBy: String
     reviewedAt: DateTime
     reviewNote: String
+    """Structured rejection reason: "spam" | "not_report" | "unusable" |
+    "duplicate". Set only while reviewState is "rejected"; null otherwise."""
+    rejectReason: String
     """Id of the \`signals\` row created when this thread was promoted
     (approved_public only)."""
     promotedSignalId: String
+    """LLM-suggested headline from the hotline-enrichment job. A draft —
+    the ERM reviews/edits it before promotion; never used directly."""
+    draftTitle: String
+    """1-5 suggestion from the hotline-enrichment job."""
+    draftSeverity: Int
+    """Geoparser-resolved \`locations\` row id, suggested by the
+    hotline-enrichment job."""
+    draftLocationId: String
+    """Disaster-type guess from the hotline-enrichment job."""
+    draftDisasterType: String
     messages: [GroundMessage!]!
     """Ids of the thread's messages, oldest first. The pipeline worker
     selects this (via groundThreadsForSource) instead of \`messages\` —
@@ -107,8 +120,18 @@ export const groundTypeDef = gql`
     senderRef: String!
     """Raw sender display name. Private tier only — never promoted."""
     senderName: String
-    """Message text (redacted). Empty for caption-less media messages."""
+    """Message text (redacted). Empty for caption-less media messages.
+    Always the reporter's original words — translations are a separate
+    overlay (see \`translation\`), never written here."""
     text: String!
+    """Language of \`text\` as a lowercased ISO 639-1 code ("ar", "en",
+    "fr", "es"), detected at intake without an LLM. Null when unknown
+    (too short, another language, or ingested before detection)."""
+    language: String
+    """On-demand translation of \`text\` into \`locale\`. \`unavailable\`
+    until requestGroundMessageTranslation queues it; poll while
+    \`queued\`."""
+    translation(locale: String!): GroundMessageTranslation!
     """S3 keys of stored attachments."""
     mediaKeys: [String!]!
     """Presigned GET URLs for mediaKeys (1 h expiry), generated at read
@@ -119,6 +142,15 @@ export const groundTypeDef = gql`
     """Media the export omitted ("image omitted") — the message still
     counts as a media message."""
     omittedMediaCount: Int!
+    """True when the message has a voice-note attachment (hotline
+    sources). Set when the row is created, so it is true even while the
+    voice note's media is still being stored."""
+    hasVoice: Boolean!
+    """Transcribed text of the message's voice note(s). Null until the
+    clear-pipeline Dagster ground_transcribe asset transcribes it, and
+    always null for messages without a voice note. Phone numbers are
+    redacted at write time."""
+    transcript: String
     """"field_report" | "news_digest" | "operational" | "chatter"; null
     until the pipeline classification task labels the message."""
     classification: String
@@ -126,8 +158,52 @@ export const groundTypeDef = gql`
     preserved from the source text."""
     uncertainty: String
     isEdited: Boolean!
+    """Enrichment (ground_hotline_enrich) gave up on this message: set when
+    the drain exhausted its attempts. While set, the message is out of the
+    enrichment queue — retryGroundMessage(stage: ENRICH) clears it."""
+    enrichFailedAt: DateTime
+    """Last error from the enrichment drain (truncated, phone-redacted)."""
+    enrichError: String
+    """Transcription (ground_transcribe) gave up on this voice note: set
+    when the drain exhausted its attempts. While set, the message is out of
+    both the transcription and enrichment queues ("transcription failed")
+    — retryGroundMessage(stage: TRANSCRIBE) clears it."""
+    transcribeFailedAt: DateTime
+    """Last error from the transcription drain (truncated, phone-redacted)."""
+    transcribeError: String
     threadId: String
     createdAt: DateTime!
+  }
+
+  """Where a message's on-demand translation stands."""
+  enum GroundTranslationStatus {
+    """Requested; the pipeline's translate drain hasn't written it yet."""
+    queued
+    """Translated — \`text\` holds it."""
+    ready
+    """Not requested, nothing to translate (no text), or the drain gave
+    up. Requesting again re-queues it."""
+    unavailable
+  }
+
+  """A staged message's translation into one locale — a read-only overlay;
+  the original text stays canonical."""
+  type GroundMessageTranslation {
+    """Lowercased BCP-47 locale, e.g. "en"."""
+    locale: String!
+    status: GroundTranslationStatus!
+    """Translated text. Null unless \`status\` is \`ready\`."""
+    text: String
+  }
+
+  """Pipeline-facing projection of a staged message for the translate
+  drain: text and detected language only — no sender identity."""
+  type GroundMessageForTranslation {
+    id: ID!
+    """Message text (phone-redacted at persistence)."""
+    text: String!
+    """Detected source language, null when unknown."""
+    language: String
   }
 
   """Result of a chat-export ingest (also returned by the REST upload
@@ -152,10 +228,45 @@ export const groundTypeDef = gql`
     """True when the message carries stored media, export-referenced
     attachments, or export-omitted media."""
     hasMedia: Boolean!
+    """S3 keys of this message's audio attachments only (a subset of its
+    stored media) — empty when the message has no voice note, or while
+    its media is still being stored (see \`hasVoice\`)."""
+    voiceMediaKeys: [String!]!
+    """True when the message has a voice attachment. Set when the row is
+    created, so it stays true while \`voiceMediaKeys\` is still empty
+    because the media hasn't been stored yet."""
+    hasVoice: Boolean!
+    """Transcribed text for this message's voice note(s), null until the
+    Dagster ground_transcribe asset transcribes them."""
+    transcript: String
     """Current label, null while unclassified."""
     classification: String
     """Current thread (placeholder or pipeline-built)."""
     threadId: String
+    """Set once the enrichment drain has given up on the message (see
+    markGroundMessagesFailed)."""
+    enrichFailedAt: DateTime
+    enrichError: String
+    """Set once the transcription drain has given up on the voice note."""
+    transcribeFailedAt: DateTime
+    transcribeError: String
+  }
+
+  """A clear-pipeline ground drain stage that can give up on a message."""
+  enum GroundPipelineStage {
+    """ground_hotline_enrich — classification + thread draft."""
+    ENRICH
+    """ground_transcribe — voice-note transcription."""
+    TRANSCRIBE
+  }
+
+  """One failure marker from a clear-pipeline ground drain."""
+  input GroundMessageFailureInput {
+    messageId: String!
+    stage: GroundPipelineStage!
+    """Exception text from the last attempt. Stored truncated to 500
+    characters, with phone numbers redacted."""
+    error: String!
   }
 
   """One classification write-back from the pipeline worker."""
@@ -166,6 +277,13 @@ export const groundTypeDef = gql`
     """Pipeline-detected uncertainty tag. Null/omitted leaves the
     ingest-extracted marker untouched."""
     uncertaintyMarker: String
+  }
+
+  """One transcription write-back from the ground_transcribe worker."""
+  input GroundMessageTranscriptInput {
+    messageId: String!
+    """Transcribed text of the message's voice note(s)."""
+    transcript: String!
   }
 
   """One thread (a cluster of staged Signals) produced by the pipeline
@@ -187,5 +305,30 @@ export const groundTypeDef = gql`
     groundSourceId. A promoted/terminal (or unknown/wrong-source) target
     is never mutated: a NEW thread is created instead, with a warning."""
     threadId: String
+  }
+
+  """Reviewer edits applied to the signal a thread is promoted into
+  (reviewGroundThread approve_public only). Omitted, null or blank fields
+  keep the default derived from the thread (thread title; the joined
+  message text as description; no severity; no location). The signal's
+  rawData provenance is never affected."""
+  input GroundPromotionOverridesInput {
+    title: String
+    description: String
+    """Integer 1-5."""
+    severity: Int
+    """An existing \`locations\` row id (any admin level)."""
+    locationId: String
+  }
+
+  """One enrichment draft from the Dagster hotline-enrichment job. Null
+  fields leave the existing draft value on the thread unchanged."""
+  input GroundThreadDraftInput {
+    threadId: String!
+    draftTitle: String
+    """1-5. Validated server-side when present."""
+    draftSeverity: Int
+    draftLocationId: String
+    draftDisasterType: String
   }
 `;

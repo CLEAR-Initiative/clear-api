@@ -9,6 +9,7 @@ import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 const TEAM_MEMBER_ROLES = [
   "team_admin",
   "field_coordinator",
+  "emergency_response_manager",
   "team_member",
 ] as const;
 type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];

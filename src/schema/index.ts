@@ -30,9 +30,11 @@ import { knowledgebaseTypeDef } from "./typeDefs/types/knowledgebase.js";
 import { gazetteerTypeDef } from "./typeDefs/types/gazetteer.js";
 import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
 import { situationAnalysisTypeDef } from "./typeDefs/types/situationAnalysis.js";
+import { analysisTypeDef } from "./typeDefs/types/analysis.js";
 import { reportFigureTypeDef } from "./typeDefs/types/reportFigure.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 import { groundTypeDef } from "./typeDefs/types/ground.js";
+import { conversationTypeDef } from "./typeDefs/types/conversation.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -67,7 +69,9 @@ export const typeDefs = [
   gazetteerTypeDef,
   datapointTypeDef,
   situationAnalysisTypeDef,
+  analysisTypeDef,
   reportFigureTypeDef,
   webhookTypeDef,
   groundTypeDef,
+  conversationTypeDef,
 ];

@@ -3,10 +3,16 @@ import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
 import {
   isSupportedLocale,
+  isTargetLocale,
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
 } from "../utils/locales.js";
-import type { TranslatableEntityType } from "../utils/translation-loader.js";
+import {
+  TRANSLATION_FK,
+  type TranslatableEntityType,
+} from "../utils/translation-loader.js";
+import { enqueueTranslation } from "../services/translation-queue.js";
+import { redactPhoneNumbers } from "../services/whatsapp-export.js";
 import { Prisma } from "../generated/prisma/client.js";
 
 interface LocaleTranslationInput {
@@ -26,9 +32,36 @@ const VALID_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
   "crisis",
   "location",
   "situationAnalysis",
+  "analysis",
+  "groundMessage",
+]);
+
+/**
+ * Types translated only when someone asks (requestGroundMessageTranslation),
+ * never in bulk. They have no meaningful coverage and must not be offered
+ * to backfills: "every hotline message missing Arabic" is not a work queue.
+ */
+const ON_DEMAND_ENTITY_TYPES: ReadonlySet<TranslatableEntityType> = new Set([
+  "groundMessage",
 ]);
 
 const ENTITY_TYPE_LIST = [...VALID_ENTITY_TYPES].join(", ");
+
+/**
+ * The payload as stored. A groundMessage translation is hotline text, so it
+ * gets the same phone redaction as every other text entering the ground tier
+ * — the model can surface a number the source only spelt out or wrote in
+ * another script. Every other type is stored as received.
+ */
+function storedTranslationData(
+  entityType: TranslatableEntityType,
+  data: Record<string, unknown>,
+): Prisma.InputJsonValue {
+  if (entityType === "groundMessage" && typeof data.text === "string") {
+    return { ...data, text: redactPhoneNumbers(data.text) } as Prisma.InputJsonValue;
+  }
+  return data as Prisma.InputJsonValue;
+}
 
 /**
  * Case-insensitively resolve a caller-supplied entity type to its canonical
@@ -43,6 +76,21 @@ function normalizeEntityType(raw: string): TranslatableEntityType | null {
     if (t.toLowerCase() === lower) return t;
   }
   return null;
+}
+
+/** Reject a locale that can't be stored as a translation of `entityType`
+ * ('en' is canonical except for source-language types like groundMessage). */
+function assertTargetLocale(entityType: TranslatableEntityType, locale: string): void {
+  if (isTargetLocale(entityType, locale)) return;
+  if (locale === DEFAULT_LOCALE) {
+    throw new GraphQLError(
+      "locale 'en' is canonical and is never translated.",
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+  throw new GraphQLError(`Unsupported locale "${locale}".`, {
+    extensions: { code: "BAD_USER_INPUT" },
+  });
 }
 
 /**
@@ -72,6 +120,16 @@ async function assertEntityExists(
       where: { id: entityId },
       select: { id: true },
     });
+  } else if (entityType === "analysis") {
+    found = await ctx.prisma.analysis.findUnique({
+      where: { id: entityId },
+      select: { id: true },
+    });
+  } else if (entityType === "groundMessage") {
+    found = await ctx.prisma.groundMessages.findUnique({
+      where: { id: entityId },
+      select: { id: true },
+    });
   } else {
     found = await ctx.prisma.situationAnalysis.findUnique({
       where: { id: entityId },
@@ -90,6 +148,12 @@ async function assertEntityExists(
 // it (always 100% by construction).
 const COVERAGE_LOCALES = SUPPORTED_LOCALES.filter(
   (l) => l !== DEFAULT_LOCALE,
+);
+
+/** Bulk-translated types — the rows of the coverage matrix. */
+type CoverageEntityType = Exclude<TranslatableEntityType, "groundMessage">;
+const COVERAGE_ENTITY_TYPES = [...VALID_ENTITY_TYPES].filter(
+  (t): t is CoverageEntityType => !ON_DEMAND_ENTITY_TYPES.has(t),
 );
 
 export const translationResolvers = {
@@ -136,6 +200,12 @@ export const translationResolvers = {
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
+      if (ON_DEMAND_ENTITY_TYPES.has(entityType)) {
+        throw new GraphQLError(
+          `${entityType} is translated on demand only; it has no missing-translation backlog.`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
       const locale = args.locale.toLowerCase();
       if (locale === DEFAULT_LOCALE) {
         throw new GraphQLError(
@@ -159,7 +229,10 @@ export const translationResolvers = {
         allRows = await context.prisma.crises.findMany({ select: { id: true } });
       } else if (entityType === "location") {
         allRows = await context.prisma.locations.findMany({ select: { id: true } });
+      } else if (entityType === "analysis") {
+        allRows = await context.prisma.analysis.findMany({ select: { id: true } });
       } else {
+        // situationAnalysis — on-demand types were rejected above.
         allRows = await context.prisma.situationAnalysis.findMany({
           select: { id: true },
         });
@@ -181,23 +254,31 @@ export const translationResolvers = {
     ) => {
       requireRole(context, ["admin"]);
 
-      const [grouped, eventCount, crisisCount, locationCount, situationCount] =
-        await Promise.all([
-          context.prisma.translations.groupBy({
-            by: ["entityType", "locale"],
-            _count: { entityId: true },
-          }),
-          context.prisma.events.count(),
-          context.prisma.crises.count(),
-          context.prisma.locations.count(),
-          context.prisma.situationAnalysis.count(),
-        ]);
+      const [
+        grouped,
+        eventCount,
+        crisisCount,
+        locationCount,
+        situationCount,
+        analysisCount,
+      ] = await Promise.all([
+        context.prisma.translations.groupBy({
+          by: ["entityType", "locale"],
+          _count: { entityId: true },
+        }),
+        context.prisma.events.count(),
+        context.prisma.crises.count(),
+        context.prisma.locations.count(),
+        context.prisma.situationAnalysis.count(),
+        context.prisma.analysis.count(),
+      ]);
 
-      const canonical: Record<TranslatableEntityType, number> = {
+      const canonical: Record<CoverageEntityType, number> = {
         event: eventCount,
         crisis: crisisCount,
         location: locationCount,
         situationAnalysis: situationCount,
+        analysis: analysisCount,
       };
 
       // Build (translatedCount) lookup keyed by `${type}:${locale}`.
@@ -212,7 +293,7 @@ export const translationResolvers = {
         canonicalCount: number;
         translatedCount: number;
       }> = [];
-      for (const entityType of [...VALID_ENTITY_TYPES] as TranslatableEntityType[]) {
+      for (const entityType of COVERAGE_ENTITY_TYPES) {
         for (const locale of COVERAGE_LOCALES) {
           out.push({
             entityType,
@@ -237,7 +318,10 @@ export const translationResolvers = {
       requireRole(context, ["admin", "pipeline"]);
       const take = Math.min(Math.max(args.first ?? 100, 1), 500);
       const where: { entityType?: string; locale?: string } = {};
-      if (args.entityType) where.entityType = args.entityType.toLowerCase();
+      if (args.entityType) {
+        where.entityType =
+          normalizeEntityType(args.entityType) ?? args.entityType.toLowerCase();
+      }
       if (args.locale) where.locale = args.locale.toLowerCase();
       return context.prisma.translationQueue.findMany({
         where,
@@ -266,25 +350,9 @@ export const translationResolvers = {
         );
       }
       const locale = args.locale.toLowerCase();
-      if (locale === DEFAULT_LOCALE) {
-        throw new GraphQLError(
-          "locale 'en' is canonical and is never translated.",
-          { extensions: { code: "BAD_USER_INPUT" } },
-        );
-      }
-      if (!isSupportedLocale(locale)) {
-        throw new GraphQLError(`Unsupported locale "${locale}".`, {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
-      }
+      assertTargetLocale(entityType, locale);
       await assertEntityExists(context, entityType, args.entityId);
-      return context.prisma.translationQueue.upsert({
-        where: {
-          entityType_entityId_locale: { entityType, entityId: args.entityId, locale },
-        },
-        create: { entityType, entityId: args.entityId, locale },
-        update: {}, // idempotent — keep the original enqueuedAt
-      });
+      return enqueueTranslation(context.prisma, entityType, args.entityId, locale);
     },
 
     // Explicit drain completion: remove an entity/locale from the queue. Returns
@@ -339,11 +407,13 @@ export const translationResolvers = {
 
       // Locale validation up front so we don't commit partial work if
       // the 3rd of 4 locales has a typo. Refuse 'en' explicitly — the
-      // canonical English lives on the entity row itself, not here.
+      // canonical English lives on the entity row itself, not here —
+      // except for source-language types (groundMessage), where English
+      // is a translation like any other.
       const seenLocales = new Set<string>();
       for (const t of input.translations) {
         const locale = t.locale.toLowerCase();
-        if (locale === DEFAULT_LOCALE) {
+        if (locale === DEFAULT_LOCALE && !isTargetLocale(entityType, locale)) {
           throw new GraphQLError(
             "locale 'en' is canonical and not stored in the translations table.",
             { extensions: { code: "BAD_USER_INPUT" } },
@@ -388,19 +458,8 @@ export const translationResolvers = {
           // and are reachable via Prisma's typed `include` on the
           // entity's relation. The polymorphic columns stay populated
           // for the existing read paths until the loader is rewired.
-          const typedFk: {
-            eventId?: string;
-            crisisId?: string;
-            locationId?: string;
-            situationAnalysisId?: string;
-          } =
-            entityType === "event"
-              ? { eventId: input.entityId }
-              : entityType === "crisis"
-                ? { crisisId: input.entityId }
-                : entityType === "location"
-                  ? { locationId: input.entityId }
-                  : { situationAnalysisId: input.entityId };
+          const typedFk = { [TRANSLATION_FK[entityType]]: input.entityId };
+          const data = storedTranslationData(entityType, t.data);
           return context.prisma.translations.upsert({
             where: {
               entityType_entityId_locale: {
@@ -414,11 +473,11 @@ export const translationResolvers = {
               entityId: input.entityId,
               ...typedFk,
               locale: t.locale.toLowerCase(),
-              data: t.data as Prisma.InputJsonValue,
+              data,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
             },
             update: {
-              data: t.data as Prisma.InputJsonValue,
+              data,
               sourceHashes: t.sourceHashes as Prisma.InputJsonValue,
               // Defensive backfill on update too — if an older row was
               // written before this migration, the next translation

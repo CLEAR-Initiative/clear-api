@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { logActivity } from "../../src/utils/activity-log.js";
+import { logActivity, logActivityOrThrow } from "../../src/utils/activity-log.js";
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 import type { LogActivityOptions } from "../../src/utils/activity-log.js";
 
@@ -187,5 +187,39 @@ describe("logActivity — error swallowing (the hard rule)", () => {
     });
 
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("logActivityOrThrow — audited reads", () => {
+  it("writes the same row shape as logActivity", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    await logActivityOrThrow(buildPrisma(create), {
+      userId: "a1",
+      action: "conversation.admin_read",
+      resourceType: "conversation",
+      resourceId: "t1",
+      metadata: { ownerId: "u1" },
+    });
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        userId: "a1",
+        action: "conversation.admin_read",
+        resourceType: "conversation",
+        resourceId: "t1",
+        metadata: { ownerId: "u1" },
+        ipAddress: null,
+        userAgent: null,
+      },
+    });
+  });
+
+  it("propagates a failed write, so the read is not served", async () => {
+    const create = vi.fn().mockRejectedValue(new Error("db down"));
+    await expect(
+      logActivityOrThrow(buildPrisma(create), {
+        userId: "a1",
+        action: "conversation.admin_read",
+      }),
+    ).rejects.toThrow("db down");
   });
 });

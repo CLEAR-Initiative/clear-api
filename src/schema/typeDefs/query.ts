@@ -126,6 +126,46 @@ export const queryTypeDef = gql`
     """List all API keys belonging to the authenticated user. Requires authentication."""
     myApiKeys: [ApiKey!]!
 
+    # ─── Agent Conversations ───────────────────────────────────────────────────
+    """A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+    admin (read-only, and logged as \`conversation.admin_read\`). Null if no
+    Conversation has that id; FORBIDDEN if it belongs to another user.
+    Approved users only."""
+    conversation(id: String!): Conversation
+
+    """Your CLEAR Agent Conversations, most recently active first. Approved
+    users only."""
+    myConversations(
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """The \`cursor\` of the last Conversation on the previous page. Omit
+      for the first page."""
+      after: String
+    ): [Conversation!]!
+
+    """Messages from your own Conversations by id (at most 200), oldest
+    first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+    to resolve messages it knows only by id. Approved users only."""
+    conversationMessagesByIds(ids: [String!]!): [ConversationMessage!]!
+
+    """Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+    midnight, and when it resets. Approved users only."""
+    myAgentBudget: AgentBudget!
+
+    """Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+    Approved users only."""
+    myAgentWorkingMemory: AgentWorkingMemory
+
+    """Admin audit: one user's Conversations, most recently active first.
+    Read-only; each call is logged as \`conversation.admin_read\`. Admin only."""
+    userConversations(
+      userId: String!
+      """Max rows to return (1–100, default 20)."""
+      first: Int = 20
+      """The \`cursor\` of the last Conversation on the previous page."""
+      after: String
+    ): [Conversation!]!
+
     # ─── Organisations & Teams ─────────────────────────────────────────────────
     """List organisations the authenticated user belongs to."""
     myOrganisations: [Organisation!]!
@@ -285,11 +325,27 @@ export const queryTypeDef = gql`
     embedding provider is the one configured in the environment -
     keep the write and read sides on the same provider or turn on
     \`filters.currentEmbeddingModelOnly\` to guarantee vector-space
-    consistency. Requires any authenticated content reader."""
+    consistency. Requires any authenticated content reader.
+
+    Two tiers are searched (ADR-0006): the ReliefWeb report KB (state /
+    analysis) and the incident index (event cards, always fresh). Each
+    tier is retrieved + RRF-fused independently, then merged tier-aware
+    so the few short incident cards are never buried by the many dense
+    report chunks. \`mode\` picks the merge: FRAME (a location+time frame
+    with little topical text — the situation-analysis case) returns a
+    report band + a quota-bounded incident band ordered by recency +
+    severity; TOPICAL (a strong free-text query — the chatbot case)
+    interleaves by relevance, gating weak incidents. AUTO picks FRAME
+    when the query is effectively empty/frame-only, else TOPICAL. Every
+    hit carries its \`tier\`."""
     searchKnowledgebase(
       query: String!
       filters: KnowledgebaseFilters
       limit: Int = 10
+      """Which tiers to search. Default: both (the KB is always fresh). Pass
+      [report] to get the pre-ADR-0006 report-only behaviour."""
+      tiers: [KnowledgebaseTier!]
+      mode: KnowledgebaseSearchMode = AUTO
     ): [KnowledgebaseHit!]!
 
     """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.
@@ -363,6 +419,45 @@ export const queryTypeDef = gql`
     pipeline calls it as \`en\` and gets canonical text back. Requires any
     authenticated content reader."""
     situationAnalysisById(id: String!): SituationAnalysis
+
+    """Unified frame-scoped analysis (ADR-0007). Reads the current row for a
+    FRAME (locationIds / eventTypes / needSectors / window) — the generalised
+    successor to \`situationAnalysis\`, and the read path for "crisis
+    overview" frames. \`windowEnd\` null in the frame reads the rolling
+    ("to present") row. Pass \`asOf\` for a historical read and
+    \`schemaVersion\` to pin a payload shape. Returns null when no analysis
+    exists for the frame yet. Requires any authenticated content reader."""
+    analysis(
+      frame: AnalysisFrameInput!
+      asOf: DateTime
+      schemaVersion: String
+    ): Analysis
+
+    """Read one analysis by row id, including superseded history rows (the
+    frame-keyed \`analysis\` query only returns the current row). Requires any
+    authenticated content reader."""
+    analysisById(id: String!): Analysis
+
+    """List analysis automation subscriptions (ADR-0007 §5). Optionally scope
+    to a team or to enabled rows only. Requires any authenticated content
+    reader."""
+    analysisAutomations(teamId: String, enabledOnly: Boolean): [AnalysisAutomation!]!
+
+    """Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
+    requests, so the generation sensor can pick them up. Admin / pipeline only."""
+    pendingAnalyses(limit: Int): [AnalysisRequest!]!
+
+    """Scheduler drain (ADR-0007 §5): enabled analysis automations that are DUE
+    (never run, or their nextRunAt has passed). The pipeline groups them by
+    frame and regenerates each at the minimum cadence across subscribers.
+    Admin / pipeline only."""
+    dueAnalysisAutomations(limit: Int): [AnalysisAutomation!]!
+
+    """Latest-evidence watermark for a frame (ADR-0008) over the \`knowledgebase\`
+    retrieval corpus — \`latestEvidenceAt\` (max ingestion time) + \`evidenceCount\`.
+    The pipeline drains compare it to the live analysis's \`generatedAt\` to decide
+    whether new evidence warrants a regeneration. Admin / pipeline only."""
+    frameEvidenceWatermark(frame: AnalysisFrameInput!): FrameEvidenceWatermark!
 
     """Captured infographics (charts/maps/tables/composite panels) filtered by the
     SAME params as text — location / event type / need sector / time / kind — so a
@@ -452,12 +547,24 @@ export const queryTypeDef = gql`
 
     """PIPELINE CONTRACT (admin/pipeline only): a source's staged
     messages, oldest first, projected for the classification/threading
-    worker — no private-tier sender identity. Returns ALL messages
-    (classified and not) so one query powers both labelling and
-    thread assembly (clustering staged Signals into threads)."""
+    worker — no private-tier sender identity. By default returns ALL
+    messages (classified and not) so one query powers both labelling and
+    thread assembly (clustering staged Signals into threads). Drains
+    pass \`unclassifiedOnly\` / \`awaitingTranscript\` to read only their
+    work queue — the default window is the oldest \`limit\` messages and
+    stops advancing once those are all done."""
     groundMessagesForClassification(
       groundSourceId: String!
       limit: Int = 500
+      """Only messages with no classification yet — the enrichment
+      drain's queue. Excludes messages marked failed for enrichment, and
+      voice notes marked failed for transcription (they have no content to
+      enrich until a retry transcribes them)."""
+      unclassifiedOnly: Boolean = false
+      """Only hotline voice notes with no transcript yet — the
+      transcription drain's queue. Excludes messages marked failed for
+      transcription."""
+      awaitingTranscript: Boolean = false
     ): [GroundMessageForClassification!]!
 
     """PIPELINE CONTRACT (admin/pipeline only): threading context for the
@@ -472,5 +579,15 @@ export const queryTypeDef = gql`
       groundSourceId: String!
       states: [String!]
     ): [GroundThread]
+
+    """PIPELINE CONTRACT (admin/pipeline only): active source ids for a
+    given kind, minimal projection (no consent/policy fields) — used by
+    the hotline enrichment job to enumerate sources to drain."""
+    pipelineGroundSourceIds(kind: String, isActive: Boolean = true): [String!]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): the translate drain's
+    canonical fetch for a queued groundMessage translation — text and
+    detected language, no sender identity. Null if the message is gone."""
+    groundMessageForTranslation(id: String!): GroundMessageForTranslation
   }
 `;

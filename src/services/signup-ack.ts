@@ -8,8 +8,10 @@
 import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "./messaging/index.js";
 
+/** `env.BETTER_AUTH_URL` is normalised to a bare origin on load, so this
+ *  concatenation can't inherit a stray path and 404. */
 export function portalLoginUrl(): string {
-  return `${env.BETTER_AUTH_URL.replace(/\/+$/, "")}/portal/login`;
+  return `${env.BETTER_AUTH_URL}/portal/login`;
 }
 
 export async function sendSignupAcknowledgement(input: {

@@ -6,7 +6,6 @@
  * no database, no `describeIfDb`. All imported modules that reach external
  * services are `vi.mock(...)`ed BEFORE the resolver import so they never
  * run in CI:
- *   - `../../src/services/celery.js`      (Redis broker — mocked to assert the crisis path NEVER dispatches post Celery→Dagster cutover)
  *   - `../../src/utils/geo-resolve.js`    (pulled in transitively by location-scope)
  *   - `../../src/utils/location-scope.js` (DB-walking team location filter)
  *   - `../../src/utils/activity-log.js`   (audit-log writer)
@@ -17,8 +16,8 @@
  *   Query.crises                 — auth gate, admin bypasses location scope vs
  *                                  non-admin builds the scoped where clause.
  *   createCrisisFromEvents       — role gate, empty-eventIds BAD_USER_INPUT,
- *                                  missing-event NOT_FOUND, no Celery dispatch
- *                                  (PENDING drives the drain), create-time title lock.
+ *                                  missing-event NOT_FOUND, PENDING drives the
+ *                                  drain, create-time title lock.
  *   addEventToCrisis             — role gate, crisis/event NOT_FOUND,
  *                                  idempotent existing-link short-circuit.
  *   removeEventFromCrisis        — role gate, crisis/link NOT_FOUND,
@@ -53,9 +52,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GraphQLError } from "graphql";
 
-vi.mock("../../src/services/celery.js", () => ({
-  sendCeleryTask: vi.fn().mockResolvedValue(undefined),
-}));
 vi.mock("../../src/services/translation-queue.js", () => ({
   enqueueTranslationDurable: vi.fn(),
 }));
@@ -74,7 +70,6 @@ vi.mock("../../src/services/s3.js", () => ({
 
 import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
 import { buildCrisisLocationFilterForUser } from "../../src/utils/location-scope.js";
-import { sendCeleryTask } from "../../src/services/celery.js";
 import { logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
 
@@ -234,21 +229,16 @@ describe("Mutation.createCrisisFromEvents", () => {
     ).rejects.toThrow(/e2/);
   });
 
-  it("does NOT dispatch a Celery task — the crisis is born PENDING for the Dagster drain", async () => {
-    // Celery→Dagster cutover: clear-api no longer fire-and-forgets
-    // `enrich_crisis`. The crisis is created enrichmentStatus=PENDING (column
-    // default) and the Dagster `enrich_crises` drain enriches it. This holds
-    // whether or not the caller supplied a title/summary.
+  it("is born PENDING for the Dagster drain regardless of caller-supplied title/summary", async () => {
+    // The crisis is created enrichmentStatus=PENDING (column default) and
+    // the Dagster `enrich_crises` drain enriches it.
     const { ctx, create } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
       { input: { title: "T", summary: "S", severity: 2, needs: {}, eventIds: ["e1"] } },
       ctx,
     );
-    await Promise.resolve();
-    await Promise.resolve();
     expect(create).toHaveBeenCalledOnce();
-    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 
   it("locks a caller-supplied create-time title so the drain preserves it", async () => {
@@ -330,7 +320,7 @@ describe("Mutation.addEventToCrisis", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("creates the link, recomputes population, and flags PENDING for the drain (no Celery dispatch)", async () => {
+  it("creates the link, recomputes population, and flags PENDING for the drain", async () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
@@ -351,8 +341,6 @@ describe("Mutation.addEventToCrisis", () => {
     expect(create).toHaveBeenCalledOnce();
     // Event-set change re-queues the crisis for the Dagster drain via PENDING.
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
-    await Promise.resolve();
-    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 });
 
@@ -419,7 +407,6 @@ describe("Mutation.removeEventFromCrisis", () => {
     expect(del).not.toHaveBeenCalled();
     expect(deleteMany).toHaveBeenCalledWith({ where: { crisisId: "c1", eventId: "e1" } });
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 7n, enrichmentStatus: "PENDING" } });
-    expect(sendCeleryTask).not.toHaveBeenCalled();
   });
 });
 

@@ -39,4 +39,22 @@ describe("buildFilterClause — countryLocationId", () => {
     expect(where).toContain(`"ancestor_ids" @> ARRAY[$2]::text[]`);
     expect(params).toEqual([["khartoum"], "sudan-a0"]);
   });
+
+  // ADR-0006: the incident tier (events_index) has no need_sectors column, so
+  // the caller passes hasNeedSectors:false to skip that condition.
+  it("emits the need_sectors condition by default but skips it when hasNeedSectors:false", () => {
+    const withCol: unknown[] = [];
+    const w1 = buildFilterClause(
+      { currentEmbeddingModelOnly: false, needSectors: ["Health"] }, withCol,
+    );
+    expect(w1).toContain(`"need_sectors" && $1::text[]`);
+    expect(withCol).toEqual([["Health"]]);
+
+    const without: unknown[] = [];
+    const w2 = buildFilterClause(
+      { currentEmbeddingModelOnly: false, needSectors: ["Health"] }, without, { hasNeedSectors: false },
+    );
+    expect(w2).not.toContain("need_sectors");
+    expect(without).toEqual([]);
+  });
 });

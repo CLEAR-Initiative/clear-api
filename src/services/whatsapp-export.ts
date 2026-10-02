@@ -87,11 +87,17 @@ const DELETED_PATTERNS: RegExp[] = [
  * WhatsApp Signal Pipeline PRD §4: no phone number is ever stored).
  *
  * Matches international (+249 91 234 5678) and local (0912345678) forms:
- * a `+`-prefixed run, or any digit run of 8+ counting only digits, with
- * spaces/dashes/dots/parens as separators. Plain years/dates (4–6 digits)
- * don't match; long casualty figures aren't digit-runs of 8+ in practice.
+ * a `+`-prefixed run, or any run of 9+ digits (counting only digits), with
+ * spaces/dashes/dots/parens as separators. Plain years/dates (4–8 digits)
+ * don't match; long casualty figures aren't digit-runs of 9+ in practice.
+ *
+ * "Digit" is any Unicode decimal digit (\p{Nd}), not just ASCII 0-9:
+ * Arabic-speaking reporters write numbers in Arabic-Indic (٠١٢…) or
+ * Eastern Arabic-Indic (۰۱۲…) digits, often mixed with ASCII, and `\d`
+ * never matches those even under the `u` flag.
  */
-const PHONE_RE = /\+\d[\d\s\-.()]{6,}\d|(?<!\d)(?:\d[\s\-.()]?){8,}\d(?!\d)/g;
+const PHONE_RE =
+  /\+\p{Nd}[\p{Nd}\s\-.()]{6,}\p{Nd}|(?<!\p{Nd})(?:\p{Nd}[\s\-.()]?){8,}\p{Nd}(?!\p{Nd})/gu;
 
 export const PHONE_REDACTION_PLACEHOLDER = "[phone redacted]";
 

@@ -347,6 +347,40 @@ row plus every superseded one.<div class="field-args"><span class="arg"><code>lo
     <td><code>[ApiKey!]!</code></td>
     <td>List all API keys belonging to the authenticated user. Requires authentication.</td>
   </tr><tr>
+    <td><code>conversation</code></td>
+    <td><code>Conversation</code></td>
+    <td>A CLEAR Agent Conversation by id: your own, or anyone's for a platform
+admin (read-only, and logged as `conversation.admin_read`). Null if no
+Conversation has that id; FORBIDDEN if it belongs to another user.
+Approved users only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>myConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Your CLEAR Agent Conversations, most recently active first. Approved
+users only.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page. Omit
+for the first page.</span></div></td>
+  </tr><tr>
+    <td><code>conversationMessagesByIds</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Messages from your own Conversations by id (at most 200), oldest
+first. Ids you don't own are left out. The CLEAR Agent's memory uses this
+to resolve messages it knows only by id. Approved users only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
+  </tr><tr>
+    <td><code>myAgentBudget</code></td>
+    <td><code>AgentBudget!</code></td>
+    <td>Your daily CLEAR Agent budget: the limit, what you've spent since UTC
+midnight, and when it resets. Approved users only.</td>
+  </tr><tr>
+    <td><code>myAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory</code></td>
+    <td>Your CLEAR Agent working memory, or null if the Agent hasn't saved any.
+Approved users only.</td>
+  </tr><tr>
+    <td><code>userConversations</code></td>
+    <td><code>[Conversation!]!</code></td>
+    <td>Admin audit: one user's Conversations, most recently active first.
+Read-only; each call is logged as `conversation.admin_read`. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1–100, default 20).</span><span class="arg"><code>after: String</code> — The `cursor` of the last Conversation on the previous page.</span></div></td>
+  </tr><tr>
     <td><code>myOrganisations</code></td>
     <td><code>[Organisation!]!</code></td>
     <td>List organisations the authenticated user belongs to.</td>
@@ -515,7 +549,20 @@ set; each contributes up to 50 candidates before fusion. The
 embedding provider is the one configured in the environment -
 keep the write and read sides on the same provider or turn on
 `filters.currentEmbeddingModelOnly` to guarantee vector-space
-consistency. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+consistency. Requires any authenticated content reader.
+
+Two tiers are searched (ADR-0006): the ReliefWeb report KB (state /
+analysis) and the incident index (event cards, always fresh). Each
+tier is retrieved + RRF-fused independently, then merged tier-aware
+so the few short incident cards are never buried by the many dense
+report chunks. `mode` picks the merge: FRAME (a location+time frame
+with little topical text — the situation-analysis case) returns a
+report band + a quota-bounded incident band ordered by recency +
+severity; TOPICAL (a strong free-text query — the chatbot case)
+interleaves by relevance, gating weak incidents. AUTO picks FRAME
+when the query is effectively empty/frame-only, else TOPICAL. Every
+hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [KnowledgebaseTier!]</code> — Which tiers to search. Default: both (the KB is always fresh). Pass
+[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
   </tr><tr>
     <td><code>knowledgebaseIngestJob</code></td>
     <td><code>KnowledgebaseIngestJob</code></td>
@@ -575,6 +622,47 @@ fetch a specific generation's canonical prose. `data` is overlaid
 with the caller's locale translation like every other read — the
 pipeline calls it as `en` and gets canonical text back. Requires any
 authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>analysis</code></td>
+    <td><code>Analysis</code></td>
+    <td>Unified frame-scoped analysis (ADR-0007). Reads the current row for a
+FRAME (locationIds / eventTypes / needSectors / window) — the generalised
+successor to `situationAnalysis`, and the read path for &quot;crisis
+overview&quot; frames. `windowEnd` null in the frame reads the rolling
+(&quot;to present&quot;) row. Pass `asOf` for a historical read and
+`schemaVersion` to pin a payload shape. Returns null when no analysis
+exists for the frame yet. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span><span class="arg"><code>asOf: DateTime</code></span><span class="arg"><code>schemaVersion: String</code></span></div></td>
+  </tr><tr>
+    <td><code>analysisById</code></td>
+    <td><code>Analysis</code></td>
+    <td>Read one analysis by row id, including superseded history rows (the
+frame-keyed `analysis` query only returns the current row). Requires any
+authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>analysisAutomations</code></td>
+    <td><code>[AnalysisAutomation!]!</code></td>
+    <td>List analysis automation subscriptions (ADR-0007 §5). Optionally scope
+to a team or to enabled rows only. Requires any authenticated content
+reader.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>enabledOnly: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>pendingAnalyses</code></td>
+    <td><code>[AnalysisRequest!]!</code></td>
+    <td>Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
+requests, so the generation sensor can pick them up. Admin / pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>dueAnalysisAutomations</code></td>
+    <td><code>[AnalysisAutomation!]!</code></td>
+    <td>Scheduler drain (ADR-0007 §5): enabled analysis automations that are DUE
+(never run, or their nextRunAt has passed). The pipeline groups them by
+frame and regenerates each at the minimum cadence across subscribers.
+Admin / pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>frameEvidenceWatermark</code></td>
+    <td><code>FrameEvidenceWatermark!</code></td>
+    <td>Latest-evidence watermark for a frame (ADR-0008) over the `knowledgebase`
+retrieval corpus — `latestEvidenceAt` (max ingestion time) + `evidenceCount`.
+The pipeline drains compare it to the live analysis's `generatedAt` to decide
+whether new evidence warrants a regeneration. Admin / pipeline only.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span></div></td>
   </tr><tr>
     <td><code>reportFigures</code></td>
     <td><code>[ReportFigure!]!</code></td>
@@ -644,9 +732,17 @@ review state (&quot;unverified&quot; | &quot;approved_private&quot; | &quot;appr
     <td><code>[GroundMessageForClassification!]!</code></td>
     <td>PIPELINE CONTRACT (admin/pipeline only): a source's staged
 messages, oldest first, projected for the classification/threading
-worker — no private-tier sender identity. Returns ALL messages
-(classified and not) so one query powers both labelling and
-thread assembly (clustering staged Signals into threads).<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+worker — no private-tier sender identity. By default returns ALL
+messages (classified and not) so one query powers both labelling and
+thread assembly (clustering staged Signals into threads). Drains
+pass `unclassifiedOnly` / `awaitingTranscript` to read only their
+work queue — the default window is the oldest `limit` messages and
+stops advancing once those are all done.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>unclassifiedOnly: Boolean</code> — Only messages with no classification yet — the enrichment
+drain's queue. Excludes messages marked failed for enrichment, and
+voice notes marked failed for transcription (they have no content to
+enrich until a retry transcribes them).</span><span class="arg"><code>awaitingTranscript: Boolean</code> — Only hotline voice notes with no transcript yet — the
+transcription drain's queue. Excludes messages marked failed for
+transcription.</span></div></td>
   </tr><tr>
     <td><code>groundThreadsForSource</code></td>
     <td><code>[GroundThread]</code></td>
@@ -658,6 +754,18 @@ lifecycleState (&quot;reported&quot; | &quot;updated&quot; | &quot;confirmed&quo
 &quot;retracted&quot;); omitted/empty returns all. The worker selects
 {id, title, lifecycleState, reviewState, messageIds} — no message
 content, no sender identity.<div class="field-args"><span class="arg"><code>groundSourceId: String!</code></span><span class="arg"><code>states: [String!]</code></span></div></td>
+  </tr><tr>
+    <td><code>pipelineGroundSourceIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): active source ids for a
+given kind, minimal projection (no consent/policy fields) — used by
+the hotline enrichment job to enumerate sources to drain.<div class="field-args"><span class="arg"><code>kind: String</code></span><span class="arg"><code>isActive: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>groundMessageForTranslation</code></td>
+    <td><code>GroundMessageForTranslation</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): the translate drain's
+canonical fetch for a queued groundMessage translation — text and
+detected language, no sender identity. Null if the message is gone.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -672,6 +780,32 @@ content, no sender identity.<div class="field-args"><span class="arg"><code>grou
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
     <td>Revoke an API key by ID. Only the key owner or an admin can revoke.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversation">
+    <td><code>upsertConversation</code></td>
+    <td><code>Conversation!</code></td>
+    <td>Create one of your Conversations with the CLEAR Agent's thread id, or
+update its title or metadata. FORBIDDEN if the id belongs to another user.
+CLEAR Agent only (the owner's session plus the agent key).<div class="field-args"><span class="arg"><code>input: UpsertConversationInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertconversationmessages">
+    <td><code>upsertConversationMessages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>Create or replace messages in one of your Conversations, matched by id
+(at most 200 per call). Only the owner's Conversations, admins included,
+and CLEAR Agent only (the owner's session plus the agent key). An Answer
+whose usage is recorded can't change. Returns the messages in input order.<div class="field-args"><span class="arg"><code>conversationId: String!</code></span><span class="arg"><code>messages: [ConversationMessageInput!]!</code></span></div></td>
+  </tr><tr id="mutation-saveagentworkingmemory">
+    <td><code>saveAgentWorkingMemory</code></td>
+    <td><code>AgentWorkingMemory!</code></td>
+    <td>Create or update your CLEAR Agent working memory. CLEAR Agent only (your
+session plus the agent key).<div class="field-args"><span class="arg"><code>input: SaveAgentWorkingMemoryInput!</code></span></div></td>
+  </tr><tr id="mutation-recordconversationturnusage">
+    <td><code>recordConversationTurnUsage</code></td>
+    <td><code>ConversationMessage!</code></td>
+    <td>Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+its Answer, an `assistant` message in one of your Conversations. The
+cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+turn's usage is already recorded. Owner only, CLEAR Agent only (the
+owner's session plus the agent key).<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>usage: ConversationTurnUsageInput!</code></span></div></td>
   </tr><tr id="mutation-createpubliceventlink">
     <td><code>createPublicEventLink</code></td>
     <td><code>CreatePublicEventLinkResult!</code></td>
@@ -1157,6 +1291,15 @@ delete so a re-run can retry cleanly. Vector length is validated
 against the pgvector column dimension (1024) on the server;
 mismatched rows are rejected before the write hits Postgres.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span></div></td>
+  </tr><tr id="mutation-synceventcards">
+    <td><code>syncEventCards</code></td>
+    <td><code>SyncEventCardsResult!</code></td>
+    <td>Synthesise, embed, and upsert incident-tier &quot;event cards&quot; into
+`events_index` for the given events (ADR-0006) — replace-on-revise,
+keyed by event id. Call this when events are created or revised (from
+the signal→event grouping step, or a periodic catch-up) to keep the
+incident tier of `searchKnowledgebase` fresh. Embedding uses the same
+provider+model as the report KB. Admin/pipeline only.<div class="field-args"><span class="arg"><code>eventIds: [String!]!</code></span></div></td>
   </tr><tr id="mutation-upsertreportdatapoints">
     <td><code>upsertReportDatapoints</code></td>
     <td><code>UpsertReportDatapointsResult!</code></td>
@@ -1175,6 +1318,56 @@ previous current row for the same bucket in the same
 transaction. History rows are preserved. Admin / pipeline only —
 the Dagster `weekly_situation_analyses` asset is the primary
 caller.<div class="field-args"><span class="arg"><code>input: UpsertSituationAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertanalysis">
+    <td><code>upsertAnalysis</code></td>
+    <td><code>UpsertAnalysisResult!</code></td>
+    <td>Upsert a unified frame-scoped analysis (ADR-0007). The pipeline
+generator's write path: bitemporal supersede-then-insert keyed on the
+frame columns (locationIds / eventTypes / needSectors / windowStart /
+windowEnd), stamping `validTo` on the previous current row for the same
+frame in the same transaction. History rows are preserved. Frame arrays are
+canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-touchanalysissynced">
+    <td><code>touchAnalysisSynced</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Pipeline: bump the current analysis row's `lastSyncedAt` for a frame
+WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
+(within the 24h floor, or no new evidence). Returns false when no current row
+exists for the frame. Admin / pipeline only.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span></div></td>
+  </tr><tr id="mutation-createanalysisautomation">
+    <td><code>createAnalysisAutomation</code></td>
+    <td><code>AnalysisAutomation!</code></td>
+    <td>Create an analysis automation — a subscription that keeps a frame's
+analysis current on a cadence (ADR-0007 §5). Admin / analyst.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
+  </tr><tr id="mutation-updateanalysisautomation">
+    <td><code>updateAnalysisAutomation</code></td>
+    <td><code>AnalysisAutomation!</code></td>
+    <td>Update an analysis automation's cadence or enabled flag. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
+  </tr><tr id="mutation-deleteanalysisautomation">
+    <td><code>deleteAnalysisAutomation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete an analysis automation subscription. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-requestanalysis">
+    <td><code>requestAnalysis</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
+an existing PENDING request for the same frame. Admin / analyst.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-markanalysisrequestgenerated">
+    <td><code>markAnalysisRequestGenerated</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Pipeline: mark a drained request GENERATED after its analysis was
+upserted. Admin / pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-markanalysisrequestfailed">
+    <td><code>markAnalysisRequestFailed</code></td>
+    <td><code>AnalysisRequest!</code></td>
+    <td>Pipeline: record a generation failure on a request (bumps the attempt
+counter). Admin / pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>error: String</code></span></div></td>
+  </tr><tr id="mutation-markanalysisautomationsran">
+    <td><code>markAnalysisAutomationsRan</code></td>
+    <td><code>Int!</code></td>
+    <td>Scheduler: stamp lastRunAt + nextRunAt (from each row's cadence) on the
+automations whose frame was just regenerated (ADR-0007 §5) — pass all the
+ids sharing that frame. Returns the count updated. Admin / pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
   </tr><tr id="mutation-upsertreportfigures">
     <td><code>upsertReportFigures</code></td>
     <td><code>UpsertReportFiguresResult!</code></td>
@@ -1248,7 +1441,12 @@ global role must appear in the source's reviewerRoles; platform
 admins always pass). Transitions follow the V1 state machine —
 notably approved_public is terminal. approve_public also promotes
 the thread into the standard signals graph via createSignal, with
-all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+all sender identity scrubbed.
+
+`overrides` (approve_public only) carries the reviewer's edits into
+the promoted signal. `rejectReason` (reject only) is one of &quot;spam&quot;,
+&quot;not_report&quot;, &quot;unusable&quot;, &quot;duplicate&quot;; any other decision clears it.
+Either one sent with the wrong decision is BAD_USER_INPUT.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: String!</code></span><span class="arg"><code>note: String</code></span><span class="arg"><code>rejectReason: String</code></span><span class="arg"><code>overrides: GroundPromotionOverridesInput</code></span></div></td>
   </tr><tr id="mutation-upsertgroundmessageclassifications">
     <td><code>upsertGroundMessageClassifications</code></td>
     <td><code>Int!</code></td>
@@ -1256,6 +1454,12 @@ all sender identity scrubbed.<div class="field-args"><span class="arg"><code>id:
 classifications from the classify_ground_messages worker. Unknown
 messageIds are skipped with a warning. Returns the number of
 messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageClassificationInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundmessagetranscripts">
+    <td><code>upsertGroundMessageTranscripts</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back transcriptions
+from the ground_transcribe worker. Unknown messageIds are skipped
+with a warning. Returns the number of messages updated.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageTranscriptInput!]!</code></span></div></td>
   </tr><tr id="mutation-upsertgroundthreads">
     <td><code>upsertGroundThreads</code></td>
     <td><code>[String]!</code></td>
@@ -1271,6 +1475,41 @@ target is never mutated (a new thread is created instead) — the
 review gate outranks the pipeline. Returns one thread id per input,
 in order; null where an input had no movable messages (no thread
 created or updated).<div class="field-args"><span class="arg"><code>inputs: [GroundThreadUpsertInput!]!</code></span></div></td>
+  </tr><tr id="mutation-upsertgroundthreaddrafts">
+    <td><code>upsertGroundThreadDrafts</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): write back enrichment
+drafts (title/severity/location/disasterType) from the hotline
+enrichment job. Unknown threadIds are skipped with a warning. Null
+fields on an input leave the existing draft value unchanged. Returns
+the number of threads updated.<div class="field-args"><span class="arg"><code>inputs: [GroundThreadDraftInput!]!</code></span></div></td>
+  </tr><tr id="mutation-markgroundmessagesfailed">
+    <td><code>markGroundMessagesFailed</code></td>
+    <td><code>Int!</code></td>
+    <td>PIPELINE CONTRACT (admin/pipeline only): durably mark messages a
+ground drain has given up on (attempts exhausted, or a message that
+can never succeed). A marked message drops out of that stage's queue
+in groundMessagesForClassification until retryGroundMessage clears
+it. A message whose stage already succeeded (classification /
+transcript set) is left unmarked. Unknown messageIds are skipped with
+a warning. Returns the number of messages marked.<div class="field-args"><span class="arg"><code>inputs: [GroundMessageFailureInput!]!</code></span></div></td>
+  </tr><tr id="mutation-retrygroundmessage">
+    <td><code>retryGroundMessage</code></td>
+    <td><code>GroundMessage!</code></td>
+    <td>Clear a message's failure marker for one stage (admin/analyst), so
+it re-enters that drain's queue on the next pipeline run. No-op when
+the stage isn't marked failed. Returns the message.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>stage: GroundPipelineStage!</code></span></div></td>
+  </tr><tr id="mutation-requestgroundmessagetranslation">
+    <td><code>requestGroundMessageTranslation</code></td>
+    <td><code>GroundMessageTranslation!</code></td>
+    <td>Translate one staged message's text into `locale` (admin/analyst)
+— any supported locale, `en` included (the source is the reporter's
+language). Queues it for the pipeline's translate drain and returns the
+current state; poll GroundMessage.translation(locale) while queued.
+Idempotent: a ready translation is returned as is, a queued one keeps
+its place, and a request after the drain gave up queues it again. A
+message with no text is unavailable. The message's own text is never
+changed.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr id="mutation-createwebhooksubscription">
     <td><code>createWebhookSubscription</code></td>
     <td><code>WebhookSubscription!</code></td>
@@ -1309,18 +1548,28 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
-enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
-is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
+is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
+(ADR-0006).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>AUTO</code></td><td>Pick FRAME when the query is effectively empty / frame-only, else
+TOPICAL.</td></tr><tr><td><code>FRAME</code></td><td>Situation-analysis: a location+time frame with little topical text.
+Returns a report band + a quota-bounded incident band ordered by
+recency + severity; no similarity floor (it would gate out the very
+incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><td>Chatbot: a strong free-text query. Interleaves the two tiers by
+relevance (soft), gating weak incidents below a similarity floor and
+giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
+KB; `incident` = an event card from the incident index (lower-tier, possibly
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
 NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
 alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
-`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -1459,6 +1708,73 @@ its descendants).</td>
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
     <td>Hide isDummy events when false (default).</td>
+  </tr></tbody></table><h3 id="type-analysisframeinput"><code>AnalysisFrameInput</code> <span class="type-badge">input</span></h3><p>A frame — the scope of an analysis. `windowEnd` omitted / null means
+rolling &quot;to present&quot;. Array members are order-insensitive (canonicalised
+server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-conversationmessageinput"><code>ConversationMessageInput</code> <span class="type-badge">input</span></h3><p>One message to create or replace, matched by id.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's message id. Rejected if it belongs to another Conversation.</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>The message parts. At most 1,000,000 characters as JSON.</td>
+  </tr><tr>
+    <td><code>currentView</code></td>
+    <td><code>JSON</code></td>
+    <td>User turns: the Current view (page, entity ids, filters — identifiers,
+never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Ordering key for history. Defaults to now on create; omit on update to keep it.</td>
+  </tr></tbody></table><h3 id="type-conversationturnusageinput"><code>ConversationTurnUsageInput</code> <span class="type-badge">input</span></h3><p>What one CLEAR Agent turn used. Recorded on its Answer.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>The model id the turn ran on, e.g. `anthropic/claude-sonnet-5-5`.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Cost in USD, computed by the caller from its price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createalertinput"><code>CreateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -1467,6 +1783,30 @@ its descendants).</td>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-createanalysisautomationinput"><code>CreateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>String!</code></td>
+    <td>Refresh cadence label, e.g. `daily` / `weekly`.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team. Omit for a system-owned automation (admin only).</td>
   </tr></tbody></table><h3 id="type-createapikeyinput"><code>CreateApiKeyInput</code> <span class="type-badge">input</span></h3><p>Input for creating a new API key.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -2086,6 +2426,68 @@ candidate's A2 matches the source's A2 — a mismatch aborts the promotion.</td>
     <td><code>String</code></td>
     <td>Pipeline-detected uncertainty tag. Null/omitted leaves the
 ingest-extracted marker untouched.</td>
+  </tr></tbody></table><h3 id="type-groundmessagefailureinput"><code>GroundMessageFailureInput</code> <span class="type-badge">input</span></h3><p>One failure marker from a clear-pipeline ground drain.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>stage</code></td>
+    <td><code>GroundPipelineStage!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>error</code></td>
+    <td><code>String!</code></td>
+    <td>Exception text from the last attempt. Stored truncated to 500
+characters, with phone numbers redacted.</td>
+  </tr></tbody></table><h3 id="type-groundmessagetranscriptinput"><code>GroundMessageTranscriptInput</code> <span class="type-badge">input</span></h3><p>One transcription write-back from the ground_transcribe worker.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>messageId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String!</code></td>
+    <td>Transcribed text of the message's voice note(s).</td>
+  </tr></tbody></table><h3 id="type-groundpromotionoverridesinput"><code>GroundPromotionOverridesInput</code> <span class="type-badge">input</span></h3><p>Reviewer edits applied to the signal a thread is promoted into
+(reviewGroundThread approve_public only). Omitted, null or blank fields
+keep the default derived from the thread (thread title; the joined
+message text as description; no severity; no location). The signal's
+rawData provenance is never affected.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>Integer 1-5.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>An existing `locations` row id (any admin level).</td>
+  </tr></tbody></table><h3 id="type-groundthreaddraftinput"><code>GroundThreadDraftInput</code> <span class="type-badge">input</span></h3><p>One enrichment draft from the Dagster hotline-enrichment job. Null
+fields leave the existing draft value on the thread unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>threadId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftTitle</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>1-5. Validated server-side when present.</td>
+  </tr><tr>
+    <td><code>draftLocationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>draftDisasterType</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-groundthreadupsertinput"><code>GroundThreadUpsertInput</code> <span class="type-badge">input</span></h3><p>One thread (a cluster of staged Signals) produced by the pipeline
 threading task. Its messageIds are re-pointed at the thread, replacing
 their V1 one-per-message placeholder threads. With `threadId` set,
@@ -2253,7 +2655,8 @@ a crisis it carries the localized title/summary/scenarios/needs with
 the same keys/nesting the English columns use.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locale</code></td>
     <td><code>String!</code></td>
-    <td>BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical).</td>
+    <td>BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical) except
+for groundMessage, whose source is the reporter's language.</td>
   </tr><tr>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
@@ -2333,6 +2736,43 @@ the same keys/nesting the English columns use.</p><table class="ref-table"><thea
   </tr><tr>
     <td><code>timeRangeEnd</code></td>
     <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-requestanalysisinput"><code>RequestAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team, for a team-scoped on-demand request.</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean</code></td>
+    <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
+Admin only — a non-admin passing `true` is rejected.</td>
+  </tr></tbody></table><h3 id="type-saveagentworkingmemoryinput"><code>SaveAgentWorkingMemoryInput</code> <span class="type-badge">input</span></h3><p>Replace your Agent working memory. Omitted fields stay unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown, at most 100,000 characters).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
@@ -2467,6 +2907,14 @@ Location correction — one without the other is rejected.</td>
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5).</td>
+  </tr></tbody></table><h3 id="type-updateanalysisautomationinput"><code>UpdateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>cadence</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enabled</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
@@ -2780,6 +3228,68 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td><code>active</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisinput"><code>UpsertAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>The frame this analysis covers.</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean</code></td>
+    <td>Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
+an admin-forced request. Omitted/false: a write within 24h of the current
+row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
+  </tr></tbody></table><h3 id="type-upsertconversationinput"><code>UpsertConversationInput</code> <span class="type-badge">input</span></h3><p>Create a Conversation with a caller-supplied id, or update its title or metadata.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>The Agent's thread id. Rejected if it belongs to another user's Conversation.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Omit to leave the title unchanged. At most 500 characters.</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Omit to leave the metadata unchanged. At most 100,000 characters as JSON.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Creation time from the Agent. Ignored on update. Defaults to now.</td>
   </tr></tbody></table><h3 id="type-upsertlocationmetadatainput"><code>UpsertLocationMetadataInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationId</code></td>
     <td><code>String!</code></td>
@@ -2953,7 +3463,8 @@ ask for. Not defaulted, deliberately.</td>
   </tr></tbody></table><h3 id="type-upserttranslationsinput"><code>UpsertTranslationsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entityType</code></td>
     <td><code>String!</code></td>
-    <td>One of 'event' | 'crisis' | 'location' (case-insensitive).</td>
+    <td>One of 'event' | 'crisis' | 'location' | 'situationAnalysis' |
+'analysis' | 'groundMessage' (case-insensitive).</td>
   </tr><tr>
     <td><code>entityId</code></td>
     <td><code>String!</code></td>
@@ -3050,6 +3561,40 @@ the top 50 most-active users in the window.</td>
     <td><code>byDay</code></td>
     <td><code>[DailyActivityCount!]!</code></td>
     <td>Daily activity counts across the window (UTC dates).</td>
+  </tr></tbody></table><h3 id="type-agentbudget"><code>AgentBudget</code> <span class="type-badge">object</span></h3><p>Your daily CLEAR Agent budget. Spend is the sum of your turns' cost since
+UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>limitUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>The daily limit in USD.</td>
+  </tr><tr>
+    <td><code>spentTodayUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>What your turns have cost since UTC midnight, in USD.</td>
+  </tr><tr>
+    <td><code>resetsAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When spend resets to zero: the next UTC midnight.</td>
+  </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
+Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>workingMemory</code></td>
+    <td><code>String</code></td>
+    <td>The working-memory document (Markdown).</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-aggregateddatapoint"><code>AggregatedDatapoint</code> <span class="type-badge">object</span></h3><p>One aggregated bucket - the roll-up of every contributing
 `report_datapoint` for a scope (window × window_kind × location).
 Consumed by the situation-analysis dashboard tiles and by chatbot
@@ -3240,6 +3785,194 @@ content reader.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-analysis"><code>Analysis</code> <span class="type-badge">object</span></h3><p>A single frame-scoped analysis snapshot. Cache read path — always the
+current row for its frame unless `asOf` is supplied for a historical read.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>── Frame ── The dimensions this analysis was generated over, the same
+ones the knowledgebase is filtered by. Arrays are canonicalised (sorted +
+de-duplicated) on write so frame identity is stable.</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>Window end. `null` means rolling &quot;to present&quot; (an automated
+analysis); a value means a fixed range (on-demand). The concrete &quot;as of&quot;
+instant of a rolling row is `generatedAt` / `validFrom`.</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>Full analysis blob (situation taxonomy + `scenarios`). Opaque and
+versioned by `schemaVersion`; LLM components carry their own
+`source_report_ids` for per-component provenance.</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Denormalised union of every contributing report id across components.
+Per-field datapoint provenance lives inside `data` — a frame can span
+many aggregated-datapoints rows, so there is no single bucket reference.</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSyncedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Last time any trigger checked this frame (manual sync or automation),
+whether or not it regenerated (ADR-0008). On a gate skip (within the 24h
+floor, or no new evidence) this advances while `generatedAt` does not.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Bitemporal validity — `validTo` is null while this is the current row
+for its frame, else the timestamp a regeneration superseded it.</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Bumped when the payload taxonomy or prompt set changes. Versions
+coexist per frame; trend reads never mix them.</td>
+  </tr></tbody></table><h3 id="type-analysisautomation"><code>AnalysisAutomation</code> <span class="type-badge">object</span></h3><p>A subscription that keeps one frame's analysis current on a cadence
+(ADR-0007 §5). The analysis row is shared; the scheduler regenerates each
+frame at the minimum cadence across its subscribers. Automations are always
+rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdByUserId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>enabled</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastRunAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nextRunAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-analysisrequest"><code>AnalysisRequest</code> <span class="type-badge">object</span></h3><p>An on-demand analysis generation request (ADR-0007 §4). A user enqueues a
+frame that may not exist yet; a pipeline sensor drains `pendingAnalyses`,
+generates + upserts the analysis, and marks the request `GENERATED`. Scheduled
+refreshes use `AnalysisAutomation` instead of this one-shot queue.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>AnalysisRequestStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>requestedByUserId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>force</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Admin force (ADR-0008): the drain bypasses the 24h floor + freshness
+check for this request.</td>
+  </tr><tr>
+    <td><code>attempts</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastError</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-apikey"><code>ApiKey</code> <span class="type-badge">object</span></h3><p>A personal API key for programmatic access. The full key is only shown once at creation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -3302,6 +4035,107 @@ while the list swap succeeded). Empty on the happy path.</td>
   </tr><tr>
     <td><code>comment</code></td>
     <td><code>UserComment!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
+owner: the user's turns, the Answers, and the tools and Source documents
+each Answer drew on. Readable by its owner and, read-only, by platform
+admins (every admin read is logged). Written only through the CLEAR Agent's
+memory adapter in clear-mvp — the owner's session plus the agent service
+key — never by the owner calling the API directly; there is no delete.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's thread id).</td>
+  </tr><tr>
+    <td><code>userId</code></td>
+    <td><code>String!</code></td>
+    <td>The owner. Every Conversation belongs to exactly one user.</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metadata</code></td>
+    <td><code>JSON</code></td>
+    <td>Opaque thread metadata kept by the Agent.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Last time the Conversation or any of its messages was written.</td>
+  </tr><tr>
+    <td><code>cursor</code></td>
+    <td><code>String!</code></td>
+    <td>Opaque position in &quot;most recently active first&quot; order. Pass the last
+one of a page as `after` to get the next page.</td>
+  </tr><tr>
+    <td><code>messageCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of messages in the Conversation.</td>
+  </tr><tr>
+    <td><code>messages</code></td>
+    <td><code>[ConversationMessage!]!</code></td>
+    <td>The most recent messages (before `before`, if given), in chronological
+order — the window an Agent loads as history. Page back with `before`
+for older ones.<div class="field-args"><span class="arg"><code>first: Int</code> — Max messages to return (1–500). Defaults to 500.</span><span class="arg"><code>before: String</code> — Message id: return only messages older than this one. Pass the
+oldest id from the previous window to page back through history.</span></div></td>
+  </tr></tbody></table><h3 id="type-conversationmessage"><code>ConversationMessage</code> <span class="type-badge">object</span></h3><p>One turn of a Conversation, as the CLEAR Agent stores it. `content` holds
+the Agent's message parts (text, tool calls and results, Source documents)
+and is opaque to the API.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>Caller-supplied id (the Agent's message id).</td>
+  </tr><tr>
+    <td><code>conversationId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>role</code></td>
+    <td><code>String!</code></td>
+    <td>`user`, `assistant`, `system`, `tool` or `signal`.</td>
+  </tr><tr>
+    <td><code>type</code></td>
+    <td><code>String</code></td>
+    <td>The Agent's message format tag, returned as stored.</td>
+  </tr><tr>
+    <td><code>content</code></td>
+    <td><code>JSON!</code></td>
+    <td>The message parts. Text that came from outside CLEAR (documents,
+signal bodies) is data, never instructions.</td>
+  </tr><tr>
+    <td><code>currentView</code></td>
+    <td><code>JSON</code></td>
+    <td>User turns only: what the user was looking at when they sent the turn —
+the page, entity ids and active filters. Identifiers, never data.</td>
+  </tr><tr>
+    <td><code>model</code></td>
+    <td><code>String</code></td>
+    <td>Answers only: the model that wrote it.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: input tokens across the whole turn, tool steps included.</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: output tokens across the whole turn.</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Answers only: what the turn cost in USD, from the caller's price table.</td>
+  </tr><tr>
+    <td><code>latencyMs</code></td>
+    <td><code>Int</code></td>
+    <td>Answers only: time from the user's turn to the finished Answer.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-createapikeypayload"><code>CreateApiKeyPayload</code> <span class="type-badge">object</span></h3><p>Returned only from createApiKey. Contains the full plaintext
 key that will never be retrievable again.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -3754,6 +4588,18 @@ Null when the call aborted without producing a row.</td>
     <td><code>String</code></td>
     <td>Set to 'different_a2' when the candidate and source coords resolve to
 different containing A2s. Null on success.</td>
+  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over the `knowledgebase`
+retrieval corpus the analysis is generated from. The drain compares
+`latestEvidenceAt` to the live analysis's `generatedAt` to decide whether
+anything new warrants a regeneration.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>latestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Max ingestion time (`created_at`) across knowledgebase rows matching the
+frame, or null when the frame has no evidence yet.</td>
+  </tr><tr>
+    <td><code>evidenceCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Count of knowledgebase rows matching the frame.</td>
   </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A GeoNames gazetteer match for a place name. Coordinates come straight
 from GeoNames — callers still validate them (e.g. the same-A2 check
 against a signal's source coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -3845,7 +4691,21 @@ is scrubbed from anything promoted to the signals graph.</p><table class="ref-ta
   </tr><tr>
     <td><code>text</code></td>
     <td><code>String!</code></td>
-    <td>Message text (redacted). Empty for caption-less media messages.</td>
+    <td>Message text (redacted). Empty for caption-less media messages.
+Always the reporter's original words — translations are a separate
+overlay (see `translation`), never written here.</td>
+  </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String</code></td>
+    <td>Language of `text` as a lowercased ISO 639-1 code (&quot;ar&quot;, &quot;en&quot;,
+&quot;fr&quot;, &quot;es&quot;), detected at intake without an LLM. Null when unknown
+(too short, another language, or ingested before detection).</td>
+  </tr><tr>
+    <td><code>translation</code></td>
+    <td><code>GroundMessageTranslation!</code></td>
+    <td>On-demand translation of `text` into `locale`. `unavailable`
+until requestGroundMessageTranslation queues it; poll while
+`queued`.<div class="field-args"><span class="arg"><code>locale: String!</code></span></div></td>
   </tr><tr>
     <td><code>mediaKeys</code></td>
     <td><code>[String!]!</code></td>
@@ -3865,6 +4725,19 @@ time — URLs are never stored.</td>
     <td>Media the export omitted (&quot;image omitted&quot;) — the message still
 counts as a media message.</td>
   </tr><tr>
+    <td><code>hasVoice</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message has a voice-note attachment (hotline
+sources). Set when the row is created, so it is true even while the
+voice note's media is still being stored.</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String</code></td>
+    <td>Transcribed text of the message's voice note(s). Null until the
+clear-pipeline Dagster ground_transcribe asset transcribes it, and
+always null for messages without a voice note. Phone numbers are
+redacted at write time.</td>
+  </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>
     <td>&quot;field_report&quot; | &quot;news_digest&quot; | &quot;operational&quot; | &quot;chatter&quot;; null
@@ -3878,6 +4751,27 @@ preserved from the source text.</td>
     <td><code>isEdited</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>enrichFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Enrichment (ground_hotline_enrich) gave up on this message: set when
+the drain exhausted its attempts. While set, the message is out of the
+enrichment queue — retryGroundMessage(stage: ENRICH) clears it.</td>
+  </tr><tr>
+    <td><code>enrichError</code></td>
+    <td><code>String</code></td>
+    <td>Last error from the enrichment drain (truncated, phone-redacted).</td>
+  </tr><tr>
+    <td><code>transcribeFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Transcription (ground_transcribe) gave up on this voice note: set
+when the drain exhausted its attempts. While set, the message is out of
+both the transcription and enrichment queues (&quot;transcription failed&quot;)
+— retryGroundMessage(stage: TRANSCRIBE) clears it.</td>
+  </tr><tr>
+    <td><code>transcribeError</code></td>
+    <td><code>String</code></td>
+    <td>Last error from the transcription drain (truncated, phone-redacted).</td>
   </tr><tr>
     <td><code>threadId</code></td>
     <td><code>String</code></td>
@@ -3912,6 +4806,23 @@ senderRef.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th
     <td>True when the message carries stored media, export-referenced
 attachments, or export-omitted media.</td>
   </tr><tr>
+    <td><code>voiceMediaKeys</code></td>
+    <td><code>[String!]!</code></td>
+    <td>S3 keys of this message's audio attachments only (a subset of its
+stored media) — empty when the message has no voice note, or while
+its media is still being stored (see `hasVoice`).</td>
+  </tr><tr>
+    <td><code>hasVoice</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the message has a voice attachment. Set when the row is
+created, so it stays true while `voiceMediaKeys` is still empty
+because the media hasn't been stored yet.</td>
+  </tr><tr>
+    <td><code>transcript</code></td>
+    <td><code>String</code></td>
+    <td>Transcribed text for this message's voice note(s), null until the
+Dagster ground_transcribe asset transcribes them.</td>
+  </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>
     <td>Current label, null while unclassified.</td>
@@ -3919,6 +4830,49 @@ attachments, or export-omitted media.</td>
     <td><code>threadId</code></td>
     <td><code>String</code></td>
     <td>Current thread (placeholder or pipeline-built).</td>
+  </tr><tr>
+    <td><code>enrichFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set once the enrichment drain has given up on the message (see
+markGroundMessagesFailed).</td>
+  </tr><tr>
+    <td><code>enrichError</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcribeFailedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set once the transcription drain has given up on the voice note.</td>
+  </tr><tr>
+    <td><code>transcribeError</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-groundmessagefortranslation"><code>GroundMessageForTranslation</code> <span class="type-badge">object</span></h3><p>Pipeline-facing projection of a staged message for the translate
+drain: text and detected language only — no sender identity.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String!</code></td>
+    <td>Message text (phone-redacted at persistence).</td>
+  </tr><tr>
+    <td><code>language</code></td>
+    <td><code>String</code></td>
+    <td>Detected source language, null when unknown.</td>
+  </tr></tbody></table><h3 id="type-groundmessagetranslation"><code>GroundMessageTranslation</code> <span class="type-badge">object</span></h3><p>A staged message's translation into one locale — a read-only overlay;
+the original text stays canonical.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locale</code></td>
+    <td><code>String!</code></td>
+    <td>Lowercased BCP-47 locale, e.g. &quot;en&quot;.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>GroundTranslationStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String</code></td>
+    <td>Translated text. Null unless `status` is `ready`.</td>
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The
@@ -4016,10 +4970,33 @@ thread is promoted and becomes a Signal.</p><table class="ref-table"><thead><tr>
     <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>rejectReason</code></td>
+    <td><code>String</code></td>
+    <td>Structured rejection reason: &quot;spam&quot; | &quot;not_report&quot; | &quot;unusable&quot; |
+&quot;duplicate&quot;. Set only while reviewState is &quot;rejected&quot;; null otherwise.</td>
+  </tr><tr>
     <td><code>promotedSignalId</code></td>
     <td><code>String</code></td>
     <td>Id of the `signals` row created when this thread was promoted
 (approved_public only).</td>
+  </tr><tr>
+    <td><code>draftTitle</code></td>
+    <td><code>String</code></td>
+    <td>LLM-suggested headline from the hotline-enrichment job. A draft —
+the ERM reviews/edits it before promotion; never used directly.</td>
+  </tr><tr>
+    <td><code>draftSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>1-5 suggestion from the hotline-enrichment job.</td>
+  </tr><tr>
+    <td><code>draftLocationId</code></td>
+    <td><code>String</code></td>
+    <td>Geoparser-resolved `locations` row id, suggested by the
+hotline-enrichment job.</td>
+  </tr><tr>
+    <td><code>draftDisasterType</code></td>
+    <td><code>String</code></td>
+    <td>Disaster-type guess from the hotline-enrichment job.</td>
   </tr><tr>
     <td><code>messages</code></td>
     <td><code>[GroundMessage!]!</code></td>
@@ -4152,9 +5129,16 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>tier</code></td>
+    <td><code>KnowledgebaseTier!</code></td>
+    <td>Tier this hit came from (ADR-0006). Consumers should weight/caveat
+`incident` hits as lower-tier (possibly unverified) and MUST NOT let
+incident figures feed the same datapoint aggregation as report figures.</td>
+  </tr><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>
-    <td>—</td>
+    <td>For a `report` hit, the ReliefWeb report id; for an `incident`
+hit, `event:&lt;event id&gt;`.</td>
   </tr><tr>
     <td><code>reportTitle</code></td>
     <td><code>String!</code></td>
@@ -4166,11 +5150,12 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
   </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>DateTime</code></td>
-    <td>—</td>
+    <td>Report publication date, or — for an incident — the event's onset
+(`startedAt`), the recency signal used to order the incident band.</td>
   </tr><tr>
     <td><code>pageStart</code></td>
     <td><code>Int!</code></td>
-    <td>—</td>
+    <td>0 for an incident hit (page range is report-only).</td>
   </tr><tr>
     <td><code>pageEnd</code></td>
     <td><code>Int!</code></td>
@@ -4178,13 +5163,14 @@ the caller can highlight which filters matched.</p><table class="ref-table"><the
   </tr><tr>
     <td><code>chunkText</code></td>
     <td><code>String!</code></td>
-    <td>—</td>
+    <td>Report chunk excerpt, or — for an incident — the synthesised event card.</td>
   </tr><tr>
     <td><code>score</code></td>
     <td><code>Float!</code></td>
-    <td>RRF-fused score. Larger is better. Not directly comparable
-across queries — the constant `k=60` bounds each per-row term
-to 1/(k+1)=~0.016, so a two-source hit tops out near 0.032.</td>
+    <td>Merge score, larger is better. Ordering/membership only — NOT
+comparable across queries or (post-ADR-0006) across tiers: it is a
+positional `1/(k+rank)` from the tier-aware merge, plus a small recency
+term on incidents, not the raw RRF sum.</td>
   </tr><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]!</code></td>
@@ -5132,6 +6118,15 @@ as already counted inside `stock`.</td>
     <td><code>Int!</code></td>
     <td>Reports contributing forward flows - a provenance count, not a count of
 distinct flow events.</td>
+  </tr></tbody></table><h3 id="type-synceventcardsresult"><code>SyncEventCardsResult</code> <span class="type-badge">object</span></h3><p>Result of `syncEventCards` — how many event cards were written vs
+skipped (an id that no longer resolves to an event).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>synced</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -5222,7 +6217,8 @@ upsertTranslations (which clears the queue row).</p><table class="ref-table"><th
   </tr><tr>
     <td><code>entityType</code></td>
     <td><code>String!</code></td>
-    <td>'event' | 'crisis' | 'location'.</td>
+    <td>'event' | 'crisis' | 'location' | 'situationAnalysis' | 'analysis' |
+'groundMessage'.</td>
   </tr><tr>
     <td><code>entityId</code></td>
     <td><code>String!</code></td>
@@ -5260,6 +6256,26 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisresult"><code>UpsertAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertAnalysis` mutation — whether it superseded a previous
+row, or was skipped by the 24h regeneration floor (ADR-0008).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>analysisId</code></td>
+    <td><code>String!</code></td>
+    <td>The current analysis row for the frame after the call — the newly-created
+row, or (on a skip) the existing current row.</td>
+  </tr><tr>
+    <td><code>supersededPrevious</code></td>
+    <td><code>Boolean!</code></td>
+    <td>`true` when the mutation stamped `validTo` on a previous current row
+for the same frame, `false` when this was the first row or a skip.</td>
+  </tr><tr>
+    <td><code>skipped</code></td>
+    <td><code>Boolean!</code></td>
+    <td>`true` when the 24h floor made this a no-op (only `lastSyncedAt` was
+bumped, no new version written). `false` on an actual (re)generation.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>String</code></td>
+    <td>Why the write was skipped (e.g. `within-24h-floor`), else null.</td>
   </tr></tbody></table><h3 id="type-upsertknowledgebaseresult"><code>UpsertKnowledgebaseResult</code> <span class="type-badge">object</span></h3><p>Result of a knowledgebase upsert — summary counts for logging.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>

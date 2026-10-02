@@ -4,6 +4,7 @@ import { requireContentReader } from "../utils/auth-guard.js";
 import {
   buildEventLocationFilterForTeam,
   buildLocationFilterForTeam,
+  getTeamScopeLocationIds,
 } from "../utils/location-scope.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -352,63 +353,65 @@ async function statsScope(
   tsCol: string;
   typeExpr: string; // SQL expression for the "type" group key
 }> {
-  // We translate our app-level filter into raw SQL for the groupBy paths
-  // because Prisma's groupBy doesn't natively support array unnest or
-  // date_trunc. The where clauses below mirror buildXxxWhere().
-  const conds: Prisma.Sql[] = [];
-  if (!input.includeDummy) conds.push(Prisma.sql`is_dummy = false`);
-  if (input.severityMin != null) conds.push(Prisma.sql`severity >= ${input.severityMin}`);
-  if (input.severityMax != null) conds.push(Prisma.sql`severity <= ${input.severityMax}`);
-  if (input.from) conds.push(Prisma.sql`__TS__ >= ${new Date(input.from)}`);
-  if (input.to) conds.push(Prisma.sql`__TS__ <= ${new Date(input.to)}`);
-  if (input.eventTypes && input.eventTypes.length > 0 && input.entity !== "signal") {
-    // event.types is a text[] — use the && (overlap) operator.
-    conds.push(Prisma.sql`types && ${input.eventTypes}::text[]`);
-  }
-  if (input.locationId) {
-    const ids = await getLocationIdsWithDescendants(prisma, input.locationId);
-    if (ids.length > 0) {
-      conds.push(
-        Prisma.sql`(origin_id = ANY(${ids}::text[]) OR destination_id = ANY(${ids}::text[]) OR location_id = ANY(${ids}::text[]))`,
-      );
-    }
-  }
-
   let table: string;
   let tsCol: string;
   let typeExpr: string;
   switch (input.entity) {
     case "signal":
       table = "signals";
-      tsCol = "published_at";
+      tsCol = "signals.published_at";
       typeExpr = `(SELECT name FROM data_sources ds WHERE ds.id = signals.source_id)`;
       break;
     case "event":
       table = "events";
-      tsCol = "first_signal_created_at";
-      typeExpr = `unnest(types)`;
+      tsCol = "events.first_signal_created_at";
+      typeExpr = `unnest(events.types)`;
       break;
     case "alert":
       // Alerts are filtered via their event — join in the SQL for stats.
+      // alerts only has status; every filter column below lives on `events`.
       table = "alerts JOIN events ON events.id = alerts.event_id";
       tsCol = "events.first_signal_created_at";
       typeExpr = `unnest(events.types)`;
-      // alerts only has status; everything else is on `events`. Re-route the
-      // AND clauses we built above to operate on events.* columns.
-      // (We shadowed the column names — the WHERE template strings above
-      // reference unqualified column names that exist on `events`, except
-      // is_dummy which lives on events too. So the join works as-is.)
       break;
   }
+  // Table that owns the filter columns (signals, or events — incl. for alerts).
+  const src = input.entity === "signal" ? "signals" : "events";
+  const col = (name: string) => Prisma.raw(`${src}.${name}`);
 
-  // Replace placeholder timestamp column.
-  const where = conds.length > 0
-    ? Prisma.sql`${conds.reduce((acc, c, i) => i === 0 ? c : Prisma.sql`${acc} AND ${c}`)}`
-    : Prisma.empty;
-  const whereSubbed = Prisma.raw(where.text.replaceAll("__TS__", tsCol));
-  // Concat with values
+  // We translate our app-level filter into raw SQL for the groupBy paths
+  // because Prisma's groupBy doesn't natively support array unnest or
+  // date_trunc. The where clauses below mirror buildXxxWhere(). Column names
+  // are the physical ones: `isDummy` has no @map, so it's a quoted camelCase
+  // column, not `is_dummy` (tests/resolvers/entityStats.resolver.test.ts
+  // runs this SQL against the migrated schema).
+  const conds: Prisma.Sql[] = [];
+  if (!input.includeDummy) conds.push(Prisma.sql`${col('"isDummy"')} = false`);
+  if (input.severityMin != null) conds.push(Prisma.sql`${col("severity")} >= ${input.severityMin}`);
+  if (input.severityMax != null) conds.push(Prisma.sql`${col("severity")} <= ${input.severityMax}`);
+  if (input.from) conds.push(Prisma.sql`${Prisma.raw(tsCol)} >= ${new Date(input.from)}`);
+  if (input.to) conds.push(Prisma.sql`${Prisma.raw(tsCol)} <= ${new Date(input.to)}`);
+  if (input.eventTypes && input.eventTypes.length > 0 && input.entity !== "signal") {
+    // event.types is a text[] — use the && (overlap) operator.
+    conds.push(Prisma.sql`${col("types")} && ${input.eventTypes}::text[]`);
+  }
+  // origin / destination / general location in `ids` — same shape as
+  // locationWhereForEvent / buildLocationFilterForTeam.
+  const inLocations = (ids: string[]) =>
+    Prisma.sql`(${col("origin_id")} = ANY(${ids}::text[]) OR ${col("destination_id")} = ANY(${ids}::text[]) OR ${col("location_id")} = ANY(${ids}::text[]))`;
+  if (input.teamId) {
+    // undefined = team has no bindings (global monitoring) → no condition.
+    const ids = await getTeamScopeLocationIds(prisma, input.teamId);
+    if (ids) conds.push(inLocations(ids));
+  }
+  if (input.locationId) {
+    const ids = await getLocationIdsWithDescendants(prisma, input.locationId);
+    if (ids.length > 0) conds.push(inLocations(ids));
+  }
+
+  // Prisma.join keeps each condition's bound values attached.
   const finalWhere = conds.length > 0
-    ? Prisma.sql`WHERE ${whereSubbed}`
+    ? Prisma.sql`WHERE ${Prisma.join(conds, " AND ")}`
     : Prisma.empty;
 
   return { table, whereSql: finalWhere, tsCol, typeExpr };

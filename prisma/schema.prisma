@@ -105,6 +105,8 @@ model user {
   commentTags           commentTags[]
   invitationsSent       invitations[]           @relation("InvitedBy")
   activityLogs          activityLogs[]
+  conversations         conversations[]
+  agentWorkingMemory    agentWorkingMemory?
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -163,13 +165,14 @@ model activityLogs {
 /// the affected field per locale instead of regenerating the whole blob.
 ///
 /// No SQL foreign key — `entityId` is polymorphic across (event, crisis,
-/// location). Cleanup on delete is handled in the app layer; dangling
+/// location, situationAnalysis, analysis, groundMessage). Cleanup on delete is handled in the app layer; dangling
 /// translations are harmless (nothing reads them) and can be GC'd by a
 /// periodic job if they ever accumulate.
 model translations {
   id String @id @default(cuid())
 
-  /// Discriminator: 'event' | 'crisis' | 'location' (extend as needed).
+  /// Discriminator: 'event' | 'crisis' | 'location' | 'situationAnalysis' |
+  /// 'analysis' | 'groundMessage' (extend as needed).
   /// Kept alongside the typed FK columns below for backwards compat with
   /// older write paths and the admin `entitiesMissingTranslation` query.
   /// New code should prefer the typed relations.
@@ -188,11 +191,19 @@ model translations {
   crisisId            String? @map("crisis_id")
   locationId          String? @map("location_id")
   situationAnalysisId String? @map("situation_analysis_id")
+  analysisId          String? @map("analysis_id")
+  /// On-demand only: a hotline message is translated when a reviewer asks
+  /// (requestGroundMessageTranslation), never on read. Unlike every other
+  /// type the source is the reporter's language, so `en` is a valid locale
+  /// here. `data` is `{ text }`; ground_messages.text is never overwritten.
+  groundMessageId     String? @map("ground_message_id")
 
   event             events?            @relation(fields: [eventId], references: [id], onDelete: Cascade)
   crisis            crises?            @relation(fields: [crisisId], references: [id], onDelete: Cascade)
   location          locations?         @relation(fields: [locationId], references: [id], onDelete: Cascade)
   situationAnalysis situationAnalysis? @relation(fields: [situationAnalysisId], references: [id], onDelete: Cascade)
+  analysis          analysis?          @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  groundMessage     groundMessages?    @relation(fields: [groundMessageId], references: [id], onDelete: Cascade)
 
   /// BCP-47 code (lowercased) — 'ar', 'fr', etc. Matches the
   /// `user.language` field; the resolver context derives locale from there.
@@ -214,6 +225,8 @@ model translations {
   @@unique([crisisId, locale])
   @@unique([locationId, locale])
   @@unique([situationAnalysisId, locale])
+  @@unique([analysisId, locale])
+  @@unique([groundMessageId, locale])
   /// Secondary admin queries ("what's covered in Arabic?") use this.
   @@index([entityType, locale])
   @@map("translations")
@@ -226,7 +239,8 @@ model translations {
 /// One row per (entityType, entityId, locale) — a re-enqueue is a no-op upsert.
 model translationQueue {
   id         String   @id @default(cuid())
-  /// 'event' | 'crisis' | 'location' — mirrors `translations.entityType`.
+  /// Mirrors `translations.entityType` ('event' | 'crisis' | 'location' |
+  /// 'situationAnalysis' | 'analysis' | 'groundMessage').
   entityType String   @map("entity_type")
   entityId   String   @map("entity_id")
   /// BCP-47 locale (lowercased), matching `translations.locale`.
@@ -467,6 +481,10 @@ model locations {
   eventOrigins           events[]                 @relation("EventOrigin")
   eventDestinations      events[]                 @relation("EventDestination")
   eventLocations         events[]                 @relation("EventLocation")
+
+  // Reverse relation for ground thread drafts
+  groundThreadDrafts groundThreads[] @relation("GroundThreadDraftLocation")
+
   userAlertSubscriptions userAlertSubscriptions[]
   teamScopes             teamLocations[]
   crises                 crises[]                 @relation("CrisisLocation")
@@ -1218,6 +1236,62 @@ model knowledgebase {
   @@map("knowledgebase")
 }
 
+/// Incident-tier index for the knowledgebase (ADR-0006). One row per EVENT
+/// (grouped signals), embedded as a synthesised "event card". This is the
+/// physically-separate, lower-tier companion to `knowledgebase` (the
+/// report/state tier): `searchKnowledgebase` retrieves both and merges
+/// tier-aware. Like `knowledgebase`, `embedding` (pgvector) + `lexicalTsv`
+/// (tsvector) are `Unsupported` and written/read exclusively via raw SQL; the
+/// HNSW + tsvector-trigger DDL lives in the migration. Don't remove those two
+/// fields — it would cascade the HNSW index.
+model eventsIndex {
+  id String @id @default(cuid())
+
+  /// The `events.id` this card came from. Unique — the write path upserts per
+  /// event (INSERT ... ON CONFLICT DO UPDATE), the replace-on-revise key.
+  eventId String @map("event_id")
+
+  /// Event title, and the human-readable card text a UI renders on a hit
+  /// (the incident-tier analog of `knowledgebase.chunk_text`).
+  title    String
+  cardText String @map("card_text")
+  /// What was embedded + tokenised into `lexical_tsv` (card + a structured
+  /// line: type / location / time / severity). Stored verbatim so the ranking
+  /// is reproducible offline.
+  embeddedText String  @map("embedded_text")
+  /// Link back to the event / its signals for a search hit.
+  sourceUrl    String? @map("source_url")
+
+  embeddingProvider String @map("embedding_provider")
+  embeddingModel    String @map("embedding_model")
+
+  /// Same preservation rule + raw-SQL access as `knowledgebase.embedding`.
+  embedding  Unsupported("vector(1024)")
+  /// Populated by a BEFORE INSERT/UPDATE trigger from `embedded_text`.
+  lexicalTsv Unsupported("tsvector") @map("lexical_tsv")
+
+  locationIds    String[] @map("location_ids")
+  locationPcodes String[] @map("location_pcodes")
+  timeRangeStart DateTime? @map("time_range_start")
+  timeRangeEnd   DateTime? @map("time_range_end")
+  /// Event onset — the recency signal frame-mode incident ordering uses.
+  startedAt      DateTime? @map("started_at")
+
+  eventTypes String[] @map("event_types")
+  /// 1–5 aggregated severity — the other frame-mode incident ordering signal.
+  severity   Int?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([eventId])
+  @@index([embeddingModel])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([timeRangeStart, timeRangeEnd])
+  @@index([startedAt])
+  @@map("events_index")
+}
+
 /// Outbound webhook subscription. Configured by platform admins; every
 /// incoming GlitchTip alert is fanned out to every active subscription
 /// whose filters match. HMAC signing is opt-out (not currently exposed —
@@ -1672,6 +1746,176 @@ model situationAnalysis {
   @@map("situation_analyses")
 }
 
+/// Unified frame-scoped analysis (ADR-0007). One bitemporal row per
+/// (frame × schema_version), generated by the pipeline over an arbitrary
+/// FRAME expressed as the same columns the `knowledgebase` is indexed on.
+/// Generalises `situationAnalysis` (country-default frame) and subsumes
+/// `crises` ("crisis overview" = an event-derived frame). Ingest is
+/// unchanged — the frame is applied only at generation time. See
+/// docs/adr/0007-unified-frame-scoped-analysis.md.
+model analysis {
+  id String @id @default(cuid())
+
+  /// ── FRAME (arrays canonicalised — sorted + de-duplicated — on write) ──
+  /// Resolved `locations.id`s the analysis covers. A single A0 id is the
+  /// "country-default" frame. No @relation so location pruning never
+  /// cascade-deletes analyses.
+  locationIds String[] @map("location_ids")
+  /// GLIDE / disaster-type slugs. Empty for a country-default frame.
+  eventTypes  String[] @map("event_types")
+  /// SAF need sectors. Empty = all sectors.
+  needSectors String[] @map("need_sectors")
+
+  /// Analysis window. `windowEnd` NULL = rolling "to present" (an
+  /// automated analysis); set = a fixed range (on-demand). The concrete
+  /// "as of" instant of a rolling row is `generatedAt` / `validFrom`, so
+  /// nothing stores a shifting end date. (ADR-0007 §2.)
+  windowStart DateTime  @map("window_start")
+  windowEnd   DateTime? @map("window_end")
+
+  /// Unified payload (ADR-0007 §4) — the situation taxonomy plus a
+  /// `scenarios` component. Opaque + versioned via `schemaVersion`; see the
+  /// Python schemas for shape.
+  data Json
+
+  /// Denormalised union of every contributing report id across components.
+  /// Per-field datapoint provenance (which aggregated buckets / reports fed a
+  /// number) lives inside `data` — a frame can span many aggregated_datapoints
+  /// rows, so there is no single bucket to reference here.
+  sourceReportIds String[] @map("source_report_ids")
+
+  generatedByModel  String   @map("generated_by_model")
+  generationCostUsd Float?   @map("generation_cost_usd")
+  generatedAt       DateTime @default(now()) @map("generated_at")
+
+  /// Last time any trigger CHECKED this frame (manual sync or automation),
+  /// whether or not it regenerated (ADR-0008). Bumped on a gate skip (within
+  /// the 24h floor, or no new evidence) in place on the current row — no new
+  /// version — so `generatedAt` stays "last actual regeneration".
+  lastSyncedAt DateTime? @map("last_synced_at")
+
+  /// Bitemporal validity — same pattern as `situationAnalysis` /
+  /// `aggregated_datapoints`. Regeneration stamps `validTo` on the previous
+  /// current row and inserts a fresh one in the same transaction.
+  validFrom DateTime  @default(now()) @map("valid_from")
+  validTo   DateTime? @map("valid_to")
+
+  /// Bumped on payload taxonomy / prompt-set change; versions coexist per
+  /// frame (the partial-unique index is per-version).
+  schemaVersion String @map("schema_version")
+
+  /// Per-locale translation overlays; cascade-delete with the row. Written
+  /// by the generation pipeline (Phase 3); unused until then.
+  translations translations[]
+
+  /// Partial unique index lives in the migration SQL — Prisma can't express
+  /// partial or NULLS-NOT-DISTINCT indexes:
+  ///   UNIQUE (location_ids, event_types, need_sectors, window_start,
+  ///           window_end, schema_version) WHERE valid_to IS NULL
+  ///           NULLS NOT DISTINCT
+  /// NULLS NOT DISTINCT makes two rolling frames (window_end NULL) that
+  /// share the other columns dedupe to one current row. History rows
+  /// (valid_to NOT NULL) don't participate. Array identity relies on the
+  /// resolver canonicalising the arrays before write.
+  @@index([validTo])
+  @@index([schemaVersion])
+  @@index([windowStart])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([needSectors], type: Gin)
+  @@map("analyses")
+}
+
+/// User-configurable automation for a frame-scoped `analysis` (ADR-0007 §5).
+/// A subscription that keeps one FRAME's analysis current. The analysis row
+/// is shared (one per frame); many automations may target the same frame and
+/// the scheduler (Phase 4) regenerates each frame at the MINIMUM cadence
+/// across its subscribers (a daily subsumes a weekly). Automations are always
+/// rolling ("to present"), so there is no `windowEnd`. The default weekly
+/// country analyses are just system-owned rows here (`teamId` null).
+model analysisAutomation {
+  id String @id @default(cuid())
+
+  /// Frame (canonicalised on write) — the `analysis` frame columns minus
+  /// `windowEnd` (automation is always rolling to present).
+  locationIds String[] @map("location_ids")
+  eventTypes  String[] @map("event_types")
+  needSectors String[] @map("need_sectors")
+  windowStart DateTime @map("window_start")
+
+  /// Refresh cadence label resolved by the scheduler (e.g. "daily",
+  /// "weekly"); the finest cadence across a frame's subscribers wins.
+  cadence String
+
+  /// Owner. `teamId` null = a system-owned automation (default country
+  /// analyses). `createdByUserId` null for system rows.
+  teamId          String? @map("team_id")
+  createdByUserId String? @map("created_by_user_id")
+
+  enabled   Boolean   @default(true)
+  lastRunAt DateTime? @map("last_run_at")
+  nextRunAt DateTime? @map("next_run_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One subscription per (frame, owner) — a re-subscribe updates the
+  /// cadence rather than duplicating. Enforced by a partial unique index in
+  /// the migration SQL (NULLS NOT DISTINCT so array/owner columns compare by
+  /// value, not NULL-distinct).
+  @@index([enabled])
+  @@index([nextRunAt])
+  @@index([locationIds], type: Gin)
+  @@map("analysis_automations")
+}
+
+enum AnalysisRequestStatus {
+  PENDING
+  GENERATED
+  FAILED
+}
+
+/// On-demand analysis generation queue (ADR-0007 §4). A user requests an
+/// analysis for a FRAME that may not exist yet; a Dagster sensor drains the
+/// PENDING rows, generates + upserts the `analysis`, and marks the request
+/// GENERATED — mirroring the crisis `pendingCrises` enrichment queue. Scheduled
+/// refreshes go through `analysis_automations`, not this one-shot queue.
+model analysisRequest {
+  id String @id @default(cuid())
+
+  /// Frame to generate (canonicalised on write, like `analysis`).
+  locationIds String[]  @map("location_ids")
+  eventTypes  String[]  @map("event_types")
+  needSectors String[]  @map("need_sectors")
+  windowStart DateTime  @map("window_start")
+  windowEnd   DateTime? @map("window_end")
+
+  status AnalysisRequestStatus @default(PENDING)
+
+  requestedByUserId String? @map("requested_by_user_id")
+  teamId            String? @map("team_id")
+
+  /// Admin force (ADR-0008): bypass the regeneration gate (24h floor + the
+  /// freshness check) for this request. Only an admin may set it true at
+  /// `requestAnalysis`; the drain honours it.
+  force Boolean @default(false)
+
+  /// Drain bookkeeping — attempt counter + last error so a persistently
+  /// failing request is surfaced rather than looping forever.
+  attempts  Int     @default(0)
+  lastError String? @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// The (status, created_at) index serves the oldest-first pendingAnalyses
+  /// drain. A partial unique — one PENDING request per frame (NULLS NOT
+  /// DISTINCT) — is added in migration 20260923000000 (SQL-only; Prisma can't
+  /// express partial indexes).
+  @@index([status, createdAt])
+  @@map("analysis_requests")
+}
+
 /// GeoNames gazetteer places, one row per geonameid, seeded per-country
 /// from the extracts in `src/geonames/` via `scripts/import-geonames.ts`.
 /// Runtime source of truth for the offline first tier of the hybrid
@@ -1800,11 +2044,26 @@ model groundThreads {
   reviewedAt  DateTime? @map("reviewed_at")
   /// Optional reviewer note (why rejected / what was corrected).
   reviewNote  String? @map("review_note")
+  /// Structured reason for a rejection: "spam" | "not_report" |
+  /// "unusable" | "duplicate" (REJECT_REASONS in services/ground-review.ts).
+  /// Set only while reviewState is "rejected"; cleared on any other decision.
+  rejectReason String? @map("reject_reason")
 
   /// Set when an approved_public thread has been promoted through
   /// createSignal — the id of the created `signals` row. One-shot: a
   /// promoted thread is never promoted again.
   promotedSignalId String? @map("promoted_signal_id")
+
+  /// Enrichment suggestions from the Dagster hotline-enrichment job
+  /// (classification/title/severity/location/disasterType ticket). A
+  /// draft, never used directly — the ERM reviews and edits it in the
+  /// inbox modal before Add to CLEAR carries it into createSignal.
+  draftTitle        String?    @map("draft_title")
+  /// 1-5 scale, same range as signals.severity.
+  draftSeverity     Int?       @map("draft_severity")
+  draftLocationId   String?    @map("draft_location_id")
+  draftLocation     locations? @relation("GroundThreadDraftLocation", fields: [draftLocationId], references: [id], onDelete: SetNull)
+  draftDisasterType String?    @map("draft_disaster_type")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1842,8 +2101,15 @@ model groundMessages {
   senderName String? @map("sender_name")
 
   /// Message text with phone numbers regex-redacted at persistence.
-  /// Empty string for caption-less media messages.
+  /// Empty string for caption-less media messages. Canonical for audit and
+  /// promotion: translations live in the `translations` overlay, never here.
   text String
+
+  /// Language of `text` as a lowercased ISO 639-1 code ("ar", "en", ...),
+  /// set at intake by a cheap script + stopword detector
+  /// (utils/language-detect.ts, no LLM). Null when the detector is unsure,
+  /// the text is empty, or the row predates detection.
+  language String?
 
   /// S3 keys of stored attachments (content-hashed under
   /// "ground/{groundSourceId}/…"). Presigned URLs are generated at read /
@@ -1865,11 +2131,31 @@ model groundMessages {
   /// verbatim from the text so it survives ingestion and promotion.
   uncertainty String?
 
+  /// Transcribed text for audio attachments, null until the Dagster
+  /// ground_transcribe asset transcribes them. Separate from `text` — the
+  /// original redacted message text is never mutated.
+  transcript String?
+
+  /// Durable per-stage failure markers, set by clear-pipeline via
+  /// markGroundMessagesFailed once a ground drain exhausts its attempts on
+  /// the message. A set *FailedAt drops the message out of that drain's
+  /// queue (groundMessagesForClassification) until a reviewer clears it
+  /// with retryGroundMessage. *Error is the last exception text, truncated
+  /// and phone-redacted.
+  enrichFailedAt     DateTime? @map("enrich_failed_at")
+  enrichError        String?   @map("enrich_error")
+  transcribeFailedAt DateTime? @map("transcribe_failed_at")
+  transcribeError    String?   @map("transcribe_error")
+
   /// True when the export carried the "<This message was edited>" marker.
   isEdited Boolean @default(false) @map("is_edited")
 
   threadId String?        @map("thread_id")
   thread   groundThreads? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  /// On-demand translations of `text` (entityType 'groundMessage');
+  /// cascade-delete with the message.
+  translations translations[]
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1879,3 +2165,88 @@ model groundMessages {
   @@map("ground_messages")
 }
 
+// ─── Agent Conversations ─────────────────────────────────────────────────────
+
+/// One CLEAR Agent Thread, stored as the audit record of what the Agent told
+/// its owner (ADR-0009). Written by clear-mvp's Mastra memory adapter through
+/// GraphQL, never directly. Readable by the owner and, read-only, by platform
+/// admins (every admin read is logged). Deleting the user deletes their
+/// Conversations.
+model conversations {
+  /// Caller-supplied: Mastra creates thread ids before the first write.
+  id       String  @id @default(cuid())
+  userId   String  @map("user_id")
+  title    String?
+  /// Opaque Mastra thread metadata.
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Bumped whenever messages are written, so "newest first" means "most
+  /// recently active".
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     user                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages conversationMessages[]
+
+  @@index([userId, updatedAt])
+  @@map("conversations")
+}
+
+/// One turn of a Conversation: a user turn, an Answer, or a system/tool
+/// message, as Mastra stores it.
+model conversationMessages {
+  /// Caller-supplied: Mastra upserts messages by its own ids.
+  id             String  @id @default(cuid())
+  conversationId String  @map("conversation_id")
+  /// `user` | `assistant` | `system` | `tool` | `signal` (Mastra's message
+  /// roles). A free string so a Mastra upgrade never needs a migration.
+  role           String
+  /// Mastra's message `type` (e.g. `v2`), round-tripped untouched.
+  type           String?
+  /// Mastra's message content (format 2: text, tool and source-document
+  /// parts). Opaque to clear-api.
+  content        Json
+  /// User turns only: the page, entity ids and filters the user was looking
+  /// at when they sent the turn — identifiers, never data.
+  currentView    Json?   @map("current_view")
+
+  /// Per-turn usage, set on Answers by recordConversationTurnUsage. Cost is
+  /// computed by the caller from its price table, like generationCostUsd.
+  model           String?
+  inputTokens     Int?      @map("input_tokens")
+  outputTokens    Int?      @map("output_tokens")
+  costUsd         Float?    @map("cost_usd")
+  latencyMs       Int?      @map("latency_ms")
+  /// Server time the usage was recorded; the daily Agent budget sums
+  /// costUsd by this, not by the caller-supplied createdAt.
+  usageRecordedAt DateTime? @map("usage_recorded_at")
+
+  /// Caller-supplied (Mastra orders history by it); defaults to now.
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  conversation conversations @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([usageRecordedAt])
+  @@map("conversation_messages")
+}
+
+/// The CLEAR Agent's working memory for one user: what it keeps about the
+/// user across Threads (Mastra's "resource", whose id is the user id).
+/// Read and written only by that user, through the Agent's memory adapter.
+model agentWorkingMemory {
+  id            String  @id @default(cuid())
+  userId        String  @unique @map("user_id")
+  /// The Agent's working-memory document (Markdown).
+  workingMemory String? @map("working_memory")
+  /// Opaque Mastra resource metadata.
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_working_memory")
+}

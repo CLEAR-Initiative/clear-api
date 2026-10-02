@@ -9,7 +9,8 @@ export const translationTypeDef = gql`
   """
   type TranslationQueueItem {
     id: String!
-    """'event' | 'crisis' | 'location'."""
+    """'event' | 'crisis' | 'location' | 'situationAnalysis' | 'analysis' |
+    'groundMessage'."""
     entityType: String!
     entityId: String!
     """BCP-47 locale (lowercased) to translate into."""
@@ -79,7 +80,8 @@ export const translationTypeDef = gql`
   the same keys/nesting the English columns use.
   """
   input LocaleTranslationInput {
-    """BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical)."""
+    """BCP-47 lowercased — 'ar', 'fr'. 'en' is rejected (canonical) except
+    for groundMessage, whose source is the reporter's language."""
     locale: String!
     """Translated payload. Shape mirrors the canonical entity per type."""
     data: JSON!
@@ -88,7 +90,8 @@ export const translationTypeDef = gql`
   }
 
   input UpsertTranslationsInput {
-    """One of 'event' | 'crisis' | 'location' (case-insensitive)."""
+    """One of 'event' | 'crisis' | 'location' | 'situationAnalysis' |
+    'analysis' | 'groundMessage' (case-insensitive)."""
     entityType: String!
     entityId: String!
     """One entry per target locale. Each row is upserted independently."""

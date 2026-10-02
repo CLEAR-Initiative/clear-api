@@ -9,6 +9,37 @@ export const mutationTypeDef = gql`
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 
+    # ─── Agent Conversations ───────────────────────────────────────────────────
+    # Written only by the CLEAR Agent in clear-mvp: each call needs the owner's
+    # session AND the agent service key in X-Clear-Agent-Key.
+    """Create one of your Conversations with the CLEAR Agent's thread id, or
+    update its title or metadata. FORBIDDEN if the id belongs to another user.
+    CLEAR Agent only (the owner's session plus the agent key)."""
+    upsertConversation(input: UpsertConversationInput!): Conversation!
+
+    """Create or replace messages in one of your Conversations, matched by id
+    (at most 200 per call). Only the owner's Conversations, admins included,
+    and CLEAR Agent only (the owner's session plus the agent key). An Answer
+    whose usage is recorded can't change. Returns the messages in input order."""
+    upsertConversationMessages(
+      conversationId: String!
+      messages: [ConversationMessageInput!]!
+    ): [ConversationMessage!]!
+
+    """Create or update your CLEAR Agent working memory. CLEAR Agent only (your
+    session plus the agent key)."""
+    saveAgentWorkingMemory(input: SaveAgentWorkingMemoryInput!): AgentWorkingMemory!
+
+    """Record what a CLEAR Agent turn used (model, tokens, cost, latency) on
+    its Answer, an \`assistant\` message in one of your Conversations. The
+    cost counts toward your daily Agent budget. Write-once: FORBIDDEN if the
+    turn's usage is already recorded. Owner only, CLEAR Agent only (the
+    owner's session plus the agent key)."""
+    recordConversationTurnUsage(
+      messageId: String!
+      usage: ConversationTurnUsageInput!
+    ): ConversationMessage!
+
     # ─── Public Event Share Links ──────────────────────────────────────────────
     """
     Mint a Redis-backed share token for an event. The snapshot of the
@@ -444,6 +475,14 @@ export const mutationTypeDef = gql`
       chunks: [KnowledgebaseChunkInput!]!
     ): UpsertKnowledgebaseResult!
 
+    """Synthesise, embed, and upsert incident-tier "event cards" into
+    \`events_index\` for the given events (ADR-0006) — replace-on-revise,
+    keyed by event id. Call this when events are created or revised (from
+    the signal→event grouping step, or a periodic catch-up) to keep the
+    incident tier of \`searchKnowledgebase\` fresh. Embedding uses the same
+    provider+model as the report KB. Admin/pipeline only."""
+    syncEventCards(eventIds: [String!]!): SyncEventCardsResult!
+
     """Replace the \`report_datapoints\` row for \`input.reportId\`.
     Admin / pipeline only. The dagster-quickstart datapoints
     extraction asset is the primary caller; hand-invocation is
@@ -463,6 +502,43 @@ export const mutationTypeDef = gql`
     upsertSituationAnalysis(
       input: UpsertSituationAnalysisInput!
     ): UpsertSituationAnalysisResult!
+
+    """Upsert a unified frame-scoped analysis (ADR-0007). The pipeline
+    generator's write path: bitemporal supersede-then-insert keyed on the
+    frame columns (locationIds / eventTypes / needSectors / windowStart /
+    windowEnd), stamping \`validTo\` on the previous current row for the same
+    frame in the same transaction. History rows are preserved. Frame arrays are
+    canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only."""
+    upsertAnalysis(input: UpsertAnalysisInput!): UpsertAnalysisResult!
+
+    """Pipeline: bump the current analysis row's \`lastSyncedAt\` for a frame
+    WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
+    (within the 24h floor, or no new evidence). Returns false when no current row
+    exists for the frame. Admin / pipeline only."""
+    touchAnalysisSynced(frame: AnalysisFrameInput!): Boolean!
+
+    """Create an analysis automation — a subscription that keeps a frame's
+    analysis current on a cadence (ADR-0007 §5). Admin / analyst."""
+    createAnalysisAutomation(input: CreateAnalysisAutomationInput!): AnalysisAutomation!
+    """Update an analysis automation's cadence or enabled flag. Admin / analyst."""
+    updateAnalysisAutomation(id: String!, input: UpdateAnalysisAutomationInput!): AnalysisAutomation!
+    """Delete an analysis automation subscription. Admin / analyst."""
+    deleteAnalysisAutomation(id: String!): Boolean!
+
+    """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
+    an existing PENDING request for the same frame. Admin / analyst."""
+    requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
+    """Pipeline: mark a drained request GENERATED after its analysis was
+    upserted. Admin / pipeline only."""
+    markAnalysisRequestGenerated(id: String!): AnalysisRequest!
+    """Pipeline: record a generation failure on a request (bumps the attempt
+    counter). Admin / pipeline only."""
+    markAnalysisRequestFailed(id: String!, error: String): AnalysisRequest!
+
+    """Scheduler: stamp lastRunAt + nextRunAt (from each row's cadence) on the
+    automations whose frame was just regenerated (ADR-0007 §5) — pass all the
+    ids sharing that frame. Returns the count updated. Admin / pipeline only."""
+    markAnalysisAutomationsRan(ids: [String!]!): Int!
 
     """Replace a report's captured infographics (image asset store). Pipeline-only;
     delete-then-insert like \`upsertReportDatapoints\`."""
@@ -541,8 +617,19 @@ export const mutationTypeDef = gql`
     admins always pass). Transitions follow the V1 state machine —
     notably approved_public is terminal. approve_public also promotes
     the thread into the standard signals graph via createSignal, with
-    all sender identity scrubbed."""
-    reviewGroundThread(id: String!, decision: String!, note: String): GroundThread!
+    all sender identity scrubbed.
+
+    \`overrides\` (approve_public only) carries the reviewer's edits into
+    the promoted signal. \`rejectReason\` (reject only) is one of "spam",
+    "not_report", "unusable", "duplicate"; any other decision clears it.
+    Either one sent with the wrong decision is BAD_USER_INPUT."""
+    reviewGroundThread(
+      id: String!
+      decision: String!
+      note: String
+      rejectReason: String
+      overrides: GroundPromotionOverridesInput
+    ): GroundThread!
 
     """PIPELINE CONTRACT (admin/pipeline only): write back
     classifications from the classify_ground_messages worker. Unknown
@@ -550,6 +637,13 @@ export const mutationTypeDef = gql`
     messages updated."""
     upsertGroundMessageClassifications(
       inputs: [GroundMessageClassificationInput!]!
+    ): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back transcriptions
+    from the ground_transcribe worker. Unknown messageIds are skipped
+    with a warning. Returns the number of messages updated."""
+    upsertGroundMessageTranscripts(
+      inputs: [GroundMessageTranscriptInput!]!
     ): Int!
 
     """PIPELINE CONTRACT (admin/pipeline only): replace placeholder
@@ -565,6 +659,37 @@ export const mutationTypeDef = gql`
     in order; null where an input had no movable messages (no thread
     created or updated)."""
     upsertGroundThreads(inputs: [GroundThreadUpsertInput!]!): [String]!
+
+    """PIPELINE CONTRACT (admin/pipeline only): write back enrichment
+    drafts (title/severity/location/disasterType) from the hotline
+    enrichment job. Unknown threadIds are skipped with a warning. Null
+    fields on an input leave the existing draft value unchanged. Returns
+    the number of threads updated."""
+    upsertGroundThreadDrafts(inputs: [GroundThreadDraftInput!]!): Int!
+
+    """PIPELINE CONTRACT (admin/pipeline only): durably mark messages a
+    ground drain has given up on (attempts exhausted, or a message that
+    can never succeed). A marked message drops out of that stage's queue
+    in groundMessagesForClassification until retryGroundMessage clears
+    it. A message whose stage already succeeded (classification /
+    transcript set) is left unmarked. Unknown messageIds are skipped with
+    a warning. Returns the number of messages marked."""
+    markGroundMessagesFailed(inputs: [GroundMessageFailureInput!]!): Int!
+
+    """Clear a message's failure marker for one stage (admin/analyst), so
+    it re-enters that drain's queue on the next pipeline run. No-op when
+    the stage isn't marked failed. Returns the message."""
+    retryGroundMessage(messageId: String!, stage: GroundPipelineStage!): GroundMessage!
+
+    """Translate one staged message's text into \`locale\` (admin/analyst)
+    — any supported locale, \`en\` included (the source is the reporter's
+    language). Queues it for the pipeline's translate drain and returns the
+    current state; poll GroundMessage.translation(locale) while queued.
+    Idempotent: a ready translation is returned as is, a queued one keeps
+    its place, and a request after the drain gave up queues it again. A
+    message with no text is unavailable. The message's own text is never
+    changed."""
+    requestGroundMessageTranslation(messageId: String!, locale: String!): GroundMessageTranslation!
   }
 
   # ─── Input Types ───────────────────────────────────────────────────────────

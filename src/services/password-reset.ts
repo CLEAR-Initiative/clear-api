@@ -51,14 +51,17 @@ export function normaliseEmail(raw: string): string {
  * `FRONTEND_URL` — the Next.js app has no reset-password route, so a
  * link there is a dead end.
  *
+ * `env.BETTER_AUTH_URL` is normalised to a bare origin on load, so this
+ * can concatenate without re-trimming: a deployment that sets a path
+ * (e.g. `https://host/auth`) can no longer push this link to a 404.
+ *
  * `kind: "setup"` swaps the page copy to first-time "choose a password"
  * wording for the dev-user welcome flow. The token itself is identical,
  * so the flag is purely cosmetic and safe to drop.
  */
 export function buildResetUrl(token: string, kind?: "setup"): string {
-  const base = env.BETTER_AUTH_URL.replace(/\/+$/, "");
   const suffix = kind ? `&kind=${kind}` : "";
-  return `${base}/portal/reset-password?token=${token}${suffix}`;
+  return `${env.BETTER_AUTH_URL}/portal/reset-password?token=${token}${suffix}`;
 }
 
 /**

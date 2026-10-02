@@ -6,7 +6,6 @@ import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { uploadFileToS3 } from "../services/s3.js";
-import { sendCeleryTask } from "../services/celery.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
@@ -455,22 +454,10 @@ export const signalResolvers = {
         },
       });
 
-      // Queue pipeline processing via Celery (fire-and-forget).
-      // signal_published_at lets the pipeline apply the staleness gate; we
-      // pass the row's actual publishedAt so the kwarg is consistent if the
-      // schema later allows backdated publishedAt values.
-      void sendCeleryTask("src.tasks.process.process_manual_signal", {
-        signal_id: signal.id,
-        source_type: dataSource.name,
-        title: input.title,
-        description: input.description,
-        severity: input.severity ?? null,
-        user_id: user.id,
-        signal_published_at: signal.publishedAt.toISOString(),
-      }).catch((err) => {
-        console.error("[createManualSignal] Failed to queue pipeline task:", err);
-      });
-
+      // No enqueue: the signal is created with status NEW, and the
+      // classify_group Dagster asset (clear-pipeline) drains NEW
+      // signals from every source — including manual — on its own poll
+      // sensor interval.
       void logActivity(context.prisma, {
         userId: user.id,
         action: "signal.create_manual",

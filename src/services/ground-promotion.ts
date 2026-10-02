@@ -14,6 +14,7 @@
  */
 
 import type { PrismaClient } from "../generated/prisma/client.js";
+import type { PromotionOverrides } from "./ground-review.js";
 
 /** The one dataSources row all WhatsApp-promoted signals hang off. */
 export const WHATSAPP_DATA_SOURCE = {
@@ -42,6 +43,8 @@ export interface PromotedSignalInput {
   publishedAt: string;
   title?: string;
   description?: string;
+  severity?: number;
+  locationId?: string;
   media?: string[];
 }
 
@@ -56,14 +59,19 @@ export interface PromotedSignalInput {
  * - media: presigned URLs supplied by the caller (generated at promotion
  *   time from mediaKeys, never stored).
  * - rawData: ground marker + thread provenance + per-message content.
+ * - overrides: the reviewer's edits (title, description, severity,
+ *   location) replace the thread-derived title/description and add
+ *   severity/location. rawData is never affected — it stays the verbatim
+ *   provenance record of what the field reported.
  */
 export function buildPromotedSignalInput(options: {
   dataSourceId: string;
   thread: { id: string; title: string | null; lifecycleState: string };
   messages: PromotableMessage[];
   mediaUrls?: string[];
+  overrides?: PromotionOverrides;
 }): PromotedSignalInput {
-  const { dataSourceId, thread, mediaUrls } = options;
+  const { dataSourceId, thread, mediaUrls, overrides = {} } = options;
   if (options.messages.length === 0) {
     throw new Error(`Cannot promote thread ${thread.id}: it has no messages`);
   }
@@ -81,8 +89,10 @@ export function buildPromotedSignalInput(options: {
     sourceId: dataSourceId,
     externalId: earliest.externalId,
     publishedAt: earliest.sentAt.toISOString(),
-    title: thread.title ?? undefined,
-    description,
+    title: overrides.title ?? thread.title ?? undefined,
+    description: overrides.description ?? description,
+    ...(overrides.severity != null ? { severity: overrides.severity } : {}),
+    ...(overrides.locationId ? { locationId: overrides.locationId } : {}),
     ...(mediaUrls && mediaUrls.length > 0 ? { media: mediaUrls } : {}),
     rawData: {
       ground: true,
