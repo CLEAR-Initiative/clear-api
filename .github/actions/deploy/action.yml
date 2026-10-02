@@ -1,0 +1,34 @@
+name: Deploy
+description: Pull the latest clear-api image on the VM and recreate the container
+
+inputs:
+  host:
+    description: VM host
+    required: true
+  ssh-key:
+    description: SSH private key for the VM
+    required: true
+  registry-token:
+    description: Token allowed to pull from the registry
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: SSH and roll the deployment
+      uses: appleboy/ssh-action@v1
+      env:
+        GHCR_TOKEN: ${{ inputs.registry-token }}
+      with:
+        host: ${{ inputs.host }}
+        username: ubuntu
+        key: ${{ inputs.ssh-key }}
+        envs: GHCR_TOKEN
+        script: |
+          set -e
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          cd /srv/app
+          docker compose pull clear-api
+          docker compose up -d --force-recreate clear-api
+          docker image prune -a -f
+          docker compose ps clear-api
