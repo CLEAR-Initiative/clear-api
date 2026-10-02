@@ -39,6 +39,7 @@ export const organisationTypeDef = gql`
   enum TeamMemberRole {
     team_admin
     field_coordinator
+    emergency_response_manager
     team_member
   }
 
