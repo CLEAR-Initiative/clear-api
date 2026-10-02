@@ -10,6 +10,7 @@ export type OrgRole = (typeof ORG_ROLES)[number];
 export const TEAM_ROLES = [
   "team_admin",
   "field_coordinator",
+  "emergency_response_manager",
   "team_member",
 ] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
@@ -30,6 +31,7 @@ export function canonicalTeamRole(role: string | null | undefined): TeamRole {
   const r = (role ?? "").toLowerCase();
   if (r === "team_admin" || r === "lead") return "team_admin";
   if (r === "field_coordinator" || r === "analyst") return "field_coordinator";
+  if (r === "emergency_response_manager") return "emergency_response_manager";
   return "team_member";
 }
 

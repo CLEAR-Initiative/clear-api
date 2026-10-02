@@ -38,6 +38,7 @@ export function isPlatformAdmin(
 export const TEAM_CONTENT_WRITER_ROLES: ReadonlySet<string> = new Set([
   "team_admin",
   "field_coordinator",
+  "emergency_response_manager",
   "team_member",
 ]);
 
