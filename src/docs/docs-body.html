@@ -4661,6 +4661,48 @@ route as JSON).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</t
     <td><code>mediaUnmatched</code></td>
     <td><code>[String!]!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-groundlinkedpost"><code>GroundLinkedPost</code> <span class="type-badge">object</span></h3><p>A social post linked from a staged message, resolved at ingest so
+reviewers see what was shared, not just a link.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>platform</code></td>
+    <td><code>String!</code></td>
+    <td>Always &quot;x&quot; for now.</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String!</code></td>
+    <td>Canonical post URL.</td>
+  </tr><tr>
+    <td><code>postId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;ok&quot;, or &quot;failed&quot; when the post couldn't be fetched (deleted,
+protected, rate-limited) — see `error`.</td>
+  </tr><tr>
+    <td><code>authorName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>authorHandle</code></td>
+    <td><code>String</code></td>
+    <td>Author's handle without the &quot;@&quot;.</td>
+  </tr><tr>
+    <td><code>text</code></td>
+    <td><code>String</code></td>
+    <td>Post text, phone numbers redacted. Null when the fetch failed.</td>
+  </tr><tr>
+    <td><code>postedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the post was published. Day precision unless fetched via the X API.</td>
+  </tr><tr>
+    <td><code>error</code></td>
+    <td><code>String</code></td>
+    <td>Why the fetch failed, when `status` is &quot;failed&quot;.</td>
+  </tr><tr>
+    <td><code>fetchedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-groundmessage"><code>GroundMessage</code> <span class="type-badge">object</span></h3><p>A staged Signal: a canonical message parsed from a WhatsApp source,
 held in the ground staging tier until its thread is reviewed. Text is
 phone-number-redacted at persistence. senderName is private-tier data and
@@ -4737,6 +4779,12 @@ voice note's media is still being stored.</td>
 clear-pipeline Dagster ground_transcribe asset transcribes it, and
 always null for messages without a voice note. Phone numbers are
 redacted at write time.</td>
+  </tr><tr>
+    <td><code>linkedPosts</code></td>
+    <td><code>[GroundLinkedPost!]!</code></td>
+    <td>Content of X posts linked in the message text (e.g. a post shared
+to the hotline from the X app), fetched at ingest. Empty when the
+message has no such links.</td>
   </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>
@@ -4822,6 +4870,12 @@ because the media hasn't been stored yet.</td>
     <td><code>String</code></td>
     <td>Transcribed text for this message's voice note(s), null until the
 Dagster ground_transcribe asset transcribes them.</td>
+  </tr><tr>
+    <td><code>linkedPosts</code></td>
+    <td><code>[GroundLinkedPost!]!</code></td>
+    <td>Content of X posts linked in the message text (e.g. a post shared
+to the hotline from the X app), fetched at ingest. Empty when the
+message has no such links.</td>
   </tr><tr>
     <td><code>classification</code></td>
     <td><code>String</code></td>

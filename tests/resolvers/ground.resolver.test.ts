@@ -179,6 +179,7 @@ describe("groundMessagesForClassification", () => {
         voiceMediaKeys: [],
         hasVoice: false,
         transcript: null,
+        linkedPosts: [],
         classification: null,
         threadId: "t1",
         enrichFailedAt: null,

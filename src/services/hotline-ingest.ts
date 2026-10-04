@@ -48,6 +48,7 @@ import {
 } from "./whatsapp-export.js";
 import { deriveThreadTitle, type GroundMessageCreate } from "./ground-ingest.js";
 import { detectLanguage } from "../utils/language-detect.js";
+import type { LinkedPost } from "./x-post-extract.js";
 
 /** The slice of a groundSources row the hotline gate judges. */
 export interface HotlineSourceRow {
@@ -82,7 +83,7 @@ export interface HotlineIngestDb {
     }): Promise<HotlineExistingMessage | null>;
     update(args: {
       where: { id: string };
-      data: { mediaKeys: string[] };
+      data: { mediaKeys: string[] } | { linkedPosts: LinkedPost[] };
     }): Promise<unknown>;
   };
   groundThreads: {
@@ -216,6 +217,10 @@ export async function ingestHotlineMessage(options: {
    * content-hash key scheme; returns the S3 key. Injected so tests (and
    * the route) control the transport fetch + S3 dependency. */
   storeMedia: (media: HotlineInboundMedia, index: number) => Promise<string>;
+  /** Resolves social-post links in the (redacted) text — e.g. a shared
+   * X post — to their content (services/x-post-extract.ts). Optional and
+   * best-effort: a throw is logged and the message still ingests. */
+  resolveLinkedPosts?: (text: string) => Promise<LinkedPost[]>;
 }): Promise<HotlineIngestResult> {
   const { db, source, message } = options;
 
@@ -299,10 +304,25 @@ export async function ingestHotlineMessage(options: {
     throw new Error("nested groundMessages create returned no id");
   }
 
-  if (message.media.length > 0) {
-    const mediaKeys = await storeAllMedia();
-    await db.groundMessages.update({ where: { id: groundMessageId }, data: { mediaKeys } });
-  }
+  // Link content and media are independent; run them side by side so the
+  // link fetch doesn't eat into the webhook's media budget.
+  await Promise.all([
+    (async () => {
+      if (message.media.length === 0) return;
+      const mediaKeys = await storeAllMedia();
+      await db.groundMessages.update({ where: { id: groundMessageId }, data: { mediaKeys } });
+    })(),
+    (async () => {
+      if (!options.resolveLinkedPosts) return;
+      try {
+        const linkedPosts = await options.resolveLinkedPosts(text);
+        if (linkedPosts.length === 0) return;
+        await db.groundMessages.update({ where: { id: groundMessageId }, data: { linkedPosts } });
+      } catch (err) {
+        console.warn(`[hotline-ingest] linked-post resolution failed for ${groundMessageId}:`, err);
+      }
+    })(),
+  ]);
 
   return { status: "created", groundMessageId, threadId: thread.id, hasAudio };
 }

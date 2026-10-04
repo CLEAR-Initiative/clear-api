@@ -2136,6 +2136,11 @@ model groundMessages {
   /// original redacted message text is never mutated.
   transcript String?
 
+  /// Content of social posts linked in `text` (e.g. an X post shared to
+  /// the hotline), resolved at ingest by services/x-post-extract.ts —
+  /// LinkedPost[] JSON. Null when the message had no such links.
+  linkedPosts Json? @map("linked_posts")
+
   /// Durable per-stage failure markers, set by clear-pipeline via
   /// markGroundMessagesFailed once a ground drain exhausts its attempts on
   /// the message. A set *FailedAt drops the message out of that drain's

@@ -109,6 +109,11 @@ const envSchema = z.object({
     z.string().min(16).optional(),
   ),
 
+  // Optional X API v2 bearer token. When set, X post links shared to the
+  // hotline are resolved via the API (full long-form text, exact
+  // timestamps); otherwise via the free, unauthenticated oEmbed endpoint.
+  X_API_BEARER_TOKEN: z.preprocess((v) => (v === "" ? undefined : v), z.string().optional()),
+
   // Shared Redis instance (name kept from the pre-Dagster Celery broker;
   // renaming is an infra change, not a code one). Used by redis-cache.ts.
   CELERY_BROKER_URL: z.string().default("redis://localhost:6379/0"),

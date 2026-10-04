@@ -35,6 +35,7 @@ import {
 } from "../services/whatsapp-export.js";
 import { enqueueTranslation } from "../services/translation-queue.js";
 import { isTargetLocale } from "../utils/locales.js";
+import type { LinkedPost } from "../services/x-post-extract.js";
 
 /** Hotline ingest labels each attachment `voice-{i}` or `media-{i}` in
  * mediaRefs (see hotline-ingest.ts). mediaRefs is set when the row is
@@ -45,6 +46,10 @@ const isVoiceRef = (ref: string | undefined) => ref?.startsWith(VOICE_REF_PREFIX
 
 /** True when any of a message's attachments is a voice note. Shared by
  * GroundMessageForClassification (pipeline) and GroundMessage (inbox). */
+/** groundMessages.linkedPosts is nullable JSON written only by hotline
+ * ingest (LinkedPost[]); null or anything non-array reads as none. */
+const linkedPostsOf = (value: unknown): LinkedPost[] =>
+  Array.isArray(value) ? (value as LinkedPost[]) : [];
 const hasVoiceRef = (mediaRefs: string[]) => mediaRefs.some((ref) => isVoiceRef(ref));
 
 /** Callers of the pipeline-facing contract surface (the
@@ -351,6 +356,7 @@ export const groundResolvers = {
         voiceMediaKeys: m.mediaKeys.filter((_key, i) => isVoiceRef(m.mediaRefs[i])),
         hasVoice: hasVoiceRef(m.mediaRefs),
         transcript: m.transcript,
+        linkedPosts: linkedPostsOf(m.linkedPosts),
         classification: m.classification,
         threadId: m.threadId,
         enrichFailedAt: m.enrichFailedAt,
@@ -1199,6 +1205,7 @@ export const groundResolvers = {
      * and the failure markers need no resolver — they are read straight
      * off the row. */
     hasVoice: (parent: { mediaRefs: string[] }) => hasVoiceRef(parent.mediaRefs),
+    linkedPosts: (parent: { linkedPosts?: unknown }) => linkedPostsOf(parent.linkedPosts),
     /** On-demand translation state for `locale`; see
      * requestGroundMessageTranslation. */
     translation: async (

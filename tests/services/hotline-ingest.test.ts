@@ -52,7 +52,7 @@ function makeDb(source: HotlineSourceRow | null) {
       update: async ({ where, data }) => {
         const hit = threads.find((t) => t.messageId === where.id);
         if (!hit) throw new Error(`no message ${where.id}`);
-        hit.message.mediaKeys = data.mediaKeys;
+        Object.assign(hit.message, data);
         return hit.message;
       },
     },
@@ -280,5 +280,55 @@ describe("ingestHotlineMessage", () => {
     expect(result.status).toBe("created");
     if (result.status !== "created") return;
     expect(result.hasAudio).toBe(false);
+  });
+});
+
+describe("ingestHotlineMessage — linked posts", () => {
+  const POST = {
+    platform: "x" as const,
+    url: "https://x.com/someone/status/123",
+    postId: "123",
+    status: "ok" as const,
+    authorName: "Someone",
+    authorHandle: "someone",
+    text: "Shelling reported near the market",
+    postedAt: "2026-10-03T00:00:00.000Z",
+    error: null,
+    fetchedAt: "2026-10-04T00:00:00.000Z",
+  };
+  const storeMedia = async () => "key";
+
+  it("stores resolved posts on the created message, fed the redacted text", async () => {
+    const { db, threads } = makeDb(ACTIVE_HOTLINE);
+    const resolveLinkedPosts = vi.fn(async () => [POST]);
+    const result = await ingestHotlineMessage({
+      db,
+      source: ACTIVE_HOTLINE,
+      message: textMessage({ text: "call +249 111 222 333 https://x.com/someone/status/123" }),
+      pseudonymSecret: SECRET,
+      storeMedia,
+      resolveLinkedPosts,
+    });
+    expect(result.status).toBe("created");
+    expect(threads[0]!.message.linkedPosts).toEqual([POST]);
+    expect(resolveLinkedPosts.mock.calls[0]![0]).not.toContain("111 222 333");
+  });
+
+  it("still ingests when resolution throws", async () => {
+    const { db, threads } = makeDb(ACTIVE_HOTLINE);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await ingestHotlineMessage({
+      db,
+      source: ACTIVE_HOTLINE,
+      message: textMessage(),
+      pseudonymSecret: SECRET,
+      storeMedia,
+      resolveLinkedPosts: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(result.status).toBe("created");
+    expect(threads[0]!.message.linkedPosts).toBeUndefined();
+    warn.mockRestore();
   });
 });

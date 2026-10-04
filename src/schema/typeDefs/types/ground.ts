@@ -151,6 +151,10 @@ export const groundTypeDef = gql`
     always null for messages without a voice note. Phone numbers are
     redacted at write time."""
     transcript: String
+    """Content of X posts linked in the message text (e.g. a post shared
+    to the hotline from the X app), fetched at ingest. Empty when the
+    message has no such links."""
+    linkedPosts: [GroundLinkedPost!]!
     """"field_report" | "news_digest" | "operational" | "chatter"; null
     until the pipeline classification task labels the message."""
     classification: String
@@ -173,6 +177,29 @@ export const groundTypeDef = gql`
     transcribeError: String
     threadId: String
     createdAt: DateTime!
+  }
+
+  """A social post linked from a staged message, resolved at ingest so
+  reviewers see what was shared, not just a link."""
+  type GroundLinkedPost {
+    """Always "x" for now."""
+    platform: String!
+    """Canonical post URL."""
+    url: String!
+    postId: String!
+    """"ok", or "failed" when the post couldn't be fetched (deleted,
+    protected, rate-limited) — see \`error\`."""
+    status: String!
+    authorName: String
+    """Author's handle without the "@"."""
+    authorHandle: String
+    """Post text, phone numbers redacted. Null when the fetch failed."""
+    text: String
+    """When the post was published. Day precision unless fetched via the X API."""
+    postedAt: DateTime
+    """Why the fetch failed, when \`status\` is "failed"."""
+    error: String
+    fetchedAt: DateTime!
   }
 
   """Where a message's on-demand translation stands."""
@@ -239,6 +266,10 @@ export const groundTypeDef = gql`
     """Transcribed text for this message's voice note(s), null until the
     Dagster ground_transcribe asset transcribes them."""
     transcript: String
+    """Content of X posts linked in the message text (e.g. a post shared
+    to the hotline from the X app), fetched at ingest. Empty when the
+    message has no such links."""
+    linkedPosts: [GroundLinkedPost!]!
     """Current label, null while unclassified."""
     classification: String
     """Current thread (placeholder or pipeline-built)."""

@@ -32,6 +32,8 @@
  *   4. Ingest: dedupe on MessageSid, redact, pseudonymize, placeholder
  *      thread, THEN fetch+store media to S3 (ground content-hash keys)
  *      and fill in mediaKeys.
+ *      Concurrently, resolve any shared X post links in the text to the
+ *      post's content (best-effort, never fails the request).
  *   5. Enqueue classification (on create / media backfill) and
  *      transcription (voice media only).
  *   6. Respond with EMPTY TwiML.
@@ -53,6 +55,7 @@ import {
 import { validateTwilioSignature } from "../services/twilio-signature.js";
 import { groundMediaKey } from "../services/ground-ingest.js";
 import { uploadBufferToS3 } from "../services/s3.js";
+import { resolveXPostLinks } from "../services/x-post-extract.js";
 
 const router = Router();
 
@@ -251,6 +254,9 @@ router.post("/", async (req: Request, res: Response) => {
       pseudonymSecret: HOTLINE_PSEUDONYM_SECRET,
       storeMedia: (media, index) =>
         fetchAndStoreTwilioMedia({ groundSourceId: source.id, messageSid, media, index }),
+      // Shared X posts arrive as bare links; store the post's content for
+      // the triage board. Bounded by X_POST_FETCH_TIMEOUT_MS, never fatal.
+      resolveLinkedPosts: (text) => resolveXPostLinks(text, { bearerToken: env.X_API_BEARER_TOKEN }),
     });
 
     respondEmptyTwiml(res);
