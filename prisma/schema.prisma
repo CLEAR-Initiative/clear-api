@@ -57,6 +57,10 @@ enum SignalStatus {
   NEW
   PROCESSED
   FAILED
+  /// Already grouped into event(s), then changed (content revision or
+  /// retraction flip). The drain re-aggregates its events from their live
+  /// members, then marks it PROCESSED. Describes pending work only.
+  NEEDS_RECOMPUTE
 }
 
 /// Crisis enrichment status — the drain marker for the crisis enrichment
@@ -615,6 +619,16 @@ model signals {
   contentHash String? @map("content_hash")
   lastRevisedAt DateTime? @map("last_revised_at")
 
+  /// Superseded upstream. Reversible and independent of `status`: keeps its
+  /// signal_to_events links but is excluded from event aggregates and the NEW
+  /// drain queue. NOT NULL because the queue filters `retracted = false`,
+  /// which a NULL would silently fail.
+  retracted Boolean @default(false)
+  /// Incremented on every effective change via updateSignalContent.
+  /// Compare-and-set token: the drain marks a signal processed only if the
+  /// revision is unchanged since it fetched the row.
+  revision  Int     @default(0)
+
   url         String?
   title       String?
   description String?
@@ -743,9 +757,12 @@ model events {
   /// DTM figures are district-wide/event-agnostic and would misattribute a
   /// whole district's total to one event.
   populationDisplaced   BigInt?                 @map("population_displaced")
-  /// Aggregated casualties for this event (max across constituent signals).
+  /// Aggregated casualties for this event (sum across constituent signals).
   casualties            Int?
   rank                  Float
+  /// Hash of the live (non-retracted) member signal ids at the last LLM
+  /// rewrite. Lets the recompute skip the rewrite when membership is unchanged.
+  rewriteMembersHash    String?                 @map("rewrite_members_hash")
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]
   userComments          userComments[]

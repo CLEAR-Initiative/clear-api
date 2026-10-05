@@ -543,8 +543,18 @@ describe("Event.signals", () => {
     await eventResolvers.Event.signals({ id: "e1" }, {}, ctx, infoWithSelections(["source"]));
     const include = findMany.mock.calls[0][0].include.signal.include;
     expect(include.generalLocation).toBeUndefined();
-    expect(findMany.mock.calls[0][0].where).toEqual({ eventId: "e1" });
+    expect(findMany.mock.calls[0][0].where).toEqual({ eventId: "e1", signal: { retracted: false } });
     expect(findMany.mock.calls[0][0].take).toBe(50);
+  });
+
+  it("hides retracted signals on the pre-loaded fast path", () => {
+    const ctx = buildContext(VIEWER, {});
+    const parent = {
+      id: "e1",
+      signalEvents: [{ signal: { id: "s1", retracted: false } }, { signal: { id: "s2", retracted: true } }],
+    };
+    const result = eventResolvers.Event.signals(parent, {}, ctx, infoWithSelections([]));
+    expect(result).toEqual([{ id: "s1", retracted: false }]);
   });
 
   it("adds location includes when the selection requests a signal location", async () => {

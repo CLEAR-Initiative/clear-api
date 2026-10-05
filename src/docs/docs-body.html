@@ -234,9 +234,22 @@ like signals when teamId is given; status defaults to &quot;consideration&quot;.
   </tr><tr>
     <td><code>pendingSignals</code></td>
     <td><code>[Signal!]!</code></td>
-    <td>Signals awaiting downstream processing (status = NEW), oldest-first — the
-Dagster event-driven drain. `source` filters by DataSource name (e.g.
-&quot;dataminr&quot;); `first` caps the batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
+    <td>Signals awaiting their first grouping (status = NEW, not retracted, not
+yet linked to any event), oldest-first — the Dagster event-driven drain.
+`source` filters by DataSource name (e.g. &quot;dataminr&quot;); `first` caps the
+batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
+  </tr><tr>
+    <td><code>pendingRecomputes</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>Signals whose events must be re-aggregated: status NEEDS_RECOMPUTE, or
+NEW but already linked to an event. Includes retracted rows, since removing
+them from event totals is the work. Oldest-first; `first` caps the batch
+(default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>eventMembers</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>An event's live (non-retracted) member signals, newest first. Uncapped
+unless `first` is given. Admin/pipeline only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>first: Int</code></span></div></td>
   </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
@@ -894,9 +907,11 @@ pipeline only. Returns the number of rows affected.<div class="field-args"><span
   </tr><tr id="mutation-marksignalsprocessed">
     <td><code>markSignalsProcessed</code></td>
     <td><code>Int!</code></td>
-    <td>Mark signals as done for the Dagster drain — the downstream pipeline calls
-this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
-and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
+    <td>Mark signals done for the Dagster drain, after classify→group→alert or
+after recomputing a changed signal's events. Sets status (PROCESSED, or
+FAILED) and processedAt. Pass exactly one of `ids` (unconditional) or
+`items` (compare-and-set: a row is updated only if its revision still
+matches). Returns rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
   </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>
@@ -926,16 +941,21 @@ creating an isolated event. Admin/pipeline only.<div class="field-args"><span cl
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>
-    <td>Apply an in-place content revision to an existing signal (e.g. IDMC's
-IDU rows being revised upstream — same id, changed figures/role/dates/
-location). Only writes when input.contentHash differs from the stored
-contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
-unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
-only.<div class="field-args"><span class="arg"><code>input: UpdateSignalContentInput!</code></span></div></td>
+    <td>Apply an in-place change to a signal, identified by `id` or by
+(`sourceId`, `externalId`). Content is written when contentHash differs,
+`retracted` when the flag differs; either bumps `revision`, stamps
+lastRevisedAt and moves a grouped signal to NEEDS_RECOMPUTE. A changed
+`rawS3Key` alone is metadata-only; a no-op re-send is ignored. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: UpdateSignalContentInput!</code></span></div></td>
   </tr><tr id="mutation-deletesignal">
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-seteventaggregates">
+    <td><code>setEventAggregates</code></td>
+    <td><code>Event!</code></td>
+    <td>Overwrite an event's aggregates with values recomputed from scratch from
+its live (non-retracted) member signals. Absent fields are left unchanged;
+explicit nulls clear them. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span></div></td>
   </tr><tr id="mutation-submitsignallocationchallenge">
     <td><code>submitSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
@@ -1564,9 +1584,11 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
-NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
-alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
+classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
+grouped, then changed (content revision or retraction flip), so its events
+must be re-aggregated from their live members.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>NEEDS_RECOMPUTE</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
 `YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -1975,7 +1997,7 @@ ISO-8601; null/omitted when no onset could be resolved.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float!</code></td>
@@ -2339,6 +2361,39 @@ window. Chunks whose time_range overlaps the window match.</p><table class="ref-
   </tr><tr>
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-eventaggregatesinput"><code>EventAggregatesInput</code> <span class="type-badge">input</span></h3><p>Absolute event aggregates from the pipeline's recompute. Absent fields are
+left unchanged; explicit nulls clear them.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>casualties</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationAffected</code></td>
+    <td><code>String</code></td>
+    <td>BigInt as a decimal string.</td>
+  </tr><tr>
+    <td><code>populationDisplaced</code></td>
+    <td><code>String</code></td>
+    <td>BigInt as a decimal string.</td>
+  </tr><tr>
+    <td><code>rank</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rewriteMembersHash</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventspageinput"><code>EventsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
@@ -2774,6 +2829,14 @@ Admin only — a non-admin passing `true` is rejected.</td>
     <td><code>metadata</code></td>
     <td><code>JSON</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-signalrevisioninput"><code>SignalRevisionInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>revision</code></td>
+    <td><code>Int!</code></td>
+    <td>The revision the drain fetched; the row is marked only if it still matches.</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -3032,7 +3095,7 @@ ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
@@ -3138,14 +3201,31 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
   </tr></tbody></table><h3 id="type-updatesignalcontentinput"><code>UpdateSignalContentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
-    <td><code>String!</code></td>
+    <td><code>String</code></td>
+    <td>The signal's id. Alternatively use sourceId + externalId.</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>With externalId: the signal's natural key, unique per source.</td>
+  </tr><tr>
+    <td><code>externalId</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>contentHash</code></td>
     <td><code>String!</code></td>
     <td>Fingerprint of the incoming raw payload. Compared against the
-signal's stored contentHash; the write (and lastRevisedAt) only
-happens when they differ.</td>
+signal's stored contentHash; content fields are written only when they
+differ.</td>
+  </tr><tr>
+    <td><code>retracted</code></td>
+    <td><code>Boolean</code></td>
+    <td>Superseded upstream. Null or absent leaves the stored flag unchanged.</td>
+  </tr><tr>
+    <td><code>rawS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Pointer to the raw payload blob in the S3 data lake. Null or absent
+leaves it unchanged; a change alone is metadata-only (no revision bump).</td>
   </tr><tr>
     <td><code>rawData</code></td>
     <td><code>JSON!</code></td>
@@ -4468,15 +4548,20 @@ Requires any authenticated content reader.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>rewriteMembersHash</code></td>
+    <td><code>String</code></td>
+    <td>Hash of the live member signal ids at the last LLM rewrite. Lets the
+recompute skip the rewrite when membership is unchanged.</td>
+  </tr><tr>
     <td><code>signals</code></td>
     <td><code>[Signal!]!</code></td>
-    <td>Signals linked to this event.</td>
+    <td>Signals linked to this event, excluding retracted ones.</td>
   </tr><tr>
     <td><code>alerts</code></td>
     <td><code>[Alert!]!</code></td>
@@ -5876,8 +5961,19 @@ after creation.</td>
   </tr><tr>
     <td><code>lastRevisedAt</code></td>
     <td><code>DateTime</code></td>
-    <td>When the API last applied an in-place content revision to this signal
-(e.g. an IDMC IDU row revised upstream). Null if never revised.</td>
+    <td>When the signal last had a content revision or retraction flip via
+updateSignalContent. Not set by the first contentHash seed. Null if never
+revised.</td>
+  </tr><tr>
+    <td><code>retracted</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Superseded upstream. Reversible. A retracted signal keeps its event
+links but is excluded from event aggregates and the NEW drain queue.</td>
+  </tr><tr>
+    <td><code>revision</code></td>
+    <td><code>Int!</code></td>
+    <td>Count of effective changes via updateSignalContent. Compare-and-set
+token for markSignalsProcessed(items:).</td>
   </tr><tr>
     <td><code>rawS3Key</code></td>
     <td><code>String</code></td>

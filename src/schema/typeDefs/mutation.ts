@@ -129,10 +129,12 @@ export const mutationTypeDef = gql`
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
 
-    """Mark signals as done for the Dagster drain — the downstream pipeline calls
-    this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
-    and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only."""
-    markSignalsProcessed(ids: [String!]!, status: SignalStatus): Int!
+    """Mark signals done for the Dagster drain, after classify→group→alert or
+    after recomputing a changed signal's events. Sets status (PROCESSED, or
+    FAILED) and processedAt. Pass exactly one of \`ids\` (unconditional) or
+    \`items\` (compare-and-set: a row is updated only if its revision still
+    matches). Returns rows updated. Idempotent. Admin/pipeline only."""
+    markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
 
     """Create a manual signal from a field officer, partner, or government source.
     Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
@@ -156,16 +158,20 @@ export const mutationTypeDef = gql`
     creating an isolated event. Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
-    """Apply an in-place content revision to an existing signal (e.g. IDMC's
-    IDU rows being revised upstream — same id, changed figures/role/dates/
-    location). Only writes when input.contentHash differs from the stored
-    contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
-    unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
-    only."""
+    """Apply an in-place change to a signal, identified by \`id\` or by
+    (\`sourceId\`, \`externalId\`). Content is written when contentHash differs,
+    \`retracted\` when the flag differs; either bumps \`revision\`, stamps
+    lastRevisedAt and moves a grouped signal to NEEDS_RECOMPUTE. A changed
+    \`rawS3Key\` alone is metadata-only; a no-op re-send is ignored. Admin/pipeline only."""
     updateSignalContent(input: UpdateSignalContentInput!): Signal!
 
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
+
+    """Overwrite an event's aggregates with values recomputed from scratch from
+    its live (non-retracted) member signals. Absent fields are left unchanged;
+    explicit nulls clear them. Admin/pipeline only."""
+    setEventAggregates(id: String!, input: EventAggregatesInput!): Event!
 
     """Create or replace the open (consideration) Location challenge for a Signal.
     Auth: any approved logged-in team member who can view the Signal. Queue only —
@@ -848,12 +854,42 @@ export const mutationTypeDef = gql`
     pointName: String
   }
 
-  input UpdateSignalContentInput {
+  input SignalRevisionInput {
     id: String!
+    """The revision the drain fetched; the row is marked only if it still matches."""
+    revision: Int!
+  }
+
+  """Absolute event aggregates from the pipeline's recompute. Absent fields are
+  left unchanged; explicit nulls clear them."""
+  input EventAggregatesInput {
+    severity: Int
+    casualties: Int
+    """BigInt as a decimal string."""
+    populationAffected: String
+    """BigInt as a decimal string."""
+    populationDisplaced: String
+    rank: Float!
+    title: String
+    description: String
+    rewriteMembersHash: String
+  }
+
+  input UpdateSignalContentInput {
+    """The signal's id. Alternatively use sourceId + externalId."""
+    id: String
+    """With externalId: the signal's natural key, unique per source."""
+    sourceId: String
+    externalId: String
     """Fingerprint of the incoming raw payload. Compared against the
-    signal's stored contentHash; the write (and lastRevisedAt) only
-    happens when they differ."""
+    signal's stored contentHash; content fields are written only when they
+    differ."""
     contentHash: String!
+    """Superseded upstream. Null or absent leaves the stored flag unchanged."""
+    retracted: Boolean
+    """Pointer to the raw payload blob in the S3 data lake. Null or absent
+    leaves it unchanged; a change alone is metadata-only (no revision bump)."""
+    rawS3Key: String
     rawData: JSON!
     url: String
     title: String
@@ -892,7 +928,7 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
-    """Aggregated casualties for the event (max across constituent signals)."""
+    """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
@@ -927,7 +963,7 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
-    """Aggregated casualties for the event (max across constituent signals)."""
+    """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float
   }

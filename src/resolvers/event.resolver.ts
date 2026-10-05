@@ -93,6 +93,32 @@ interface UpdateEventInput {
   signalIds?: string[];
 }
 
+/** Absent = leave unchanged; explicit null = clear (`?? undefined` would
+ *  swallow the null, which is why updateEvent can't be used for this). */
+interface EventAggregatesInput {
+  severity?: number | null;
+  casualties?: number | null;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
+  rank: number;
+  title?: string | null;
+  description?: string | null;
+  rewriteMembersHash?: string | null;
+}
+
+/** BigInt column from its decimal-string input, keeping absent (undefined)
+ *  and cleared (null) distinct. */
+function bigIntOrKeep(value: string | null | undefined, field: string): bigint | null | undefined {
+  if (value === undefined || value === null) return value;
+  // BigInt() alone would turn "" into 0n and "0x10" into 16n.
+  if (!/^-?\d+$/.test(value)) {
+    throw new GraphQLError(`${field} must be a decimal integer string`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return BigInt(value);
+}
+
 export const eventResolvers = {
   Query: {
     events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
@@ -335,6 +361,38 @@ export const eventResolvers = {
       }
 
       return event;
+    },
+
+    // Overwrites an event's aggregates with values the pipeline recomputed from
+    // its live members. Absent fields are kept; explicit nulls clear them.
+    setEventAggregates: async (
+      _parent: unknown,
+      args: { id: string; input: EventAggregatesInput },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const { id, input } = args;
+
+      const existing = await context.prisma.events.findUnique({ where: { id } });
+      if (!existing) {
+        throw new GraphQLError("Event not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return context.prisma.events.update({
+        where: { id },
+        data: {
+          severity: input.severity,
+          casualties: input.casualties,
+          populationAffected: bigIntOrKeep(input.populationAffected, "populationAffected"),
+          populationDisplaced: bigIntOrKeep(input.populationDisplaced, "populationDisplaced"),
+          rank: input.rank,
+          title: input.title,
+          description: input.description,
+          rewriteMembersHash: input.rewriteMembersHash,
+        },
+      });
     },
 
     updateEvent: async (
@@ -752,8 +810,13 @@ export const eventResolvers = {
       info: import("graphql").GraphQLResolveInfo,
     ) => {
       // Fast path: pre-loaded from a deeper include.
+      // Retracted signals keep their link (retraction is reversible) but were
+      // superseded upstream, so they are hidden like they are excluded from
+      // the event's aggregates.
       if (parent.signalEvents) {
-        return parent.signalEvents.map((l) => l.signal);
+        return parent.signalEvents
+          .map((l) => l.signal)
+          .filter((s) => (s as { retracted?: boolean }).retracted !== true);
       }
       // Inspect the GraphQL selection to decide whether to include
       // signal-locations + their translations. /detection's events tab
@@ -791,7 +854,7 @@ export const eventResolvers = {
       };
       return context.prisma.signalEvents
         .findMany({
-          where: { eventId: parent.id },
+          where: { eventId: parent.id, signal: { retracted: false } },
           include: { signal: { include: signalInclude } },
           take: 50,
           // Intentionally no orderBy: ordering by signal.publishedAt

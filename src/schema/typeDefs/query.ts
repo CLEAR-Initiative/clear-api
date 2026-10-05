@@ -30,10 +30,21 @@ export const queryTypeDef = gql`
     like signals when teamId is given; status defaults to "consideration"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
 
-    """Signals awaiting downstream processing (status = NEW), oldest-first — the
-    Dagster event-driven drain. \`source\` filters by DataSource name (e.g.
-    "dataminr"); \`first\` caps the batch (default 100, max 500). Admin/pipeline only."""
+    """Signals awaiting their first grouping (status = NEW, not retracted, not
+    yet linked to any event), oldest-first — the Dagster event-driven drain.
+    \`source\` filters by DataSource name (e.g. "dataminr"); \`first\` caps the
+    batch (default 100, max 500). Admin/pipeline only."""
     pendingSignals(first: Int, source: String): [Signal!]!
+
+    """Signals whose events must be re-aggregated: status NEEDS_RECOMPUTE, or
+    NEW but already linked to an event. Includes retracted rows, since removing
+    them from event totals is the work. Oldest-first; \`first\` caps the batch
+    (default 100, max 500). Admin/pipeline only."""
+    pendingRecomputes(first: Int): [Signal!]!
+
+    """An event's live (non-retracted) member signals, newest first. Uncapped
+    unless \`first\` is given. Admin/pipeline only."""
+    eventMembers(eventId: String!, first: Int): [Signal!]!
 
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean): [Event!]!

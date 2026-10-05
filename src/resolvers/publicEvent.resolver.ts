@@ -219,7 +219,8 @@ export const publicEventResolvers = {
       // fields, deduped by location id). Polygon-only locations are
       // dropped via the `ST_GeometryType = 'ST_Point'` filter below.
       const signalLinks = await context.prisma.signalEvents.findMany({
-        where: { eventId },
+        // Retracted signals were superseded upstream: no map point for them.
+        where: { eventId, signal: { retracted: false } },
         select: {
           signal: {
             select: {

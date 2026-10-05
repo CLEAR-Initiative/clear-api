@@ -38,7 +38,10 @@ describe("pendingSignals", () => {
     await signalResolvers.Query.pendingSignals({}, { first: 9999, source: "dataminr" }, context);
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { status: "NEW", isDummy: false, source: { name: "dataminr" } },
+      where: {
+        status: "NEW", retracted: false, signalEvents: { none: {} },
+        isDummy: false, source: { name: "dataminr" },
+      },
       orderBy: { publishedAt: "asc" },
       take: 500, // clamped down from 9999
     });
@@ -48,7 +51,7 @@ describe("pendingSignals", () => {
     const findMany = vi.fn(async () => []);
     await signalResolvers.Query.pendingSignals({}, {}, ctx({ signals: { findMany } }));
     expect(findMany).toHaveBeenCalledWith({
-      where: { status: "NEW", isDummy: false },
+      where: { status: "NEW", retracted: false, signalEvents: { none: {} }, isDummy: false },
       orderBy: { publishedAt: "asc" },
       take: 100,
     });
@@ -122,6 +125,150 @@ describe("markSignalsProcessed", () => {
       signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a"] }, ctx({ signals: { updateMany } }, "viewer")),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects status=NEEDS_RECOMPUTE as a mark target (API-U-46)", async () => {
+    const updateMany = vi.fn();
+    const $transaction = vi.fn();
+    const p = { signals: { updateMany }, $transaction };
+    await expect(
+      signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a"], status: "NEEDS_RECOMPUTE" }, ctx(p)),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(
+      signalResolvers.Mutation.markSignalsProcessed(
+        {}, { items: [{ id: "a", revision: 1 }], status: "NEEDS_RECOMPUTE" }, ctx(p),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect($transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A1b. markSignalsProcessed(items) — compare-and-set ─────────────────────
+
+function itemsPrisma(counts: number[]) {
+  const updateMany = vi.fn((_args: unknown) => ({ __op: true, count: counts[updateMany.mock.calls.length - 1] ?? 0 }));
+  const $transaction = vi.fn(async (ops: { count: number }[]) => ops.map((o) => ({ count: o.count })));
+  return { signals: { updateMany }, $transaction };
+}
+
+describe("markSignalsProcessed items (CAS)", () => {
+  const mark = signalResolvers.Mutation.markSignalsProcessed;
+
+  it("runs one $transaction with a per-item where {id, revision} and sums counts (API-U-41)", async () => {
+    const p = itemsPrisma([1, 1, 0]);
+    const n = await mark(
+      {}, { items: [{ id: "a", revision: 2 }, { id: "b", revision: 0 }, { id: "c", revision: 5 }] }, ctx(p),
+    );
+    expect(n).toBe(2);
+    expect(p.$transaction).toHaveBeenCalledTimes(1);
+    expect(p.$transaction.mock.calls[0][0]).toHaveLength(3);
+    expect(p.signals.updateMany).toHaveBeenCalledTimes(3);
+    const calls = p.signals.updateMany.mock.calls.map((c) => c[0] as { where: unknown; data: Record<string, unknown> });
+    expect(calls.map((c) => c.where)).toEqual([
+      { id: "a", revision: 2 }, { id: "b", revision: 0 }, { id: "c", revision: 5 },
+    ]);
+    for (const c of calls) {
+      expect(c.data.status).toBe("PROCESSED");
+      expect(c.data.processedAt).toBeInstanceOf(Date);
+    }
+    // the where is exactly {id, revision}: no status condition
+    expect(Object.keys(calls[0].where as object).sort()).toEqual(["id", "revision"]);
+  });
+
+  it("a stale item (revision moved) is a no-op returning 0 (API-U-42)", async () => {
+    const p = itemsPrisma([0]);
+    expect(await mark({}, { items: [{ id: "a", revision: 1 }] }, ctx(p))).toBe(0);
+  });
+
+  it("rejects ids + items together (API-U-43)", async () => {
+    const p = itemsPrisma([1]);
+    await expect(
+      mark({}, { ids: ["a"], items: [{ id: "a", revision: 0 }] }, ctx(p)),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(p.signals.updateMany).not.toHaveBeenCalled();
+    expect(p.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects neither ids nor items; empty items returns 0 without a DB call (API-U-44)", async () => {
+    const p = itemsPrisma([]);
+    await expect(mark({}, {}, ctx(p))).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(mark({}, { ids: null, items: null }, ctx(p))).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(await mark({}, { items: [] }, ctx(p))).toBe(0);
+    expect(p.$transaction).not.toHaveBeenCalled();
+    expect(p.signals.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts FAILED and rejects NEW for items (API-U-45)", async () => {
+    const p = itemsPrisma([1]);
+    await mark({}, { items: [{ id: "a", revision: 1 }], status: "FAILED" }, ctx(p));
+    expect((p.signals.updateMany.mock.calls[0][0] as { data: { status: string } }).data.status).toBe("FAILED");
+    const q = itemsPrisma([1]);
+    await expect(
+      mark({}, { items: [{ id: "a", revision: 1 }], status: "NEW" }, ctx(q)),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(q.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("roles: pipeline ok, viewer and anonymous rejected (API-U-47)", async () => {
+    const ok = itemsPrisma([1]);
+    expect(await mark({}, { items: [{ id: "a", revision: 1 }] }, ctx(ok, "pipeline"))).toBe(1);
+    for (const role of ["viewer", null]) {
+      const p = itemsPrisma([1]);
+      await expect(mark({}, { items: [{ id: "a", revision: 1 }] }, ctx(p, role))).rejects.toBeInstanceOf(GraphQLError);
+      expect(p.$transaction).not.toHaveBeenCalled();
+    }
+  });
+});
+
+// ─── A1c. pendingRecomputes ──────────────────────────────────────────────────
+
+describe("pendingRecomputes", () => {
+  const q = signalResolvers.Query.pendingRecomputes;
+  const expectedWhere = {
+    isDummy: false,
+    OR: [{ status: "NEEDS_RECOMPUTE" }, { status: "NEW", signalEvents: { some: {} } }],
+  };
+
+  it("uses the exact where, a stable orderBy and defaults take to 100 (API-U-51)", async () => {
+    const findMany = vi.fn(async () => []);
+    await q({}, {}, ctx({ signals: { findMany } }));
+    expect(findMany).toHaveBeenCalledWith({
+      where: expectedWhere,
+      orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
+      take: 100,
+    });
+    expect(findMany.mock.calls[0][0].where).not.toHaveProperty("retracted");
+  });
+
+  it.each([[9999, 500], [0, 1], [-5, 1], [7, 7], [null, 100]])("clamps first=%s to %s", async (first, take) => {
+    const findMany = vi.fn(async () => []);
+    await q({}, { first }, ctx({ signals: { findMany } }));
+    expect(findMany.mock.calls[0][0].take).toBe(take);
+  });
+
+  it("roles: admin and pipeline ok, viewer and anonymous rejected (API-U-52)", async () => {
+    for (const role of ["admin", "pipeline"]) {
+      const findMany = vi.fn(async () => []);
+      await q({}, {}, ctx({ signals: { findMany } }, role));
+      expect(findMany).toHaveBeenCalled();
+    }
+    for (const role of ["viewer", null]) {
+      const findMany = vi.fn();
+      await expect(q({}, {}, ctx({ signals: { findMany } }, role))).rejects.toBeInstanceOf(GraphQLError);
+      expect(findMany).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe("pendingSignals (extra)", () => {
+  it("clamps first to [1, 500] and rejects anonymous (API-U-50/52)", async () => {
+    const findMany = vi.fn(async () => []);
+    await signalResolvers.Query.pendingSignals({}, { first: 0 }, ctx({ signals: { findMany } }));
+    expect(findMany.mock.calls[0][0].take).toBe(1);
+    await expect(
+      signalResolvers.Query.pendingSignals({}, {}, ctx({ signals: { findMany } }, null)),
+    ).rejects.toBeInstanceOf(GraphQLError);
   });
 });
 
