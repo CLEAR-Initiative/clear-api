@@ -1,8 +1,7 @@
 /**
- * Schema/contract tests for the signal retraction + recompute surface, run
- * through a real ApolloServer (the pipeline's HTTP path). The pipeline's query
- * strings are mirrored below; keep in sync with clear-pipeline's
- * providers/clear_api.py. DB-FREE: Prisma is a `vi.fn()` mock.
+ * Schema/contract tests for the retraction + recompute surface through a real ApolloServer.
+ * Query strings mirror clear-pipeline's providers/clear_api.py; keep them in sync.
+ * DB-FREE: Prisma is a `vi.fn()` mock.
  */
 import { ApolloServer } from "@apollo/server";
 import { describe, expect, it, vi } from "vitest";

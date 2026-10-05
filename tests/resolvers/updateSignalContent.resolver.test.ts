@@ -1,14 +1,7 @@
 /**
- * Tests for updateSignalContent — applies an in-place change (content
- * revision and/or retraction flip and/or raw blob pointer move) to an existing
- * signal, identified by id or by (sourceId, externalId).
- *
- * DB-FREE: `context.prisma` is a STATEFUL mock store shared by the resolvers
- * under test. findUnique returns a copy of the stored row (+ `_count` when
- * asked); updateMany matches where {id, revision, status} against the stored
- * row, applies `data` (incl. `{increment: n}`) and returns {count}. A hook
- * lets a test run code before updateMany to simulate a concurrent drain.
- * `createPointLocation` (the PostGIS dependency) is mocked.
+ * Tests for updateSignalContent. DB-FREE: a STATEFUL Prisma mock whose updateMany
+ * honours the {id, revision, status} compare-and-set; a hook runs before it to
+ * simulate a concurrent drain. `createPointLocation` (PostGIS) is mocked.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GraphQLError } from "graphql";

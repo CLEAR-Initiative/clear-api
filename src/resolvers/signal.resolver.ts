@@ -134,10 +134,8 @@ type SignalStatusValue = "NEW" | "PROCESSED" | "FAILED" | "NEEDS_RECOMPUTE";
  *  not yet marked still needs its events recomputed. FAILED is terminal. */
 export function statusAfterChange(current: SignalStatusValue, linked: boolean): SignalStatusValue {
   if (current === "FAILED") return "FAILED";
-  // Unlinked means never grouped (or dropped below the relevance threshold,
-  // which still marks PROCESSED): there are no events to recompute, so the
-  // recompute lane would just re-mark it. Back to NEW so a revision that
-  // makes it relevant goes through classification again.
+  // Unlinked = never grouped, or dropped as irrelevant (still PROCESSED): no events to
+  // recompute. NEW sends a revision that makes it relevant back through classification.
   if (!linked) return "NEW";
   return "NEEDS_RECOMPUTE";
 }

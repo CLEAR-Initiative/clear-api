@@ -1,14 +1,7 @@
 /**
- * Integration tests (real Postgres) for the signal retraction / recompute
- * contract: updateSignalContent, markSignalsProcessed, pendingSignals,
- * pendingRecomputes, eventMembers, setEventAggregates.
- *
- * The DB-free suites stub Prisma, so they can't prove the `signalEvents`
- * relation filters, the compare-and-set races, or the column defaults. These
- * run them for real.
- *
- * Self-seeding: every row hangs off a fresh data source / event prefixed with
- * a per-run id and is deleted in afterAll.
+ * Integration tests (real Postgres) for the retraction / recompute contract: what the
+ * Prisma stubs can't prove (`signalEvents` relation filters, compare-and-set races,
+ * column defaults). Rows hang off a per-run data source / event, deleted in afterAll.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -151,9 +144,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── Column defaults ───────────────────────────────────────────────────────
 
   it("API-I-01 backfill defaults: a row inserted without the new columns reads retracted=false, revision=0, status NEW", async () => {
-    // Case: an IDMC signal like 'idu 1234' written by the old code path
-    // (createSignal, never heard of retraction). Raw INSERT names none of the
-    // new columns, as a pre-migration writer would.
+    // Raw INSERT naming neither `retracted` nor `revision`: the column defaults must apply.
     const id = `${RUN}-legacy`;
     await prisma.$executeRaw`
       INSERT INTO signals (id, source_id, external_id, raw_data, published_at, collected_at)
@@ -168,11 +159,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── Queues ────────────────────────────────────────────────────────────────
 
   it("API-I-02 pendingSignals returns only first-grouping candidates (excludes retracted and already-linked)", async () => {
-    // Case: three NEW signals from one source.
-    //   plain      — new report, never grouped            -> returned
-    //   retracted  — IDMC withdrew it before grouping     -> hidden
-    //   linked     — drain linked it to 'Flood in Nyala' but crashed before marking it -> hidden
-    //                (belongs to the recompute lane, not a second grouping)
+    // `linked`: the drain linked it but crashed before marking it. It belongs to the
+    // recompute lane, not a second grouping.
     const ev = await seedEvent();
     const plain = await seedSignal();
     const retracted = await seedSignal({ retracted: true });
@@ -186,13 +174,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-03 pendingRecomputes returns NEEDS_RECOMPUTE and NEW-but-linked rows (retracted too); skips the rest", async () => {
-    // Case: six signals.
-    //   needs        NEEDS_RECOMPUTE, linked                -> returned (a revised figure)
-    //   needsRetr    NEEDS_RECOMPUTE, retracted, linked     -> returned (removing it IS the work)
-    //   newLinked    NEW, linked, retracted                 -> returned (change landed mid-grouping)
-    //   newPlain     NEW, unlinked                          -> NOT (first-grouping lane)
-    //   processed    PROCESSED, nothing pending             -> NOT
-    //   failed       FAILED                                 -> NOT (terminal, known issue #9)
+    // Retracted rows are returned: removing them from event totals is the work.
+    // newLinked: a change landed mid-grouping. newPlain belongs to the first-grouping lane.
     const ev = await seedEvent();
     const needs = await seedSignal({ status: "NEEDS_RECOMPUTE" });
     const needsRetr = await seedSignal({ status: "NEEDS_RECOMPUTE", retracted: true });
@@ -208,9 +191,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-04 pendingRecomputes is oldest-first with a stable id tie-break, and `first` bounds it", async () => {
-    // Case: three NEEDS_RECOMPUTE rows published 1980-01-01 00:00:01, :02, :02
-    // (the last two tie on publishedAt). Asking first=2 must give the two
-    // oldest, ties broken by id ascending, so a drain never skips or repeats.
+    // The last two tie on publishedAt: ties break by id ascending so a drain never
+    // skips or repeats a row across batches.
     const base = new Date("1980-01-01T00:00:00Z");
     const a = await seedSignal({ status: "NEEDS_RECOMPUTE", publishedAt: new Date(base.getTime() + 1000) });
     const b = await seedSignal({ status: "NEEDS_RECOMPUTE", publishedAt: new Date(base.getTime() + 2000) });
@@ -225,10 +207,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── updateSignalContent ───────────────────────────────────────────────────
 
   it("API-I-05 retraction with an UNCHANGED hash is written: PROCESSED+linked -> NEEDS_RECOMPUTE, revision+1, link kept", async () => {
-    // Case: IDMC record 'idu 5678' (hash h1) was grouped into 'Flood in
-    // Nyala' and marked PROCESSED. IDMC now supersedes it; gx resends the same
-    // content hash h1 with retracted=true, keyed by (sourceId, externalId) like
-    // gx does (gold never has the cuid).
+    // Keyed by (sourceId, externalId) as gx sends it: gold never has the cuid.
     const ev = await seedEvent();
     const sig = await seedSignal({ status: "PROCESSED" });
     await link(sig.id, ev.id);
@@ -247,9 +226,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-06 un-retract works: the flag flips back and the row is queued for recompute again", async () => {
-    // Case: 'idu 5678' was retracted (NEEDS_RECOMPUTE), the drain recomputed
-    // and marked it PROCESSED; then IDMC reverses itself (the 'reversal'
-    // scenario): same hash h1, retracted=false.
+    // IDMC reverses a retraction already recomputed: same hash, retracted=false.
     const ev = await seedEvent();
     const sig = await seedSignal({ status: "PROCESSED", retracted: true, revision: 1 });
     await link(sig.id, ev.id);
@@ -263,10 +240,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-07 status transitions on a content revision: FAILED stays FAILED, unlinked NEW stays NEW, linked NEW -> NEEDS_RECOMPUTE", async () => {
-    // Case: IDMC revises the displacement figure (hash h1 -> h2) on three rows.
-    //   failed    FAILED (e.g. unknown_source)       -> FAILED (terminal)
-    //   freshNew  NEW, never linked                  -> NEW (first grouping will see the new content)
-    //   newLinked NEW, linked by a drain mid-run     -> NEEDS_RECOMPUTE
+    // freshNew stays NEW: its first grouping will see the new content.
     const ev = await seedEvent();
     const failed = await seedSignal({ status: "FAILED" });
     const freshNew = await seedSignal();
@@ -289,11 +263,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-08 revision / lastRevisedAt rules: first hash seed and a rawS3Key-only change are not revisions; a no-op resend writes nothing", async () => {
-    // Case A: a legacy gx row has NULL contentHash. First resend seeds h1:
-    //         revision +1, but lastRevisedAt stays NULL (no baseline to revise).
-    // Case B: same hash, but the blob moved to a new S3 key (IDMC changed the
-    //         record's created_at day): key written, revision/status untouched.
-    // Case C: exact same payload again: row returned unchanged, no write.
+    // A: NULL stored hash; the seed bumps revision but not lastRevisedAt (no baseline).
+    // B: blob moved (IDMC changed the record's created_at day). C: identical resend.
     const ev = await seedEvent();
     const seed = await seedSignal({ contentHash: null, status: "PROCESSED" });
     await link(seed.id, ev.id);
@@ -319,12 +290,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-09 RACE: drain links and marks the row between the update's read and write -> update re-reads and lands on NEEDS_RECOMPUTE", async () => {
-    // Case: IDMC revises 'idu 9001' (h1 -> h2). updateSignalContent reads it as
-    // NEW and unlinked (would write NEW). Before its write, the drain groups
-    // it into 'Flood in Nyala' and marks it PROCESSED with the OLD content.
-    // Without the compare-and-set the update would leave PROCESSED/h1-derived
-    // totals forever; with it, the write fails, re-reads (PROCESSED, linked)
-    // and writes NEEDS_RECOMPUTE.
+    // The update reads NEW/unlinked, then the drain groups the row from h1 content.
+    // Without the compare-and-set, PROCESSED would keep h1-derived totals forever.
     const ev = await seedEvent();
     const sig = await seedSignal();
     const ctx = ctxWithRaceBeforeFirstWrite(async () => {
@@ -341,9 +308,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-10 RACE: a concurrent writer changes the row on EVERY attempt -> CONFLICT after 4 tries, nothing written", async () => {
-    // Case: pathological churn. Each time updateSignalContent tries to write,
-    // someone bumps the revision first. It must give up with CONFLICT rather
-    // than loop forever or overwrite.
+    // Must give up rather than loop forever or overwrite.
     const sig = await seedSignal({ status: "PROCESSED" });
     let writes = 0;
     const signalsProxy = new Proxy(prisma.signals, {
@@ -375,9 +340,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-11 lookup errors: no key -> BAD_USER_INPUT; lone externalId -> BAD_USER_INPUT; unknown natural key -> NOT_FOUND", async () => {
-    // Case: gx sends sourceId+externalId of a row Postgres never had (reset DB)
-    // -> NOT_FOUND so the pipeline can fall back to create. A lone externalId
-    // (no sourceId) is ambiguous across sources -> rejected.
+    // NOT_FOUND lets the pipeline fall back to create (e.g. after a DB reset). A lone
+    // externalId is ambiguous across sources.
     await expect(update({ input: { contentHash: "h", rawData: {} } } as never)).rejects.toMatchObject({
       extensions: { code: "BAD_USER_INPUT" },
     });
@@ -392,10 +356,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── markSignalsProcessed ──────────────────────────────────────────────────
 
   it("API-I-12 RACE: drain marks with a stale revision after a retraction landed -> no-op, row stays NEEDS_RECOMPUTE", async () => {
-    // Case: the drain fetched 'idu 9002' at revision 0 and is recomputing its
-    // event. Meanwhile IDMC retracts it (revision 1, NEEDS_RECOMPUTE). The
-    // drain then marks items [{id, revision:0}]. The mark must NOT overwrite
-    // the pending recompute, or the retraction would be lost.
+    // Overwriting the pending recompute would lose the retraction.
     const ev = await seedEvent();
     const sig = await seedSignal({ status: "PROCESSED" });
     await link(sig.id, ev.id);
@@ -410,8 +371,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-13 items batch is per-row: fresh revision is marked, stale one is skipped, in one call", async () => {
-    // Case: drain finished two rows. 'fresh' still at revision 0 -> PROCESSED.
-    // 'stale' was bumped to revision 3 after the fetch -> untouched.
+    // 'stale' was bumped to revision 3 after the drain fetched it.
     const fresh = await seedSignal({ status: "NEEDS_RECOMPUTE", revision: 0 });
     const stale = await seedSignal({ status: "NEEDS_RECOMPUTE", revision: 3 });
 
@@ -423,7 +383,6 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-14 argument validation: ids+items together, neither, and NEW/NEEDS_RECOMPUTE targets are rejected before any write", async () => {
-    // Case: a buggy caller sends both lists, or tries to 'mark' a row NEW.
     const sig = await seedSignal({ status: "NEEDS_RECOMPUTE" });
     for (const args of [
       { ids: [sig.id], items: [{ id: sig.id, revision: 0 }] },
@@ -439,10 +398,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── eventMembers ──────────────────────────────────────────────────────────
 
   it("API-I-15 eventMembers: live members only, newest first, bounded by `first`, scoped to the event", async () => {
-    // Case: 'Flood in Nyala' has 3 members (published Jan 1, 2, 3) plus a
-    // retracted 4th (Jan 4), and another event has its own member.
-    // Expect Jan 3, Jan 2, Jan 1 — no retracted row, no foreign row; first=2
-    // keeps the two newest.
+    // Members published Jan 1-3, a retracted one on Jan 4, and a member of another event.
     const ev = await seedEvent();
     const other = await seedEvent();
     const day = (d: number) => new Date(Date.UTC(1985, 0, d));
@@ -464,9 +420,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   // ─── setEventAggregates ────────────────────────────────────────────────────
 
   it("API-I-16 setEventAggregates: explicit null clears, absent field is kept, rank is written", async () => {
-    // Case: 'Flood in Nyala' had casualties=10, severity=3. Its last
-    // casualty-bearing member is retracted: recompute sends casualties=null,
-    // severity absent, rank 0. casualties becomes NULL, severity stays 3.
+    // The last casualty-bearing member was retracted: the recompute sends casualties=null.
     const ev = await seedEvent();
 
     await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { casualties: null, rank: 0 } } as never, baseCtx);
@@ -479,8 +433,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-17 setEventAggregates BigInt round-trip: populationAffected beyond 2^53 survives exactly; negatives and null work", async () => {
-    // Case: 9007199254740993 (2^53+1) as a decimal string must come back
-    // identical (a JS number would round it to ...992). Then clear it with null.
+    // 2^53+1: a JS number would round it to ...992.
     const ev = await seedEvent();
     const big = "9007199254740993";
 
@@ -496,8 +449,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   });
 
   it("API-I-18 setEventAggregates rejects non-decimal population strings and writes nothing; unknown event -> NOT_FOUND", async () => {
-    // Case: '' would silently become 0 and '0x10' would become 16 with a bare
-    // BigInt(); both must be rejected, leaving the stored value untouched.
+    // A bare BigInt() would accept '' as 0 and '0x10' as 16.
     const ev = await seedEvent();
     await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: "42", rank: 0.1 } } as never, baseCtx);
 

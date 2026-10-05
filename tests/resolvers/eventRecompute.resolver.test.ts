@@ -1,9 +1,5 @@
-/**
- * Unit tests (mocked Prisma) for the recompute-support resolvers:
- *   - Query.eventMembers      (live members of an event, newest first)
- *   - Mutation.setEventAggregates (absolute aggregates; absent = keep, null = clear)
- * DB-free: asserts resolver logic (auth, args passed to Prisma), not SQL.
- */
+/** Unit tests (mocked Prisma) for Query.eventMembers and Mutation.setEventAggregates:
+ *  auth and the args passed to Prisma, not SQL. */
 import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";

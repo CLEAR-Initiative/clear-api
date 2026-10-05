@@ -810,9 +810,8 @@ export const eventResolvers = {
       info: import("graphql").GraphQLResolveInfo,
     ) => {
       // Fast path: pre-loaded from a deeper include.
-      // Retracted signals keep their link (retraction is reversible) but were
-      // superseded upstream, so they are hidden like they are excluded from
-      // the event's aggregates.
+      // Retracted signals keep their link (retraction is reversible) but are hidden,
+      // matching their exclusion from the event's aggregates.
       if (parent.signalEvents) {
         return parent.signalEvents
           .map((l) => l.signal)
