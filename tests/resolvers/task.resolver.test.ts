@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
+import { Prisma } from "../../src/generated/prisma/client.js";
 
 import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resolver.js";
 import type { Context } from "../../src/context.js";
@@ -178,6 +179,67 @@ describe("requestEventEnrichment", () => {
     await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 5 }, ctx(analyst, prisma));
     expect(prisma.task.create).toHaveBeenLastCalledWith({
       data: expect.objectContaining({ payload: { horizonYears: 5 } }),
+    });
+  });
+
+  describe("dedupe — one open Task per Event and kind", () => {
+    it.each(["PENDING", "LEASED"])("returns the existing %s Task unchanged instead of creating a second", async (status) => {
+      const prisma = makePrisma();
+      const open = makeTask({ id: "t-open", status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
+      prisma.task.findFirst.mockResolvedValue(open);
+      const result = await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 10 }, ctx(analyst, prisma));
+      expect(result).toBe(open);
+      expect(prisma.task.findFirst).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          kind: IMPACT_PRIOR_KIND, subjectType: "event", subjectId: "ev-1",
+          status: { in: ["PENDING", "LEASED"] },
+        }),
+      });
+      expect(prisma.task.create).not.toHaveBeenCalled();
+      expect(prisma.activityLogs.create).not.toHaveBeenCalled();
+    });
+
+    it("returns the winner when the partial unique index rejects a concurrent create", async () => {
+      const prisma = makePrisma();
+      const winner = makeTask({ id: "t-winner" });
+      prisma.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+      prisma.task.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+      );
+      const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(result).toBe(winner);
+    });
+
+    it("rethrows any other create failure", async () => {
+      const prisma = makePrisma();
+      prisma.task.create.mockRejectedValueOnce(new Error("connection lost"));
+      await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).rejects.toThrow("connection lost");
+    });
+  });
+
+  describe("origin", () => {
+    it("is `user` for a session and `api` for an API key", async () => {
+      const prisma = makePrisma();
+      await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma, "session"));
+      expect(prisma.task.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ origin: "user" }) });
+      await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma, "api-key"));
+      expect(prisma.task.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ origin: "api" }) });
+    });
+  });
+
+  it("logs task.requested against the caller with the new Task's id", async () => {
+    const prisma = makePrisma();
+    await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma));
+    // logActivity is fire-and-forget; let it settle.
+    await new Promise((r) => setImmediate(r));
+    expect(prisma.activityLogs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: "u-coord",
+        action: "task.requested",
+        resourceType: "task",
+        resourceId: "t-1",
+        metadata: expect.objectContaining({ kind: IMPACT_PRIOR_KIND, subjectId: "ev-1", teamId: "team-a" }),
+      }),
     });
   });
 

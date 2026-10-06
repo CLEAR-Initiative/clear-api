@@ -78,6 +78,7 @@ describeIfDb("Tasks against the real schema", () => {
   });
 
   afterAll(async () => {
+    await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, VIEWER_ID] } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
@@ -175,6 +176,33 @@ describeIfDb("Tasks against the real schema", () => {
     for (const t of [...a, ...b]) {
       await completeTask(null, { id: t.id, result: {} }, t.leaseOwnerId === WORKER_A ? workerA : workerB);
     }
+  });
+
+  it("a second request returns the open Task; after completion a new request opens a new one", async () => {
+    const id = await makeEvent();
+    const first = await requestEventEnrichment(null, { eventId: id, horizonYears: 4 }, analyst);
+    const again = await requestEventEnrichment(null, { eventId: id, horizonYears: 9 }, analyst);
+    expect(again.id).toBe(first.id);
+    expect(again.payload).toEqual({ horizonYears: 4 });
+    const [claimed] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect((await requestEventEnrichment(null, { eventId: id }, analyst)).id).toBe(first.id);
+    await completeTask(null, { id: claimed.id, result: {} }, workerA);
+    const second = await requestEventEnrichment(null, { eventId: id }, analyst);
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe("PENDING");
+    // logActivity is fire-and-forget: give it a moment to land.
+    let log: { id: string }[] = [];
+    for (let i = 0; i < 20 && log.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      log = await prisma.activityLogs.findMany({
+        where: { action: "task.requested", resourceId: { in: [first.id, second.id] } },
+      });
+    }
+    expect(log).toHaveLength(2);
+    // Leave the pool empty for the next test (claims are oldest-first).
+    const [again2] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect(again2.id).toBe(second.id);
+    await completeTask(null, { id: second.id, result: {} }, workerA);
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

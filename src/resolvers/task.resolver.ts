@@ -25,6 +25,7 @@ import {
   requireTeamContentWriter,
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
+import { logActivity } from "../utils/activity-log.js";
 
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
@@ -212,17 +213,52 @@ export const taskResolvers = {
       });
       if (!event) throw notFound("Event");
 
-      return context.prisma.task.create({
-        data: {
-          kind,
-          subjectType: EVENT_SUBJECT,
-          subjectId: event.id,
-          payload: { horizonYears },
-          requesterId: user.id,
-          teamId: args.teamId ?? null,
-          maxAttempts: env.TASK_MAX_ATTEMPTS,
-        },
+      // One open Task per Event and kind: a second request returns the
+      // existing one unchanged (its requester, team and horizon stay).
+      const openWhere: Prisma.taskWhereInput = {
+        kind,
+        subjectType: EVENT_SUBJECT,
+        subjectId: event.id,
+        status: { in: ["PENDING", "LEASED"] },
+      };
+      const existing = await context.prisma.task.findFirst({ where: openWhere });
+      if (existing) return existing;
+
+      let created: TaskRow;
+      try {
+        created = await context.prisma.task.create({
+          data: {
+            kind,
+            subjectType: EVENT_SUBJECT,
+            subjectId: event.id,
+            payload: { horizonYears },
+            // A signed-in person is `user`; an API-key caller is `api`.
+            // Nothing writes `rule` yet.
+            origin: context.authMethod === "api-key" ? "api" : "user",
+            requesterId: user.id,
+            teamId: args.teamId ?? null,
+            maxAttempts: env.TASK_MAX_ATTEMPTS,
+          },
+        });
+      } catch (e) {
+        // Lost the create race against a concurrent identical request — the
+        // partial unique index (tasks_open_subject_uk) rejected the
+        // duplicate; return the winner instead of queueing the work twice.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          const winner = await context.prisma.task.findFirst({ where: openWhere });
+          if (winner) return winner;
+        }
+        throw e;
+      }
+
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "task.requested",
+        resourceType: "task",
+        resourceId: created.id,
+        metadata: { kind, subjectType: EVENT_SUBJECT, subjectId: event.id, teamId: args.teamId ?? null, horizonYears },
       });
+      return created;
     },
 
     // The claim. One statement leases up to `limit` of the oldest claimable
