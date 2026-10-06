@@ -13,7 +13,7 @@ Redis single-flight lock, so none of them records on the row that a consumer has
 taken it.
 
 The new requirement breaks that assumption. A user requests an **Event
-enrichment** (first kind: **Event prior**) and the work is done by a **Worker**
+enrichment** (first kind: **ImpactPrior**, the ontology's own class) and the work is done by a **Worker**
 that may be code CLEAR owns, a scheduled Claude Code routine, a third-party
 agent, or a person. The same mechanism must serve later kinds of work.
 
