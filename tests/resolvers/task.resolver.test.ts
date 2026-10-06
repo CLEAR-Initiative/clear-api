@@ -97,9 +97,27 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
       return { count };
     }),
   };
+  const priors = new Map<string, Row>();
   const impactPrior = {
+    store: priors,
     findFirst: vi.fn(async (): Promise<Row | null> => null),
     findMany: vi.fn(async (): Promise<Row[]> => []),
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => priors.get(where.id) ?? null),
+    findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => {
+      const row = priors.get(where.id);
+      if (!row) throw new Error("not found");
+      return row;
+    }),
+    updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      let count = 0;
+      for (const [id, row] of priors) {
+        if (matches(row, where)) {
+          priors.set(id, { ...row, ...data });
+          count++;
+        }
+      }
+      return { count };
+    }),
     create: vi.fn(async ({ data }: { data: Row }) => ({ id: "ip-1", state: "proposed", ...data })),
   };
   const events = {
@@ -179,7 +197,8 @@ const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
+  taskResolvers.Mutation;
 const { leaseToken: leaseTokenField } = taskResolvers.Task;
 const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
 
@@ -803,6 +822,77 @@ describe("cancelTask", () => {
       const row = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { late: true } }, ctx(worker, prisma));
       expect(row).toMatchObject({ status: "CANCELLED", result: null });
     });
+  });
+});
+
+describe("decideImpactPrior", () => {
+  const proposed = (overrides: Row = {}): Row => ({
+    id: "ip-1", eventId: "ev-1", taskId: "t-1", state: "proposed", hazardType: "FL",
+    decidedById: null, decidedAt: null, decisionRationale: null, ...overrides,
+  });
+  const seededPrior = (row: Row = proposed()) => {
+    const prisma = makePrisma();
+    prisma.impactPrior.store.set(row.id as string, row);
+    return prisma;
+  };
+
+  it.each([
+    ["admin accepts", admin, "accepted"],
+    ["analyst rejects", analyst, "rejected"],
+  ])("%s a proposed ImpactPrior, recording who, when and why", async (_name, user, decision) => {
+    vi.useFakeTimers({ toFake: ["Date"] }); // keep setImmediate real for the log-settle wait below
+    vi.setSystemTime(new Date("2026-10-07T09:00:00Z"));
+    const prisma = seededPrior();
+    const row = await decideImpactPrior(null, { id: "ip-1", decision: decision as never, rationale: "  Cases check out. " }, ctx(user, prisma));
+    expect(row).toMatchObject({
+      state: decision,
+      decidedById: user.id,
+      decidedAt: new Date("2026-10-07T09:00:00Z"),
+      decisionRationale: "Cases check out.",
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(prisma.activityLogs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: user.id, action: "impact_prior.decided", resourceType: "impact_prior", resourceId: "ip-1",
+        metadata: expect.objectContaining({ decision, eventId: "ev-1" }),
+      }),
+    });
+  });
+
+  it.each([
+    ["a viewer", viewer],
+    ["a team coordinator", coordinator],
+    ["a worker", worker],
+    ["pipeline", pipeline],
+  ])("is FORBIDDEN for %s — only platform admins and analysts decide", async (_name, user) => {
+    const prisma = seededPrior();
+    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "accepted", rationale: "x" }, ctx(user, prisma)));
+    expect(err.extensions.code).toBe("FORBIDDEN");
+    expect(prisma.impactPrior.store.get("ip-1")!.state).toBe("proposed");
+  });
+
+  it("is NOT_FOUND for an unknown id and BAD_USER_INPUT for an empty rationale", async () => {
+    expect((await errorOf(decideImpactPrior(null, { id: "ip-nope", decision: "accepted", rationale: "x" }, ctx(admin)))).extensions.code).toBe("NOT_FOUND");
+    const prisma = seededPrior();
+    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "accepted", rationale: "   " }, ctx(admin, prisma)));
+    expect(err.extensions.code).toBe("BAD_USER_INPUT");
+    expect(prisma.impactPrior.store.get("ip-1")!.state).toBe("proposed");
+  });
+
+  it.each(["accepted", "rejected"])("is CONFLICT once already %s — a decision is recorded once", async (state) => {
+    const prisma = seededPrior(proposed({ state, decidedById: "u-admin" }));
+    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "rejected", rationale: "x" }, ctx(analyst, prisma)));
+    expect(err.extensions.code).toBe("CONFLICT");
+    expect(prisma.impactPrior.store.get("ip-1")).toMatchObject({ state, decidedById: "u-admin" });
+  });
+
+  it("a decision landing between the read and the write is not overwritten", async () => {
+    const prisma = seededPrior();
+    prisma.impactPrior.findUnique.mockImplementationOnce(async () => proposed());
+    prisma.impactPrior.store.set("ip-1", proposed({ state: "accepted", decidedById: "u-other" }));
+    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "rejected", rationale: "x" }, ctx(analyst, prisma)));
+    expect(err.extensions.code).toBe("CONFLICT");
+    expect(prisma.impactPrior.store.get("ip-1")!.decidedById).toBe("u-other");
   });
 });
 

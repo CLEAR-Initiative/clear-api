@@ -32,6 +32,8 @@ export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
 const DEFAULT_HORIZON_YEARS = 10;
 const WORKER_ROLE = "worker";
+const DECIDER_ROLES = ["admin", "analyst"];
+const MAX_RATIONALE_LENGTH = 4000;
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
 type ImpactPriorRow = Prisma.impactPriorGetPayload<Record<string, never>>;
@@ -449,6 +451,44 @@ export const taskResolvers = {
         metadata: { kind, subjectType: EVENT_SUBJECT, subjectId: event.id, teamId: args.teamId ?? null, horizonYears },
       });
       return created;
+    },
+
+    // The acceptance gate (V2). A Worker writes `proposed` only; a named
+    // admin or analyst moves it to accepted or rejected with a rationale,
+    // exactly once (the conditional write refuses a second decision).
+    decideImpactPrior: async (
+      _parent: unknown,
+      args: { id: string; decision: "accepted" | "rejected"; rationale: string },
+      context: Context,
+    ) => {
+      const user = requireRole(context, DECIDER_ROLES);
+      const rationale = args.rationale.trim();
+      if (!rationale) throw badInput("rationale is required");
+      if (rationale.length > MAX_RATIONALE_LENGTH) {
+        throw badInput(`rationale must be at most ${MAX_RATIONALE_LENGTH} characters`);
+      }
+      if (args.decision !== "accepted" && args.decision !== "rejected") {
+        throw badInput('decision must be "accepted" or "rejected"');
+      }
+      const existing = await context.prisma.impactPrior.findUnique({ where: { id: args.id } });
+      if (!existing) throw notFound("ImpactPrior");
+      if (existing.state !== "proposed") {
+        throw conflict(`ImpactPrior is already ${existing.state}`);
+      }
+      const now = new Date();
+      const { count } = await context.prisma.impactPrior.updateMany({
+        where: { id: args.id, state: "proposed" },
+        data: { state: args.decision, decidedById: user.id, decidedAt: now, decisionRationale: rationale },
+      });
+      if (count === 0) throw conflict("ImpactPrior was decided meanwhile");
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "impact_prior.decided",
+        resourceType: "impact_prior",
+        resourceId: existing.id,
+        metadata: { eventId: existing.eventId, taskId: existing.taskId, decision: args.decision },
+      });
+      return context.prisma.impactPrior.findUniqueOrThrow({ where: { id: args.id } });
     },
 
     // Cancellation, by the requester or a platform admin. PENDING ends now;

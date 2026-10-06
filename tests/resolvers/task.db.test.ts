@@ -20,11 +20,15 @@ import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resol
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
+  taskResolvers.Mutation;
 const { eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
 const ANALYST_ID = `${RUN}-analyst`;
+/** A second requester: the per-requester daily cap (20) is real, and this
+ *  suite makes more requests than that. */
+const ANALYST_B_ID = `${RUN}-analyst-b`;
 const VIEWER_ID = `${RUN}-viewer`;
 const WORKER_A = `${RUN}-worker-a`;
 const WORKER_B = `${RUN}-worker-b`;
@@ -34,6 +38,7 @@ const DISTRICT_ID = `${RUN}-district`;
 const asUser = (id: string, role: string): Context =>
   ({ prisma, user: { id, role }, session: null, authMethod: "session" }) as unknown as Context;
 const analyst = asUser(ANALYST_ID, "analyst");
+const analystB = asUser(ANALYST_B_ID, "analyst");
 const viewer = asUser(VIEWER_ID, "viewer");
 const workerA = asUser(WORKER_A, "worker");
 const workerB = asUser(WORKER_B, "worker");
@@ -61,6 +66,7 @@ describeIfDb("Tasks against the real schema", () => {
   beforeAll(async () => {
     for (const [id, role] of [
       [ANALYST_ID, "analyst"],
+      [ANALYST_B_ID, "analyst"],
       [VIEWER_ID, "viewer"],
       [WORKER_A, "worker"],
       [WORKER_B, "worker"],
@@ -78,13 +84,13 @@ describeIfDb("Tasks against the real schema", () => {
   });
 
   afterAll(async () => {
-    await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, VIEWER_ID] } } });
+    await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT_ID, COUNTRY_ID] } } });
     await prisma.user.deleteMany({
-      where: { id: { in: [ANALYST_ID, VIEWER_ID, WORKER_A, WORKER_B] } },
+      where: { id: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, WORKER_A, WORKER_B] } },
     });
   });
 
@@ -388,9 +394,42 @@ describeIfDb("Tasks against the real schema", () => {
     expect(await taskResolvers.ImpactPrior.supersedes(newest, null, analyst)).toMatchObject({ id: first.id });
   });
 
+  it("decideImpactPrior records a decision once; a later request supersedes rather than overwrites", async () => {
+    const id = await makeEvent();
+    const proposal = {
+      hazardType: "FL", countryLocationId: COUNTRY_ID, geographicScope: "country", horizonYears: 10,
+      numberOfCases: 1, basis: [{ tier: "web", sourceUrl: "https://example.test", scope: "country" }],
+      methodVersion: "clear-impact-prior@0.1.0",
+    };
+    await requestEventEnrichment(null, { eventId: id }, analystB);
+    const [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {}, impactPrior: proposal }, workerA);
+    const [prior] = await eventImpactPriors(null, { eventId: id }, analyst);
+
+    await expect(decideImpactPrior(null, { id: prior.id, decision: "accepted", rationale: "x" }, viewer)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    const rejected = await decideImpactPrior(null, { id: prior.id, decision: "rejected", rationale: "Wrong season." }, analystB);
+    expect(rejected).toMatchObject({ state: "rejected", decidedById: ANALYST_B_ID, decisionRationale: "Wrong season." });
+    expect(rejected.decidedAt).toBeInstanceOf(Date);
+    await expect(decideImpactPrior(null, { id: prior.id, decision: "accepted", rationale: "y" }, analyst)).rejects.toMatchObject({
+      extensions: { code: "CONFLICT" },
+    });
+
+    // The rejected row stays; a new request produces a superseding proposal pointing at it.
+    await requestEventEnrichment(null, { eventId: id }, analystB);
+    const [t2] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await completeTask(null, { id: t2.id, leaseToken: t2.leaseToken!, result: {}, impactPrior: proposal }, workerA);
+    const priors = await eventImpactPriors(null, { eventId: id }, analyst);
+    expect(priors.map((p) => p.state)).toEqual(["proposed", "rejected"]);
+    expect(priors[0].supersedesId).toBe(prior.id);
+    const log = await prisma.activityLogs.findMany({ where: { action: "impact_prior.decided", resourceId: prior.id } });
+    expect(log.length).toBeGreaterThanOrEqual(0);
+  });
+
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {
     const id = await makeEvent();
-    const first = await requestEventEnrichment(null, { eventId: id }, analyst);
+    const first = await requestEventEnrichment(null, { eventId: id }, analystB);
     await expect(
       prisma.task.create({
         data: { kind: IMPACT_PRIOR_KIND, subjectType: "event", subjectId: id, payload: {} },
@@ -401,7 +440,7 @@ describeIfDb("Tasks against the real schema", () => {
     expect(claimed.id).toBe(first.id);
     await completeTask(null, { id: first.id, leaseToken: claimed.leaseToken!, result: {} }, workerA);
     // Once COMPLETED, a new open Task for the same Event is allowed.
-    const second = await requestEventEnrichment(null, { eventId: id }, analyst);
+    const second = await requestEventEnrichment(null, { eventId: id }, analystB);
     expect(second.id).not.toBe(first.id);
   });
 });

@@ -141,6 +141,12 @@ export const taskTypeDef = gql`
     createdAt: DateTime!
   }
 
+  """The decision a named admin or analyst records on a proposed ImpactPrior."""
+  enum ImpactPriorDecision {
+    accepted
+    rejected
+  }
+
   """Spend a Worker reports when completing a Task. Cost is computed by the
   caller from its own price table."""
   input TaskUsageInput {
