@@ -385,6 +385,24 @@ export const taskResolvers = {
       });
     },
 
+    // Failure. Records the error and releases the Task: back to PENDING for
+    // another attempt while attempts remain, FAILED (with this error as its
+    // lastError, shown to the requester and admins) once they are used up.
+    failTask: async (_parent: unknown, args: { id: string; error: string }, context: Context) => {
+      const task = await requireLeaseOwner(context, args.id);
+      const user = context.user!;
+      const error = args.error.trim();
+      if (!error) throw badInput("error must not be empty");
+      const exhausted = task.attempts >= task.maxAttempts;
+      return writeAsLeaseOwner(context.prisma, task.id, user.id, {
+        lastError: error,
+        leaseExpiresAt: null,
+        ...(exhausted
+          ? { status: "FAILED" } // leaseOwnerId stays: who last held it.
+          : { status: "PENDING", leaseOwnerId: null }),
+      });
+    },
+
     // Completion: the Task's raw output, optional usage, and for
     // `event.impact_prior` an optional ImpactPrior proposal. With a proposal
     // the typed row is inserted (state `proposed`) in the same transaction

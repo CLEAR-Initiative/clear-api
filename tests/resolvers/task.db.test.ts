@@ -20,7 +20,7 @@ import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resol
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask } = taskResolvers.Mutation;
 const { eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
@@ -257,6 +257,33 @@ describeIfDb("Tasks against the real schema", () => {
     // Visible to the requester on the Event page; redacted for a viewer.
     expect((await eventTasks(null, { eventId: id }, analyst))[0].lastError).toBe("lease expired after max attempts");
     expect((await eventTasks(null, { eventId: id }, viewer))[0].lastError).toBeNull();
+  });
+
+  it("failTask retries until maxAttempts, then FAILED with the last error visible to the requester", async () => {
+    const id = await makeEvent();
+    const requested = await requestEventEnrichment(null, { eventId: id }, analyst);
+    const [first] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    const retry = await failTask(null, { id: first.id, error: "attempt 1 failed" }, workerA);
+    expect(retry).toMatchObject({ status: "PENDING", attempts: 1, lastError: "attempt 1 failed", leaseOwnerId: null });
+    // Still the one open Task for the Event: a new request dedupes onto it.
+    expect((await requestEventEnrichment(null, { eventId: id }, analyst)).id).toBe(requested.id);
+
+    const [second] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
+    expect(second).toMatchObject({ id: requested.id, attempts: 2, leaseOwnerId: WORKER_B });
+    await failTask(null, { id: second.id, error: "attempt 2 failed" }, workerB);
+    const [third] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect(third.attempts).toBe(3);
+    const failed = await failTask(null, { id: third.id, error: "attempt 3 failed" }, workerA);
+    expect(failed).toMatchObject({ status: "FAILED", attempts: 3, lastError: "attempt 3 failed", leaseOwnerId: WORKER_A });
+
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB)).toEqual([]);
+    expect((await eventTasks(null, { eventId: id }, analyst))[0].lastError).toBe("attempt 3 failed");
+    expect((await eventTasks(null, { eventId: id }, viewer))[0].lastError).toBeNull();
+    // FAILED is terminal history: a new request opens a fresh Task.
+    const again = await requestEventEnrichment(null, { eventId: id }, analyst);
+    expect(again.id).not.toBe(requested.id);
+    const [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await completeTask(null, { id: t.id, result: {} }, workerA);
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

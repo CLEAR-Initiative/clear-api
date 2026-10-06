@@ -1588,6 +1588,13 @@ TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
 usually means the lease lapsed and another Worker took the Task; stop
 working on it). If cancellation was requested, the Task becomes
 CANCELLED and the Worker should stop.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-failtask">
+    <td><code>failTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: give the Task up with an error. It returns to
+PENDING for another Worker (or attempt) while attempts remain, and
+becomes FAILED with this as its `lastError` once `maxAttempts`
+claims have been used. Only the lease owner, only while LEASED.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>error: String!</code></span></div></td>
   </tr><tr id="mutation-completetask">
     <td><code>completeTask</code></td>
     <td><code>Task!</code></td>

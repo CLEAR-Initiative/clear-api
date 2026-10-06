@@ -1108,6 +1108,12 @@ export const mutationTypeDef = gql`
     CANCELLED and the Worker should stop."""
     heartbeatTask(id: String!): Task!
 
+    """WORKER CONTRACT: give the Task up with an error. It returns to
+    PENDING for another Worker (or attempt) while attempts remain, and
+    becomes FAILED with this as its \`lastError\` once \`maxAttempts\`
+    claims have been used. Only the lease owner, only while LEASED."""
+    failTask(id: String!, error: String!): Task!
+
     """WORKER CONTRACT: report the Task done. \`result\` is the raw output
     (audit only). For \`event.impact_prior\`, pass \`impactPrior\` to
     record a proposal (outcome \`produced\`) or omit it to record

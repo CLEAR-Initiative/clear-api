@@ -158,7 +158,7 @@ const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask } = taskResolvers.Mutation;
 const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const leased = (overrides: Row = {}) =>
@@ -382,6 +382,7 @@ describe("lease ownership — heartbeat and complete", () => {
   it.each([
     ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-1" }, c)],
     ["completeTask", (c: Context) => completeTask(null, { id: "t-1", result: {} }, c)],
+    ["failTask", (c: Context) => failTask(null, { id: "t-1", error: "x" }, c)],
   ])("%s is FORBIDDEN for any non-worker role, even an admin", async (_name, call) => {
     const err = await errorOf(call(ctx(admin, seeded(leased()))));
     expect(err.extensions.code).toBe("FORBIDDEN");
@@ -390,6 +391,7 @@ describe("lease ownership — heartbeat and complete", () => {
   it.each([
     ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-nope" }, c)],
     ["completeTask", (c: Context) => completeTask(null, { id: "t-nope", result: {} }, c)],
+    ["failTask", (c: Context) => failTask(null, { id: "t-nope", error: "x" }, c)],
   ])("%s is NOT_FOUND for an unknown Task", async (_name, call) => {
     const err = await errorOf(call(ctx(worker)));
     expect(err.extensions.code).toBe("NOT_FOUND");
@@ -505,6 +507,44 @@ describe("completeTask", () => {
     );
     expect(err.extensions.code).toBe("BAD_USER_INPUT");
     expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
+  });
+});
+
+describe("failTask", () => {
+  it("returns the Task to PENDING with the error while attempts remain, releasing the lease", async () => {
+    const prisma = seeded(leased({ attempts: 1, maxAttempts: 3 }));
+    const row = await failTask(null, { id: "t-1", error: "model timed out" }, ctx(worker, prisma));
+    expect(row).toMatchObject({
+      status: "PENDING",
+      lastError: "model timed out",
+      leaseOwnerId: null,
+      leaseExpiresAt: null,
+      attempts: 1,
+    });
+  });
+
+  it("marks the Task FAILED on the last attempt, keeping who last held it", async () => {
+    const prisma = seeded(leased({ attempts: 3, maxAttempts: 3 }));
+    const row = await failTask(null, { id: "t-1", error: "no model access" }, ctx(worker, prisma));
+    expect(row).toMatchObject({
+      status: "FAILED",
+      lastError: "no model access",
+      leaseOwnerId: "u-worker",
+      leaseExpiresAt: null,
+    });
+  });
+
+  it("is BAD_USER_INPUT for an empty error, and writes nothing", async () => {
+    const prisma = seeded(leased());
+    const err = await errorOf(failTask(null, { id: "t-1", error: "   " }, ctx(worker, prisma)));
+    expect(err.extensions.code).toBe("BAD_USER_INPUT");
+    expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
+  });
+
+  it("is NOT_LEASE_OWNER for another worker", async () => {
+    const prisma = seeded(leased());
+    const err = await errorOf(failTask(null, { id: "t-1", error: "x" }, ctx(rivalWorker, prisma)));
+    expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
   });
 });
 

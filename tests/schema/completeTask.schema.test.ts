@@ -43,6 +43,18 @@ const HEARTBEAT_TASK = `
   }
 `;
 
+const FAIL_TASK = `
+  mutation ClearFailTask($id: String!, $error: String!) {
+    failTask(id: $id, error: $error) {
+      id
+      status
+      attempts
+      maxAttempts
+      lastError
+    }
+  }
+`;
+
 const COMPLETE_TASK = `
   mutation ClearCompleteTask($id: String!, $result: JSON!, $usage: TaskUsageInput, $impactPrior: ImpactPriorInput) {
     completeTask(id: $id, result: $result, usage: $usage, impactPrior: $impactPrior) {
@@ -162,6 +174,12 @@ describe("Worker protocol schema contract", () => {
     const row = result.data?.heartbeatTask as { status: string; leaseExpiresAt: string };
     expect(row.status).toBe("LEASED");
     expect(new Date(row.leaseExpiresAt).getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+  });
+
+  it("failTask executes the Worker's document and returns the Task to PENDING with its error", async () => {
+    const result = await run(FAIL_TASK, { id: "t-1", error: "rate limited" }, WORKER);
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.failTask).toMatchObject({ id: "t-1", status: "PENDING", lastError: "rate limited", attempts: 1 });
   });
 
   it("completeTask accepts usage and an ImpactPriorInput and returns the COMPLETED Task", async () => {
