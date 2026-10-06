@@ -149,7 +149,7 @@ const badInput = (message: string) =>
  *  (CONFLICT) when the Task is in any other state, `NOT_LEASE_OWNER`
  *  (FORBIDDEN) when another Worker holds it — usually because this one's
  *  lease lapsed and was reclaimed. */
-function leaseError(task: TaskRow | null, userId: string): GraphQLError {
+function leaseError(task: TaskRow | null, userId: string, leaseToken: string): GraphQLError {
   if (!task) return notFound("Task");
   if (task.status !== "LEASED") {
     return conflict(`Task is ${task.status}, not LEASED`, "NOT_LEASED");
@@ -157,20 +157,35 @@ function leaseError(task: TaskRow | null, userId: string): GraphQLError {
   if (task.leaseOwnerId !== userId) {
     return forbidden("You do not hold the lease on this Task", "NOT_LEASE_OWNER");
   }
+  if (task.leaseToken !== leaseToken) {
+    return forbidden(
+      "Your lease on this Task lapsed and was reclaimed; this leaseToken is stale",
+      "NOT_LEASE_OWNER",
+    );
+  }
   return conflict("Task changed while writing; retry", "NOT_LEASED");
 }
 
 /**
  * The Worker-side ownership check shared by heartbeat / complete / fail:
- * the caller holds the `worker` role, the Task exists, is LEASED, and the
- * lease is the caller's. A fast pre-check only — the write itself goes
- * through {@link writeAsLeaseOwner}, which re-asserts the lease atomically.
+ * the caller holds the `worker` role, the Task exists, is LEASED, the lease
+ * is the caller's AND the caller presents the token that claim minted. The
+ * token is what tells two runs of the same Worker identity apart: one
+ * service user may be several processes (an overlapping routine run,
+ * Dagster replicas), and only the run that holds the current lease may
+ * write. A fast pre-check only — the write itself goes through
+ * {@link writeAsLeaseOwner}, which re-asserts all of it atomically.
  */
-async function requireLeaseOwner(context: Context, id: string): Promise<TaskRow> {
+async function requireLeaseOwner(context: Context, id: string, leaseToken: string): Promise<TaskRow> {
   const user = requireRole(context, [WORKER_ROLE]);
   const task = await context.prisma.task.findUnique({ where: { id } });
-  if (!task || task.status !== "LEASED" || task.leaseOwnerId !== user.id) {
-    throw leaseError(task, user.id);
+  if (
+    !task ||
+    task.status !== "LEASED" ||
+    task.leaseOwnerId !== user.id ||
+    task.leaseToken !== leaseToken
+  ) {
+    throw leaseError(task, user.id, leaseToken);
   }
   return task;
 }
@@ -185,9 +200,10 @@ async function cancelLeasedTask(
   tx: Prisma.TransactionClient,
   id: string,
   userId: string,
+  leaseToken: string,
 ): Promise<TaskRow> {
   await tx.task.updateMany({
-    where: { id, status: "LEASED", leaseOwnerId: userId },
+    where: { id, status: "LEASED", leaseOwnerId: userId, leaseToken },
     data: { status: "CANCELLED", leaseExpiresAt: null },
   });
   return tx.task.findUniqueOrThrow({ where: { id } });
@@ -205,10 +221,11 @@ async function writeAsLeaseOwner(
   tx: Prisma.TransactionClient,
   id: string,
   userId: string,
+  leaseToken: string,
   data: Prisma.taskUpdateManyMutationInput,
 ): Promise<TaskRow> {
   const { count } = await tx.task.updateMany({
-    where: { id, status: "LEASED", leaseOwnerId: userId, cancelRequestedAt: null },
+    where: { id, status: "LEASED", leaseOwnerId: userId, leaseToken, cancelRequestedAt: null },
     data,
   });
   if (count === 0) {
@@ -217,11 +234,12 @@ async function writeAsLeaseOwner(
       current &&
       current.status === "LEASED" &&
       current.leaseOwnerId === userId &&
+      current.leaseToken === leaseToken &&
       current.cancelRequestedAt
     ) {
-      return cancelLeasedTask(tx, id, userId);
+      return cancelLeasedTask(tx, id, userId, leaseToken);
     }
-    throw leaseError(current, userId);
+    throw leaseError(current, userId, leaseToken);
   }
   return tx.task.findUniqueOrThrow({ where: { id } });
 }
@@ -252,6 +270,10 @@ function visibleImpactPriors<T extends ImpactPriorRow & { task: { requesterId: s
 
 export const taskResolvers = {
   Task: {
+    // The token is the lease owner's secret: null for everyone else, so a
+    // reader of eventTasks cannot write as the Worker.
+    leaseToken: (parent: TaskRow, _args: unknown, context: Context) =>
+      parent.leaseToken && context.user?.id === parent.leaseOwnerId ? parent.leaseToken : null,
     requester: (parent: TaskRow, _args: unknown, context: Context) =>
       parent.requesterId
         ? context.prisma.user.findUnique({ where: { id: parent.requesterId } })
@@ -485,6 +507,7 @@ export const taskResolvers = {
           UPDATE "tasks"
           SET "status" = 'LEASED',
               "lease_owner_id" = ${worker.id},
+              "lease_token" = gen_random_uuid()::text,
               "lease_expires_at" = now() + (${leaseMinutes}::int * interval '1 minute'),
               "attempts" = "attempts" + 1,
               "updated_at" = now()
@@ -514,11 +537,15 @@ export const taskResolvers = {
     // Keep-alive. Extends the lease by TASK_LEASE_MINUTES from now; a Task
     // whose lease lapsed but was not yet reclaimed is still the owner's to
     // extend (the lapse is only acted on at a claim).
-    heartbeatTask: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const task = await requireLeaseOwner(context, args.id);
+    heartbeatTask: async (
+      _parent: unknown,
+      args: { id: string; leaseToken: string },
+      context: Context,
+    ) => {
+      const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
-      return writeAsLeaseOwner(context.prisma, task.id, user.id, {
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
+      return writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         leaseExpiresAt: new Date(Date.now() + env.TASK_LEASE_MINUTES * 60_000),
       });
     },
@@ -526,14 +553,18 @@ export const taskResolvers = {
     // Failure. Records the error and releases the Task: back to PENDING for
     // another attempt while attempts remain, FAILED (with this error as its
     // lastError, shown to the requester and admins) once they are used up.
-    failTask: async (_parent: unknown, args: { id: string; error: string }, context: Context) => {
-      const task = await requireLeaseOwner(context, args.id);
+    failTask: async (
+      _parent: unknown,
+      args: { id: string; leaseToken: string; error: string },
+      context: Context,
+    ) => {
+      const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
       const error = args.error.trim();
       if (!error) throw badInput("error must not be empty");
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;
-      return writeAsLeaseOwner(context.prisma, task.id, user.id, {
+      return writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         lastError: error,
         leaseExpiresAt: null,
         ...(exhausted
@@ -550,13 +581,14 @@ export const taskResolvers = {
       _parent: unknown,
       args: {
         id: string;
+        leaseToken: string;
         result: Prisma.InputJsonValue;
         usage?: TaskUsageInput | null;
         impactPrior?: ImpactPriorInput | null;
       },
       context: Context,
     ) => {
-      const task = await requireLeaseOwner(context, args.id);
+      const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
       const now = new Date();
       const isImpactPriorTask =
@@ -566,7 +598,7 @@ export const taskResolvers = {
       }
       const usage = args.usage ? validateUsage(args.usage) : null;
       if (args.impactPrior) validateImpactPriorShape(args.impactPrior);
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
 
       // The proposal must describe THIS Event: its hazard is one of the
       // Event's types and its country is the Event's. A Worker that found
@@ -601,7 +633,7 @@ export const taskResolvers = {
       return context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
         // reclaimed Task's new owner never finds a stranger's result on it.
-        const completed = await writeAsLeaseOwner(tx, task.id, user.id, {
+        const completed = await writeAsLeaseOwner(tx, task.id, user.id, args.leaseToken, {
           status: "COMPLETED",
           completedAt: now,
           result: args.result,

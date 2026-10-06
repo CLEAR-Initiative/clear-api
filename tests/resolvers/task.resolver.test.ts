@@ -32,6 +32,7 @@ function makeTask(overrides: Row = {}): Row {
     teamId: null,
     leaseOwnerId: null,
     leaseExpiresAt: null,
+    leaseToken: null,
     attempts: 0,
     maxAttempts: 3,
     lastError: null,
@@ -173,10 +174,12 @@ const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
 const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } = taskResolvers.Mutation;
+const { leaseToken: leaseTokenField } = taskResolvers.Task;
 const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
 
+const TOKEN = "tok-1";
 const leased = (overrides: Row = {}) =>
-  makeTask({ status: "LEASED", leaseOwnerId: "u-worker", attempts: 1, leaseExpiresAt: new Date("2026-10-06T10:15:00Z"), ...overrides });
+  makeTask({ status: "LEASED", leaseOwnerId: "u-worker", leaseToken: TOKEN, attempts: 1, leaseExpiresAt: new Date("2026-10-06T10:15:00Z"), ...overrides });
 
 async function errorOf(p: Promise<unknown>): Promise<GraphQLError> {
   try {
@@ -394,9 +397,9 @@ describe("claimTasks", () => {
 
 describe("lease ownership — heartbeat and complete", () => {
   it.each([
-    ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-1" }, c)],
-    ["completeTask", (c: Context) => completeTask(null, { id: "t-1", result: {} }, c)],
-    ["failTask", (c: Context) => failTask(null, { id: "t-1", error: "x" }, c)],
+    ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, c)],
+    ["completeTask", (c: Context) => completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, c)],
+    ["failTask", (c: Context) => failTask(null, { id: "t-1", leaseToken: TOKEN, error: "x" }, c)],
   ])("%s is FORBIDDEN for any non-worker role, even an admin", async (_name, call) => {
     const err = await errorOf(call(ctx(admin, seeded(leased()))));
     expect(err.extensions.code).toBe("FORBIDDEN");
@@ -404,8 +407,8 @@ describe("lease ownership — heartbeat and complete", () => {
 
   it.each([
     ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-nope" }, c)],
-    ["completeTask", (c: Context) => completeTask(null, { id: "t-nope", result: {} }, c)],
-    ["failTask", (c: Context) => failTask(null, { id: "t-nope", error: "x" }, c)],
+    ["completeTask", (c: Context) => completeTask(null, { id: "t-nope", leaseToken: TOKEN, result: {} }, c)],
+    ["failTask", (c: Context) => failTask(null, { id: "t-nope", leaseToken: TOKEN, error: "x" }, c)],
   ])("%s is NOT_FOUND for an unknown Task", async (_name, call) => {
     const err = await errorOf(call(ctx(worker)));
     expect(err.extensions.code).toBe("NOT_FOUND");
@@ -415,7 +418,7 @@ describe("lease ownership — heartbeat and complete", () => {
     "is CONFLICT NOT_LEASED when the Task is %s",
     async (status) => {
       const prisma = seeded(makeTask({ status, leaseOwnerId: "u-worker" }));
-      const err = await errorOf(heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma)));
+      const err = await errorOf(heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, ctx(worker, prisma)));
       expect(err.extensions).toMatchObject({ code: "CONFLICT", subCode: "NOT_LEASED" });
       expect(err.message).toContain(status);
     },
@@ -423,7 +426,7 @@ describe("lease ownership — heartbeat and complete", () => {
 
   it("is FORBIDDEN NOT_LEASE_OWNER for a worker that does not hold the lease, and writes nothing", async () => {
     const prisma = seeded(leased());
-    const err = await errorOf(completeTask(null, { id: "t-1", result: {} }, ctx(rivalWorker, prisma)));
+    const err = await errorOf(completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(rivalWorker, prisma)));
     expect(err.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" });
     expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
   });
@@ -433,7 +436,7 @@ describe("lease ownership — heartbeat and complete", () => {
     // The pre-check sees worker A as owner; by the time of the write, B holds it.
     prisma.task.findUnique.mockImplementationOnce(async () => leased());
     prisma.task.store.set("t-1", leased({ leaseOwnerId: "u-worker-2", attempts: 2 }));
-    const err = await errorOf(heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma)));
+    const err = await errorOf(heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, ctx(worker, prisma)));
     expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
     expect(prisma.task.store.get("t-1")).toMatchObject({ leaseOwnerId: "u-worker-2", attempts: 2 });
   });
@@ -444,7 +447,7 @@ describe("heartbeatTask", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-06T10:10:00Z"));
     const prisma = seeded(leased());
-    const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+    const row = await heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, ctx(worker, prisma));
     expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: "u-worker", attempts: 1 });
     expect(row.leaseExpiresAt).toEqual(new Date("2026-10-06T10:25:00Z"));
   });
@@ -453,7 +456,7 @@ describe("heartbeatTask", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-06T10:30:00Z"));
     const prisma = seeded(leased({ leaseExpiresAt: new Date("2026-10-06T10:15:00Z") }));
-    const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+    const row = await heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, ctx(worker, prisma));
     expect(row.leaseExpiresAt).toEqual(new Date("2026-10-06T10:45:00Z"));
   });
 });
@@ -461,7 +464,7 @@ describe("heartbeatTask", () => {
 describe("completeTask", () => {
   it("marks the Task COMPLETED with the raw result, keeping who completed it", async () => {
     const prisma = seeded(leased());
-    const done = await completeTask(null, { id: "t-1", result: { cases: 1 } }, ctx(worker, prisma));
+    const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { cases: 1 } }, ctx(worker, prisma));
     expect(done).toMatchObject({
       status: "COMPLETED",
       result: { cases: 1 },
@@ -477,6 +480,7 @@ describe("completeTask", () => {
       null,
       {
         id: "t-1",
+        leaseToken: TOKEN,
         result: { raw: true },
         impactPrior: {
           hazardType: "FL",
@@ -505,14 +509,14 @@ describe("completeTask", () => {
 
   it("without an impactPrior on an event.impact_prior Task records no_prior_found and writes no row", async () => {
     const prisma = seeded(leased());
-    const done = await completeTask(null, { id: "t-1", result: { searched: 3, cases: 0 } }, ctx(worker, prisma));
+    const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { searched: 3, cases: 0 } }, ctx(worker, prisma));
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
     expect(prisma.impactPrior.create).not.toHaveBeenCalled();
   });
 
   it("leaves outcome null for a Task of another kind", async () => {
     const prisma = seeded(leased({ kind: "event.other" }));
-    const done = await completeTask(null, { id: "t-1", result: {} }, ctx(worker, prisma));
+    const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(worker, prisma));
     expect(done.outcome).toBeNull();
   });
 
@@ -521,13 +525,13 @@ describe("completeTask", () => {
 
     it("is recorded on the Task as reported", async () => {
       const prisma = seeded(leased());
-      const done = await completeTask(null, { id: "t-1", result: {}, usage }, ctx(worker, prisma));
+      const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {}, usage }, ctx(worker, prisma));
       expect(done).toMatchObject(usage);
     });
 
     it("stays null when not reported", async () => {
       const prisma = seeded(leased());
-      const done = await completeTask(null, { id: "t-1", result: {} }, ctx(worker, prisma));
+      const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(worker, prisma));
       expect(done).toMatchObject({ model: null, inputTokens: null, outputTokens: null, costUsd: null });
     });
 
@@ -539,7 +543,7 @@ describe("completeTask", () => {
       ["an infinite cost", { ...usage, costUsd: Number.POSITIVE_INFINITY }],
     ])("rejects %s with BAD_USER_INPUT and writes nothing", async (_name, bad) => {
       const prisma = seeded(leased());
-      const err = await errorOf(completeTask(null, { id: "t-1", result: {}, usage: bad }, ctx(worker, prisma)));
+      const err = await errorOf(completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {}, usage: bad }, ctx(worker, prisma)));
       expect(err.extensions.code).toBe("BAD_USER_INPUT");
       expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
     });
@@ -556,7 +560,7 @@ describe("completeTask", () => {
       methodVersion: "clear-impact-prior@0.1.0",
     });
     const complete = (prisma: ReturnType<typeof makePrisma>, impactPrior: Row) =>
-      completeTask(null, { id: "t-1", result: {}, impactPrior: impactPrior as never }, ctx(worker, prisma));
+      completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {}, impactPrior: impactPrior as never }, ctx(worker, prisma));
 
     it("accepts a hazard among the Event's types and the Event's level-0 ancestor as country", async () => {
       const prisma = seeded(leased());
@@ -614,6 +618,7 @@ describe("completeTask", () => {
         null,
         {
           id: "t-1",
+          leaseToken: TOKEN,
           result: {},
           impactPrior: {
             hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
@@ -631,7 +636,7 @@ describe("completeTask", () => {
 describe("failTask", () => {
   it("returns the Task to PENDING with the error while attempts remain, releasing the lease", async () => {
     const prisma = seeded(leased({ attempts: 1, maxAttempts: 3 }));
-    const row = await failTask(null, { id: "t-1", error: "model timed out" }, ctx(worker, prisma));
+    const row = await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "model timed out" }, ctx(worker, prisma));
     expect(row).toMatchObject({
       status: "PENDING",
       lastError: "model timed out",
@@ -643,7 +648,7 @@ describe("failTask", () => {
 
   it("marks the Task FAILED on the last attempt, keeping who last held it", async () => {
     const prisma = seeded(leased({ attempts: 3, maxAttempts: 3 }));
-    const row = await failTask(null, { id: "t-1", error: "no model access" }, ctx(worker, prisma));
+    const row = await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "no model access" }, ctx(worker, prisma));
     expect(row).toMatchObject({
       status: "FAILED",
       lastError: "no model access",
@@ -654,14 +659,14 @@ describe("failTask", () => {
 
   it("is BAD_USER_INPUT for an empty error, and writes nothing", async () => {
     const prisma = seeded(leased());
-    const err = await errorOf(failTask(null, { id: "t-1", error: "   " }, ctx(worker, prisma)));
+    const err = await errorOf(failTask(null, { id: "t-1", leaseToken: TOKEN, error: "   " }, ctx(worker, prisma)));
     expect(err.extensions.code).toBe("BAD_USER_INPUT");
     expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
   });
 
   it("is NOT_LEASE_OWNER for another worker", async () => {
     const prisma = seeded(leased());
-    const err = await errorOf(failTask(null, { id: "t-1", error: "x" }, ctx(rivalWorker, prisma)));
+    const err = await errorOf(failTask(null, { id: "t-1", leaseToken: TOKEN, error: "x" }, ctx(rivalWorker, prisma)));
     expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
   });
 });
@@ -718,7 +723,7 @@ describe("cancelTask", () => {
 
     it("at its next heartbeat: the Task becomes CANCELLED and the lease is released", async () => {
       const prisma = seeded(flagged());
-      const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+      const row = await heartbeatTask(null, { id: "t-1", leaseToken: TOKEN }, ctx(worker, prisma));
       expect(row).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: "u-analyst" });
     });
 
@@ -728,6 +733,7 @@ describe("cancelTask", () => {
         null,
         {
           id: "t-1",
+          leaseToken: TOKEN,
           result: { late: true },
           impactPrior: {
             hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
@@ -742,7 +748,7 @@ describe("cancelTask", () => {
 
     it("at failure: CANCELLED rather than PENDING, so it is never retried", async () => {
       const prisma = seeded(flagged());
-      const row = await failTask(null, { id: "t-1", error: "gave up" }, ctx(worker, prisma));
+      const row = await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "gave up" }, ctx(worker, prisma));
       expect(row.status).toBe("CANCELLED");
     });
 
@@ -750,7 +756,7 @@ describe("cancelTask", () => {
       const prisma = seeded(leased());
       prisma.task.findUnique.mockImplementationOnce(async () => leased());
       prisma.task.store.set("t-1", flagged());
-      const row = await completeTask(null, { id: "t-1", result: { late: true } }, ctx(worker, prisma));
+      const row = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { late: true } }, ctx(worker, prisma));
       expect(row).toMatchObject({ status: "CANCELLED", result: null });
     });
   });

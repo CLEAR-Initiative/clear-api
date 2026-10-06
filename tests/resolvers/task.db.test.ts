@@ -104,6 +104,11 @@ describeIfDb("Tasks against the real schema", () => {
     const [claimed] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(claimed.id).toBe(requested.id);
     expect(claimed).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_A, attempts: 1 });
+    expect(claimed.leaseToken).toMatch(/^[0-9a-f-]{36}$/);
+    // The token is the owner's secret: the requester reading eventTasks never sees it.
+    const [seenByRequester] = await eventTasks(null, { eventId }, analyst);
+    expect(taskResolvers.Task.leaseToken(seenByRequester, null, analyst)).toBeNull();
+    expect(taskResolvers.Task.leaseToken(claimed, null, workerA)).toBe(claimed.leaseToken);
     expect(claimed.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 10 * 60_000);
 
     // Nothing left for a second Worker.
@@ -113,6 +118,7 @@ describeIfDb("Tasks against the real schema", () => {
       null,
       {
         id: claimed.id,
+        leaseToken: claimed.leaseToken!,
         result: { summary: "one prior flood" },
         impactPrior: {
           hazardType: "FL",
@@ -174,7 +180,7 @@ describeIfDb("Tasks against the real schema", () => {
     expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 5 }, workerA)).toEqual([]);
 
     for (const t of [...a, ...b]) {
-      await completeTask(null, { id: t.id, result: {} }, t.leaseOwnerId === WORKER_A ? workerA : workerB);
+      await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {} }, t.leaseOwnerId === WORKER_A ? workerA : workerB);
     }
   });
 
@@ -186,7 +192,7 @@ describeIfDb("Tasks against the real schema", () => {
     expect(again.payload).toEqual({ horizonYears: 4 });
     const [claimed] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect((await requestEventEnrichment(null, { eventId: id }, analyst)).id).toBe(first.id);
-    await completeTask(null, { id: claimed.id, result: {} }, workerA);
+    await completeTask(null, { id: claimed.id, leaseToken: claimed.leaseToken!, result: {} }, workerA);
     const second = await requestEventEnrichment(null, { eventId: id }, analyst);
     expect(second.id).not.toBe(first.id);
     expect(second.status).toBe("PENDING");
@@ -202,7 +208,7 @@ describeIfDb("Tasks against the real schema", () => {
     // Leave the pool empty for the next test (claims are oldest-first).
     const [again2] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(again2.id).toBe(second.id);
-    await completeTask(null, { id: second.id, result: {} }, workerA);
+    await completeTask(null, { id: second.id, leaseToken: again2.leaseToken!, result: {} }, workerA);
   });
 
   /** Age a lease so the next claim sees it as lapsed. */
@@ -215,7 +221,7 @@ describeIfDb("Tasks against the real schema", () => {
     const [a] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(a.id).toBe(requested.id);
 
-    const beat = await heartbeatTask(null, { id: a.id }, workerA);
+    const beat = await heartbeatTask(null, { id: a.id, leaseToken: a.leaseToken! }, workerA);
     expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThanOrEqual(a.leaseExpiresAt!.getTime());
     expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
     // Another Worker gets nothing while the lease is live.
@@ -224,18 +230,19 @@ describeIfDb("Tasks against the real schema", () => {
     await expireLease(a.id);
     const [b] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
     expect(b).toMatchObject({ id: a.id, status: "LEASED", leaseOwnerId: WORKER_B, attempts: 2 });
+    expect(b.leaseToken).not.toBe(a.leaseToken);
 
     // The old owner is told it no longer holds the lease, on every write.
-    await expect(heartbeatTask(null, { id: a.id }, workerA)).rejects.toMatchObject({
+    await expect(heartbeatTask(null, { id: a.id, leaseToken: a.leaseToken! }, workerA)).rejects.toMatchObject({
       extensions: { code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" },
     });
-    await expect(completeTask(null, { id: a.id, result: { stale: true } }, workerA)).rejects.toMatchObject({
+    await expect(completeTask(null, { id: a.id, leaseToken: a.leaseToken!, result: { stale: true } }, workerA)).rejects.toMatchObject({
       extensions: { subCode: "NOT_LEASE_OWNER" },
     });
     const row = await prisma.task.findUniqueOrThrow({ where: { id: a.id } });
     expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_B, result: null });
 
-    await completeTask(null, { id: a.id, result: {} }, workerB);
+    await completeTask(null, { id: a.id, leaseToken: b.leaseToken!, result: {} }, workerB);
   });
 
   it("a lapsed lease on a Task out of attempts is marked FAILED at the next claim, not handed out again", async () => {
@@ -263,17 +270,17 @@ describeIfDb("Tasks against the real schema", () => {
     const id = await makeEvent();
     const requested = await requestEventEnrichment(null, { eventId: id }, analyst);
     const [first] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
-    const retry = await failTask(null, { id: first.id, error: "attempt 1 failed" }, workerA);
+    const retry = await failTask(null, { id: first.id, leaseToken: first.leaseToken!, error: "attempt 1 failed" }, workerA);
     expect(retry).toMatchObject({ status: "PENDING", attempts: 1, lastError: "attempt 1 failed", leaseOwnerId: null });
     // Still the one open Task for the Event: a new request dedupes onto it.
     expect((await requestEventEnrichment(null, { eventId: id }, analyst)).id).toBe(requested.id);
 
     const [second] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
     expect(second).toMatchObject({ id: requested.id, attempts: 2, leaseOwnerId: WORKER_B });
-    await failTask(null, { id: second.id, error: "attempt 2 failed" }, workerB);
+    await failTask(null, { id: second.id, leaseToken: second.leaseToken!, error: "attempt 2 failed" }, workerB);
     const [third] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(third.attempts).toBe(3);
-    const failed = await failTask(null, { id: third.id, error: "attempt 3 failed" }, workerA);
+    const failed = await failTask(null, { id: third.id, leaseToken: third.leaseToken!, error: "attempt 3 failed" }, workerA);
     expect(failed).toMatchObject({ status: "FAILED", attempts: 3, lastError: "attempt 3 failed", leaseOwnerId: WORKER_A });
 
     expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB)).toEqual([]);
@@ -283,7 +290,7 @@ describeIfDb("Tasks against the real schema", () => {
     const again = await requestEventEnrichment(null, { eventId: id }, analyst);
     expect(again.id).not.toBe(requested.id);
     const [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
-    await completeTask(null, { id: t.id, result: {} }, workerA);
+    await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {} }, workerA);
   });
 
   it("cancel: PENDING ends now; LEASED is flagged, never re-claimed, and finished by the Worker", async () => {
@@ -306,7 +313,7 @@ describeIfDb("Tasks against the real schema", () => {
     await expireLease(held.id);
     expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 10 }, workerB)).toEqual([]);
     // The Worker's completion is discarded and the Task ends CANCELLED.
-    const done = await completeTask(null, { id: held.id, result: { late: true } }, workerA);
+    const done = await completeTask(null, { id: held.id, leaseToken: held.leaseToken!, result: { late: true } }, workerA);
     expect(done).toMatchObject({ status: "CANCELLED", result: null, leaseExpiresAt: null });
     expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
     await expect(cancelTask(null, { id: held.id }, analyst)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
@@ -329,27 +336,27 @@ describeIfDb("Tasks against the real schema", () => {
     await requestEventEnrichment(null, { eventId: id }, analyst);
     let [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     await expect(
-      completeTask(null, { id: t.id, result: {}, impactPrior: { ...proposal, hazardType: "EQ" } }, workerA),
+      completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {}, impactPrior: { ...proposal, hazardType: "EQ" } }, workerA),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     await expect(
-      completeTask(null, { id: t.id, result: {}, impactPrior: { ...proposal, countryLocationId: DISTRICT_ID } }, workerA),
+      completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {}, impactPrior: { ...proposal, countryLocationId: DISTRICT_ID } }, workerA),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     expect((await prisma.task.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("LEASED");
 
     // No cases: no_prior_found, usage recorded, no row.
-    const none = await completeTask(null, { id: t.id, result: { cases: 0 }, usage }, workerA);
+    const none = await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: { cases: 0 }, usage }, workerA);
     expect(none).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found", ...usage });
     expect(await eventImpactPriors(null, { eventId: id }, analyst)).toEqual([]);
 
     // A second request → first ImpactPrior; a third → one that supersedes it.
     await requestEventEnrichment(null, { eventId: id }, analyst);
     [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
-    await completeTask(null, { id: t.id, result: {}, impactPrior: proposal, usage }, workerA);
+    await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {}, impactPrior: proposal, usage }, workerA);
     await requestEventEnrichment(null, { eventId: id }, analyst);
     [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
     await completeTask(
       null,
-      { id: t.id, result: {}, impactPrior: { ...proposal, numberOfCases: 2, basis: [...proposal.basis, { tier: "web", sourceUrl: "https://example.test", scope: "country" }] } },
+      { id: t.id, leaseToken: t.leaseToken!, result: {}, impactPrior: { ...proposal, numberOfCases: 2, basis: [...proposal.basis, { tier: "web", sourceUrl: "https://example.test", scope: "country" }] } },
       workerB,
     );
     const priors = await eventImpactPriors(null, { eventId: id }, analyst);
@@ -372,7 +379,7 @@ describeIfDb("Tasks against the real schema", () => {
 
     const [claimed] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(claimed.id).toBe(first.id);
-    await completeTask(null, { id: first.id, result: {} }, workerA);
+    await completeTask(null, { id: first.id, leaseToken: claimed.leaseToken!, result: {} }, workerA);
     // Once COMPLETED, a new open Task for the same Event is allowed.
     const second = await requestEventEnrichment(null, { eventId: id }, analyst);
     expect(second.id).not.toBe(first.id);

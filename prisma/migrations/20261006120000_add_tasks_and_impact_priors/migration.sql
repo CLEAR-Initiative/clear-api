@@ -20,6 +20,7 @@ CREATE TABLE "tasks" (
     "team_id" TEXT,
     "lease_owner_id" TEXT,
     "lease_expires_at" TIMESTAMP(3),
+    "lease_token" TEXT,
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "max_attempts" INTEGER NOT NULL DEFAULT 3,
     "last_error" TEXT,

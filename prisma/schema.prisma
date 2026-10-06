@@ -2308,6 +2308,11 @@ model task {
   /// user.id of the Worker (or person) holding the lease.
   leaseOwnerId   String?   @map("lease_owner_id")
   leaseExpiresAt DateTime? @map("lease_expires_at")
+  /// Secret minted per claim and handed only to the Worker that claimed;
+  /// heartbeat, complete and fail must present it. Distinguishes two runs
+  /// of the same Worker identity (one service user) so a stale run cannot
+  /// write over a reclaimed lease.
+  leaseToken     String?   @map("lease_token")
 
   attempts    Int     @default(0)
   maxAttempts Int     @default(3) @map("max_attempts")

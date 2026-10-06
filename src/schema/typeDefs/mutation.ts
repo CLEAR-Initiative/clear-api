@@ -1105,20 +1105,21 @@ export const mutationTypeDef = gql`
     hold the same Task. \`limit\` is clamped to the platform cap. Each
     lease lasts TASK_LEASE_MINUTES; heartbeat to keep it."""
     claimTasks(kind: String!, limit: Int = 1): [Task!]!
+    # Each leased row carries a fresh \`leaseToken\`; keep it for the writes below.
 
     """WORKER CONTRACT: keep a lease alive. Extends \`leaseExpiresAt\` by
     TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
     (CONFLICT \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\` — the latter
-    usually means the lease lapsed and another Worker took the Task; stop
-    working on it). If cancellation was requested, the Task becomes
+    means the lease lapsed and was reclaimed, so this \`leaseToken\` is
+    stale; stop working on it). If cancellation was requested, the Task becomes
     CANCELLED and the Worker should stop."""
-    heartbeatTask(id: String!): Task!
+    heartbeatTask(id: String!, leaseToken: String!): Task!
 
     """WORKER CONTRACT: give the Task up with an error. It returns to
     PENDING for another Worker (or attempt) while attempts remain, and
     becomes FAILED with this as its \`lastError\` once \`maxAttempts\`
     claims have been used. Only the lease owner, only while LEASED."""
-    failTask(id: String!, error: String!): Task!
+    failTask(id: String!, leaseToken: String!, error: String!): Task!
 
     """WORKER CONTRACT: report the Task done. \`result\` is the raw output
     (audit only). For \`event.impact_prior\`, pass \`impactPrior\` to
@@ -1129,6 +1130,7 @@ export const mutationTypeDef = gql`
     discarded."""
     completeTask(
       id: String!
+      leaseToken: String!
       result: JSON!
       usage: TaskUsageInput
       impactPrior: ImpactPriorInput

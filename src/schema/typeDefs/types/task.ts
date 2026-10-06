@@ -66,6 +66,11 @@ export const taskTypeDef = gql`
     """When the current lease lapses. A heartbeat extends it by
     TASK_LEASE_MINUTES; past this instant the Task is claimable again."""
     leaseExpiresAt: DateTime
+    """Secret minted per claim. Returned only to the lease owner (null for
+    everyone else); the Worker presents it on heartbeat, complete and fail.
+    A new claim mints a new token, so a run whose lease lapsed and was
+    reclaimed — even by the same Worker identity — can no longer write."""
+    leaseToken: String
     """Times the Task has been claimed."""
     attempts: Int!
     """Claims allowed before the Task is marked FAILED."""

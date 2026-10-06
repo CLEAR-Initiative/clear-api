@@ -24,6 +24,7 @@ const CLAIM_TASKS = `
       payload
       status
       leaseOwnerId
+      leaseToken
       leaseExpiresAt
       attempts
       maxAttempts
@@ -32,8 +33,8 @@ const CLAIM_TASKS = `
 `;
 
 const HEARTBEAT_TASK = `
-  mutation ClearHeartbeatTask($id: String!) {
-    heartbeatTask(id: $id) {
+  mutation ClearHeartbeatTask($id: String!, $leaseToken: String!) {
+    heartbeatTask(id: $id, leaseToken: $leaseToken) {
       id
       status
       leaseOwnerId
@@ -44,8 +45,8 @@ const HEARTBEAT_TASK = `
 `;
 
 const FAIL_TASK = `
-  mutation ClearFailTask($id: String!, $error: String!) {
-    failTask(id: $id, error: $error) {
+  mutation ClearFailTask($id: String!, $leaseToken: String!, $error: String!) {
+    failTask(id: $id, leaseToken: $leaseToken, error: $error) {
       id
       status
       attempts
@@ -56,8 +57,8 @@ const FAIL_TASK = `
 `;
 
 const COMPLETE_TASK = `
-  mutation ClearCompleteTask($id: String!, $result: JSON!, $usage: TaskUsageInput, $impactPrior: ImpactPriorInput) {
-    completeTask(id: $id, result: $result, usage: $usage, impactPrior: $impactPrior) {
+  mutation ClearCompleteTask($id: String!, $leaseToken: String!, $result: JSON!, $usage: TaskUsageInput, $impactPrior: ImpactPriorInput) {
+    completeTask(id: $id, leaseToken: $leaseToken, result: $result, usage: $usage, impactPrior: $impactPrior) {
       id
       status
       outcome
@@ -82,6 +83,7 @@ const LEASED = {
   requesterId: "u-1",
   teamId: null,
   leaseOwnerId: "u-worker",
+  leaseToken: "tok-1",
   leaseExpiresAt: new Date("2026-10-06T10:15:00Z"),
   attempts: 1,
   maxAttempts: 3,
@@ -164,12 +166,12 @@ describe("Worker protocol schema contract", () => {
     const result = await run(CLAIM_TASKS, { kind: "event.impact_prior", limit: 1 }, WORKER);
     expect(result.errors).toBeUndefined();
     expect(result.data?.claimTasks).toEqual([
-      expect.objectContaining({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker", attempts: 1 }),
+      expect.objectContaining({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker", leaseToken: "tok-1", attempts: 1 }),
     ]);
   });
 
   it("heartbeatTask executes the Worker's document and returns the extended lease", async () => {
-    const result = await run(HEARTBEAT_TASK, { id: "t-1" }, WORKER);
+    const result = await run(HEARTBEAT_TASK, { id: "t-1", leaseToken: "tok-1" }, WORKER);
     expect(result.errors).toBeUndefined();
     const row = result.data?.heartbeatTask as { status: string; leaseExpiresAt: string };
     expect(row.status).toBe("LEASED");
@@ -177,7 +179,7 @@ describe("Worker protocol schema contract", () => {
   });
 
   it("failTask executes the Worker's document and returns the Task to PENDING with its error", async () => {
-    const result = await run(FAIL_TASK, { id: "t-1", error: "rate limited" }, WORKER);
+    const result = await run(FAIL_TASK, { id: "t-1", leaseToken: "tok-1", error: "rate limited" }, WORKER);
     expect(result.errors).toBeUndefined();
     expect(result.data?.failTask).toMatchObject({ id: "t-1", status: "PENDING", lastError: "rate limited", attempts: 1 });
   });
@@ -187,6 +189,7 @@ describe("Worker protocol schema contract", () => {
       COMPLETE_TASK,
       {
         id: "t-1",
+        leaseToken: "tok-1",
         result: { summary: "one case" },
         usage: { model: "anthropic/claude-sonnet-5-5", inputTokens: 1200, outputTokens: 300, costUsd: 0.012 },
         impactPrior: {
@@ -215,7 +218,7 @@ describe("Worker protocol schema contract", () => {
   });
 
   it("completeTask without an impactPrior records no_prior_found", async () => {
-    const result = await run(COMPLETE_TASK, { id: "t-1", result: { cases: 0 } }, WORKER);
+    const result = await run(COMPLETE_TASK, { id: "t-1", leaseToken: "tok-1", result: { cases: 0 } }, WORKER);
     expect(result.errors).toBeUndefined();
     expect(result.data?.completeTask).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
   });
@@ -223,7 +226,7 @@ describe("Worker protocol schema contract", () => {
   it("relays CONFLICT / NOT_LEASED for a Task that is not leased", async () => {
     const result = await run(
       COMPLETE_TASK,
-      { id: "t-1", result: {} },
+      { id: "t-1", leaseToken: "tok-1", result: {} },
       WORKER,
       mockPrisma({ ...LEASED, status: "PENDING", leaseOwnerId: null }),
     );
@@ -231,7 +234,7 @@ describe("Worker protocol schema contract", () => {
   });
 
   it("relays FORBIDDEN / NOT_LEASE_OWNER for another Worker", async () => {
-    const result = await run(COMPLETE_TASK, { id: "t-1", result: {} }, { id: "u-worker-2", role: "worker" });
+    const result = await run(COMPLETE_TASK, { id: "t-1", leaseToken: "tok-1", result: {} }, { id: "u-worker-2", role: "worker" });
     expect(result.errors?.[0]?.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" });
   });
 
