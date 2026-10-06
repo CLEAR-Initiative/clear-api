@@ -31,6 +31,18 @@ const CLAIM_TASKS = `
   }
 `;
 
+const HEARTBEAT_TASK = `
+  mutation ClearHeartbeatTask($id: String!) {
+    heartbeatTask(id: $id) {
+      id
+      status
+      leaseOwnerId
+      leaseExpiresAt
+      cancelRequestedAt
+    }
+  }
+`;
+
 const COMPLETE_TASK = `
   mutation ClearCompleteTask($id: String!, $result: JSON!, $usage: TaskUsageInput, $impactPrior: ImpactPriorInput) {
     completeTask(id: $id, result: $result, usage: $usage, impactPrior: $impactPrior) {
@@ -76,12 +88,19 @@ const LEASED = {
 };
 
 function mockPrisma(task: Record<string, unknown> = LEASED) {
+  let current: Record<string, unknown> = { ...task };
   const prisma: Record<string, unknown> = {
     $queryRaw: vi.fn().mockResolvedValue([{ id: "t-1" }]),
+    $executeRaw: vi.fn().mockResolvedValue(0),
     task: {
-      findUnique: vi.fn().mockResolvedValue(task),
+      findUnique: vi.fn(async () => current),
+      findUniqueOrThrow: vi.fn(async () => current),
       findMany: vi.fn().mockResolvedValue([task]),
-      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...task, ...data })),
+      updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const ok = Object.entries(where).every(([k, v]) => current[k] === v);
+        if (ok) current = { ...current, ...data };
+        return { count: ok ? 1 : 0 };
+      }),
     },
     impactPrior: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -135,6 +154,14 @@ describe("Worker protocol schema contract", () => {
     expect(result.data?.claimTasks).toEqual([
       expect.objectContaining({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker", attempts: 1 }),
     ]);
+  });
+
+  it("heartbeatTask executes the Worker's document and returns the extended lease", async () => {
+    const result = await run(HEARTBEAT_TASK, { id: "t-1" }, WORKER);
+    expect(result.errors).toBeUndefined();
+    const row = result.data?.heartbeatTask as { status: string; leaseExpiresAt: string };
+    expect(row.status).toBe("LEASED");
+    expect(new Date(row.leaseExpiresAt).getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
   });
 
   it("completeTask accepts usage and an ImpactPriorInput and returns the COMPLETED Task", async () => {

@@ -20,7 +20,7 @@ import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resol
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { requestEventEnrichment, claimTasks, completeTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask } = taskResolvers.Mutation;
 const { eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
@@ -203,6 +203,60 @@ describeIfDb("Tasks against the real schema", () => {
     const [again2] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     expect(again2.id).toBe(second.id);
     await completeTask(null, { id: second.id, result: {} }, workerA);
+  });
+
+  /** Age a lease so the next claim sees it as lapsed. */
+  const expireLease = (id: string) =>
+    prisma.task.update({ where: { id }, data: { leaseExpiresAt: new Date(Date.now() - 60_000) } });
+
+  it("heartbeat extends the lease; a lapsed lease is reclaimed by the next claim and the old owner is locked out", async () => {
+    const id = await makeEvent();
+    const requested = await requestEventEnrichment(null, { eventId: id }, analyst);
+    const [a] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect(a.id).toBe(requested.id);
+
+    const beat = await heartbeatTask(null, { id: a.id }, workerA);
+    expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThanOrEqual(a.leaseExpiresAt!.getTime());
+    expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+    // Another Worker gets nothing while the lease is live.
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB)).toEqual([]);
+
+    await expireLease(a.id);
+    const [b] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
+    expect(b).toMatchObject({ id: a.id, status: "LEASED", leaseOwnerId: WORKER_B, attempts: 2 });
+
+    // The old owner is told it no longer holds the lease, on every write.
+    await expect(heartbeatTask(null, { id: a.id }, workerA)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" },
+    });
+    await expect(completeTask(null, { id: a.id, result: { stale: true } }, workerA)).rejects.toMatchObject({
+      extensions: { subCode: "NOT_LEASE_OWNER" },
+    });
+    const row = await prisma.task.findUniqueOrThrow({ where: { id: a.id } });
+    expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_B, result: null });
+
+    await completeTask(null, { id: a.id, result: {} }, workerB);
+  });
+
+  it("a lapsed lease on a Task out of attempts is marked FAILED at the next claim, not handed out again", async () => {
+    const id = await makeEvent();
+    const requested = await requestEventEnrichment(null, { eventId: id }, analyst);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, attempt % 2 ? workerA : workerB);
+      expect(t).toMatchObject({ id: requested.id, attempts: attempt });
+      await expireLease(t.id);
+    }
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA)).toEqual([]);
+    const row = await prisma.task.findUniqueOrThrow({ where: { id: requested.id } });
+    expect(row).toMatchObject({
+      status: "FAILED",
+      attempts: 3,
+      lastError: "lease expired after max attempts",
+      leaseExpiresAt: null,
+    });
+    // Visible to the requester on the Event page; redacted for a viewer.
+    expect((await eventTasks(null, { eventId: id }, analyst))[0].lastError).toBe("lease expired after max attempts");
+    expect((await eventTasks(null, { eventId: id }, viewer))[0].lastError).toBeNull();
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

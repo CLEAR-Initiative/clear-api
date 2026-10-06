@@ -1579,6 +1579,15 @@ oldest claimable Tasks of `kind` — PENDING, or LEASED past their
 expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two Workers
 hold the same Task. `limit` is clamped to the platform cap. Each
 lease lasts TASK_LEASE_MINUTES; heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr id="mutation-heartbeattask">
+    <td><code>heartbeatTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: keep a lease alive. Extends `leaseExpiresAt` by
+TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+(CONFLICT `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER` — the latter
+usually means the lease lapsed and another Worker took the Task; stop
+working on it). If cancellation was requested, the Task becomes
+CANCELLED and the Worker should stop.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-completetask">
     <td><code>completeTask</code></td>
     <td><code>Task!</code></td>

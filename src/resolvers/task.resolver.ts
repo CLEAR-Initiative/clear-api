@@ -77,24 +77,57 @@ const conflict = (message: string, subCode?: string) =>
 const badInput = (message: string) =>
   new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
 
+/** The error a Worker gets when it does not hold the lease: `NOT_LEASED`
+ *  (CONFLICT) when the Task is in any other state, `NOT_LEASE_OWNER`
+ *  (FORBIDDEN) when another Worker holds it — usually because this one's
+ *  lease lapsed and was reclaimed. */
+function leaseError(task: TaskRow | null, userId: string): GraphQLError {
+  if (!task) return notFound("Task");
+  if (task.status !== "LEASED") {
+    return conflict(`Task is ${task.status}, not LEASED`, "NOT_LEASED");
+  }
+  if (task.leaseOwnerId !== userId) {
+    return forbidden("You do not hold the lease on this Task", "NOT_LEASE_OWNER");
+  }
+  return conflict("Task changed while writing; retry", "NOT_LEASED");
+}
+
 /**
  * The Worker-side ownership check shared by heartbeat / complete / fail:
  * the caller holds the `worker` role, the Task exists, is LEASED, and the
- * lease is the caller's. `NOT_LEASED` and `NOT_LEASE_OWNER` are subCodes a
- * Worker branches on (a lapsed lease taken by someone else is the usual
- * cause of the second).
+ * lease is the caller's. A fast pre-check only — the write itself goes
+ * through {@link writeAsLeaseOwner}, which re-asserts the lease atomically.
  */
 async function requireLeaseOwner(context: Context, id: string): Promise<TaskRow> {
   const user = requireRole(context, [WORKER_ROLE]);
   const task = await context.prisma.task.findUnique({ where: { id } });
-  if (!task) throw notFound("Task");
-  if (task.status !== "LEASED") {
-    throw conflict(`Task is ${task.status}, not LEASED`, "NOT_LEASED");
-  }
-  if (task.leaseOwnerId !== user.id) {
-    throw forbidden("You do not hold the lease on this Task", "NOT_LEASE_OWNER");
+  if (!task || task.status !== "LEASED" || task.leaseOwnerId !== user.id) {
+    throw leaseError(task, user.id);
   }
   return task;
+}
+
+/**
+ * Write to a Task only if it is STILL leased by the caller, in one
+ * statement. Between the pre-check and the write a lapsed lease may have
+ * been reclaimed by another Worker; a plain `update` by id would then
+ * overwrite the new owner's lease. On a miss, re-read and throw the error
+ * the current state warrants.
+ */
+async function writeAsLeaseOwner(
+  tx: Prisma.TransactionClient,
+  id: string,
+  userId: string,
+  data: Prisma.taskUpdateManyMutationInput,
+): Promise<TaskRow> {
+  const { count } = await tx.task.updateMany({
+    where: { id, status: "LEASED", leaseOwnerId: userId },
+    data,
+  });
+  if (count === 0) {
+    throw leaseError(await tx.task.findUnique({ where: { id } }), userId);
+  }
+  return tx.task.findUniqueOrThrow({ where: { id } });
 }
 
 /** `lastError` is the requester's and platform admins' to see; everyone
@@ -298,6 +331,19 @@ export const taskResolvers = {
       const leaseMinutes = env.TASK_LEASE_MINUTES;
 
       const claimedIds = await context.prisma.$transaction(async (tx) => {
+        // A lapsed lease whose Task has used up its attempts is FAILED here,
+        // the same lazy way an expired lease is reclaimed below: there is no
+        // sweeper, so the next claim is where the expiry is noticed.
+        await tx.$executeRaw`
+          UPDATE "tasks"
+          SET "status" = 'FAILED',
+              "last_error" = COALESCE("last_error", 'lease expired after max attempts'),
+              "lease_expires_at" = NULL,
+              "updated_at" = now()
+          WHERE "kind" = ${args.kind}
+            AND "status" = 'LEASED'
+            AND "lease_expires_at" < now()
+            AND "attempts" >= "max_attempts"`;
         const rows = await tx.$queryRaw<{ id: string }[]>`
           UPDATE "tasks"
           SET "status" = 'LEASED',
@@ -310,6 +356,7 @@ export const taskResolvers = {
             WHERE "kind" = ${args.kind}
               AND ("status" = 'PENDING'
                    OR ("status" = 'LEASED' AND "lease_expires_at" < now()))
+              AND "attempts" < "max_attempts"
               AND "cancel_requested_at" IS NULL
             ORDER BY "created_at"
             LIMIT ${limit}
@@ -327,6 +374,17 @@ export const taskResolvers = {
       return claimed.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
     },
 
+    // Keep-alive. Extends the lease by TASK_LEASE_MINUTES from now; a Task
+    // whose lease lapsed but was not yet reclaimed is still the owner's to
+    // extend (the lapse is only acted on at a claim).
+    heartbeatTask: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const task = await requireLeaseOwner(context, args.id);
+      const user = context.user!;
+      return writeAsLeaseOwner(context.prisma, task.id, user.id, {
+        leaseExpiresAt: new Date(Date.now() + env.TASK_LEASE_MINUTES * 60_000),
+      });
+    },
+
     // Completion: the Task's raw output, optional usage, and for
     // `event.impact_prior` an optional ImpactPrior proposal. With a proposal
     // the typed row is inserted (state `proposed`) in the same transaction
@@ -342,13 +400,24 @@ export const taskResolvers = {
       context: Context,
     ) => {
       const task = await requireLeaseOwner(context, args.id);
+      const user = context.user!;
       const now = new Date();
+      if (args.impactPrior && (task.kind !== IMPACT_PRIOR_KIND || task.subjectType !== EVENT_SUBJECT)) {
+        throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
+      }
 
       return context.prisma.$transaction(async (tx) => {
+        // The Task first, conditionally on still holding the lease, so a
+        // reclaimed Task's new owner never finds a stranger's result on it.
+        const completed = await writeAsLeaseOwner(tx, task.id, user.id, {
+          status: "COMPLETED",
+          completedAt: now,
+          result: args.result,
+          outcome: args.impactPrior ? "produced" : null,
+          // leaseOwnerId stays as the record of who completed it.
+          leaseExpiresAt: null,
+        });
         if (args.impactPrior) {
-          if (task.kind !== IMPACT_PRIOR_KIND || task.subjectType !== EVENT_SUBJECT) {
-            throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
-          }
           await tx.impactPrior.create({
             data: {
               eventId: task.subjectId,
@@ -369,17 +438,7 @@ export const taskResolvers = {
             },
           });
         }
-        return tx.task.update({
-          where: { id: task.id },
-          data: {
-            status: "COMPLETED",
-            completedAt: now,
-            result: args.result,
-            outcome: args.impactPrior ? "produced" : null,
-            // leaseOwnerId stays as the record of who completed it.
-            leaseExpiresAt: null,
-          },
-        });
+        return completed;
       });
     },
   },

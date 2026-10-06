@@ -1100,6 +1100,14 @@ export const mutationTypeDef = gql`
     lease lasts TASK_LEASE_MINUTES; heartbeat to keep it."""
     claimTasks(kind: String!, limit: Int = 1): [Task!]!
 
+    """WORKER CONTRACT: keep a lease alive. Extends \`leaseExpiresAt\` by
+    TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+    (CONFLICT \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\` — the latter
+    usually means the lease lapsed and another Worker took the Task; stop
+    working on it). If cancellation was requested, the Task becomes
+    CANCELLED and the Worker should stop."""
+    heartbeatTask(id: String!): Task!
+
     """WORKER CONTRACT: report the Task done. \`result\` is the raw output
     (audit only). For \`event.impact_prior\`, pass \`impactPrior\` to
     record a proposal (outcome \`produced\`) or omit it to record

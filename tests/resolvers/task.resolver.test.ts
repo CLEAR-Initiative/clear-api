@@ -1,14 +1,16 @@
 /**
  * Tests for the Task / Worker protocol resolver (ADR-0010).
  *
- * DB-FREE: `context.prisma` is a `vi.fn()` mock per delegate; `$transaction`
- * runs a callback against the mock, and `$queryRaw` (the SKIP LOCKED claim)
- * is a stub that returns whatever ids the test seeds. These assert external
- * behaviour — who may call what, the status after each mutation, what the
- * error subCodes and messages are — never the SQL text. Claim atomicity and
- * lease expiry run against the real schema in `task.db.test.ts`.
+ * DB-FREE: `context.prisma` is a small in-memory `task` store behind
+ * `vi.fn()` delegates (so conditional `updateMany` writes behave like the
+ * real thing), `$transaction` runs a callback against it, and `$queryRaw`
+ * (the SKIP LOCKED claim) is a stub that returns whatever ids the test
+ * seeds. These assert external behaviour — who may call what, the status
+ * after each mutation, what the error subCodes and messages are — never the
+ * SQL text. Claim atomicity and lease expiry run against the real schema in
+ * `task.db.test.ts`.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../../src/generated/prisma/client.js";
 
@@ -48,16 +50,45 @@ function makeTask(overrides: Row = {}): Row {
   };
 }
 
+/** A `where` of equality conditions (what the resolver's conditional
+ *  writes use) matched against a row. */
+function matches(row: Row, where: Row): boolean {
+  return Object.entries(where).every(([k, v]) => row[k] === v);
+}
+
 function makePrisma(overrides: Record<string, unknown> = {}) {
+  const store = new Map<string, Row>();
   const task = {
-    findUnique: vi.fn(async (): Promise<Row | null> => null),
+    store,
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => store.get(where.id) ?? null),
+    findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => {
+      const row = store.get(where.id);
+      if (!row) throw new Error("not found");
+      return row;
+    }),
     findFirst: vi.fn(async (): Promise<Row | null> => null),
     findMany: vi.fn(async (): Promise<Row[]> => []),
     count: vi.fn(async () => 0),
-    create: vi.fn(async ({ data }: { data: Row }) => makeTask({ ...data })),
-    update: vi.fn(async ({ where, data }: { where: { id: string }; data: Row }) =>
-      makeTask({ id: where.id, ...data }),
-    ),
+    create: vi.fn(async ({ data }: { data: Row }) => {
+      const row = makeTask({ ...data });
+      store.set(row.id as string, row);
+      return row;
+    }),
+    update: vi.fn(async ({ where, data }: { where: { id: string }; data: Row }) => {
+      const row = { ...(store.get(where.id) ?? makeTask({ id: where.id })), ...data };
+      store.set(where.id, row);
+      return row;
+    }),
+    updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      let count = 0;
+      for (const [id, row] of store) {
+        if (matches(row, where)) {
+          store.set(id, { ...row, ...data });
+          count++;
+        }
+      }
+      return { count };
+    }),
   };
   const impactPrior = {
     findFirst: vi.fn(async (): Promise<Row | null> => null),
@@ -87,6 +118,7 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   const prisma: Record<string, unknown> = {
     task, impactPrior, events, locations, activityLogs, teamMembers,
     $queryRaw: vi.fn(async () => [] as { id: string }[]),
+    $executeRaw: vi.fn(async () => 0),
   };
   prisma.$transaction = vi.fn(async (arg: unknown) =>
     typeof arg === "function"
@@ -98,6 +130,13 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     task: typeof task; impactPrior: typeof impactPrior; events: typeof events;
     activityLogs: typeof activityLogs; $queryRaw: ReturnType<typeof vi.fn>;
   };
+}
+
+/** Seed rows into the store and return the prisma. */
+function seeded(...rows: Row[]) {
+  const prisma = makePrisma();
+  for (const r of rows) prisma.task.store.set(r.id as string, r);
+  return prisma;
 }
 
 type User = { id: string; role: string };
@@ -119,8 +158,11 @@ const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, completeTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask } = taskResolvers.Mutation;
 const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
+
+const leased = (overrides: Row = {}) =>
+  makeTask({ status: "LEASED", leaseOwnerId: "u-worker", attempts: 1, leaseExpiresAt: new Date("2026-10-06T10:15:00Z"), ...overrides });
 
 async function errorOf(p: Promise<unknown>): Promise<GraphQLError> {
   try {
@@ -131,6 +173,10 @@ async function errorOf(p: Promise<unknown>): Promise<GraphQLError> {
   }
   throw new Error("expected a GraphQLError");
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("requestEventEnrichment", () => {
   describe("gate — the same as escalateEvent", () => {
@@ -221,15 +267,11 @@ describe("requestEventEnrichment", () => {
     it("counts the caller's Tasks since UTC midnight", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-10-06T15:30:00Z"));
-      try {
-        const prisma = makePrisma();
-        await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-        expect(prisma.task.count).toHaveBeenCalledWith({
-          where: { requesterId: "u-analyst", createdAt: { gte: new Date("2026-10-06T00:00:00Z") } },
-        });
-      } finally {
-        vi.useRealTimers();
-      }
+      const prisma = makePrisma();
+      await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(prisma.task.count).toHaveBeenCalledWith({
+        where: { requesterId: "u-analyst", createdAt: { gte: new Date("2026-10-06T00:00:00Z") } },
+      });
     });
 
     it("allows the 20th request and rejects the 21st with FORBIDDEN / DAILY_CAP naming the cap", async () => {
@@ -336,52 +378,85 @@ describe("claimTasks", () => {
   });
 });
 
-describe("completeTask — ownership", () => {
-  const leased = () => makeTask({ status: "LEASED", leaseOwnerId: "u-worker", attempts: 1 });
-
-  it("is FORBIDDEN for any non-worker role, even an admin", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(leased());
-    const err = await errorOf(completeTask(null, { id: "t-1", result: {} }, ctx(admin, prisma)));
+describe("lease ownership — heartbeat and complete", () => {
+  it.each([
+    ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-1" }, c)],
+    ["completeTask", (c: Context) => completeTask(null, { id: "t-1", result: {} }, c)],
+  ])("%s is FORBIDDEN for any non-worker role, even an admin", async (_name, call) => {
+    const err = await errorOf(call(ctx(admin, seeded(leased()))));
     expect(err.extensions.code).toBe("FORBIDDEN");
   });
 
-  it("is NOT_FOUND for an unknown Task", async () => {
-    const err = await errorOf(completeTask(null, { id: "t-nope", result: {} }, ctx(worker)));
+  it.each([
+    ["heartbeatTask", (c: Context) => heartbeatTask(null, { id: "t-nope" }, c)],
+    ["completeTask", (c: Context) => completeTask(null, { id: "t-nope", result: {} }, c)],
+  ])("%s is NOT_FOUND for an unknown Task", async (_name, call) => {
+    const err = await errorOf(call(ctx(worker)));
     expect(err.extensions.code).toBe("NOT_FOUND");
   });
 
-  it("is CONFLICT NOT_LEASED when the Task is not LEASED", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(makeTask({ status: "PENDING" }));
-    const err = await errorOf(completeTask(null, { id: "t-1", result: {} }, ctx(worker, prisma)));
-    expect(err.extensions.code).toBe("CONFLICT");
-    expect(err.extensions.subCode).toBe("NOT_LEASED");
-  });
+  it.each(["PENDING", "COMPLETED", "FAILED", "CANCELLED"])(
+    "is CONFLICT NOT_LEASED when the Task is %s",
+    async (status) => {
+      const prisma = seeded(makeTask({ status, leaseOwnerId: "u-worker" }));
+      const err = await errorOf(heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma)));
+      expect(err.extensions).toMatchObject({ code: "CONFLICT", subCode: "NOT_LEASED" });
+      expect(err.message).toContain(status);
+    },
+  );
 
-  it("is FORBIDDEN NOT_LEASE_OWNER for a worker that does not hold the lease", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(leased());
+  it("is FORBIDDEN NOT_LEASE_OWNER for a worker that does not hold the lease, and writes nothing", async () => {
+    const prisma = seeded(leased());
     const err = await errorOf(completeTask(null, { id: "t-1", result: {} }, ctx(rivalWorker, prisma)));
-    expect(err.extensions.code).toBe("FORBIDDEN");
-    expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
-    expect(prisma.task.update).not.toHaveBeenCalled();
+    expect(err.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" });
+    expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
   });
 
+  it("a lease reclaimed between the check and the write is not overwritten (NOT_LEASE_OWNER)", async () => {
+    const prisma = seeded(leased());
+    // The pre-check sees worker A as owner; by the time of the write, B holds it.
+    prisma.task.findUnique.mockImplementationOnce(async () => leased());
+    prisma.task.store.set("t-1", leased({ leaseOwnerId: "u-worker-2", attempts: 2 }));
+    const err = await errorOf(heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma)));
+    expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
+    expect(prisma.task.store.get("t-1")).toMatchObject({ leaseOwnerId: "u-worker-2", attempts: 2 });
+  });
+});
+
+describe("heartbeatTask", () => {
+  it("extends the lease by TASK_LEASE_MINUTES (15) from now", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T10:10:00Z"));
+    const prisma = seeded(leased());
+    const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+    expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: "u-worker", attempts: 1 });
+    expect(row.leaseExpiresAt).toEqual(new Date("2026-10-06T10:25:00Z"));
+  });
+
+  it("still extends a lapsed lease the owner has not lost yet", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T10:30:00Z"));
+    const prisma = seeded(leased({ leaseExpiresAt: new Date("2026-10-06T10:15:00Z") }));
+    const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+    expect(row.leaseExpiresAt).toEqual(new Date("2026-10-06T10:45:00Z"));
+  });
+});
+
+describe("completeTask", () => {
   it("marks the Task COMPLETED with the raw result, keeping who completed it", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(leased());
+    const prisma = seeded(leased());
     const done = await completeTask(null, { id: "t-1", result: { cases: 1 } }, ctx(worker, prisma));
-    expect(done).toMatchObject({ status: "COMPLETED", result: { cases: 1 } });
-    const data = prisma.task.update.mock.calls[0][0].data;
-    expect(data.leaseExpiresAt).toBeNull();
-    expect(data).not.toHaveProperty("leaseOwnerId");
-    expect(data.completedAt).toBeInstanceOf(Date);
+    expect(done).toMatchObject({
+      status: "COMPLETED",
+      result: { cases: 1 },
+      leaseOwnerId: "u-worker",
+      leaseExpiresAt: null,
+    });
+    expect(done.completedAt).toBeInstanceOf(Date);
   });
 
   it("with an impactPrior inserts a proposed row linked to the Event and Task, outcome produced", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(leased());
+    const prisma = seeded(leased());
     const done = await completeTask(
       null,
       {
@@ -411,12 +486,31 @@ describe("completeTask — ownership", () => {
     // State is the column default (`proposed`): the Worker never sets it.
     expect(prisma.impactPrior.create.mock.calls[0][0].data).not.toHaveProperty("state");
   });
+
+  it("rejects an impactPrior on a Task of another kind with BAD_USER_INPUT, before any write", async () => {
+    const prisma = seeded(leased({ kind: "event.other" }));
+    const err = await errorOf(
+      completeTask(
+        null,
+        {
+          id: "t-1",
+          result: {},
+          impactPrior: {
+            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
+            horizonYears: 10, numberOfCases: 1, basis: [], methodVersion: "x",
+          },
+        },
+        ctx(worker, prisma),
+      ),
+    );
+    expect(err.extensions.code).toBe("BAD_USER_INPUT");
+    expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
+  });
 });
 
 describe("reads", () => {
   it("task / eventTasks need a content reader — a pending user is FORBIDDEN, a worker may read", async () => {
-    const prisma = makePrisma();
-    prisma.task.findUnique.mockResolvedValue(makeTask());
+    const prisma = seeded(makeTask());
     const err = await errorOf(taskQuery(null, { id: "t-1" }, ctx({ id: "u-p", role: "pending" }, prisma)));
     expect(err.extensions.code).toBe("FORBIDDEN");
     expect(await taskQuery(null, { id: "t-1" }, ctx(worker, prisma))).toMatchObject({ id: "t-1" });
