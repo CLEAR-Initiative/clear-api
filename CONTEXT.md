@@ -81,8 +81,10 @@ _Avoid_: job, ticket, queue item, request (that is the act of asking)
 
 **Worker**:
 Anything that claims a **Task** and completes it: code CLEAR owns, a scheduled Claude Code
-routine, a third-party agent, or a person. The **CLEAR Agent** is never a Worker. A Worker doing
-web research plays what the CLEAR Domain Ontology calls a web agent.
+routine, a third-party agent, or a person. A Worker is whatever calls the four Task mutations
+over GraphQL; the Dagster drain is one Worker among these, not the queue (ADR-0010). The
+**CLEAR Agent** is never a Worker. A Worker doing web research plays what the CLEAR Domain
+Ontology calls a web agent.
 _Avoid_: agent, bot, enricher, consumer
 
 **Request enrichment**:
