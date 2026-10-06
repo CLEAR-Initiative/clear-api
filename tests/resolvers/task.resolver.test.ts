@@ -257,7 +257,7 @@ describe("requestEventEnrichment", () => {
       const open = makeTask({ id: "t-open", status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
       prisma.task.findFirst.mockResolvedValue(open);
       const result = await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 10 }, ctx(analyst, prisma));
-      expect(result).toBe(open);
+      expect(result).toEqual(open);
       expect(prisma.task.findFirst).toHaveBeenCalledWith({
         where: expect.objectContaining({
           kind: IMPACT_PRIOR_KIND, subjectType: "event", subjectId: "ev-1",
@@ -276,7 +276,23 @@ describe("requestEventEnrichment", () => {
         new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
       );
       const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-      expect(result).toBe(winner);
+      expect(result).toEqual(winner);
+    });
+
+    it("redacts the open Task's lastError for a different requester, on both dedupe paths", async () => {
+      const open = makeTask({ id: "t-open", requesterId: "u-someone-else", lastError: "attempt 1 failed" });
+      const prisma = makePrisma();
+      prisma.task.findFirst.mockResolvedValue(open);
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).lastError).toBeNull();
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma))).lastError).toBe("attempt 1 failed");
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx({ id: "u-someone-else", role: "analyst" }, prisma))).lastError).toBe("attempt 1 failed");
+
+      const racing = makePrisma();
+      racing.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(open);
+      racing.task.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+      );
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, racing))).lastError).toBeNull();
     });
 
     it("rethrows any other create failure", async () => {
@@ -808,6 +824,26 @@ describe("reads", () => {
     expect(await see(admin)).toBe("boom");
     expect(await see(viewer)).toBeNull();
     expect(await see(worker)).toBeNull();
+  });
+
+  it("ImpactPrior.task redacts lastError like the Task reads do", async () => {
+    const prisma = seeded(makeTask({ status: "FAILED", lastError: "boom", requesterId: "u-analyst" }));
+    const prior = { id: "ip-1", taskId: "t-1", eventId: "ev-1", supersedesId: null } as never;
+    expect((await taskResolvers.ImpactPrior.task(prior, null, ctx(viewer, prisma))).lastError).toBeNull();
+    expect((await taskResolvers.ImpactPrior.task(prior, null, ctx(analyst, prisma))).lastError).toBe("boom");
+    expect((await taskResolvers.ImpactPrior.task(prior, null, ctx(admin, prisma))).lastError).toBe("boom");
+  });
+
+  it("ImpactPrior.supersedes applies the same visibility rule as eventImpactPriors", async () => {
+    const prisma = makePrisma();
+    const predecessor = { id: "ip-old", state: "proposed", eventId: "ev-1", task: { requesterId: "u-coord" } };
+    (prisma.impactPrior as unknown as { findUnique: unknown }).findUnique = vi.fn(async () => predecessor);
+    const newer = { id: "ip-new", supersedesId: "ip-old", eventId: "ev-1" } as never;
+    expect(await taskResolvers.ImpactPrior.supersedes(newer, null, ctx(viewer, prisma))).toBeNull();
+    expect(await taskResolvers.ImpactPrior.supersedes(newer, null, ctx(coordinator, prisma))).toMatchObject({ id: "ip-old" });
+    expect(await taskResolvers.ImpactPrior.supersedes(newer, null, ctx(admin, prisma))).toMatchObject({ id: "ip-old" });
+    expect(await taskResolvers.ImpactPrior.supersedes(newer, null, ctx(admin, prisma))).not.toHaveProperty("task");
+    expect(await taskResolvers.ImpactPrior.supersedes({ id: "ip-first", supersedesId: null } as never, null, ctx(admin, prisma))).toBeNull();
   });
 
   it("eventImpactPriors shows every state to admins, analysts and the requester; accepted only to others", async () => {

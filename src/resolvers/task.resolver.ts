@@ -244,9 +244,17 @@ async function writeAsLeaseOwner(
   return tx.task.findUniqueOrThrow({ where: { id } });
 }
 
+/** The caller as a viewer. Field resolvers run only under a parent read
+ *  that already passed requireContentReader, so a missing user is treated
+ *  as the most restricted viewer rather than an error. */
+function viewerOf(context: Context): { id: string; role?: string | null } {
+  return context.user ?? { id: "", role: null };
+}
+
 /** `lastError` is the requester's and platform admins' to see; everyone
  *  else gets the Task with it blanked (the `ownView` pattern of
- *  `requestAnalysis`). */
+ *  `requestAnalysis`). Applied on every path a Task leaves the resolver
+ *  by: the reads, the dedupe return, and the ImpactPrior.task field. */
 function redactForViewer<T extends { requesterId: string | null; lastError: string | null }>(
   row: T,
   user: { id: string; role?: string | null },
@@ -287,12 +295,22 @@ export const taskResolvers = {
   ImpactPrior: {
     event: (parent: ImpactPriorRow, _args: unknown, context: Context) =>
       context.prisma.events.findUniqueOrThrow({ where: { id: parent.eventId } }),
-    task: (parent: ImpactPriorRow, _args: unknown, context: Context) =>
-      context.prisma.task.findUniqueOrThrow({ where: { id: parent.taskId } }),
-    supersedes: (parent: ImpactPriorRow, _args: unknown, context: Context) =>
-      parent.supersedesId
-        ? context.prisma.impactPrior.findUnique({ where: { id: parent.supersedesId } })
-        : null,
+    task: async (parent: ImpactPriorRow, _args: unknown, context: Context) =>
+      redactForViewer(
+        await context.prisma.task.findUniqueOrThrow({ where: { id: parent.taskId } }),
+        viewerOf(context),
+      ),
+    // The same visibility rule as eventImpactPriors: walking the supersede
+    // chain must not expose a proposed or rejected row to a viewer who may
+    // only see accepted ones.
+    supersedes: async (parent: ImpactPriorRow, _args: unknown, context: Context) => {
+      if (!parent.supersedesId) return null;
+      const row = await context.prisma.impactPrior.findUnique({
+        where: { id: parent.supersedesId },
+        include: { task: { select: { requesterId: true } } },
+      });
+      return row ? (visibleImpactPriors([row], viewerOf(context))[0] ?? null) : null;
+    },
     decidedBy: (parent: ImpactPriorRow, _args: unknown, context: Context) =>
       parent.decidedById
         ? context.prisma.user.findUnique({ where: { id: parent.decidedById } })
@@ -379,7 +397,7 @@ export const taskResolvers = {
         status: { in: ["PENDING", "LEASED"] },
       };
       const existing = await context.prisma.task.findFirst({ where: openWhere });
-      if (existing) return existing;
+      if (existing) return redactForViewer(existing, user);
 
       // Per-requester daily cap, enforced here (not merely reported) because
       // API callers will not self-limit. Counts every Task this requester
@@ -418,7 +436,7 @@ export const taskResolvers = {
         // duplicate; return the winner instead of queueing the work twice.
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
           const winner = await context.prisma.task.findFirst({ where: openWhere });
-          if (winner) return winner;
+          if (winner) return redactForViewer(winner, user);
         }
         throw e;
       }
