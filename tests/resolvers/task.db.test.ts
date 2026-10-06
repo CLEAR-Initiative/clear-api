@@ -20,7 +20,7 @@ import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resol
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } = taskResolvers.Mutation;
 const { eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
@@ -284,6 +284,32 @@ describeIfDb("Tasks against the real schema", () => {
     expect(again.id).not.toBe(requested.id);
     const [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
     await completeTask(null, { id: t.id, result: {} }, workerA);
+  });
+
+  it("cancel: PENDING ends now; LEASED is flagged, never re-claimed, and finished by the Worker", async () => {
+    const pendingEvent = await makeEvent();
+    const pending = await requestEventEnrichment(null, { eventId: pendingEvent }, analyst);
+    const cancelled = await cancelTask(null, { id: pending.id }, analyst);
+    expect(cancelled).toMatchObject({ status: "CANCELLED", cancelledById: ANALYST_ID });
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 10 }, workerA)).toEqual([]);
+    // CANCELLED is history: the Event can be requested again.
+    const fresh = await requestEventEnrichment(null, { eventId: pendingEvent }, analyst);
+    expect(fresh.id).not.toBe(pending.id);
+
+    const [held] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect(held.id).toBe(fresh.id);
+    await expect(cancelTask(null, { id: held.id }, viewer)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const flagged = await cancelTask(null, { id: held.id }, analyst);
+    expect(flagged).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_A });
+    expect(flagged.cancelRequestedAt).toBeInstanceOf(Date);
+    // A lapsed, flagged lease is not handed to another Worker.
+    await expireLease(held.id);
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 10 }, workerB)).toEqual([]);
+    // The Worker's completion is discarded and the Task ends CANCELLED.
+    const done = await completeTask(null, { id: held.id, result: { late: true } }, workerA);
+    expect(done).toMatchObject({ status: "CANCELLED", result: null, leaseExpiresAt: null });
+    expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
+    await expect(cancelTask(null, { id: held.id }, analyst)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

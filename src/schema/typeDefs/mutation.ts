@@ -1093,6 +1093,12 @@ export const mutationTypeDef = gql`
       horizonYears: Int
     ): Task!
 
+    """Cancel a Task. The requester or a platform admin only. A PENDING
+    Task is CANCELLED at once; a LEASED one is flagged and becomes
+    CANCELLED at the Worker's next heartbeat, completion or failure (its
+    result is discarded). Any other status is CONFLICT."""
+    cancelTask(id: String!): Task!
+
     """WORKER CONTRACT (\`worker\` role): lease up to \`limit\` of the
     oldest claimable Tasks of \`kind\` — PENDING, or LEASED past their
     expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two Workers

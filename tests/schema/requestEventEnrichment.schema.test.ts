@@ -33,6 +33,17 @@ const REQUEST_EVENT_ENRICHMENT = `
   }
 `;
 
+const CANCEL_TASK = `
+  mutation CancelTask($id: String!) {
+    cancelTask(id: $id) {
+      id
+      status
+      cancelRequestedAt
+      cancelledById
+    }
+  }
+`;
+
 function mockPrisma(todayCount = 0) {
   const created = {
     id: "t-1",
@@ -65,6 +76,11 @@ function mockPrisma(todayCount = 0) {
     events: { findUnique: vi.fn().mockResolvedValue({ id: "ev-1" }) },
     task: {
       findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(created),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({
+        ...created, status: "CANCELLED", cancelRequestedAt: new Date(), cancelledById: "u-1",
+      }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       count: vi.fn().mockResolvedValue(todayCount),
       create: vi.fn().mockResolvedValue(created),
     },
@@ -86,7 +102,7 @@ async function run(
   const server = new ApolloServer<Context>({ typeDefs, resolvers });
   await server.start();
   const response = await server.executeOperation(
-    { query: REQUEST_EVENT_ENRICHMENT, variables },
+    { query: variables.id ? CANCEL_TASK : REQUEST_EVENT_ENRICHMENT, variables },
     { contextValue: buildContext(mockPrisma(todayCount), user) },
   );
   await server.stop();
@@ -118,6 +134,12 @@ describe("requestEventEnrichment schema contract", () => {
     const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" }, 20);
     expect(result.errors?.[0]?.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "DAILY_CAP" });
     expect(result.errors?.[0]?.message).toMatch(/20/);
+  });
+
+  it("cancelTask executes clear-mvp's document for the requester", async () => {
+    const result = await run({ id: "u-1", role: "analyst" }, { id: "t-1" });
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.cancelTask).toMatchObject({ id: "t-1", status: "CANCELLED", cancelledById: "u-1" });
   });
 
   it("surfaces UNAUTHENTICATED when there is no user", async () => {

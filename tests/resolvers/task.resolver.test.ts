@@ -158,7 +158,7 @@ const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask } = taskResolvers.Mutation;
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } = taskResolvers.Mutation;
 const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
 
 const leased = (overrides: Row = {}) =>
@@ -545,6 +545,96 @@ describe("failTask", () => {
     const prisma = seeded(leased());
     const err = await errorOf(failTask(null, { id: "t-1", error: "x" }, ctx(rivalWorker, prisma)));
     expect(err.extensions.subCode).toBe("NOT_LEASE_OWNER");
+  });
+});
+
+describe("cancelTask", () => {
+  it.each([
+    ["the requester", analyst],
+    ["a platform admin", admin],
+  ])("%s cancels a PENDING Task at once", async (_name, user) => {
+    const prisma = seeded(makeTask({ requesterId: "u-analyst" }));
+    const row = await cancelTask(null, { id: "t-1" }, ctx(user, prisma));
+    expect(row).toMatchObject({ status: "CANCELLED", cancelledById: user.id });
+    expect(row.cancelRequestedAt).toBeInstanceOf(Date);
+    await new Promise((r) => setImmediate(r));
+    expect(prisma.activityLogs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ userId: user.id, action: "task.cancelled", resourceId: "t-1" }),
+    });
+  });
+
+  it.each([
+    ["another analyst", { id: "u-analyst-2", role: "analyst" }],
+    ["a viewer", viewer],
+    ["the worker holding it", worker],
+  ])("is FORBIDDEN for %s", async (_name, user) => {
+    const prisma = seeded(leased({ requesterId: "u-analyst" }));
+    const err = await errorOf(cancelTask(null, { id: "t-1" }, ctx(user, prisma)));
+    expect(err.extensions.code).toBe("FORBIDDEN");
+    expect(prisma.task.store.get("t-1")!.cancelRequestedAt).toBeNull();
+  });
+
+  it("is UNAUTHENTICATED without a user and NOT_FOUND for an unknown id", async () => {
+    expect((await errorOf(cancelTask(null, { id: "t-1" }, ctx(null)))).extensions.code).toBe("UNAUTHENTICATED");
+    expect((await errorOf(cancelTask(null, { id: "t-nope" }, ctx(admin)))).extensions.code).toBe("NOT_FOUND");
+  });
+
+  it("flags a LEASED Task instead of cancelling it outright, and is idempotent", async () => {
+    const prisma = seeded(leased({ requesterId: "u-analyst" }));
+    const row = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
+    expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: "u-worker", cancelledById: "u-analyst" });
+    expect(row.cancelRequestedAt).toBeInstanceOf(Date);
+    const again = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
+    expect(again.cancelRequestedAt).toEqual(row.cancelRequestedAt);
+    expect(prisma.activityLogs.create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["COMPLETED", "FAILED", "CANCELLED"])("is CONFLICT for a %s Task", async (status) => {
+    const prisma = seeded(makeTask({ status, requesterId: "u-analyst" }));
+    const err = await errorOf(cancelTask(null, { id: "t-1" }, ctx(analyst, prisma)));
+    expect(err.extensions.code).toBe("CONFLICT");
+  });
+
+  describe("the Worker finishes a requested cancel", () => {
+    const flagged = () => leased({ cancelRequestedAt: new Date("2026-10-06T10:05:00Z"), cancelledById: "u-analyst" });
+
+    it("at its next heartbeat: the Task becomes CANCELLED and the lease is released", async () => {
+      const prisma = seeded(flagged());
+      const row = await heartbeatTask(null, { id: "t-1" }, ctx(worker, prisma));
+      expect(row).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: "u-analyst" });
+    });
+
+    it("at completion: the result and any ImpactPrior are discarded", async () => {
+      const prisma = seeded(flagged());
+      const row = await completeTask(
+        null,
+        {
+          id: "t-1",
+          result: { late: true },
+          impactPrior: {
+            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
+            horizonYears: 10, numberOfCases: 1, basis: [], methodVersion: "x",
+          },
+        },
+        ctx(worker, prisma),
+      );
+      expect(row).toMatchObject({ status: "CANCELLED", result: null, outcome: null });
+      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+    });
+
+    it("at failure: CANCELLED rather than PENDING, so it is never retried", async () => {
+      const prisma = seeded(flagged());
+      const row = await failTask(null, { id: "t-1", error: "gave up" }, ctx(worker, prisma));
+      expect(row.status).toBe("CANCELLED");
+    });
+
+    it("a cancel landing between the pre-check and the write still wins", async () => {
+      const prisma = seeded(leased());
+      prisma.task.findUnique.mockImplementationOnce(async () => leased());
+      prisma.task.store.set("t-1", flagged());
+      const row = await completeTask(null, { id: "t-1", result: { late: true } }, ctx(worker, prisma));
+      expect(row).toMatchObject({ status: "CANCELLED", result: null });
+    });
   });
 });
 

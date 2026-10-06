@@ -20,6 +20,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
   isPlatformAdmin,
+  requireAuth,
   requireContentReader,
   requireRole,
   requireTeamContentWriter,
@@ -108,11 +109,30 @@ async function requireLeaseOwner(context: Context, id: string): Promise<TaskRow>
 }
 
 /**
- * Write to a Task only if it is STILL leased by the caller, in one
- * statement. Between the pre-check and the write a lapsed lease may have
- * been reclaimed by another Worker; a plain `update` by id would then
- * overwrite the new owner's lease. On a miss, re-read and throw the error
- * the current state warrants.
+ * Finish a cancellation the requester or an admin asked for while the Task
+ * was LEASED: the Worker's next heartbeat, complete or fail lands here and
+ * the Task becomes CANCELLED (its result, if any, discarded). The Worker
+ * reads the status and stops.
+ */
+async function cancelLeasedTask(
+  tx: Prisma.TransactionClient,
+  id: string,
+  userId: string,
+): Promise<TaskRow> {
+  await tx.task.updateMany({
+    where: { id, status: "LEASED", leaseOwnerId: userId },
+    data: { status: "CANCELLED", leaseExpiresAt: null },
+  });
+  return tx.task.findUniqueOrThrow({ where: { id } });
+}
+
+/**
+ * Write to a Task only if it is STILL leased by the caller and no
+ * cancellation is pending, in one statement. Between the pre-check and the
+ * write a lapsed lease may have been reclaimed by another Worker (a plain
+ * `update` by id would overwrite the new owner's lease) or a cancel may
+ * have landed (the write must not bury it). On a miss, re-read: a pending
+ * cancel is carried out, anything else throws the error the state warrants.
  */
 async function writeAsLeaseOwner(
   tx: Prisma.TransactionClient,
@@ -121,11 +141,20 @@ async function writeAsLeaseOwner(
   data: Prisma.taskUpdateManyMutationInput,
 ): Promise<TaskRow> {
   const { count } = await tx.task.updateMany({
-    where: { id, status: "LEASED", leaseOwnerId: userId },
+    where: { id, status: "LEASED", leaseOwnerId: userId, cancelRequestedAt: null },
     data,
   });
   if (count === 0) {
-    throw leaseError(await tx.task.findUnique({ where: { id } }), userId);
+    const current = await tx.task.findUnique({ where: { id } });
+    if (
+      current &&
+      current.status === "LEASED" &&
+      current.leaseOwnerId === userId &&
+      current.cancelRequestedAt
+    ) {
+      return cancelLeasedTask(tx, id, userId);
+    }
+    throw leaseError(current, userId);
   }
   return tx.task.findUniqueOrThrow({ where: { id } });
 }
@@ -315,6 +344,47 @@ export const taskResolvers = {
       return created;
     },
 
+    // Cancellation, by the requester or a platform admin. PENDING ends now;
+    // LEASED is flagged and the Worker finishes it at its next heartbeat,
+    // completion or failure (a claim never hands out a flagged Task).
+    cancelTask: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const user = requireAuth(context);
+      const task = await context.prisma.task.findUnique({ where: { id: args.id } });
+      if (!task) throw notFound("Task");
+      if (!isPlatformAdmin(user) && task.requesterId !== user.id) {
+        throw forbidden("Only the requester or a platform admin can cancel a Task");
+      }
+      const now = new Date();
+      let count: number;
+      if (task.status === "PENDING") {
+        ({ count } = await context.prisma.task.updateMany({
+          where: { id: task.id, status: "PENDING" },
+          data: { status: "CANCELLED", cancelRequestedAt: now, cancelledById: user.id },
+        }));
+      } else if (task.status === "LEASED") {
+        if (task.cancelRequestedAt) {
+          return task; // already requested; the Worker will finish it
+        }
+        ({ count } = await context.prisma.task.updateMany({
+          where: { id: task.id, status: "LEASED", cancelRequestedAt: null },
+          data: { cancelRequestedAt: now, cancelledById: user.id },
+        }));
+      } else {
+        throw conflict(`Task is ${task.status} and can no longer be cancelled`);
+      }
+      if (count === 0) {
+        throw conflict("Task changed while cancelling; retry");
+      }
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "task.cancelled",
+        resourceType: "task",
+        resourceId: task.id,
+        metadata: { kind: task.kind, subjectType: task.subjectType, subjectId: task.subjectId, wasLeased: task.status === "LEASED" },
+      });
+      return context.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    },
+
     // The claim. One statement leases up to `limit` of the oldest claimable
     // Tasks of `kind` — PENDING, or LEASED past their expiry (a lapsed lease
     // is reclaimed lazily here; there is no sweeper) — under
@@ -380,6 +450,7 @@ export const taskResolvers = {
     heartbeatTask: async (_parent: unknown, args: { id: string }, context: Context) => {
       const task = await requireLeaseOwner(context, args.id);
       const user = context.user!;
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
       return writeAsLeaseOwner(context.prisma, task.id, user.id, {
         leaseExpiresAt: new Date(Date.now() + env.TASK_LEASE_MINUTES * 60_000),
       });
@@ -393,6 +464,7 @@ export const taskResolvers = {
       const user = context.user!;
       const error = args.error.trim();
       if (!error) throw badInput("error must not be empty");
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
       const exhausted = task.attempts >= task.maxAttempts;
       return writeAsLeaseOwner(context.prisma, task.id, user.id, {
         lastError: error,
@@ -424,6 +496,8 @@ export const taskResolvers = {
         throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
       }
 
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
+
       return context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
         // reclaimed Task's new owner never finds a stranger's result on it.
@@ -435,6 +509,8 @@ export const taskResolvers = {
           // leaseOwnerId stays as the record of who completed it.
           leaseExpiresAt: null,
         });
+        // A cancel that landed mid-write won: nothing is produced.
+        if (completed.status === "CANCELLED") return completed;
         if (args.impactPrior) {
           await tx.impactPrior.create({
             data: {

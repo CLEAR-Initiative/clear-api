@@ -1571,6 +1571,13 @@ global admin or analyst anywhere; a team content writer for the
 (FORBIDDEN with subCode `DAILY_CAP`). The only kind today is
 `event.impact_prior`; `horizonYears` (default 10) is how far back
 the Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
+  </tr><tr id="mutation-canceltask">
+    <td><code>cancelTask</code></td>
+    <td><code>Task!</code></td>
+    <td>Cancel a Task. The requester or a platform admin only. A PENDING
+Task is CANCELLED at once; a LEASED one is flagged and becomes
+CANCELLED at the Worker's next heartbeat, completion or failure (its
+result is discarded). Any other status is CONFLICT.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-claimtasks">
     <td><code>claimTasks</code></td>
     <td><code>[Task!]!</code></td>
