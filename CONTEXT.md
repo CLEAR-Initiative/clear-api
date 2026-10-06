@@ -136,6 +136,8 @@ _Avoid_: event prior, precedent, history, related events
 - An **ImpactPrior** draws on CLEAR's own Events and on external sources, each labelled by tier, as knowledge base results are
 - An **ImpactPrior** case shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
 - A **Task** whose **Worker** finds no case produces no **ImpactPrior**; the Task records "no prior found" and the Event stays unenriched
+- An **ImpactPrior** is proposed, accepted or rejected. A **Worker** can only write a proposed one; a named person accepts or rejects it with a rationale, in the shape of the Domain Ontology's DecisionRecord. Only an accepted ImpactPrior counts downstream; a rejected one stays, superseded, with its reason
+- A proposed **ImpactPrior** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
 
 ## Example dialogue
