@@ -20,10 +20,11 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
   isPlatformAdmin,
-  requireAuth,
   requireContentReader,
+  requireNonWorker,
   requireRole,
   requireTeamContentWriter,
+  WORKER_ROLE,
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
@@ -32,7 +33,6 @@ import { notifyTaskOutcome } from "../services/task-notifications.js";
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
 const DEFAULT_HORIZON_YEARS = 10;
-const WORKER_ROLE = "worker";
 const DECIDER_ROLES = ["admin", "analyst"];
 const MAX_RATIONALE_LENGTH = 4000;
 /** A Worker's error is stored and emailed; cap it so neither bloats. */
@@ -528,7 +528,7 @@ export const taskResolvers = {
     // LEASED is flagged and the Worker finishes it at its next heartbeat,
     // completion or failure (a claim never hands out a flagged Task).
     cancelTask: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const task = await context.prisma.task.findUnique({ where: { id: args.id } });
       if (!task) throw notFound("Task");
       if (!isPlatformAdmin(user) && task.requesterId !== user.id) {

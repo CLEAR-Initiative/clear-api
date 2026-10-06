@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import { randomBytes } from "crypto";
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireNonWorker } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
 import {
@@ -25,7 +25,7 @@ export const authResolvers = {
       _args: unknown,
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       if (user.emailVerified) {
         throw new GraphQLError("Email is already verified", {

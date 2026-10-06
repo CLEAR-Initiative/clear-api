@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { Channel, Frequency } from "../generated/prisma/client.js";
-import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
 
 interface SubscribeToAlertsInput {
   locationId: string;
@@ -65,7 +65,7 @@ export const subscriptionResolvers = {
       args: { input: SubscribeToAlertsInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { input } = args;
 
       // Verify location exists
@@ -110,7 +110,7 @@ export const subscriptionResolvers = {
       args: { input: SubscribeToAlertsBatchInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { input } = args;
 
       if (input.locationIds.length === 0 || input.alertTypes.length === 0) {
@@ -199,7 +199,7 @@ export const subscriptionResolvers = {
       args: { id: string; input: UpdateAlertSubscriptionInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { id, input } = args;
 
       const subscription = await context.prisma.userAlertSubscriptions.findUnique({
@@ -232,7 +232,7 @@ export const subscriptionResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const subscription = await context.prisma.userAlertSubscriptions.findUnique({
         where: { id: args.id },
