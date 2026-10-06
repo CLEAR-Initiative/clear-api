@@ -217,6 +217,51 @@ describe("requestEventEnrichment", () => {
     });
   });
 
+  describe("per-requester daily cap (TASK_REQUEST_DAILY_CAP, default 20)", () => {
+    it("counts the caller's Tasks since UTC midnight", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-10-06T15:30:00Z"));
+      try {
+        const prisma = makePrisma();
+        await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+        expect(prisma.task.count).toHaveBeenCalledWith({
+          where: { requesterId: "u-analyst", createdAt: { gte: new Date("2026-10-06T00:00:00Z") } },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("allows the 20th request and rejects the 21st with FORBIDDEN / DAILY_CAP naming the cap", async () => {
+      const prisma = makePrisma();
+      prisma.task.count.mockResolvedValueOnce(19);
+      await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).resolves.toBeDefined();
+      prisma.task.count.mockResolvedValueOnce(20);
+      const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)));
+      expect(err.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "DAILY_CAP" });
+      expect(err.message).toContain("20");
+      expect(prisma.task.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("applies to admins too, and to API-key callers", async () => {
+      const prisma = makePrisma();
+      prisma.task.count.mockResolvedValue(20);
+      const a = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma)));
+      expect(a.extensions.subCode).toBe("DAILY_CAP");
+      const b = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma, "api-key")));
+      expect(b.extensions.subCode).toBe("DAILY_CAP");
+    });
+
+    it("does not apply when the request dedupes onto an open Task", async () => {
+      const prisma = makePrisma();
+      prisma.task.findFirst.mockResolvedValue(makeTask({ id: "t-open" }));
+      prisma.task.count.mockResolvedValue(20);
+      const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(result.id).toBe("t-open");
+      expect(prisma.task.count).not.toHaveBeenCalled();
+    });
+  });
+
   describe("origin", () => {
     it("is `user` for a session and `api` for an API key", async () => {
       const prisma = makePrisma();

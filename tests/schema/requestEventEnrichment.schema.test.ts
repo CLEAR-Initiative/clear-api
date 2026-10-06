@@ -33,7 +33,7 @@ const REQUEST_EVENT_ENRICHMENT = `
   }
 `;
 
-function mockPrisma() {
+function mockPrisma(todayCount = 0) {
   const created = {
     id: "t-1",
     kind: "event.impact_prior",
@@ -65,7 +65,7 @@ function mockPrisma() {
     events: { findUnique: vi.fn().mockResolvedValue({ id: "ev-1" }) },
     task: {
       findFirst: vi.fn().mockResolvedValue(null),
-      count: vi.fn().mockResolvedValue(0),
+      count: vi.fn().mockResolvedValue(todayCount),
       create: vi.fn().mockResolvedValue(created),
     },
     activityLogs: { create: vi.fn().mockResolvedValue({}) },
@@ -78,12 +78,16 @@ function buildContext(prisma: unknown, user: { id: string; role: string } | null
   } as unknown as Context;
 }
 
-async function run(user: { id: string; role: string } | null, variables: Record<string, unknown>) {
+async function run(
+  user: { id: string; role: string } | null,
+  variables: Record<string, unknown>,
+  todayCount = 0,
+) {
   const server = new ApolloServer<Context>({ typeDefs, resolvers });
   await server.start();
   const response = await server.executeOperation(
     { query: REQUEST_EVENT_ENRICHMENT, variables },
-    { contextValue: buildContext(mockPrisma(), user) },
+    { contextValue: buildContext(mockPrisma(todayCount), user) },
   );
   await server.stop();
   if (response.body.kind !== "single") {
@@ -108,6 +112,12 @@ describe("requestEventEnrichment schema contract", () => {
   it("surfaces FORBIDDEN with the guard's code for a viewer without a team", async () => {
     const result = await run({ id: "u-1", role: "viewer" }, { eventId: "ev-1" });
     expect(result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+  });
+
+  it("surfaces FORBIDDEN / DAILY_CAP with the cap in the message once the cap is reached", async () => {
+    const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" }, 20);
+    expect(result.errors?.[0]?.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "DAILY_CAP" });
+    expect(result.errors?.[0]?.message).toMatch(/20/);
   });
 
   it("surfaces UNAUTHENTICATED when there is no user", async () => {

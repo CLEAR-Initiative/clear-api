@@ -58,6 +58,12 @@ interface ImpactPriorInput {
   methodVersion: string;
 }
 
+/** Start of the current UTC day — the window the per-requester cap counts
+ *  over (same anchor as the daily Agent budget). */
+function utcMidnight(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 const notFound = (what: string) =>
   new GraphQLError(`${what} not found`, { extensions: { code: "NOT_FOUND" } });
 const forbidden = (message: string, subCode?: string) =>
@@ -223,6 +229,21 @@ export const taskResolvers = {
       };
       const existing = await context.prisma.task.findFirst({ where: openWhere });
       if (existing) return existing;
+
+      // Per-requester daily cap, enforced here (not merely reported) because
+      // API callers will not self-limit. Counts every Task this requester
+      // created since UTC midnight, whatever became of it. Checked after the
+      // dedupe: handing back an already-open Task costs nothing.
+      const cap = env.TASK_REQUEST_DAILY_CAP;
+      const today = await context.prisma.task.count({
+        where: { requesterId: user.id, createdAt: { gte: utcMidnight(new Date()) } },
+      });
+      if (today >= cap) {
+        throw forbidden(
+          `Daily enrichment request cap reached: ${cap} requests per day. Try again after 00:00 UTC.`,
+          "DAILY_CAP",
+        );
+      }
 
       let created: TaskRow;
       try {
