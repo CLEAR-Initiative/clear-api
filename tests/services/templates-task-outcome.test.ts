@@ -20,6 +20,19 @@ describe("taskOutcome email", () => {
     expect(content.htmlBody).not.toContain("Error:");
   });
 
+  it("escapes the Worker's error and the recipient's name in the HTML body", () => {
+    const content = taskOutcome('Ana <script>', "Impact prior enrichment failed", "https://app.test/event/ev-1", {
+      outcomeKind: "failed",
+      error: '<a href="https://evil.test">click</a> & run',
+    });
+    expect(content.htmlBody).not.toContain("<script>");
+    expect(content.htmlBody).not.toContain('<a href="https://evil.test">');
+    expect(content.htmlBody).toContain("&lt;a href=&quot;https://evil.test&quot;&gt;click&lt;/a&gt; &amp; run");
+    expect(content.htmlBody).toContain("Hi Ana &lt;script&gt;");
+    // The plain-text body is left as text.
+    expect(content.textBody).toContain('Error: <a href="https://evil.test">click</a> & run');
+  });
+
   it("renders a failure with the error for a recipient allowed to see it", () => {
     const content = taskOutcome("Ana", "Impact prior enrichment failed", "https://app.test/event/ev-1", {
       outcomeKind: "failed",

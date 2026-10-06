@@ -35,6 +35,8 @@ const DEFAULT_HORIZON_YEARS = 10;
 const WORKER_ROLE = "worker";
 const DECIDER_ROLES = ["admin", "analyst"];
 const MAX_RATIONALE_LENGTH = 4000;
+/** A Worker's error is stored and emailed; cap it so neither bloats. */
+const MAX_ERROR_LENGTH = 2000;
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
 type ImpactPriorRow = Prisma.impactPriorGetPayload<Record<string, never>>;
@@ -642,10 +644,18 @@ export const taskResolvers = {
       });
 
       // A Task the sweep just failed ends like any other failure: its
-      // requester and reviewers hear about it.
+      // requester and reviewers hear about it. Best-effort and off the
+      // claim's path: the leases are already handed out, so a failing read
+      // here must not cost the Worker the ids it now holds.
       if (sweptToFailed.length > 0) {
-        const failed = await context.prisma.task.findMany({ where: { id: { in: sweptToFailed } } });
-        for (const task of failed) void notifyTaskOutcome(context.prisma, task, "failed");
+        void (async () => {
+          try {
+            const failed = await context.prisma.task.findMany({ where: { id: { in: sweptToFailed } } });
+            for (const task of failed) await notifyTaskOutcome(context.prisma, task, "failed");
+          } catch (err) {
+            console.error(`[claimTasks] could not notify the ${sweptToFailed.length} Task(s) the sweep failed:`, err);
+          }
+        })();
       }
 
       if (claimedIds.length === 0) return [];
@@ -682,7 +692,7 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
-      const error = args.error.trim();
+      const error = args.error.trim().slice(0, MAX_ERROR_LENGTH);
       if (!error) throw badInput("error must not be empty");
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;

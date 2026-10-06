@@ -396,6 +396,17 @@ ${dashboardUrl}
   };
 }
 
+/** Escape text that came from outside the template (a Worker's error, a
+ *  user's name) before it is interpolated into HTML. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export interface TaskOutcomeExtras {
   outcomeKind: "completed" | "failed";
   /** The Worker's error, for recipients allowed to read it; null otherwise. */
@@ -415,8 +426,13 @@ export function taskOutcome(
 ): EmailContent {
   const failed = extras.outcomeKind === "failed";
   const errorLine = extras.error ? `\n\nError: ${extras.error}` : "";
+  // The Worker's error and the recipient's name are not ours: escape them
+  // before they reach the HTML body (the text body is plain text).
+  const safeName = escapeHtml(recipientName);
+  const safeMessage = escapeHtml(message);
+  const safeError = extras.error ? escapeHtml(extras.error) : null;
   return {
-    subject: failed ? `CLEAR: ${message}` : `CLEAR: ${message}`,
+    subject: `CLEAR: ${message}`,
 
     textBody: `Hi ${recipientName},
 
@@ -431,14 +447,14 @@ ${eventUrl}
     htmlBody: wrapHtml(
       failed ? "Enrichment failed" : "Enrichment ready for review",
       `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
-        Hi ${recipientName},
+        Hi ${safeName},
       </p>
       <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
-        ${message}.
+        ${safeMessage}.
       </p>
       ${
-        extras.error
-          ? `<p style="margin: 0 0 24px; font-size: 13px; color: #B91C1C; line-height: 1.5;">Error: ${extras.error}</p>`
+        safeError
+          ? `<p style="margin: 0 0 24px; font-size: 13px; color: #B91C1C; line-height: 1.5;">Error: ${safeError}</p>`
           : ""
       }
       ${ctaButton("Open Event", eventUrl)}

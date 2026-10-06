@@ -434,8 +434,14 @@ describeIfDb("Tasks against the real schema", () => {
     const priors = await eventImpactPriors(null, { eventId: id }, analyst);
     expect(priors.map((p) => p.state)).toEqual(["proposed", "rejected"]);
     expect(priors[0].supersedesId).toBe(prior.id);
-    const log = await prisma.activityLogs.findMany({ where: { action: "impact_prior.decided", resourceId: prior.id } });
-    expect(log.length).toBeGreaterThanOrEqual(0);
+    // The decision is on the activity log (fire-and-forget: give it a moment).
+    let log: { metadata: unknown }[] = [];
+    for (let i = 0; i < 20 && log.length < 1; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      log = await prisma.activityLogs.findMany({ where: { action: "impact_prior.decided", resourceId: prior.id } });
+    }
+    expect(log).toHaveLength(1);
+    expect(log[0].metadata).toMatchObject({ decision: "rejected", eventId: id });
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

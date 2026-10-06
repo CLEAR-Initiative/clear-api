@@ -735,6 +735,12 @@ describe("failTask", () => {
     });
   });
 
+  it("caps a runaway error at 2000 characters", async () => {
+    const prisma = seeded(leased({ attempts: 3, maxAttempts: 3 }));
+    const row = await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "x".repeat(5000) }, ctx(worker, prisma));
+    expect((row.lastError as string).length).toBe(2000);
+  });
+
   it("is BAD_USER_INPUT for an empty error, and writes nothing", async () => {
     const prisma = seeded(leased());
     const err = await errorOf(failTask(null, { id: "t-1", leaseToken: TOKEN, error: "   " }, ctx(worker, prisma)));
