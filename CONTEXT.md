@@ -72,6 +72,37 @@ asked, what the Agent answered, and what it drew on to answer (tools run, Source
 cited). Owned by that user.
 _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
 
+### Tasks and Workers
+
+**Task**:
+One unit of work of a named kind, about one subject such as an Event, waiting for or held by a
+**Worker**. **Event enrichment** is the first kind of work.
+_Avoid_: job, ticket, queue item, request (that is the act of asking)
+
+**Worker**:
+Anything that claims a **Task** and completes it: code CLEAR owns, a scheduled Claude Code
+routine, a third-party agent, or a person. The **CLEAR Agent** is never a Worker. A Worker doing
+web research plays what the CLEAR Domain Ontology calls a web agent.
+_Avoid_: agent, bot, enricher, consumer
+
+**Request enrichment**:
+The act of asking for an **Event enrichment** on an Event. Independent of escalation: an Event
+may have either, both or neither.
+_Avoid_: escalate to enrichment, flag for enrichment, send to queue
+
+**Event enrichment**:
+An analytical add-on to an Event, produced by a **Worker**, stored beside the Event and labelled
+by its kind. A sibling of Signal enrichment (the pipeline's geo and classification step) and
+Crisis enrichment (the narrative and scenarios on a Crisis).
+_Avoid_: investigation, research, verification (as the family name); bare "enrichment" in field names
+
+**ImpactPrior**:
+The first kind of **Event enrichment**, named and defined by the CLEAR Domain Ontology: what has
+typically happened before given a hazard type, a context and a population, inferred from
+historical Events similar to the input Event, with its evidence basis and number of cases. It
+informs an Estimate and is not itself one.
+_Avoid_: event prior, precedent, history, related events
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**
@@ -98,6 +129,20 @@ _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a C
 - A **Conversation** keeps what the Agent actually said, even if the owner's access later narrows
 - Each **Conversation** turn records what it cost (model, tokens, latency) alongside what was said
 
+- A **Task** has exactly one kind and exactly one subject; at most one Task per subject and kind is open at a time
+- A claimed **Task** is held under a lease the **Worker** keeps alive by heartbeat; a lapsed lease goes back to the pool at the next claim, and a Task that has used up its attempts is failed with its last error. There is no sweeper
+- A requester or a platform admin may cancel a **Task**: a waiting one ends at once; a held one ends at the Worker's next heartbeat, completion or failure, with whatever it produced discarded
+- A **Task** is never deleted; what it recorded (requester, Worker, attempts, error, spend) is its history
+- Only a **Worker** completes a **Task**; what it produces for an enrichment kind is an **Event enrichment**
+- An **Event enrichment** is superseded, never overwritten: a new result is a new record and earlier ones stay (the Domain Ontology's rule for Estimates and ContextObservations)
+- **Request enrichment** and escalation are independent actions on an Event
+- An **ImpactPrior** draws on CLEAR's own Events and on external sources, each labelled by tier, as knowledge base results are
+- An **ImpactPrior** case shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
+- A **Task** whose **Worker** finds no case produces no **ImpactPrior**; the Task records "no prior found" and the Event stays unenriched
+- An **ImpactPrior** is proposed, accepted or rejected. A **Worker** can only write a proposed one; a named person accepts or rejects it with a rationale, in the shape of the Domain Ontology's DecisionRecord. Only an accepted ImpactPrior counts downstream; a rejected one stays, superseded, with its reason
+- A proposed **ImpactPrior** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page
+- The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
+
 ## Example dialogue
 
 > **Dev:** "If someone opens **API Docs** from the home page without logging in, do they see the **Portal Shell**?"
@@ -107,4 +152,7 @@ _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a C
 
 - "navbar" / "main navbar" was used for both the old docs top bar and the portal left sidebar — resolved: product language is **Portal Shell** (left sidebar). The old docs top marketing nav is removed on `/docs`.
 - "sidebar" alone is ambiguous (portal left vs docs left vs right TOC) — resolved: **Portal Shell** (left), **On This Page** (right); the docs-only left sidebar is removed.
+- "escalate" — in code, `escalateEvent` raises an Event to a published Alert; in the CLEAR Domain Ontology, escalation turns an Event into a Crisis and requires a DecisionRecord. Unresolved; for the ontology owner. Neither meaning is **Request enrichment**.
+- "agent" — clear-mvp reserves it for the one **CLEAR Agent**; the Domain Ontology uses "Event web agent" and "Context web agent" for background collectors. Resolved for this repo: the runtime term is **Worker**; the overload is raised with the ontology owner.
+- "event prior" — resolved: the Domain Ontology already defines **ImpactPrior**, which is the concept meant.
 - "static HTML app" vs SPA — resolved for this work: keep Bun/Express HTML string templates; extract a shared **Portal Shell** module; keep **API Docs** prebuild + in-memory cache. No separate frontend framework.
