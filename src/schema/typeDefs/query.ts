@@ -600,9 +600,16 @@ export const queryTypeDef = gql`
     \`task\`."""
     eventTasks(eventId: String!): [Task!]!
 
-    """ImpactPriors produced for an Event, newest first. Admins, analysts
-    and the requesting user see every state; everyone else sees
-    \`accepted\` only."""
+    """ImpactPriors produced for an Event, newest first. An \`accepted\`
+    one follows the Event's visibility; a \`proposed\` one is visible to its
+    requester and to deciders (admins and analysts); a \`rejected\` one to
+    deciders only."""
     eventImpactPriors(eventId: String!): [ImpactPrior!]!
+
+    """The Inbox's Review items: ImpactPriors in one state across every
+    Event, newest first — \`proposed\` by default, i.e. what is waiting
+    for a decision. Platform admins and analysts only, so the list is
+    exactly what the caller may decide."""
+    impactPriors(state: ImpactPriorState = proposed, limit: Int = 50, offset: Int = 0): [ImpactPrior!]!
   }
 `;

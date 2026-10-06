@@ -27,11 +27,16 @@ import {
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
+import { notifyTaskOutcome } from "../services/task-notifications.js";
 
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
 const DEFAULT_HORIZON_YEARS = 10;
 const WORKER_ROLE = "worker";
+const DECIDER_ROLES = ["admin", "analyst"];
+const MAX_RATIONALE_LENGTH = 4000;
+/** A Worker's error is stored and emailed; cap it so neither bloats. */
+const MAX_ERROR_LENGTH = 2000;
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
 type ImpactPriorRow = Prisma.impactPriorGetPayload<Record<string, never>>;
@@ -263,16 +268,29 @@ function redactForViewer<T extends { requesterId: string | null; lastError: stri
   return { ...row, lastError: null };
 }
 
-/** V1 visibility for ImpactPriors: admins, analysts and the requesting user
- *  see every state; everyone else sees `accepted` only. (V2 refines
- *  `rejected` to deciders only.) */
+/** Who may decide a proposed ImpactPrior: platform admins and analysts. */
+function isDecider(user: { role?: string | null }): boolean {
+  return isPlatformAdmin(user) || user.role === "analyst";
+}
+
+/**
+ * Visibility of ImpactPriors (decision 15): an `accepted` one follows the
+ * Event's visibility (any content reader); a `proposed` one is visible to
+ * its requester and to those who may decide it; a `rejected` one stays as
+ * superseded history, visible to deciders only.
+ */
 function visibleImpactPriors<T extends ImpactPriorRow & { task: { requesterId: string | null } }>(
   rows: T[],
   user: { id: string; role?: string | null },
 ): ImpactPriorRow[] {
-  const decider = isPlatformAdmin(user) || user.role === "analyst";
+  const decider = isDecider(user);
   return rows
-    .filter((r) => decider || r.state === "accepted" || r.task.requesterId === user.id)
+    .filter(
+      (r) =>
+        decider ||
+        r.state === "accepted" ||
+        (r.state === "proposed" && r.task.requesterId === user.id),
+    )
     .map(({ task: _task, ...rest }) => rest);
 }
 
@@ -325,6 +343,23 @@ export const taskResolvers = {
   },
 
   Query: {
+    // The Inbox's list (V2): ImpactPriors in one state across every Event,
+    // newest first. Deciders only — it lists exactly what the caller may
+    // decide, so clear-mvp needs no rule of its own. `proposed` by default.
+    impactPriors: async (
+      _parent: unknown,
+      args: { state?: "proposed" | "accepted" | "rejected" | null; limit?: number | null; offset?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, DECIDER_ROLES);
+      return context.prisma.impactPrior.findMany({
+        where: { state: args.state ?? "proposed" },
+        orderBy: { createdAt: "desc" },
+        take: Math.min(Math.max(args.limit ?? 50, 1), 200),
+        skip: Math.max(args.offset ?? 0, 0),
+      });
+    },
+
     // Task status follows the Event's visibility: the same reader gate as
     // `event(id)`. Only `lastError` is narrower (requester + admins).
     task: async (_parent: unknown, args: { id: string }, context: Context) => {
@@ -451,6 +486,44 @@ export const taskResolvers = {
       return created;
     },
 
+    // The acceptance gate (V2). A Worker writes `proposed` only; a named
+    // admin or analyst moves it to accepted or rejected with a rationale,
+    // exactly once (the conditional write refuses a second decision).
+    decideImpactPrior: async (
+      _parent: unknown,
+      args: { id: string; decision: "accepted" | "rejected"; rationale: string },
+      context: Context,
+    ) => {
+      const user = requireRole(context, DECIDER_ROLES);
+      const rationale = args.rationale.trim();
+      if (!rationale) throw badInput("rationale is required");
+      if (rationale.length > MAX_RATIONALE_LENGTH) {
+        throw badInput(`rationale must be at most ${MAX_RATIONALE_LENGTH} characters`);
+      }
+      if (args.decision !== "accepted" && args.decision !== "rejected") {
+        throw badInput('decision must be "accepted" or "rejected"');
+      }
+      const existing = await context.prisma.impactPrior.findUnique({ where: { id: args.id } });
+      if (!existing) throw notFound("ImpactPrior");
+      if (existing.state !== "proposed") {
+        throw conflict(`ImpactPrior is already ${existing.state}`);
+      }
+      const now = new Date();
+      const { count } = await context.prisma.impactPrior.updateMany({
+        where: { id: args.id, state: "proposed" },
+        data: { state: args.decision, decidedById: user.id, decidedAt: now, decisionRationale: rationale },
+      });
+      if (count === 0) throw conflict("ImpactPrior was decided meanwhile");
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "impact_prior.decided",
+        resourceType: "impact_prior",
+        resourceId: existing.id,
+        metadata: { eventId: existing.eventId, taskId: existing.taskId, decision: args.decision },
+      });
+      return context.prisma.impactPrior.findUniqueOrThrow({ where: { id: args.id } });
+    },
+
     // Cancellation, by the requester or a platform admin. PENDING ends now;
     // LEASED is flagged and the Worker finishes it at its next heartbeat,
     // completion or failure (a claim never hands out a flagged Task).
@@ -520,6 +593,7 @@ export const taskResolvers = {
       const limit = Math.min(Math.max(args.limit ?? 1, 1), env.TASK_CLAIM_MAX);
       const leaseMinutes = env.TASK_LEASE_MINUTES;
 
+      const sweptToFailed: string[] = [];
       const claimedIds = await context.prisma.$transaction(async (tx) => {
         // Lazy sweeps, since there is no sweeper process: the next claim is
         // where a lapsed lease is noticed. A lapsed lease whose cancellation
@@ -534,7 +608,7 @@ export const taskResolvers = {
             AND "status" = 'LEASED'
             AND "cancel_requested_at" IS NOT NULL
             AND "lease_expires_at" < now()`;
-        await tx.$executeRaw`
+        const swept = await tx.$queryRaw<{ id: string }[]>`
           UPDATE "tasks"
           SET "status" = 'FAILED',
               "last_error" = COALESCE("last_error", 'lease expired after max attempts'),
@@ -543,7 +617,9 @@ export const taskResolvers = {
           WHERE "kind" = ${args.kind}
             AND "status" = 'LEASED'
             AND "lease_expires_at" < now()
-            AND "attempts" >= "max_attempts"`;
+            AND "attempts" >= "max_attempts"
+          RETURNING "id"`;
+        sweptToFailed.push(...swept.map((r) => r.id));
         const rows = await tx.$queryRaw<{ id: string }[]>`
           UPDATE "tasks"
           SET "status" = 'LEASED',
@@ -566,6 +642,21 @@ export const taskResolvers = {
           RETURNING "id"`;
         return rows.map((r) => r.id);
       });
+
+      // A Task the sweep just failed ends like any other failure: its
+      // requester and reviewers hear about it. Best-effort and off the
+      // claim's path: the leases are already handed out, so a failing read
+      // here must not cost the Worker the ids it now holds.
+      if (sweptToFailed.length > 0) {
+        void (async () => {
+          try {
+            const failed = await context.prisma.task.findMany({ where: { id: { in: sweptToFailed } } });
+            for (const task of failed) await notifyTaskOutcome(context.prisma, task, "failed");
+          } catch (err) {
+            console.error(`[claimTasks] could not notify the ${sweptToFailed.length} Task(s) the sweep failed:`, err);
+          }
+        })();
+      }
 
       if (claimedIds.length === 0) return [];
       const claimed = await context.prisma.task.findMany({
@@ -601,17 +692,20 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
-      const error = args.error.trim();
+      const error = args.error.trim().slice(0, MAX_ERROR_LENGTH);
       if (!error) throw badInput("error must not be empty");
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;
-      return writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
+      const written = await writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         lastError: error,
         leaseExpiresAt: null,
         ...(exhausted
           ? { status: "FAILED" } // leaseOwnerId stays: who last held it.
           : { status: "PENDING", leaseOwnerId: null }),
       });
+      // Only a terminal failure is news; a retry is the queue's business.
+      if (written.status === "FAILED") void notifyTaskOutcome(context.prisma, written, "failed");
+      return written;
     },
 
     // Completion: the Task's raw output, optional usage, and for
@@ -671,7 +765,7 @@ export const taskResolvers = {
       // written, and the Event stays unenriched.
       const outcome = !isImpactPriorTask ? null : args.impactPrior ? "produced" : "no_prior_found";
 
-      return context.prisma.$transaction(async (tx) => {
+      const completed = await context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
         // reclaimed Task's new owner never finds a stranger's result on it.
         const completed = await writeAsLeaseOwner(tx, task.id, user.id, args.leaseToken, {
@@ -717,6 +811,10 @@ export const taskResolvers = {
         }
         return completed;
       });
+      // The fan-out (V2): requester, team analysts and platform admins hear
+      // the outcome once the row is committed, never inside the transaction.
+      if (completed.status === "COMPLETED") void notifyTaskOutcome(context.prisma, completed, "completed");
+      return completed;
     },
   },
 };

@@ -1093,6 +1093,13 @@ export const mutationTypeDef = gql`
       horizonYears: Int
     ): Task!
 
+    """Decide a proposed ImpactPrior: a platform admin or analyst accepts or
+    rejects it with a rationale, recorded as who, when and why (the Domain
+    Ontology's DecisionRecord). Only from \`proposed\` (CONFLICT otherwise).
+    Only an accepted ImpactPrior counts downstream; a rejected one stays,
+    superseded, with its reason."""
+    decideImpactPrior(id: String!, decision: ImpactPriorDecision!, rationale: String!): ImpactPrior!
+
     """Cancel a Task. The requester or a platform admin only. A PENDING
     Task is CANCELLED at once; a LEASED one is flagged and becomes
     CANCELLED at the Worker's next heartbeat, completion or failure (its

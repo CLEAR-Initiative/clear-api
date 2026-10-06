@@ -781,9 +781,17 @@ to the requester and platform admins only.<div class="field-args"><span class="a
   </tr><tr>
     <td><code>eventImpactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for an Event, newest first. Admins, analysts
-and the requesting user see every state; everyone else sees
-`accepted` only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+    <td>ImpactPriors produced for an Event, newest first. An `accepted`
+one follows the Event's visibility; a `proposed` one is visible to its
+requester and to deciders (admins and analysts); a `rejected` one to
+deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>impactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>The Inbox's Review items: ImpactPriors in one state across every
+Event, newest first — `proposed` by default, i.e. what is waiting
+for a decision. Platform admins and analysts only, so the list is
+exactly what the caller may decide.<div class="field-args"><span class="arg"><code>state: ImpactPriorState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1572,6 +1580,14 @@ global admin or analyst anywhere; a team content writer for the
 (FORBIDDEN with subCode `DAILY_CAP`). The only kind today is
 `event.impact_prior`; `horizonYears` (default 10) is how far back
 the Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
+  </tr><tr id="mutation-decideimpactprior">
+    <td><code>decideImpactPrior</code></td>
+    <td><code>ImpactPrior!</code></td>
+    <td>Decide a proposed ImpactPrior: a platform admin or analyst accepts or
+rejects it with a rationale, recorded as who, when and why (the Domain
+Ontology's DecisionRecord). Only from `proposed` (CONFLICT otherwise).
+Only an accepted ImpactPrior counts downstream; a rejected one stays,
+superseded, with its reason.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: ImpactPriorDecision!</code></span><span class="arg"><code>rationale: String!</code></span></div></td>
   </tr><tr id="mutation-canceltask">
     <td><code>cancelTask</code></td>
     <td><code>Task!</code></td>
@@ -1622,7 +1638,7 @@ discarded.<div class="field-args"><span class="arg"><code>id: String!</code></sp
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
-up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>A Worker writes `proposed` only. A named admin or analyst moves it
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriordecision"><code>ImpactPriorDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed ImpactPrior.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>A Worker writes `proposed` only. A named admin or analyst moves it
 to `accepted` or `rejected` with a rationale; only `accepted` counts
 downstream, a rejected one stays, superseded, with its reason.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
@@ -4648,9 +4664,9 @@ requester and platform admins.</td>
   </tr><tr>
     <td><code>impactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for this Event, newest first. Admins, analysts
-and the requesting user see every state; everyone else sees
-`accepted` only.</td>
+    <td>ImpactPriors produced for this Event, newest first. `accepted`
+follows the Event's visibility; `proposed` is visible to its requester
+and to deciders; `rejected` to deciders only.</td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>

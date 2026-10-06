@@ -93,3 +93,20 @@ queue without taking each other's work.
 - Decisions on a proposed ImpactPrior (`decideImpactPrior`), notification
   fan-out and the Inbox are V2; Worker administration, the platform-wide
   claim cap and the analysis-request migration are V3.
+
+## What landed (V2, 2026-10-06)
+
+- `decideImpactPrior(id, decision, rationale)`: a platform admin or analyst
+  accepts or rejects a proposed ImpactPrior once, recording who, when and
+  why (the DecisionRecord fields on the row). A rejected row stays as
+  superseded history.
+- Visibility (decision 15): `accepted` follows the Event; `proposed` is
+  visible to its requester and to deciders; `rejected` to deciders only.
+  `impactPriors(state)` lists one state across Events for the Inbox,
+  deciders only.
+- Fan-out on a Task's completion or terminal failure (including the claim
+  sweep): in-app `notifications` rows of type `task` linking the Event
+  page for the requester, platform admins and the Task's team analysts;
+  email through the messaging registry (`taskOutcome` template) for those
+  who opted in, with the Worker's error shown only to the requester and
+  admins. Recipients are the Task's team (Events have no team of their own).

@@ -104,8 +104,10 @@ const LEASED = {
 function mockPrisma(task: Record<string, unknown> = LEASED) {
   let current: Record<string, unknown> = { ...task };
   const prisma: Record<string, unknown> = {
-    $queryRaw: vi.fn().mockResolvedValue([{ id: "t-1" }]),
+    $queryRaw: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([{ id: "t-1" }]),
     $executeRaw: vi.fn().mockResolvedValue(0),
+    user: { findMany: vi.fn().mockResolvedValue([]) },
+    notifications: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     task: {
       findUnique: vi.fn(async () => current),
       findUniqueOrThrow: vi.fn(async () => current),
