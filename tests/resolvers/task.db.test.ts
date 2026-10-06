@@ -32,6 +32,7 @@ const ANALYST_B_ID = `${RUN}-analyst-b`;
 const VIEWER_ID = `${RUN}-viewer`;
 const WORKER_A = `${RUN}-worker-a`;
 const WORKER_B = `${RUN}-worker-b`;
+const ADMIN_ID = `${RUN}-admin`;
 const COUNTRY_ID = `${RUN}-country`;
 const DISTRICT_ID = `${RUN}-district`;
 
@@ -67,6 +68,7 @@ describeIfDb("Tasks against the real schema", () => {
     for (const [id, role] of [
       [ANALYST_ID, "analyst"],
       [ANALYST_B_ID, "analyst"],
+      [ADMIN_ID, "admin"],
       [VIEWER_ID, "viewer"],
       [WORKER_A, "worker"],
       [WORKER_B, "worker"],
@@ -85,12 +87,13 @@ describeIfDb("Tasks against the real schema", () => {
 
   afterAll(async () => {
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
+    await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT_ID, COUNTRY_ID] } } });
     await prisma.user.deleteMany({
-      where: { id: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, WORKER_A, WORKER_B] } },
+      where: { id: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, WORKER_A, WORKER_B, ADMIN_ID] } },
     });
   });
 
@@ -146,6 +149,14 @@ describeIfDb("Tasks against the real schema", () => {
       leaseExpiresAt: null,
     });
     expect(done.completedAt).toBeInstanceOf(Date);
+
+    // The fan-out: the requester and the platform admin were told in-app, with a link to the Event.
+    let rows: { userId: string; actionUrl: string | null; notificationType: string }[] = [];
+    for (let i = 0; i < 20 && rows.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      rows = await prisma.notifications.findMany({ where: { notificationType: "task", actionUrl: `/event/${eventId}` } });
+    }
+    expect(rows.map((r) => r.userId).sort()).toEqual([ADMIN_ID, ANALYST_ID].sort());
 
     // The Event page's reads.
     const tasks = await eventTasks(null, { eventId }, analyst);

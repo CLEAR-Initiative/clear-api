@@ -396,6 +396,60 @@ ${dashboardUrl}
   };
 }
 
+export interface TaskOutcomeExtras {
+  outcomeKind: "completed" | "failed";
+  /** The Worker's error, for recipients allowed to read it; null otherwise. */
+  error: string | null;
+}
+
+/**
+ * Task outcome (ADR-0010, V2): an Event enrichment the recipient asked for,
+ * or may decide, completed or failed. One line of what happened and a link
+ * to the Event page, where a proposed ImpactPrior is accepted or rejected.
+ */
+export function taskOutcome(
+  recipientName: string,
+  message: string,
+  eventUrl: string,
+  extras: TaskOutcomeExtras,
+): EmailContent {
+  const failed = extras.outcomeKind === "failed";
+  const errorLine = extras.error ? `\n\nError: ${extras.error}` : "";
+  return {
+    subject: failed ? `CLEAR: ${message}` : `CLEAR: ${message}`,
+
+    textBody: `Hi ${recipientName},
+
+${message}.${errorLine}
+
+Open the event to ${failed ? "see the details" : "review it"}:
+
+${eventUrl}
+
+- The CLEAR Platform Team`,
+
+    htmlBody: wrapHtml(
+      failed ? "Enrichment failed" : "Enrichment ready for review",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${recipientName},
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        ${message}.
+      </p>
+      ${
+        extras.error
+          ? `<p style="margin: 0 0 24px; font-size: 13px; color: #B91C1C; line-height: 1.5;">Error: ${extras.error}</p>`
+          : ""
+      }
+      ${ctaButton("Open Event", eventUrl)}
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
+        You received this because you requested the enrichment, or may decide what it proposed.
+      </p>`,
+    ),
+  };
+}
+
 /**
  * Password reset template.
  */

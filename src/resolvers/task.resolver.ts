@@ -27,6 +27,7 @@ import {
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
+import { notifyTaskOutcome } from "../services/task-notifications.js";
 
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
@@ -590,6 +591,7 @@ export const taskResolvers = {
       const limit = Math.min(Math.max(args.limit ?? 1, 1), env.TASK_CLAIM_MAX);
       const leaseMinutes = env.TASK_LEASE_MINUTES;
 
+      const sweptToFailed: string[] = [];
       const claimedIds = await context.prisma.$transaction(async (tx) => {
         // Lazy sweeps, since there is no sweeper process: the next claim is
         // where a lapsed lease is noticed. A lapsed lease whose cancellation
@@ -604,7 +606,7 @@ export const taskResolvers = {
             AND "status" = 'LEASED'
             AND "cancel_requested_at" IS NOT NULL
             AND "lease_expires_at" < now()`;
-        await tx.$executeRaw`
+        const swept = await tx.$queryRaw<{ id: string }[]>`
           UPDATE "tasks"
           SET "status" = 'FAILED',
               "last_error" = COALESCE("last_error", 'lease expired after max attempts'),
@@ -613,7 +615,9 @@ export const taskResolvers = {
           WHERE "kind" = ${args.kind}
             AND "status" = 'LEASED'
             AND "lease_expires_at" < now()
-            AND "attempts" >= "max_attempts"`;
+            AND "attempts" >= "max_attempts"
+          RETURNING "id"`;
+        sweptToFailed.push(...swept.map((r) => r.id));
         const rows = await tx.$queryRaw<{ id: string }[]>`
           UPDATE "tasks"
           SET "status" = 'LEASED',
@@ -636,6 +640,13 @@ export const taskResolvers = {
           RETURNING "id"`;
         return rows.map((r) => r.id);
       });
+
+      // A Task the sweep just failed ends like any other failure: its
+      // requester and reviewers hear about it.
+      if (sweptToFailed.length > 0) {
+        const failed = await context.prisma.task.findMany({ where: { id: { in: sweptToFailed } } });
+        for (const task of failed) void notifyTaskOutcome(context.prisma, task, "failed");
+      }
 
       if (claimedIds.length === 0) return [];
       const claimed = await context.prisma.task.findMany({
@@ -675,13 +686,16 @@ export const taskResolvers = {
       if (!error) throw badInput("error must not be empty");
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;
-      return writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
+      const written = await writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         lastError: error,
         leaseExpiresAt: null,
         ...(exhausted
           ? { status: "FAILED" } // leaseOwnerId stays: who last held it.
           : { status: "PENDING", leaseOwnerId: null }),
       });
+      // Only a terminal failure is news; a retry is the queue's business.
+      if (written.status === "FAILED") void notifyTaskOutcome(context.prisma, written, "failed");
+      return written;
     },
 
     // Completion: the Task's raw output, optional usage, and for
@@ -741,7 +755,7 @@ export const taskResolvers = {
       // written, and the Event stays unenriched.
       const outcome = !isImpactPriorTask ? null : args.impactPrior ? "produced" : "no_prior_found";
 
-      return context.prisma.$transaction(async (tx) => {
+      const completed = await context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
         // reclaimed Task's new owner never finds a stranger's result on it.
         const completed = await writeAsLeaseOwner(tx, task.id, user.id, args.leaseToken, {
@@ -787,6 +801,10 @@ export const taskResolvers = {
         }
         return completed;
       });
+      // The fan-out (V2): requester, team analysts and platform admins hear
+      // the outcome once the row is committed, never inside the transaction.
+      if (completed.status === "COMPLETED") void notifyTaskOutcome(context.prisma, completed, "completed");
+      return completed;
     },
   },
 };

@@ -14,6 +14,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../../src/generated/prisma/client.js";
 
+const notifyTaskOutcome = vi.fn(async () => undefined);
+vi.mock("../../src/services/task-notifications.js", () => ({
+  notifyTaskOutcome: (...args: unknown[]) => notifyTaskOutcome(...(args as [])),
+}));
+
 import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resolver.js";
 import type { Context } from "../../src/context.js";
 
@@ -218,6 +223,38 @@ async function errorOf(p: Promise<unknown>): Promise<GraphQLError> {
 
 afterEach(() => {
   vi.useRealTimers();
+  notifyTaskOutcome.mockClear();
+});
+
+describe("notification fan-out (V2)", () => {
+  it("fires on completion with the committed Task", async () => {
+    const prisma = seeded(leased());
+    await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(worker, prisma));
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "t-1", status: "COMPLETED", outcome: "no_prior_found" }), "completed");
+  });
+
+  it("fires on a terminal failure but not on a retry", async () => {
+    const retry = seeded(leased({ attempts: 1 }));
+    await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "x" }, ctx(worker, retry));
+    expect(notifyTaskOutcome).not.toHaveBeenCalled();
+    const last = seeded(leased({ attempts: 3 }));
+    await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "gave up" }, ctx(worker, last));
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(last, expect.objectContaining({ status: "FAILED", lastError: "gave up" }), "failed");
+  });
+
+  it("does not fire when a cancel wins", async () => {
+    const prisma = seeded(leased({ cancelRequestedAt: new Date("2026-10-06T10:05:00Z") }));
+    await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(worker, prisma));
+    expect(notifyTaskOutcome).not.toHaveBeenCalled();
+  });
+
+  it("fires for Tasks the claim sweep marks FAILED", async () => {
+    const prisma = seeded(makeTask({ id: "t-old", status: "FAILED", lastError: "lease expired after max attempts" }));
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: "t-old" }]).mockResolvedValueOnce([]);
+    prisma.task.findMany.mockResolvedValueOnce([prisma.task.store.get("t-old")!]);
+    await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, ctx(worker, prisma));
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "t-old" }), "failed");
+  });
 });
 
 describe("requestEventEnrichment", () => {
@@ -418,7 +455,7 @@ describe("claimTasks", () => {
 
   it("returns the leased rows in claim order", async () => {
     const prisma = makePrisma();
-    prisma.$queryRaw.mockResolvedValueOnce([{ id: "t-2" }, { id: "t-1" }]);
+    prisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "t-2" }, { id: "t-1" }]);
     prisma.task.findMany.mockResolvedValueOnce([
       makeTask({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker" }),
       makeTask({ id: "t-2", status: "LEASED", leaseOwnerId: "u-worker" }),
