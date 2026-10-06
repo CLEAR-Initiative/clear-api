@@ -450,6 +450,19 @@ export const taskResolvers = {
           where: { id: task.id, status: "PENDING" },
           data: { status: "CANCELLED", cancelRequestedAt: now, cancelledById: user.id },
         }));
+      } else if (task.status === "LEASED" && task.leaseExpiresAt && task.leaseExpiresAt < now) {
+        // The Worker's lease has lapsed: nothing is coming back from it, so
+        // finish the cancellation now rather than wait for a heartbeat that
+        // will never arrive (and would otherwise leave the Event blocked).
+        ({ count } = await context.prisma.task.updateMany({
+          where: { id: task.id, status: "LEASED", leaseExpiresAt: { lt: now } },
+          data: {
+            status: "CANCELLED",
+            leaseExpiresAt: null,
+            cancelRequestedAt: task.cancelRequestedAt ?? now,
+            cancelledById: task.cancelledById ?? user.id,
+          },
+        }));
       } else if (task.status === "LEASED") {
         if (task.cancelRequestedAt) {
           return task; // already requested; the Worker will finish it
@@ -490,9 +503,19 @@ export const taskResolvers = {
       const leaseMinutes = env.TASK_LEASE_MINUTES;
 
       const claimedIds = await context.prisma.$transaction(async (tx) => {
-        // A lapsed lease whose Task has used up its attempts is FAILED here,
-        // the same lazy way an expired lease is reclaimed below: there is no
-        // sweeper, so the next claim is where the expiry is noticed.
+        // Lazy sweeps, since there is no sweeper process: the next claim is
+        // where a lapsed lease is noticed. A lapsed lease whose cancellation
+        // was requested is finished (the Worker that was told to stop never
+        // answered); one whose Task has used up its attempts is FAILED.
+        await tx.$executeRaw`
+          UPDATE "tasks"
+          SET "status" = 'CANCELLED',
+              "lease_expires_at" = NULL,
+              "updated_at" = now()
+          WHERE "kind" = ${args.kind}
+            AND "status" = 'LEASED'
+            AND "cancel_requested_at" IS NOT NULL
+            AND "lease_expires_at" < now()`;
         await tx.$executeRaw`
           UPDATE "tasks"
           SET "status" = 'FAILED',

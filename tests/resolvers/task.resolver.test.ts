@@ -51,10 +51,16 @@ function makeTask(overrides: Row = {}): Row {
   };
 }
 
-/** A `where` of equality conditions (what the resolver's conditional
- *  writes use) matched against a row. */
+/** A `where` of equality conditions, plus `{ lt }` on dates (what the
+ *  resolver's conditional writes use), matched against a row. */
 function matches(row: Row, where: Row): boolean {
-  return Object.entries(where).every(([k, v]) => row[k] === v);
+  return Object.entries(where).every(([k, v]) => {
+    if (v && typeof v === "object" && "lt" in (v as object)) {
+      const cell = row[k];
+      return cell instanceof Date && cell < (v as { lt: Date }).lt;
+    }
+    return row[k] === v;
+  });
 }
 
 function makePrisma(overrides: Record<string, unknown> = {}) {
@@ -703,6 +709,8 @@ describe("cancelTask", () => {
   });
 
   it("flags a LEASED Task instead of cancelling it outright, and is idempotent", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T10:10:00Z")); // lease (10:15) still live
     const prisma = seeded(leased({ requesterId: "u-analyst" }));
     const row = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
     expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: "u-worker", cancelledById: "u-analyst" });
@@ -710,6 +718,26 @@ describe("cancelTask", () => {
     const again = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
     expect(again.cancelRequestedAt).toEqual(row.cancelRequestedAt);
     expect(prisma.activityLogs.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a LEASED Task whose lease has lapsed at once — its Worker is not coming back", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T11:00:00Z"));
+    const prisma = seeded(leased({ requesterId: "u-analyst", leaseExpiresAt: new Date("2026-10-06T10:15:00Z") }));
+    const row = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
+    expect(row).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: "u-analyst" });
+    expect(row.cancelRequestedAt).toEqual(new Date("2026-10-06T11:00:00Z"));
+  });
+
+  it("finishes an already-flagged LEASED Task once its lease has lapsed, keeping the original request", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T11:00:00Z"));
+    const flaggedAt = new Date("2026-10-06T10:05:00Z");
+    const prisma = seeded(
+      leased({ requesterId: "u-analyst", leaseExpiresAt: new Date("2026-10-06T10:15:00Z"), cancelRequestedAt: flaggedAt, cancelledById: "u-admin" }),
+    );
+    const row = await cancelTask(null, { id: "t-1" }, ctx(analyst, prisma));
+    expect(row).toMatchObject({ status: "CANCELLED", cancelRequestedAt: flaggedAt, cancelledById: "u-admin" });
   });
 
   it.each(["COMPLETED", "FAILED", "CANCELLED"])("is CONFLICT for a %s Task", async (status) => {

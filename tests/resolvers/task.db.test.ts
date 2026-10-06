@@ -309,14 +309,34 @@ describeIfDb("Tasks against the real schema", () => {
     const flagged = await cancelTask(null, { id: held.id }, analyst);
     expect(flagged).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_A });
     expect(flagged.cancelRequestedAt).toBeInstanceOf(Date);
-    // A lapsed, flagged lease is not handed to another Worker.
-    await expireLease(held.id);
-    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 10 }, workerB)).toEqual([]);
     // The Worker's completion is discarded and the Task ends CANCELLED.
     const done = await completeTask(null, { id: held.id, leaseToken: held.leaseToken!, result: { late: true } }, workerA);
     expect(done).toMatchObject({ status: "CANCELLED", result: null, leaseExpiresAt: null });
     expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
     await expect(cancelTask(null, { id: held.id }, analyst)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+  });
+
+  it("a flagged Task whose Worker died is finished at the next claim, and the Event is requestable again", async () => {
+    const id = await makeEvent();
+    await requestEventEnrichment(null, { eventId: id }, analyst);
+    const [held] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await cancelTask(null, { id: held.id }, analyst);
+    await expireLease(held.id);
+    // Not handed out, but finished: CANCELLED, so the Event is free again.
+    expect(await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 10 }, workerB)).toEqual([]);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: held.id } })).status).toBe("CANCELLED");
+    const fresh = await requestEventEnrichment(null, { eventId: id }, analyst);
+    expect(fresh.id).not.toBe(held.id);
+
+    // And cancelling a lapsed lease directly ends it at once, no claim needed.
+    const [held2] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    expect(held2.id).toBe(fresh.id);
+    await expireLease(held2.id);
+    const ended = await cancelTask(null, { id: held2.id }, analyst);
+    expect(ended).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: ANALYST_ID });
+    await expect(
+      heartbeatTask(null, { id: held2.id, leaseToken: held2.leaseToken! }, workerA),
+    ).rejects.toMatchObject({ extensions: { subCode: "NOT_LEASED" } });
   });
 
   it("validates a proposal against the Event, records no_prior_found and usage, and supersedes rather than overwrites", async () => {
