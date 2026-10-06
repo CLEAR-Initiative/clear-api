@@ -97,9 +97,15 @@ export function requireRole(context: Context, roles: string[]) {
 }
 
 /**
- * Approved-tier gate. Admits `admin`, `analyst`, and `viewer`; rejects
- * `pending` (the default for fresh signups) and any other unrecognised
- * role.
+ * Approved-tier gate. Admits `admin`, `analyst`, `viewer` and `worker`;
+ * rejects `pending` (the default for fresh signups) and any other
+ * unrecognised role.
+ *
+ * `worker` is the narrow service role a Task Worker runs as (ADR-0010):
+ * it reads content like any approved user so it can research its Task,
+ * and its only writes are the Task mutations on Tasks it holds — every
+ * write guard is an explicit `requireRole` list, so admitting it here
+ * opens nothing else. `pipeline` and `agent` are deliberately not here.
  *
  * Use this on every content-read resolver (signals, events, alerts,
  * crises and their by-location / by-id variants). Pending users still
@@ -114,6 +120,7 @@ const APPROVED_ROLES: ReadonlySet<string> = new Set([
   "admin",
   "analyst",
   "viewer",
+  "worker",
 ]);
 
 export function requireContentReader(context: Context) {

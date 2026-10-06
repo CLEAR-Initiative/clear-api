@@ -35,7 +35,13 @@ export type ActivityAction =
   // A platform admin read another user's Conversation (or listed them).
   // The first logged *read*: Conversations are an audit record of what the
   // CLEAR Agent told their owner, so reading them is itself audited.
-  | "conversation.admin_read";
+  | "conversation.admin_read"
+  // Tasks and Workers (ADR-0010): a user asked for an Event enrichment, a
+  // requester/admin cancelled one, and a named person decided a
+  // Worker-produced ImpactPrior.
+  | "task.requested"
+  | "task.cancelled"
+  | "impact_prior.decided";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -49,7 +55,9 @@ export type ActivityResourceType =
   | "feedback"
   | "session"
   | "user"
-  | "conversation";
+  | "conversation"
+  | "task"
+  | "impact_prior";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */

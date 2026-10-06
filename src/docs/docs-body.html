@@ -119,6 +119,7 @@
             <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
+            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (first kind: an <a href="#type-impactprior">ImpactPrior</a>) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
           </tbody>
         </table>
       </div>
@@ -766,6 +767,23 @@ the hotline enrichment job to enumerate sources to drain.<div class="field-args"
     <td>PIPELINE CONTRACT (admin/pipeline only): the translate drain's
 canonical fetch for a queued groundMessage translation — text and
 detected language, no sender identity. Null if the message is gone.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task</code></td>
+    <td>One Task by id, or null. Any authenticated content reader; the
+Task's status follows its Event's visibility. `lastError` is visible
+to the requester and platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>eventTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>Enrichment Tasks about an Event, newest first. Same gate as
+`task`.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>eventImpactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>ImpactPriors produced for an Event, newest first. Admins, analysts
+and the requesting user see every state; everyone else sees
+`accepted` only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1543,6 +1561,58 @@ realistic shape.<div class="field-args"><span class="arg"><code>id: String!</cod
     <td><code>WebhookDelivery!</code></td>
     <td>Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
 schedules an immediate retry via the poller.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-requesteventenrichment">
+    <td><code>requestEventEnrichment</code></td>
+    <td><code>Task!</code></td>
+    <td>Request an Event enrichment: records a Task of `kind` about the
+Event, or returns the open (PENDING / LEASED) Task if one already
+exists for that Event and kind. Same rights as `escalateEvent`: a
+global admin or analyst anywhere; a team content writer for the
+`teamId` they act on behalf of. Capped per requester per UTC day
+(FORBIDDEN with subCode `DAILY_CAP`). The only kind today is
+`event.impact_prior`; `horizonYears` (default 10) is how far back
+the Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
+  </tr><tr id="mutation-canceltask">
+    <td><code>cancelTask</code></td>
+    <td><code>Task!</code></td>
+    <td>Cancel a Task. The requester or a platform admin only. A PENDING
+Task is CANCELLED at once; a LEASED one is flagged and becomes
+CANCELLED at the Worker's next heartbeat, completion or failure (its
+result is discarded). Any other status is CONFLICT.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-claimtasks">
+    <td><code>claimTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>WORKER CONTRACT (`worker` role): lease up to `limit` of the
+oldest claimable Tasks of `kind` — PENDING, or LEASED past their
+expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two Workers
+hold the same Task. `limit` is clamped to the platform cap. Each
+lease lasts TASK_LEASE_MINUTES; heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr id="mutation-heartbeattask">
+    <td><code>heartbeatTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: keep a lease alive. Extends `leaseExpiresAt` by
+TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+(CONFLICT `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER` — the latter
+means the lease lapsed and was reclaimed, so this `leaseToken` is
+stale; stop working on it). If cancellation was requested, the Task becomes
+CANCELLED and the Worker should stop.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span></div></td>
+  </tr><tr id="mutation-failtask">
+    <td><code>failTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: give the Task up with an error. It returns to
+PENDING for another Worker (or attempt) while attempts remain, and
+becomes FAILED with this as its `lastError` once `maxAttempts`
+claims have been used. Only the lease owner, only while LEASED.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>error: String!</code></span></div></td>
+  </tr><tr id="mutation-completetask">
+    <td><code>completeTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: report the Task done. `result` is the raw output
+(audit only). For `event.impact_prior`, pass `impactPrior` to
+record a proposal (outcome `produced`) or omit it to record
+`no_prior_found`. Only the lease owner, only while LEASED (CONFLICT
+`NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
+requested meanwhile the Task becomes CANCELLED and the result is
+discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>impactPrior: ImpactPriorInput</code></span></div></td>
   </tr></tbody>
     </table>
 
@@ -1552,7 +1622,9 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
-up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>A Worker writes `proposed` only. A named admin or analyst moves it
+to `accepted` or `rejected` with a rationale; only `accepted` counts
+downstream, a rejected one stays, superseded, with its reason.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
@@ -1569,7 +1641,10 @@ NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
 alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
-`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-taskorigin"><code>TaskOrigin</code> <span class="type-badge">enum</span></h3><p>Who asked for the Task: a signed-in user, an automatic rule, or an
+API-key caller.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>user</code></td><td>—</td></tr><tr><td><code>rule</code></td><td>—</td></tr><tr><td><code>api</code></td><td>—</td></tr></tbody></table><h3 id="type-taskstatus"><code>TaskStatus</code> <span class="type-badge">enum</span></h3><p>Lifecycle of a Task. PENDING → LEASED (claimed) → COMPLETED | FAILED;
+PENDING or LEASED → CANCELLED. An expired lease returns the Task to
+PENDING lazily, at the next claim. Tasks are never deleted.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>LEASED</code></td><td>—</td></tr><tr><td><code>COMPLETED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>CANCELLED</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -2518,6 +2593,60 @@ updated — provided the thread is not yet promoted (reviewState !=
 &quot;approved_public&quot; and no promotedSignalId) and belongs to
 groundSourceId. A promoted/terminal (or unknown/wrong-source) target
 is never mutated: a NEW thread is created instead, with a warning.</td>
+  </tr></tbody></table><h3 id="type-impactpriorinput"><code>ImpactPriorInput</code> <span class="type-badge">input</span></h3><p>An ImpactPrior proposal, given by a Worker on completing an
+`event.impact_prior` Task with at least one case. Omit it entirely to
+record `no_prior_found`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>Must be one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>Must be the level-0 ancestor of the Event's primary location.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`.</td>
+  </tr><tr>
+    <td><code>horizonYears</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>numberOfCases</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>basis</code></td>
+    <td><code>JSON!</code></td>
+    <td>One entry per case; see `ImpactPrior.basis`.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-inviteuserinput"><code>InviteUserInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -2879,6 +3008,23 @@ Location correction — one without the other is rejected.</td>
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts).</td>
+  </tr></tbody></table><h3 id="type-taskusageinput"><code>TaskUsageInput</code> <span class="type-badge">input</span></h3><p>Spend a Worker reports when completing a Task. Cost is computed by the
+caller from its own price table.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-teamassignmentinput"><code>TeamAssignmentInput</code> <span class="type-badge">input</span></h3><p>One (team, role) assignment passed to inviteUser.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>teamId</code></td>
     <td><code>String!</code></td>
@@ -4493,6 +4639,18 @@ Requires any authenticated content reader.</td>
     <td><code>escalations</code></td>
     <td><code>[EventEscalation!]!</code></td>
     <td>Escalations by users.</td>
+  </tr><tr>
+    <td><code>enrichmentTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>Enrichment Tasks about this Event, newest first. Requires any
+authenticated content reader; `lastError` is redacted for all but the
+requester and platform admins.</td>
+  </tr><tr>
+    <td><code>impactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>ImpactPriors produced for this Event, newest first. Admins, analysts
+and the requesting user see every state; everyone else sees
+`accepted` only.</td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -5013,6 +5171,115 @@ it carries no message content and no sender identity.</td>
     <td>—</td>
   </tr><tr>
     <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-impactprior"><code>ImpactPrior</code> <span class="type-badge">object</span></h3><p>What has typically happened before given a hazard type, a context and a
+population (the CLEAR Domain Ontology's ImpactPrior), inferred from
+historical Events similar to the input Event. Produced by a Worker from an
+`event.impact_prior` Task. Supersede, never overwrite: a later request
+produces a new ImpactPrior pointing at the previous one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>taskId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>ImpactPriorState!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>The level-0 (country) ancestor of the Event's primary location.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`: the scope the cases were matched at.</td>
+  </tr><tr>
+    <td><code>horizonYears</code></td>
+    <td><code>Int!</code></td>
+    <td>How far back cases were sought, in years.</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>numberOfCases</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>basis</code></td>
+    <td><code>JSON!</code></td>
+    <td>The evidence: one entry per case —
+`{ tier: &quot;clear&quot; | &quot;web&quot;, eventId?, sourceUrl?, quote?, occurredAt?, locationLabel?, scope }`.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version string of the skill or handler that produced it.</td>
+  </tr><tr>
+    <td><code>supersedesId</code></td>
+    <td><code>String</code></td>
+    <td>The previous ImpactPrior for the same Event, if any.</td>
+  </tr><tr>
+    <td><code>supersedes</code></td>
+    <td><code>ImpactPrior</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedById</code></td>
+    <td><code>String</code></td>
+    <td>Who decided it, when and why (null while `proposed`).</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decisionRationale</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -6126,6 +6393,127 @@ skipped (an id that no longer resolves to an event).</p><table class="ref-table"
   </tr><tr>
     <td><code>skipped</code></td>
     <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-task"><code>Task</code> <span class="type-badge">object</span></h3><p>One unit of Worker-performed work (ADR-0010).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>The kind of work, e.g. `event.impact_prior`. A Worker claims by kind.</td>
+  </tr><tr>
+    <td><code>subjectType</code></td>
+    <td><code>String!</code></td>
+    <td>The subject's type, e.g. `event`.</td>
+  </tr><tr>
+    <td><code>subjectId</code></td>
+    <td><code>String!</code></td>
+    <td>The subject's id, e.g. an Event id.</td>
+  </tr><tr>
+    <td><code>payload</code></td>
+    <td><code>JSON!</code></td>
+    <td>Per-kind inputs, e.g. `{ &quot;horizonYears&quot;: 10 }`.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>TaskStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>origin</code></td>
+    <td><code>TaskOrigin!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>requesterId</code></td>
+    <td><code>String</code></td>
+    <td>The user who requested it; null for origin `rule`.</td>
+  </tr><tr>
+    <td><code>requester</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>The view-scope team passed at request time (an authorisation hint,
+not an Event team — Events have none).</td>
+  </tr><tr>
+    <td><code>leaseOwnerId</code></td>
+    <td><code>String</code></td>
+    <td>The Worker (a service user) or person currently holding the lease.</td>
+  </tr><tr>
+    <td><code>leaseOwner</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>leaseExpiresAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the current lease lapses. A heartbeat extends it by
+TASK_LEASE_MINUTES; past this instant the Task is claimable again.</td>
+  </tr><tr>
+    <td><code>leaseToken</code></td>
+    <td><code>String</code></td>
+    <td>Secret minted per claim. Returned only to the lease owner (null for
+everyone else); the Worker presents it on heartbeat, complete and fail.
+A new claim mints a new token, so a run whose lease lapsed and was
+reclaimed — even by the same Worker identity — can no longer write.</td>
+  </tr><tr>
+    <td><code>attempts</code></td>
+    <td><code>Int!</code></td>
+    <td>Times the Task has been claimed.</td>
+  </tr><tr>
+    <td><code>maxAttempts</code></td>
+    <td><code>Int!</code></td>
+    <td>Claims allowed before the Task is marked FAILED.</td>
+  </tr><tr>
+    <td><code>lastError</code></td>
+    <td><code>String</code></td>
+    <td>The last Worker-reported error. Visible to the requester and platform
+admins only; null for everyone else.</td>
+  </tr><tr>
+    <td><code>cancelRequestedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set when a LEASED Task was cancelled; the Worker learns at its next
+heartbeat or completion and stops.</td>
+  </tr><tr>
+    <td><code>cancelledById</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outcome</code></td>
+    <td><code>String</code></td>
+    <td>Kind-specific result vocabulary. For `event.impact_prior`:
+`produced` or `no_prior_found`.</td>
+  </tr><tr>
+    <td><code>result</code></td>
+    <td><code>JSON</code></td>
+    <td>Raw Worker output, kept for audit. The typed result lives beside the
+subject (see `Event.impactPriors`).</td>
+  </tr><tr>
+    <td><code>model</code></td>
+    <td><code>String</code></td>
+    <td>Spend as the Worker reported it on completion.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>completedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
