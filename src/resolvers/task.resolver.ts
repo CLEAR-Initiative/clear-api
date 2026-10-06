@@ -65,6 +65,73 @@ function utcMidnight(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
+const GEOGRAPHIC_SCOPES: ReadonlySet<string> = new Set(["district", "country"]);
+
+/**
+ * The level-0 (country) ancestor of an Event's primary location — the
+ * location → origin → destination preference `escalateEvent` uses — walking
+ * `ancestorIds` the way `resolveEmailLocation` does. Events have no country
+ * column. Null when the Event has no location or the walk finds no level 0.
+ */
+async function resolveEventCountryId(
+  prisma: Prisma.TransactionClient | Context["prisma"],
+  event: { locationId: string | null; originId: string | null; destinationId: string | null },
+): Promise<string | null> {
+  const primaryId = event.locationId ?? event.originId ?? event.destinationId;
+  if (!primaryId) return null;
+  const primary = await prisma.locations.findUnique({
+    where: { id: primaryId },
+    select: { id: true, level: true, ancestorIds: true },
+  });
+  if (!primary) return null;
+  if (primary.level === 0) return primary.id;
+  if (primary.ancestorIds.length === 0) return null;
+  const country = await prisma.locations.findFirst({
+    where: { id: { in: primary.ancestorIds }, level: 0 },
+    select: { id: true },
+  });
+  return country?.id ?? null;
+}
+
+/** Usage as a Worker reports it, validated like recordConversationTurnUsage:
+ *  non-negative integer token counts, a finite non-negative cost. */
+function validateUsage(usage: TaskUsageInput): TaskUsageInput {
+  const model = usage.model?.trim();
+  if (!model) throw badInput("usage.model is required");
+  for (const [name, value] of Object.entries({
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  })) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw badInput(`usage.${name} must be a non-negative integer`);
+    }
+  }
+  if (!Number.isFinite(usage.costUsd) || usage.costUsd < 0) {
+    throw badInput("usage.costUsd must be a non-negative number");
+  }
+  return { ...usage, model };
+}
+
+/** Shape checks on an ImpactPrior proposal that need no database. */
+function validateImpactPriorShape(input: ImpactPriorInput): void {
+  if (!GEOGRAPHIC_SCOPES.has(input.geographicScope)) {
+    throw badInput('impactPrior.geographicScope must be "district" or "country"');
+  }
+  if (!Number.isInteger(input.horizonYears) || input.horizonYears <= 0) {
+    throw badInput("impactPrior.horizonYears must be a positive integer");
+  }
+  if (!Number.isInteger(input.numberOfCases) || input.numberOfCases < 1) {
+    throw badInput("impactPrior.numberOfCases must be at least 1; omit impactPrior to record no_prior_found");
+  }
+  if (!Array.isArray(input.basis) || input.basis.length !== input.numberOfCases) {
+    throw badInput("impactPrior.basis must list exactly one entry per case");
+  }
+  if (!input.methodVersion?.trim()) throw badInput("impactPrior.methodVersion is required");
+  if (input.validFrom && input.validTo && input.validTo < input.validFrom) {
+    throw badInput("impactPrior.validTo must not precede validFrom");
+  }
+}
+
 const notFound = (what: string) =>
   new GraphQLError(`${what} not found`, { extensions: { code: "NOT_FOUND" } });
 const forbidden = (message: string, subCode?: string) =>
@@ -492,11 +559,44 @@ export const taskResolvers = {
       const task = await requireLeaseOwner(context, args.id);
       const user = context.user!;
       const now = new Date();
-      if (args.impactPrior && (task.kind !== IMPACT_PRIOR_KIND || task.subjectType !== EVENT_SUBJECT)) {
+      const isImpactPriorTask =
+        task.kind === IMPACT_PRIOR_KIND && task.subjectType === EVENT_SUBJECT;
+      if (args.impactPrior && !isImpactPriorTask) {
         throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
       }
-
+      const usage = args.usage ? validateUsage(args.usage) : null;
+      if (args.impactPrior) validateImpactPriorShape(args.impactPrior);
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id);
+
+      // The proposal must describe THIS Event: its hazard is one of the
+      // Event's types and its country is the Event's. A Worker that found
+      // cases for the wrong hazard or country has not found a prior.
+      if (args.impactPrior) {
+        const event = await context.prisma.events.findUnique({
+          where: { id: task.subjectId },
+          select: { id: true, types: true, locationId: true, originId: true, destinationId: true },
+        });
+        if (!event) throw notFound("Event");
+        if (!event.types.includes(args.impactPrior.hazardType)) {
+          throw badInput(
+            `impactPrior.hazardType "${args.impactPrior.hazardType}" is not one of the Event's types (${event.types.join(", ") || "none"})`,
+          );
+        }
+        const countryId = await resolveEventCountryId(context.prisma, event);
+        if (!countryId) {
+          throw badInput("The Event's country cannot be resolved; an ImpactPrior cannot be attached to it");
+        }
+        if (args.impactPrior.countryLocationId !== countryId) {
+          throw badInput(
+            `impactPrior.countryLocationId must be the Event's country (${countryId}), not "${args.impactPrior.countryLocationId}"`,
+          );
+        }
+      }
+
+      // For `event.impact_prior`, completing without a proposal means the
+      // Worker looked and found no case: the Task records it, no row is
+      // written, and the Event stays unenriched.
+      const outcome = !isImpactPriorTask ? null : args.impactPrior ? "produced" : "no_prior_found";
 
       return context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
@@ -505,17 +605,27 @@ export const taskResolvers = {
           status: "COMPLETED",
           completedAt: now,
           result: args.result,
-          outcome: args.impactPrior ? "produced" : null,
+          outcome,
+          ...(usage ?? {}),
           // leaseOwnerId stays as the record of who completed it.
           leaseExpiresAt: null,
         });
         // A cancel that landed mid-write won: nothing is produced.
         if (completed.status === "CANCELLED") return completed;
         if (args.impactPrior) {
+          // Supersede, never overwrite: the newest existing ImpactPrior for
+          // the Event (whatever its state) becomes this one's predecessor
+          // and stays as it was.
+          const previous = await tx.impactPrior.findFirst({
+            where: { eventId: task.subjectId },
+            orderBy: { createdAt: "desc" },
+            select: { id: true },
+          });
           await tx.impactPrior.create({
             data: {
               eventId: task.subjectId,
               taskId: task.id,
+              supersedesId: previous?.id ?? null,
               hazardType: args.impactPrior.hazardType,
               countryLocationId: args.impactPrior.countryLocationId,
               geographicScope: args.impactPrior.geographicScope,

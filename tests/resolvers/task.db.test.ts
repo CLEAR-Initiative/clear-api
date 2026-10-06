@@ -312,6 +312,55 @@ describeIfDb("Tasks against the real schema", () => {
     await expect(cancelTask(null, { id: held.id }, analyst)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
   });
 
+  it("validates a proposal against the Event, records no_prior_found and usage, and supersedes rather than overwrites", async () => {
+    const id = await makeEvent();
+    const proposal = {
+      hazardType: "FL",
+      countryLocationId: COUNTRY_ID,
+      geographicScope: "district",
+      horizonYears: 10,
+      numberOfCases: 1,
+      basis: [{ tier: "clear", eventId: "some-earlier-event", scope: "district" }],
+      methodVersion: "clear-impact-prior@0.1.0",
+    };
+    const usage = { model: "anthropic/claude-sonnet-5-5", inputTokens: 900, outputTokens: 120, costUsd: 0.0045 };
+
+    // Wrong hazard / wrong country are refused and the Task stays LEASED.
+    await requestEventEnrichment(null, { eventId: id }, analyst);
+    let [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await expect(
+      completeTask(null, { id: t.id, result: {}, impactPrior: { ...proposal, hazardType: "EQ" } }, workerA),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    await expect(
+      completeTask(null, { id: t.id, result: {}, impactPrior: { ...proposal, countryLocationId: DISTRICT_ID } }, workerA),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("LEASED");
+
+    // No cases: no_prior_found, usage recorded, no row.
+    const none = await completeTask(null, { id: t.id, result: { cases: 0 }, usage }, workerA);
+    expect(none).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found", ...usage });
+    expect(await eventImpactPriors(null, { eventId: id }, analyst)).toEqual([]);
+
+    // A second request → first ImpactPrior; a third → one that supersedes it.
+    await requestEventEnrichment(null, { eventId: id }, analyst);
+    [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerA);
+    await completeTask(null, { id: t.id, result: {}, impactPrior: proposal, usage }, workerA);
+    await requestEventEnrichment(null, { eventId: id }, analyst);
+    [t] = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, workerB);
+    await completeTask(
+      null,
+      { id: t.id, result: {}, impactPrior: { ...proposal, numberOfCases: 2, basis: [...proposal.basis, { tier: "web", sourceUrl: "https://example.test", scope: "country" }] } },
+      workerB,
+    );
+    const priors = await eventImpactPriors(null, { eventId: id }, analyst);
+    expect(priors).toHaveLength(2);
+    const [newest, first] = priors;
+    expect(newest).toMatchObject({ numberOfCases: 2, supersedesId: first.id, state: "proposed" });
+    expect(first).toMatchObject({ numberOfCases: 1, supersedesId: null, state: "proposed" });
+    // The earlier row is untouched, and the chain resolves.
+    expect(await taskResolvers.ImpactPrior.supersedes(newest, null, analyst)).toMatchObject({ id: first.id });
+  });
+
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {
     const id = await makeEvent();
     const first = await requestEventEnrichment(null, { eventId: id }, analyst);

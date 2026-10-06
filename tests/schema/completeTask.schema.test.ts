@@ -123,7 +123,7 @@ function mockPrisma(task: Record<string, unknown> = LEASED) {
     },
     locations: {
       findUnique: vi.fn().mockResolvedValue({ id: "loc-d", level: 2, ancestorIds: ["loc-c"] }),
-      findMany: vi.fn().mockResolvedValue([{ id: "loc-c", level: 0 }]),
+      findFirst: vi.fn().mockResolvedValue({ id: "loc-c" }),
     },
   };
   prisma.$transaction = vi.fn(async (arg: unknown) =>
@@ -207,7 +207,17 @@ describe("Worker protocol schema contract", () => {
       status: "COMPLETED",
       outcome: "produced",
       result: { summary: "one case" },
+      model: "anthropic/claude-sonnet-5-5",
+      inputTokens: 1200,
+      outputTokens: 300,
+      costUsd: 0.012,
     });
+  });
+
+  it("completeTask without an impactPrior records no_prior_found", async () => {
+    const result = await run(COMPLETE_TASK, { id: "t-1", result: { cases: 0 } }, WORKER);
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.completeTask).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
   });
 
   it("relays CONFLICT / NOT_LEASED for a Task that is not leased", async () => {

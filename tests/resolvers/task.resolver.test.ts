@@ -97,10 +97,24 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   };
   const events = {
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
-      where.id === "ev-1" ? { id: "ev-1", types: ["FL"], locationId: "loc-district" } : null,
+      where.id === "ev-1"
+        ? { id: "ev-1", types: ["FL", "FF"], locationId: "loc-district", originId: null, destinationId: null }
+        : null,
     ),
   };
-  const locations = { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) };
+  // loc-district (level 2) → loc-state (1) → loc-country (0).
+  const LOCATIONS: Record<string, Row> = {
+    "loc-district": { id: "loc-district", level: 2, ancestorIds: ["loc-state", "loc-country"] },
+    "loc-state": { id: "loc-state", level: 1, ancestorIds: ["loc-country"] },
+    "loc-country": { id: "loc-country", level: 0, ancestorIds: [] },
+  };
+  const locations = {
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => LOCATIONS[where.id] ?? null),
+    findFirst: vi.fn(async ({ where }: { where: { id: { in: string[] }; level: number } }) =>
+      Object.values(LOCATIONS).find((l) => where.id.in.includes(l.id as string) && l.level === where.level) ?? null,
+    ),
+    findMany: vi.fn(async () => []),
+  };
   const activityLogs = { create: vi.fn(async () => ({})) };
   // Membership fixture: the coordinator belongs to team-a only.
   const MEMBERSHIPS: Record<string, Record<string, string>> = {
@@ -489,6 +503,110 @@ describe("completeTask", () => {
     expect(prisma.impactPrior.create.mock.calls[0][0].data).not.toHaveProperty("state");
   });
 
+  it("without an impactPrior on an event.impact_prior Task records no_prior_found and writes no row", async () => {
+    const prisma = seeded(leased());
+    const done = await completeTask(null, { id: "t-1", result: { searched: 3, cases: 0 } }, ctx(worker, prisma));
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
+    expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+  });
+
+  it("leaves outcome null for a Task of another kind", async () => {
+    const prisma = seeded(leased({ kind: "event.other" }));
+    const done = await completeTask(null, { id: "t-1", result: {} }, ctx(worker, prisma));
+    expect(done.outcome).toBeNull();
+  });
+
+  describe("usage", () => {
+    const usage = { model: "anthropic/claude-sonnet-5-5", inputTokens: 1200, outputTokens: 300, costUsd: 0.0123 };
+
+    it("is recorded on the Task as reported", async () => {
+      const prisma = seeded(leased());
+      const done = await completeTask(null, { id: "t-1", result: {}, usage }, ctx(worker, prisma));
+      expect(done).toMatchObject(usage);
+    });
+
+    it("stays null when not reported", async () => {
+      const prisma = seeded(leased());
+      const done = await completeTask(null, { id: "t-1", result: {} }, ctx(worker, prisma));
+      expect(done).toMatchObject({ model: null, inputTokens: null, outputTokens: null, costUsd: null });
+    });
+
+    it.each([
+      ["an empty model", { ...usage, model: " " }],
+      ["negative inputTokens", { ...usage, inputTokens: -1 }],
+      ["fractional outputTokens", { ...usage, outputTokens: 1.5 }],
+      ["a negative cost", { ...usage, costUsd: -0.01 }],
+      ["an infinite cost", { ...usage, costUsd: Number.POSITIVE_INFINITY }],
+    ])("rejects %s with BAD_USER_INPUT and writes nothing", async (_name, bad) => {
+      const prisma = seeded(leased());
+      const err = await errorOf(completeTask(null, { id: "t-1", result: {}, usage: bad }, ctx(worker, prisma)));
+      expect(err.extensions.code).toBe("BAD_USER_INPUT");
+      expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
+    });
+  });
+
+  describe("ImpactPrior validation against the Event", () => {
+    const proposal = () => ({
+      hazardType: "FL",
+      countryLocationId: "loc-country",
+      geographicScope: "district",
+      horizonYears: 10,
+      numberOfCases: 2,
+      basis: [{ tier: "clear", eventId: "ev-a", scope: "district" }, { tier: "web", sourceUrl: "https://x", scope: "country" }],
+      methodVersion: "clear-impact-prior@0.1.0",
+    });
+    const complete = (prisma: ReturnType<typeof makePrisma>, impactPrior: Row) =>
+      completeTask(null, { id: "t-1", result: {}, impactPrior: impactPrior as never }, ctx(worker, prisma));
+
+    it("accepts a hazard among the Event's types and the Event's level-0 ancestor as country", async () => {
+      const prisma = seeded(leased());
+      const done = await complete(prisma, { ...proposal(), hazardType: "FF" });
+      expect(done.outcome).toBe("produced");
+    });
+
+    it.each([
+      ["a hazard not among the Event's types", { hazardType: "EQ" }, /hazardType/],
+      ["a country that is not the Event's", { countryLocationId: "loc-state" }, /countryLocationId/],
+      ["an unknown geographic scope", { geographicScope: "continent" }, /geographicScope/],
+      ["zero cases (omit impactPrior for no_prior_found)", { numberOfCases: 0, basis: [] }, /numberOfCases/],
+      ["a basis that does not list one entry per case", { numberOfCases: 1 }, /basis/],
+      ["a zero horizon", { horizonYears: 0 }, /horizonYears/],
+      ["an empty methodVersion", { methodVersion: "" }, /methodVersion/],
+      ["validTo before validFrom", { validFrom: new Date("2026-02-01"), validTo: new Date("2026-01-01") }, /validTo/],
+    ])("rejects %s with BAD_USER_INPUT and writes nothing", async (_name, bad, message) => {
+      const prisma = seeded(leased());
+      const err = await errorOf(complete(prisma, { ...proposal(), ...bad }));
+      expect(err.extensions.code).toBe("BAD_USER_INPUT");
+      expect(err.message).toMatch(message);
+      expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
+      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a proposal when the Event's country cannot be resolved", async () => {
+      const prisma = seeded(leased());
+      prisma.events.findUnique.mockResolvedValueOnce({
+        id: "ev-1", types: ["FL"], locationId: null, originId: null, destinationId: null,
+      });
+      const err = await errorOf(complete(prisma, proposal()));
+      expect(err.extensions.code).toBe("BAD_USER_INPUT");
+      expect(err.message).toMatch(/country cannot be resolved/);
+    });
+
+    it("supersedes the newest existing ImpactPrior for the Event, never overwriting it", async () => {
+      const prisma = seeded(leased());
+      prisma.impactPrior.findFirst.mockResolvedValueOnce({ id: "ip-old" });
+      await complete(prisma, proposal());
+      expect(prisma.impactPrior.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { eventId: "ev-1" }, orderBy: { createdAt: "desc" } }),
+      );
+      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ supersedesId: "ip-old" }),
+      });
+      // Nothing touched the earlier row: there is no update delegate call to make.
+      expect(prisma.impactPrior).not.toHaveProperty("update");
+    });
+  });
+
   it("rejects an impactPrior on a Task of another kind with BAD_USER_INPUT, before any write", async () => {
     const prisma = seeded(leased({ kind: "event.other" }));
     const err = await errorOf(
@@ -613,7 +731,7 @@ describe("cancelTask", () => {
           result: { late: true },
           impactPrior: {
             hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
-            horizonYears: 10, numberOfCases: 1, basis: [], methodVersion: "x",
+            horizonYears: 10, numberOfCases: 1, basis: [{ tier: "web", scope: "country" }], methodVersion: "x",
           },
         },
         ctx(worker, prisma),
