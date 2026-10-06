@@ -861,6 +861,32 @@ describe("cancelTask", () => {
       expect(row.status).toBe("CANCELLED");
     });
 
+    it("at completion with a malformed proposal: the cancel wins over BAD_USER_INPUT", async () => {
+      const prisma = seeded(flagged());
+      const row = await completeTask(
+        null,
+        {
+          id: "t-1",
+          leaseToken: TOKEN,
+          result: {},
+          impactPrior: {
+            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
+            horizonYears: 10, numberOfCases: 1, basis: [{ tier: "web", scope: "country" }], methodVersion: "x",
+            validFrom: new Date("not a date"),
+          } as never,
+        },
+        ctx(worker, prisma),
+      );
+      expect(row).toMatchObject({ status: "CANCELLED", result: null, outcome: null });
+      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+    });
+
+    it("at failure with an empty error: the cancel wins over BAD_USER_INPUT", async () => {
+      const prisma = seeded(flagged());
+      const row = await failTask(null, { id: "t-1", leaseToken: TOKEN, error: "   " }, ctx(worker, prisma));
+      expect(row).toMatchObject({ status: "CANCELLED", lastError: null });
+    });
+
     it("a cancel landing between the pre-check and the write still wins", async () => {
       const prisma = seeded(leased());
       prisma.task.findUnique.mockImplementationOnce(async () => leased());

@@ -709,9 +709,11 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
+      // A requested cancel wins regardless of what the Worker brought back:
+      // the requester's decision stands, and the payload is discarded.
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const error = args.error.trim().slice(0, MAX_ERROR_LENGTH);
       if (!error) throw badInput("error must not be empty");
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;
       const written = await writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         lastError: error,
@@ -742,6 +744,10 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
+      // A requested cancel wins regardless of what the Worker brought back,
+      // even a malformed proposal: the Task is CANCELLED now rather than
+      // left leased until the Worker resubmits or the lease lapses.
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const now = new Date();
       const isImpactPriorTask =
         task.kind === IMPACT_PRIOR_KIND && task.subjectType === EVENT_SUBJECT;
@@ -750,7 +756,6 @@ export const taskResolvers = {
       }
       const usage = args.usage ? validateUsage(args.usage) : null;
       const validity = args.impactPrior ? validateImpactPriorShape(args.impactPrior) : null;
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
 
       // The proposal must describe THIS Event: its hazard is one of the
       // Event's types and its country is the Event's. A Worker that found

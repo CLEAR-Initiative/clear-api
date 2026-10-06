@@ -30,8 +30,9 @@ const WORKER_MUTATIONS = new Set(["claimTasks", "heartbeatTask", "completeTask",
 
 /**
  * Mutations that read no identity at all — a worker key grants nothing an
- * anonymous caller doesn't already have. Pinned below as anonymous-callable,
- * so one can't quietly start trusting `context.user` without moving here.
+ * anonymous caller doesn't already have. Pinned below as anonymous-callable
+ * AND as never reading `context.user` before the database, so one can't
+ * quietly start trusting the caller's identity without moving here.
  */
 const PUBLIC_MUTATIONS = new Set(["verifyEmail", "requestPasswordReset", "resetPassword", "acceptInvite"]);
 
@@ -111,19 +112,27 @@ const WORKER = { id: "u-worker", role: "worker" };
 async function call(field: GraphQLField<unknown, Context>, user: { id: string; role: string } | null) {
   const touched: string[] = [];
   const args = Object.fromEntries(field.args.map((a) => [a.name, placeholder(a.type)]));
+  let readIdentity = false;
   const context = {
     prisma: sentinelPrisma(touched),
-    user,
     session: null,
     authMethod: user ? "api-key" : "none",
     viaAgent: false,
     locale: "en",
   } as unknown as Context;
+  // A getter, so a resolver that consults the caller's identity is seen doing so.
+  Object.defineProperty(context, "user", {
+    enumerable: true,
+    get() {
+      readIdentity = true;
+      return user;
+    },
+  });
   try {
     await field.resolve!(null, args, context, {} as never);
-    return { error: null as unknown, touched };
+    return { error: null as unknown, touched, readIdentity };
   } catch (error) {
-    return { error, touched };
+    return { error, touched, readIdentity };
   }
 }
 
@@ -161,13 +170,23 @@ describe("worker role write scope", () => {
     expect(touched.length).toBeGreaterThan(0);
   });
 
-  it.each([...PUBLIC_MUTATIONS])("%s is anonymous-callable, so the worker gains nothing on it", async (name) => {
-    const { error } = await call(mutationFields[name]!, null);
-    expect(authCode(error)).toBeUndefined();
+  it.each([...PUBLIC_MUTATIONS])("%s is anonymous-callable and ignores identity, so the worker gains nothing on it", async (name) => {
+    const anonymous = await call(mutationFields[name]!, null);
+    expect(authCode(anonymous.error)).toBeUndefined();
+    expect(anonymous.readIdentity).toBe(false);
+    // The worker takes exactly the same path to the database as an anonymous caller.
+    const asWorker = await call(mutationFields[name]!, WORKER);
+    expect(authCode(asWorker.error)).toBeUndefined();
+    expect(asWorker.readIdentity).toBe(false);
+    expect(asWorker.touched).toEqual(anonymous.touched);
   });
 
-  it.each(WORKER_READS)("query %s admits the worker", async (name) => {
-    const { error } = await call(queryFields[name]!, WORKER);
+  // Reaching the database is the evidence the guard let the worker through;
+  // what the query returns once there is each resolver's own test's business.
+  it.each(WORKER_READS)("query %s admits the worker through to the database", async (name) => {
+    const { error, touched } = await call(queryFields[name]!, WORKER);
     expect(authCode(error)).toBeUndefined();
+    expect(error).toBeInstanceOf(PrismaTouched);
+    expect(touched.length).toBeGreaterThan(0);
   });
 });
