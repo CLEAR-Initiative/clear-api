@@ -219,6 +219,36 @@ describe("Worker protocol schema contract", () => {
     });
   });
 
+  it.each([
+    ["an unparseable validFrom", { validFrom: "not a date" }, /validFrom must be an ISO 8601/],
+    ["validTo before validFrom", { validFrom: "2026-02-01T00:00:00Z", validTo: "2026-01-01T00:00:00Z" }, /validTo must not precede/],
+  ])("completeTask rejects %s on the wire with BAD_USER_INPUT, before any write", async (_name, window, message) => {
+    const prisma = mockPrisma();
+    const result = await run(
+      COMPLETE_TASK,
+      {
+        id: "t-1",
+        leaseToken: "tok-1",
+        result: {},
+        impactPrior: {
+          hazardType: "FL",
+          countryLocationId: "loc-c",
+          geographicScope: "country",
+          horizonYears: 10,
+          numberOfCases: 1,
+          basis: [{ tier: "web", sourceUrl: "https://example.test", scope: "country" }],
+          methodVersion: "clear-impact-prior@0.1.0",
+          ...window,
+        },
+      },
+      WORKER,
+      prisma,
+    );
+    expect(result.errors?.[0]?.extensions?.code).toBe("BAD_USER_INPUT");
+    expect(result.errors?.[0]?.message).toMatch(message);
+    expect((prisma.impactPrior as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
+  });
+
   it("completeTask without an impactPrior records no_prior_found", async () => {
     const result = await run(COMPLETE_TASK, { id: "t-1", leaseToken: "tok-1", result: { cases: 0 } }, WORKER);
     expect(result.errors).toBeUndefined();

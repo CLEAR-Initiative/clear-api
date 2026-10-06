@@ -117,8 +117,22 @@ function validateUsage(usage: TaskUsageInput): TaskUsageInput {
   return { ...usage, model };
 }
 
-/** Shape checks on an ImpactPrior proposal that need no database. */
-function validateImpactPriorShape(input: ImpactPriorInput): void {
+/** A DateTime input as a valid Date. The scalar's parseValue is
+ *  `new Date(value)`, so an unparseable string arrives as an Invalid Date —
+ *  which compares false against anything and makes Prisma throw on write. */
+function parseDateTimeInput(value: Date, field: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw badInput(`impactPrior.${field} must be an ISO 8601 date-time`);
+  }
+  return date;
+}
+
+/** Shape checks on an ImpactPrior proposal that need no database. Returns
+ *  the parsed validity window. */
+function validateImpactPriorShape(
+  input: ImpactPriorInput,
+): { validFrom: Date | null; validTo: Date | null } {
   if (!GEOGRAPHIC_SCOPES.has(input.geographicScope)) {
     throw badInput('impactPrior.geographicScope must be "district" or "country"');
   }
@@ -132,9 +146,12 @@ function validateImpactPriorShape(input: ImpactPriorInput): void {
     throw badInput("impactPrior.basis must list exactly one entry per case");
   }
   if (!input.methodVersion?.trim()) throw badInput("impactPrior.methodVersion is required");
-  if (input.validFrom && input.validTo && input.validTo < input.validFrom) {
+  const validFrom = input.validFrom == null ? null : parseDateTimeInput(input.validFrom, "validFrom");
+  const validTo = input.validTo == null ? null : parseDateTimeInput(input.validTo, "validTo");
+  if (validFrom && validTo && validTo.getTime() < validFrom.getTime()) {
     throw badInput("impactPrior.validTo must not precede validFrom");
   }
+  return { validFrom, validTo };
 }
 
 const notFound = (what: string) =>
@@ -732,7 +749,7 @@ export const taskResolvers = {
         throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
       }
       const usage = args.usage ? validateUsage(args.usage) : null;
-      if (args.impactPrior) validateImpactPriorShape(args.impactPrior);
+      const validity = args.impactPrior ? validateImpactPriorShape(args.impactPrior) : null;
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
 
       // The proposal must describe THIS Event: its hazard is one of the
@@ -803,8 +820,8 @@ export const taskResolvers = {
               upperBound: args.impactPrior.upperBound ?? null,
               numberOfCases: args.impactPrior.numberOfCases,
               basis: args.impactPrior.basis,
-              validFrom: args.impactPrior.validFrom ?? null,
-              validTo: args.impactPrior.validTo ?? null,
+              validFrom: validity?.validFrom ?? null,
+              validTo: validity?.validTo ?? null,
               methodVersion: args.impactPrior.methodVersion,
             },
           });

@@ -655,6 +655,9 @@ describe("completeTask", () => {
       ["a zero horizon", { horizonYears: 0 }, /horizonYears/],
       ["an empty methodVersion", { methodVersion: "" }, /methodVersion/],
       ["validTo before validFrom", { validFrom: new Date("2026-02-01"), validTo: new Date("2026-01-01") }, /validTo/],
+      ["validTo before validFrom as strings", { validFrom: "2026-02-01T00:00:00Z", validTo: "2026-01-01T00:00:00Z" }, /validTo must not precede/],
+      ["an unparseable validFrom", { validFrom: new Date("not a date") }, /validFrom must be an ISO 8601/],
+      ["an unparseable validTo", { validFrom: new Date("2026-01-01"), validTo: new Date("2026-13-45") }, /validTo must be an ISO 8601/],
     ])("rejects %s with BAD_USER_INPUT and writes nothing", async (_name, bad, message) => {
       const prisma = seeded(leased());
       const err = await errorOf(complete(prisma, { ...proposal(), ...bad }));
