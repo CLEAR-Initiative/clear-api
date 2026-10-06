@@ -11,6 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import {
   requireAuth,
+  requireContentReader,
   requireRole,
   requireTeamContentWriter,
   resolveTeamMembership,
@@ -81,6 +82,35 @@ describe("requireRole", () => {
     expect(codeOf(() => requireRole(buildContext(null), ["admin"]))).toBe(
       "UNAUTHENTICATED",
     );
+  });
+});
+
+describe("requireContentReader", () => {
+  it.each(["admin", "analyst", "viewer", "worker"])("admits the approved role %s", (role) => {
+    const user = { id: "u1", role };
+    expect(requireContentReader(buildContext(user))).toBe(user);
+  });
+
+  it.each(["pending", "pipeline", "agent", null])(
+    "rejects role %s with FORBIDDEN / PENDING_APPROVAL",
+    (role) => {
+      const ctx = buildContext({ id: "u1", role });
+      try {
+        requireContentReader(ctx);
+      } catch (e) {
+        expect(e).toBeInstanceOf(GraphQLError);
+        expect((e as GraphQLError).extensions).toMatchObject({
+          code: "FORBIDDEN",
+          subCode: "PENDING_APPROVAL",
+        });
+        return;
+      }
+      throw new Error("expected requireContentReader to throw");
+    },
+  );
+
+  it("throws UNAUTHENTICATED when unauthenticated", () => {
+    expect(codeOf(() => requireContentReader(buildContext(null)))).toBe("UNAUTHENTICATED");
   });
 });
 

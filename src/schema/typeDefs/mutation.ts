@@ -1075,4 +1075,43 @@ export const mutationTypeDef = gql`
     schedules an immediate retry via the poller."""
     retryWebhookDelivery(id: String!): WebhookDelivery!
   }
+
+  # ─── Tasks (ADR-0010) ────────────────────────────────────────────────
+  extend type Mutation {
+    """Request an Event enrichment: records a Task of \`kind\` about the
+    Event, or returns the open (PENDING / LEASED) Task if one already
+    exists for that Event and kind. Same rights as \`escalateEvent\`: a
+    global admin or analyst anywhere; a team content writer for the
+    \`teamId\` they act on behalf of. Capped per requester per UTC day
+    (FORBIDDEN with subCode \`DAILY_CAP\`). The only kind today is
+    \`event.impact_prior\`; \`horizonYears\` (default 10) is how far back
+    the Worker looks for cases."""
+    requestEventEnrichment(
+      eventId: String!
+      kind: String = "event.impact_prior"
+      teamId: String
+      horizonYears: Int
+    ): Task!
+
+    """WORKER CONTRACT (\`worker\` role): lease up to \`limit\` of the
+    oldest claimable Tasks of \`kind\` — PENDING, or LEASED past their
+    expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two Workers
+    hold the same Task. \`limit\` is clamped to the platform cap. Each
+    lease lasts TASK_LEASE_MINUTES; heartbeat to keep it."""
+    claimTasks(kind: String!, limit: Int = 1): [Task!]!
+
+    """WORKER CONTRACT: report the Task done. \`result\` is the raw output
+    (audit only). For \`event.impact_prior\`, pass \`impactPrior\` to
+    record a proposal (outcome \`produced\`) or omit it to record
+    \`no_prior_found\`. Only the lease owner, only while LEASED (CONFLICT
+    \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
+    requested meanwhile the Task becomes CANCELLED and the result is
+    discarded."""
+    completeTask(
+      id: String!
+      result: JSON!
+      usage: TaskUsageInput
+      impactPrior: ImpactPriorInput
+    ): Task!
+  }
 `;

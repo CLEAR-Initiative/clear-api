@@ -35,6 +35,7 @@ import { reportFigureTypeDef } from "./typeDefs/types/reportFigure.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 import { groundTypeDef } from "./typeDefs/types/ground.js";
 import { conversationTypeDef } from "./typeDefs/types/conversation.js";
+import { taskTypeDef } from "./typeDefs/types/task.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -74,4 +75,5 @@ export const typeDefs = [
   webhookTypeDef,
   groundTypeDef,
   conversationTypeDef,
+  taskTypeDef,
 ];

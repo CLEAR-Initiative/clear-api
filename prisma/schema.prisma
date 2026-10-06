@@ -753,6 +753,7 @@ model events {
   eventEscaladedByUsers eventEscaladedByUsers[]
   eventCrises           eventCrises[]
   translations          translations[]
+  impactPriors          impactPrior[]
 }
 
 model disasterTypes {
@@ -2249,4 +2250,156 @@ model agentWorkingMemory {
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agent_working_memory")
+}
+
+// ─── Tasks and Workers (ADR-0010) ──────────────────────────────────────────
+
+enum TaskStatus {
+  PENDING
+  LEASED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Who asked for the Task: a signed-in user, an automatic rule (nothing
+/// writes `rule` yet; the column exists so the first rule needs no
+/// migration), or an API-key caller.
+enum TaskOrigin {
+  user
+  rule
+  api
+}
+
+/// A Worker writes `proposed` only. A named admin or analyst moves it to
+/// `accepted` or `rejected` with a rationale (V2); only `accepted` counts
+/// downstream.
+enum ImpactPriorState {
+  proposed
+  accepted
+  rejected
+}
+
+/// One unit of Worker-performed work (ADR-0010): exactly one `kind`, exactly
+/// one subject, a status, a row-level lease (owner + expiry), an attempt
+/// counter and the raw Worker output. Postgres is the broker — `claimTasks`
+/// leases rows with `FOR UPDATE SKIP LOCKED` — and GraphQL is the only door.
+/// Tasks are never deleted.
+model task {
+  id          String @id @default(cuid())
+  /// e.g. `event.impact_prior`. The handler vocabulary, not an enum, so a new
+  /// kind is a Worker and a handler, not a migration.
+  kind        String
+  /// e.g. `event`.
+  subjectType String @map("subject_type")
+  subjectId   String @map("subject_id")
+  /// Per-kind inputs, e.g. `{ horizonYears: 10 }`.
+  payload     Json
+
+  status TaskStatus @default(PENDING)
+  origin TaskOrigin @default(user)
+
+  /// `context.user.id` of the requester; null for origin `rule`.
+  requesterId String? @map("requester_id")
+  /// The view-scope team the requester passed (Events have no team of their
+  /// own; this is the authorisation hint `escalateEvent` also takes).
+  teamId      String? @map("team_id")
+
+  /// user.id of the Worker (or person) holding the lease.
+  leaseOwnerId   String?   @map("lease_owner_id")
+  leaseExpiresAt DateTime? @map("lease_expires_at")
+
+  attempts    Int     @default(0)
+  maxAttempts Int     @default(3) @map("max_attempts")
+  lastError   String? @map("last_error")
+
+  /// Set on a LEASED Task by `cancelTask`; the Worker's next heartbeat or
+  /// completion turns it into CANCELLED.
+  cancelRequestedAt DateTime? @map("cancel_requested_at")
+  cancelledById     String?   @map("cancelled_by_id")
+
+  /// Kind-specific vocabulary: `produced` | `no_prior_found` for
+  /// `event.impact_prior`.
+  outcome String?
+  /// Raw Worker output, kept for audit only — the typed result lives beside
+  /// the subject (first: `impact_priors`).
+  result  Json?
+
+  /// Spend as the Worker reports it (cost from its own price table, like
+  /// conversationMessages).
+  model        String?
+  inputTokens  Int?    @map("input_tokens")
+  outputTokens Int?    @map("output_tokens")
+  costUsd      Float?  @map("cost_usd")
+
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  impactPriors impactPrior[]
+
+  /// (status, kind, created_at) serves the oldest-first claim; the partial
+  /// unique `tasks_open_subject_uk` — one PENDING/LEASED Task per (kind,
+  /// subject) — is SQL-only in the migration (Prisma can't express it).
+  @@index([status, kind, createdAt])
+  @@index([subjectType, subjectId])
+  @@index([requesterId, createdAt])
+  @@map("tasks")
+}
+
+/// What has typically happened before given a hazard type, a context and a
+/// population (the CLEAR Domain Ontology's ImpactPrior), inferred from
+/// historical Events similar to the input Event. Produced by a Worker from
+/// an `event.impact_prior` Task; shaped on the ontology's attributes, the
+/// quantitative ones nullable until a later step fills them. Supersede,
+/// never overwrite: a new result is a new row pointing at the previous one.
+model impactPrior {
+  id      String @id @default(cuid())
+  eventId String @map("event_id")
+  taskId  String @map("task_id")
+
+  state ImpactPriorState @default(proposed)
+
+  /// GLIDE code, one of the Event's `types`.
+  hazardType        String @map("hazard_type")
+  /// The level-0 ancestor of the Event's primary location.
+  countryLocationId String @map("country_location_id")
+  /// `district` | `country` — the scope the cases were matched at.
+  geographicScope   String @map("geographic_scope")
+  horizonYears      Int    @map("horizon_years")
+
+  populationGroup String? @map("population_group")
+  metric          String?
+  lowerBound      Float?  @map("lower_bound")
+  upperBound      Float?  @map("upper_bound")
+  numberOfCases   Int     @map("number_of_cases")
+  /// `[{ tier: "clear"|"web", eventId?, sourceUrl?, quote?, occurredAt?,
+  /// locationLabel?, scope }]` — one entry per case.
+  basis           Json
+
+  validFrom DateTime? @map("valid_from")
+  validTo   DateTime? @map("valid_to")
+  /// Skill / handler version string that produced this row.
+  methodVersion String @map("method_version")
+
+  supersedesId String?       @map("supersedes_id")
+  supersedes   impactPrior?  @relation("ImpactPriorSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy impactPrior[] @relation("ImpactPriorSupersedes")
+
+  /// DecisionRecord fields (who, when, why) — extractable to their own table
+  /// later. Null while `proposed`.
+  decidedById       String?   @map("decided_by_id")
+  decidedAt         DateTime? @map("decided_at")
+  decisionRationale String?   @map("decision_rationale")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Restrict: an Event with ImpactPriors cannot be hard-deleted without an
+  /// explicit decision.
+  event events @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  task  task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, createdAt])
+  @@index([state, createdAt])
+  @@map("impact_priors")
 }

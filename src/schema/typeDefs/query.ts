@@ -589,5 +589,20 @@ export const queryTypeDef = gql`
     canonical fetch for a queued groundMessage translation — text and
     detected language, no sender identity. Null if the message is gone."""
     groundMessageForTranslation(id: String!): GroundMessageForTranslation
+
+    # ─── Tasks (ADR-0010) ──────────────────────────────────────────────────
+    """One Task by id, or null. Any authenticated content reader; the
+    Task's status follows its Event's visibility. \`lastError\` is visible
+    to the requester and platform admins only."""
+    task(id: String!): Task
+
+    """Enrichment Tasks about an Event, newest first. Same gate as
+    \`task\`."""
+    eventTasks(eventId: String!): [Task!]!
+
+    """ImpactPriors produced for an Event, newest first. Admins, analysts
+    and the requesting user see every state; everyone else sees
+    \`accepted\` only."""
+    eventImpactPriors(eventId: String!): [ImpactPrior!]!
   }
 `;

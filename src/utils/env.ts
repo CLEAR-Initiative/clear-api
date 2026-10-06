@@ -185,6 +185,33 @@ const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.coerce.number().nonnegative().default(2),
   ),
+
+  // ─── Tasks and Workers (ADR-0010) ────────────────────────────────
+  // All four are enforced server-side in task.resolver.ts (unlike
+  // AGENT_DAILY_BUDGET_USD, which is only reported): third-party Workers
+  // and API callers will not self-limit. Empty means default.
+  /** Minutes a claimed Task stays leased before it returns to the pool;
+   *  a heartbeat extends the lease by this much again. */
+  TASK_LEASE_MINUTES: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(15),
+  ),
+  /** Claims a Task may take before it is marked FAILED with its last
+   *  error. Stamped on each Task at creation (`maxAttempts`). */
+  TASK_MAX_ATTEMPTS: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(3),
+  ),
+  /** Most Tasks one `claimTasks` call may lease at once. */
+  TASK_CLAIM_MAX: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(10),
+  ),
+  /** Enrichment requests one requester may create per UTC day. */
+  TASK_REQUEST_DAILY_CAP: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(20),
+  ),
 });
 
 const parsed = envSchema.parse(process.env);
