@@ -265,16 +265,29 @@ function redactForViewer<T extends { requesterId: string | null; lastError: stri
   return { ...row, lastError: null };
 }
 
-/** V1 visibility for ImpactPriors: admins, analysts and the requesting user
- *  see every state; everyone else sees `accepted` only. (V2 refines
- *  `rejected` to deciders only.) */
+/** Who may decide a proposed ImpactPrior: platform admins and analysts. */
+function isDecider(user: { role?: string | null }): boolean {
+  return isPlatformAdmin(user) || user.role === "analyst";
+}
+
+/**
+ * Visibility of ImpactPriors (decision 15): an `accepted` one follows the
+ * Event's visibility (any content reader); a `proposed` one is visible to
+ * its requester and to those who may decide it; a `rejected` one stays as
+ * superseded history, visible to deciders only.
+ */
 function visibleImpactPriors<T extends ImpactPriorRow & { task: { requesterId: string | null } }>(
   rows: T[],
   user: { id: string; role?: string | null },
 ): ImpactPriorRow[] {
-  const decider = isPlatformAdmin(user) || user.role === "analyst";
+  const decider = isDecider(user);
   return rows
-    .filter((r) => decider || r.state === "accepted" || r.task.requesterId === user.id)
+    .filter(
+      (r) =>
+        decider ||
+        r.state === "accepted" ||
+        (r.state === "proposed" && r.task.requesterId === user.id),
+    )
     .map(({ task: _task, ...rest }) => rest);
 }
 
@@ -327,6 +340,23 @@ export const taskResolvers = {
   },
 
   Query: {
+    // The Inbox's list (V2): ImpactPriors in one state across every Event,
+    // newest first. Deciders only — it lists exactly what the caller may
+    // decide, so clear-mvp needs no rule of its own. `proposed` by default.
+    impactPriors: async (
+      _parent: unknown,
+      args: { state?: "proposed" | "accepted" | "rejected" | null; limit?: number | null; offset?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, DECIDER_ROLES);
+      return context.prisma.impactPrior.findMany({
+        where: { state: args.state ?? "proposed" },
+        orderBy: { createdAt: "desc" },
+        take: Math.min(Math.max(args.limit ?? 50, 1), 200),
+        skip: Math.max(args.offset ?? 0, 0),
+      });
+    },
+
     // Task status follows the Event's visibility: the same reader gate as
     // `event(id)`. Only `lastError` is narrower (requester + admins).
     task: async (_parent: unknown, args: { id: string }, context: Context) => {

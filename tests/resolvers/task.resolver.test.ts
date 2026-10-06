@@ -200,7 +200,7 @@ const pipeline: User = { id: "u-pipe", role: "pipeline" };
 const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
   taskResolvers.Mutation;
 const { leaseToken: leaseTokenField } = taskResolvers.Task;
-const { task: taskQuery, eventTasks, eventImpactPriors } = taskResolvers.Query;
+const { task: taskQuery, eventTasks, eventImpactPriors, impactPriors: impactPriorsQuery } = taskResolvers.Query;
 
 const TOKEN = "tok-1";
 const leased = (overrides: Row = {}) =>
@@ -896,6 +896,36 @@ describe("decideImpactPrior", () => {
   });
 });
 
+describe("impactPriors — the Inbox query", () => {
+  it("lists proposed rows newest first for deciders, defaulting state and paging", async () => {
+    const prisma = makePrisma();
+    prisma.impactPrior.findMany.mockResolvedValue([{ id: "ip-1", state: "proposed" }]);
+    const rows = await impactPriorsQuery(null, {}, ctx(analyst, prisma));
+    expect(rows.map((r) => r.id)).toEqual(["ip-1"]);
+    expect(prisma.impactPrior.findMany).toHaveBeenCalledWith({
+      where: { state: "proposed" },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      skip: 0,
+    });
+    await impactPriorsQuery(null, { state: "rejected", limit: 500, offset: -3 }, ctx(admin, prisma));
+    expect(prisma.impactPrior.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { state: "rejected" }, take: 200, skip: 0 }),
+    );
+  });
+
+  it.each([
+    ["a viewer", viewer],
+    ["a team coordinator", coordinator],
+    ["a worker", worker],
+  ])("is FORBIDDEN for %s — the Inbox lists only what the caller may decide", async (_name, user) => {
+    const prisma = makePrisma();
+    const err = await errorOf(impactPriorsQuery(null, {}, ctx(user, prisma)));
+    expect(err.extensions.code).toBe("FORBIDDEN");
+    expect(prisma.impactPrior.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("reads", () => {
   it("task / eventTasks need a content reader — a pending user is FORBIDDEN, a worker may read", async () => {
     const prisma = seeded(makeTask());
@@ -936,20 +966,22 @@ describe("reads", () => {
     expect(await taskResolvers.ImpactPrior.supersedes({ id: "ip-first", supersedesId: null } as never, null, ctx(admin, prisma))).toBeNull();
   });
 
-  it("eventImpactPriors shows every state to admins, analysts and the requester; accepted only to others", async () => {
+  it("eventImpactPriors: accepted follows the Event, proposed is for the requester and deciders, rejected for deciders only", async () => {
     const prisma = makePrisma();
     const rows = [
       { id: "ip-p", state: "proposed", eventId: "ev-1", task: { requesterId: "u-coord" } },
       { id: "ip-a", state: "accepted", eventId: "ev-1", task: { requesterId: "u-coord" } },
-      { id: "ip-r", state: "rejected", eventId: "ev-1", task: { requesterId: "u-other" } },
+      { id: "ip-r", state: "rejected", eventId: "ev-1", task: { requesterId: "u-coord" } },
     ];
     prisma.impactPrior.findMany.mockResolvedValue(rows);
     const ids = async (user: User) =>
       (await eventImpactPriors(null, { eventId: "ev-1" }, ctx(user, prisma))).map((r) => r.id);
     expect(await ids(admin)).toEqual(["ip-p", "ip-a", "ip-r"]);
     expect(await ids(analyst)).toEqual(["ip-p", "ip-a", "ip-r"]);
+    // The requester (a coordinator) sees their own proposal and the accepted one, not the rejected history.
     expect(await ids(coordinator)).toEqual(["ip-p", "ip-a"]);
     expect(await ids(viewer)).toEqual(["ip-a"]);
+    expect(await ids(worker)).toEqual(["ip-a"]);
     // The join used for the visibility rule never leaks into the result.
     const [first] = await eventImpactPriors(null, { eventId: "ev-1" }, ctx(admin, prisma));
     expect(first).not.toHaveProperty("task");

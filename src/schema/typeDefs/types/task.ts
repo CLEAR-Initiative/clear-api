@@ -184,9 +184,9 @@ export const taskTypeDef = gql`
     authenticated content reader; \`lastError\` is redacted for all but the
     requester and platform admins."""
     enrichmentTasks: [Task!]!
-    """ImpactPriors produced for this Event, newest first. Admins, analysts
-    and the requesting user see every state; everyone else sees
-    \`accepted\` only."""
+    """ImpactPriors produced for this Event, newest first. \`accepted\`
+    follows the Event's visibility; \`proposed\` is visible to its requester
+    and to deciders; \`rejected\` to deciders only."""
     impactPriors: [ImpactPrior!]!
   }
 `;

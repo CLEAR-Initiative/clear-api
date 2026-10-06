@@ -781,9 +781,17 @@ to the requester and platform admins only.<div class="field-args"><span class="a
   </tr><tr>
     <td><code>eventImpactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for an Event, newest first. Admins, analysts
-and the requesting user see every state; everyone else sees
-`accepted` only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+    <td>ImpactPriors produced for an Event, newest first. An `accepted`
+one follows the Event's visibility; a `proposed` one is visible to its
+requester and to deciders (admins and analysts); a `rejected` one to
+deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>impactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>The Inbox's Review items: ImpactPriors in one state across every
+Event, newest first — `proposed` by default, i.e. what is waiting
+for a decision. Platform admins and analysts only, so the list is
+exactly what the caller may decide.<div class="field-args"><span class="arg"><code>state: ImpactPriorState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -4656,9 +4664,9 @@ requester and platform admins.</td>
   </tr><tr>
     <td><code>impactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for this Event, newest first. Admins, analysts
-and the requesting user see every state; everyone else sees
-`accepted` only.</td>
+    <td>ImpactPriors produced for this Event, newest first. `accepted`
+follows the Event's visibility; `proposed` is visible to its requester
+and to deciders; `rejected` to deciders only.</td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
