@@ -50,9 +50,13 @@ queue without taking each other's work.
   and stays one; the translation queue is a high-volume dedup buffer and stays.
 - The claim is raw SQL, which the repo already does for pgvector. Prisma cannot
   express `SKIP LOCKED`.
-- Typed results live beside the domain object they enrich, keyed by kind; the
-  Task keeps the raw Worker output for audit. The first typed table is Event
-  enrichments.
+- Typed results live beside the domain object they enrich, shaped on the
+  CLEAR Domain Ontology's entity for that kind, not on a generic findings
+  blob; the Task keeps the raw Worker output for audit. The first such table
+  is ImpactPrior, with the ontology's attributes (hazard type, population
+  group, metric, scope, bounds, number of cases, basis, validity period,
+  method version, supersede chain), the quantitative ones nullable until a
+  later step fills them. It is the first ontology entity to reach code.
 - A Worker needs a clear-api identity. Reusing the `pipeline` role is enough
   for a first owned Worker; third-party Workers want a narrower role.
 - The Dagster drain shape (poll sensor, Redis single-flight, batch loop) stays
