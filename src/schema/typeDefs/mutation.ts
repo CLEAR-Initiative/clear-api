@@ -408,29 +408,33 @@ export const mutationTypeDef = gql`
     until the async enrichment task completes)."""
     removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
 
-    """Edit a crisis's title in place. Any authenticated user. Pass an empty
-    string to clear the field."""
+    """Edit a crisis's title in place. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
+    empty string to clear the field."""
     updateCrisisTitle(id: String!, title: String!): Crisis!
 
     """Edit the human-facing description on a crisis. The crisis's summary
     column stores JSON of the form description+tldr — this mutation updates
     just the description key and preserves any existing tldr bullets (which
-    the LLM enrichment task generates). Any authenticated user. Pass an
+    the LLM enrichment task generates). Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
     empty string to clear the description without disturbing the tldr."""
     updateCrisisDescription(id: String!, description: String!): Crisis!
 
     """Delete a crisis. Cascades the eventCrises join rows, user feedback,
-    and user comments via the FK constraints. Any authenticated user."""
+    and user comments via the FK constraints. Platform admins only."""
     deleteCrisis(id: String!): Boolean!
 
     """Append S3 keys to a crisis's attachments list. Idempotent — keys
     already present in the list are skipped silently. Returns the updated
-    crisis with the new list."""
+    crisis with the new list. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
 
     """Remove an S3 key from a crisis's attachments list. Does NOT delete
     the underlying S3 object (operators can clean those up separately).
-    Returns the updated crisis."""
+    Returns the updated crisis. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     removeCrisisAttachment(id: String!, key: String!): Crisis!
 
     """Set the LLM-generated NRC SAF needs analysis inside the crisis's
