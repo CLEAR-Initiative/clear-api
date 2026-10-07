@@ -2,7 +2,7 @@
  * One-off: rename every @clear.dev account to @clearinitiative.io in an EXISTING
  * database (clear.dev is not our domain), and create the new
  * emr.user@clearinitiative.io account. Covers the demo accounts (admin / analyst
- * / viewer) AND the service identities (pipeline / agent).
+ * / viewer) AND the service identities (pipeline / agent / worker).
  *
  * Why this exists: the code that creates these users matches by email (seed.ts
  * and the create-*-user scripts are find-or-create), so changing those emails
@@ -59,6 +59,7 @@ const RENAMES: Array<{ from: string; to: string }> = [
   { from: "viewer@clear.dev", to: "viewer@clearinitiative.io" },
   { from: "pipeline@clear.dev", to: "pipeline@clearinitiative.io" },
   { from: "agent@clear.dev", to: "agent@clearinitiative.io" },
+  { from: "worker@clear.dev", to: "worker@clearinitiative.io" },
 ];
 
 // New account to create if missing. emergency_response_manager is a TEAM role,
