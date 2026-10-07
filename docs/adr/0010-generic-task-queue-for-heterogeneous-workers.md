@@ -42,6 +42,18 @@ queue without taking each other's work.
 - **The CLEAR Agent in clear-mvp.** Its tools and memory are bound to a user's
   session and the agent key (ADR-0009), and clear-mvp's ADR-0006 rules out
   backend-triggered agents living there.
+- **Dagster's run queue as the broker.** Dagster already has a queue, retries,
+  sensors and asset automation, and it drains the three existing queues today.
+  But a queue lives wherever its Workers can reach it, and only things Dagster
+  launches can take work from Dagster's queue. The first Worker is a scheduled
+  Claude Code routine driving clear-mcp over stdio with an API key, on
+  Anthropic's scheduler; a third-party agent or a person on a chat client are
+  the same shape. None of them can claim a Dagster run on their own schedule,
+  and none can be wrapped in a Dagster job. Dagster is therefore one caller of
+  the Task protocol (a thin, sensor-driven drain that claims over GraphQL and
+  runs the handler as ordinary Dagster compute), not its host. The Task is also
+  product state the UI reads through clear-api (status, requester, cap, dedupe,
+  cancel, outcome, cost), which Dagster's run state is not.
 
 ## Consequences
 
