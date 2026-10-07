@@ -1008,7 +1008,8 @@ describe("myTasks — the requester's own requests", () => {
     expect(rows[0].lastError).toBe("boom");
     expect(prisma.task.findMany).toHaveBeenCalledWith({
       where: { requesterId: "u-coord" },
-      orderBy: { createdAt: "desc" },
+      // id breaks createdAt ties so offset pages are stable.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 50,
       skip: 0,
     });

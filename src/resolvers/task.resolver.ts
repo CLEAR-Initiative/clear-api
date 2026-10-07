@@ -410,7 +410,9 @@ export const taskResolvers = {
       const user = requireNonWorkerContentReader(context);
       return context.prisma.task.findMany({
         where: { requesterId: user.id, ...(args.status ? { status: args.status } : {}) },
-        orderBy: { createdAt: "desc" },
+        // `id` breaks createdAt ties so offset pages neither repeat nor skip
+        // a row (Tasks of one request are created within the same instant).
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: Math.min(Math.max(args.limit ?? 50, 1), 200),
         skip: Math.max(args.offset ?? 0, 0),
       });
