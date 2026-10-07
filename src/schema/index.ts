@@ -7,6 +7,7 @@ import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
+import { estimateTypeDef } from "./typeDefs/types/estimate.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
 import { locationTypeDef } from "./typeDefs/types/location.js";
 import { notificationTypeDef } from "./typeDefs/types/notification.js";
@@ -47,6 +48,7 @@ export const typeDefs = [
   signalTypeDef,
   signalLocationChallengeTypeDef,
   eventTypeDef,
+  estimateTypeDef,
   dataSourceTypeDef,
   locationTypeDef,
   notificationTypeDef,

@@ -5,6 +5,7 @@ import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
 import { signalResolvers } from "./signal.resolver.js";
 import { eventResolvers } from "./event.resolver.js";
+import { estimateResolvers } from "./estimate.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
 import { locationResolvers } from "./location.resolver.js";
 import { notificationResolvers } from "./notification.resolver.js";
@@ -43,6 +44,7 @@ export const resolvers: IResolvers[] = [
   alertResolvers,
   signalResolvers,
   eventResolvers,
+  estimateResolvers,
   dataSourceResolvers,
   locationResolvers,
   notificationResolvers,
