@@ -189,4 +189,13 @@ and web cases were never checked against the Events CLEAR already holds.
 - The case's figures become Estimates on that Event (method `media_report`, attribution
   `event_caused`, valid for the incident's date, `sourceSignalId` the case's Signal), insert-only;
   the same source's figure for the same metric and population group is not written twice.
-- Still to land in V4: the ImpactPrior computed from accepted history rather than reviewed.
+- `Event.computedImpactPriors(horizonYears)`: the ImpactPrior computed from history, not
+  reviewed. For an Event, the Events before it that manifest the same hazard in the same country
+  within the horizon (non-dummy) each contribute their current Estimate per metric and population
+  group; the prior is the median (central value), the range (bounds), the case count, the Event
+  and Estimate ids, and `methodVersion` `clear-impact-prior@0.2.0`; below three cases it is flagged
+  low-confidence. Computed on read, so it is always current with what analysts accepted and
+  nothing needs superseding. Rejected for now: storing computed priors in `impact_priors` (no
+  consumer needs a frozen copy until `Estimate.informed_by` exists; storing them would bring
+  back the per-Event supersede chain the ontology does not have). The LLM-proposed `.clear`
+  ImpactPriors still exist; whether that Worker is retired or repurposed is open.

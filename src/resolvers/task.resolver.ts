@@ -41,6 +41,7 @@ import { logActivity } from "../utils/activity-log.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
 import { acceptCase } from "../services/case-acceptance.js";
 import { resolveEventCountryId } from "../utils/event-country.js";
+import { computeImpactPriors } from "../services/computed-impact-prior.js";
 import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind } from "../utils/task-kinds.js";
 import {
   casesFromBasis,
@@ -497,6 +498,18 @@ export const taskResolvers = {
       taskResolvers.Query.eventImpactPriors(null, { eventId: parent.id }, context),
     caseProposals: async (parent: { id: string }, _args: unknown, context: Context) =>
       taskResolvers.Query.eventCaseProposals(null, { eventId: parent.id }, context),
+    computedImpactPriors: async (
+      parent: { id: string },
+      args: { horizonYears?: number | null },
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      const horizonYears = args.horizonYears ?? 10;
+      if (!Number.isInteger(horizonYears) || horizonYears < 1 || horizonYears > 50) {
+        throw badInput("horizonYears must be an integer from 1 to 50");
+      }
+      return computeImpactPriors(context.prisma, parent.id, horizonYears);
+    },
   },
 
   Query: {

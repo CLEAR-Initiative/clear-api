@@ -4444,6 +4444,64 @@ Empty when the source states none.</td>
     <td><code>comment</code></td>
     <td><code>UserComment!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-computedimpactprior"><code>ComputedImpactPrior</code> <span class="type-badge">object</span></h3><p>What has typically happened before (the Domain Ontology's ImpactPrior),
+computed from CLEAR's history (V4): the Events before this one that
+manifest the same hazard in the same country within the horizon, one
+current figure each for one metric and population group. Computed on
+read from accepted history — nothing to review. Read `numberOfCases`
+beside the figure: a prior resting on three Events is not one resting on
+ninety.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>The Event's country (level-0 location).</td>
+  </tr><tr>
+    <td><code>horizonYears</code></td>
+    <td><code>Int!</code></td>
+    <td>How far back history was taken, in years.</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>String!</code></td>
+    <td>One of the Domain Ontology's seven metric types.</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>centralValue</code></td>
+    <td><code>Float!</code></td>
+    <td>The median of the historical figures.</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float!</code></td>
+    <td>The smallest historical figure.</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float!</code></td>
+    <td>The largest historical figure.</td>
+  </tr><tr>
+    <td><code>numberOfCases</code></td>
+    <td><code>Int!</code></td>
+    <td>How many historical Events it rests on.</td>
+  </tr><tr>
+    <td><code>lowConfidence</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True below three cases: a starting point, not a basis.</td>
+  </tr><tr>
+    <td><code>eventIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The historical Events it rests on.</td>
+  </tr><tr>
+    <td><code>estimateIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The Estimates it rests on, one per Event.</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version of the method that computed it.</td>
   </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
 owner: the user's turns, the Answers, and the tools and Source documents
 each Answer drew on. Readable by its owner and, read-only, by platform
@@ -5021,6 +5079,13 @@ deciders; `rejected` to deciders only.</td>
 under the ImpactPrior visibility rule: `accepted` follows the Event,
 `proposed` is visible to the requester and deciders, `rejected` to
 deciders only.</td>
+  </tr><tr>
+    <td><code>computedImpactPriors</code></td>
+    <td><code>[ComputedImpactPrior!]!</code></td>
+    <td>ImpactPriors computed from CLEAR's history (V4), one per hazard the
+Event manifests × metric × population group with any history, most
+evidence first. Follows the Event's visibility. `horizonYears`
+(default 10, at most 50) is how far back history is taken.<div class="field-args"><span class="arg"><code>horizonYears: Int</code></span></div></td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
