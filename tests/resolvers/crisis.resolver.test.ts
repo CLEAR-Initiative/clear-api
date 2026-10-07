@@ -622,6 +622,19 @@ describe("Crisis content edits are refused to unapproved callers", () => {
       expect(anyCall).not.toHaveBeenCalled();
     });
   }
+
+  // The other side of the contract: every approved role passes the guard and
+  // reaches the crisis lookup (a missing crisis then answers NOT_FOUND), so a
+  // change that wrongly blocks admin, analyst or viewer fails here.
+  for (const [who, user] of [["admin", ADMIN], ["analyst", ANALYST], ["viewer", VIEWER]] as const) {
+    it.each(edits)(`%s admits ${who} through to the crisis lookup`, async (_name, edit) => {
+      const findUnique = vi.fn().mockResolvedValue(null);
+      await expect(edit(buildContext(user, { crises: { findUnique } }))).rejects.toMatchObject({
+        extensions: { code: "NOT_FOUND" },
+      });
+      expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "c1" }) }));
+    });
+  }
 });
 
 describe("Mutation.deleteCrisis", () => {
