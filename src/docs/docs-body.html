@@ -119,7 +119,7 @@
             <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
-            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (first kind: an <a href="#type-impactprior">ImpactPrior</a>) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
+            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (first kind: an <a href="#type-impactprior">ImpactPrior</a>, proposed by several Workers side by side — one Task per source kind) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
           </tbody>
         </table>
       </div>
@@ -1575,15 +1575,20 @@ realistic shape.<div class="field-args"><span class="arg"><code>id: String!</cod
 schedules an immediate retry via the poller.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-requesteventenrichment">
     <td><code>requestEventEnrichment</code></td>
-    <td><code>Task!</code></td>
-    <td>Request an Event enrichment: records a Task of `kind` about the
-Event, or returns the open (PENDING / LEASED) Task if one already
-exists for that Event and kind. Same rights as `escalateEvent`: a
-global admin or analyst anywhere; a team content writer for the
-`teamId` they act on behalf of. Capped per requester per UTC day
-(FORBIDDEN with subCode `DAILY_CAP`). The only kind today is
-`event.impact_prior`; `horizonYears` (default 10) is how far back
-the Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
+    <td><code>[Task!]!</code></td>
+    <td>Request an Event enrichment. Always fans out: one Task per enabled
+source kind of the `kind` family (server-configured; today
+`event.impact_prior.clear` for CLEAR data and `event.impact_prior.web`
+for the web), so every Worker proposes on the Event side by side and
+nothing marks it done. Returns the open (PENDING / LEASED) Task per
+kind, in configured order — an already-open one is returned unchanged
+rather than duplicated; only kinds with none get a new Task. Same
+rights as `escalateEvent`: a global admin or analyst anywhere; a team
+content writer for the `teamId` they act on behalf of. Capped per
+requester per UTC day, counting requests not Tasks (FORBIDDEN with
+subCode `DAILY_CAP`); a request that creates nothing does not count.
+The only family today is `event.impact_prior`; `horizonYears`
+(default 10) is how far back each Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
   </tr><tr id="mutation-decideimpactprior">
     <td><code>decideImpactPrior</code></td>
     <td><code>ImpactPrior!</code></td>
@@ -1603,10 +1608,13 @@ result is discarded). Any other status is CONFLICT.<div class="field-args"><span
     <td><code>claimTasks</code></td>
     <td><code>[Task!]!</code></td>
     <td>WORKER CONTRACT (`worker` role): lease up to `limit` of the
-oldest claimable Tasks of `kind` — PENDING, or LEASED past their
-expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two Workers
-hold the same Task. `limit` is clamped to the platform cap. Each
-lease lasts TASK_LEASE_MINUTES; heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+oldest claimable Tasks of exactly `kind` — PENDING, or LEASED past
+their expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two
+Workers hold the same Task. A Worker drains its own source kind
+(`event.impact_prior.clear`, `event.impact_prior.web`, …); the bare
+`event.impact_prior` stays claimable for one release. `limit` is
+clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
+heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr id="mutation-heartbeattask">
     <td><code>heartbeatTask</code></td>
     <td><code>Task!</code></td>
@@ -1627,9 +1635,11 @@ claims have been used. Only the lease owner, only while LEASED.<div class="field
     <td><code>completeTask</code></td>
     <td><code>Task!</code></td>
     <td>WORKER CONTRACT: report the Task done. `result` is the raw output
-(audit only). For `event.impact_prior`, pass `impactPrior` to
-record a proposal (outcome `produced`) or omit it to record
-`no_prior_found`. Only the lease owner, only while LEASED (CONFLICT
+(audit only). For an `event.impact_prior.*` Task, pass `impactPrior`
+to record a proposal (outcome `produced`; its `sourceKind` is the
+Task's kind, and it supersedes only the newest proposal of that same
+kind) or omit it to record `no_prior_found`. Only the lease owner,
+only while LEASED (CONFLICT
 `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
 requested meanwhile the Task becomes CANCELLED and the result is
 discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>impactPrior: ImpactPriorInput</code></span></div></td>
@@ -2614,8 +2624,9 @@ updated — provided the thread is not yet promoted (reviewState !=
 groundSourceId. A promoted/terminal (or unknown/wrong-source) target
 is never mutated: a NEW thread is created instead, with a warning.</td>
   </tr></tbody></table><h3 id="type-impactpriorinput"><code>ImpactPriorInput</code> <span class="type-badge">input</span></h3><p>An ImpactPrior proposal, given by a Worker on completing an
-`event.impact_prior` Task with at least one case. Omit it entirely to
-record `no_prior_found`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`event.impact_prior.*` Task with at least one case. Omit it entirely to
+record `no_prior_found`. The source kind is taken from the Task, never
+from the input.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>hazardType</code></td>
     <td><code>String!</code></td>
     <td>Must be one of the Event's `types`.</td>
@@ -4668,9 +4679,10 @@ requester and platform admins.</td>
   </tr><tr>
     <td><code>impactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for this Event, newest first. `accepted`
-follows the Event's visibility; `proposed` is visible to its requester
-and to deciders; `rejected` to deciders only.</td>
+    <td>ImpactPriors produced for this Event, newest first, from every
+source side by side (see `sourceKind`). `accepted` follows the
+Event's visibility; `proposed` is visible to its requester and to
+deciders; `rejected` to deciders only.</td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -5196,8 +5208,10 @@ it carries no message content and no sender identity.</td>
   </tr></tbody></table><h3 id="type-impactprior"><code>ImpactPrior</code> <span class="type-badge">object</span></h3><p>What has typically happened before given a hazard type, a context and a
 population (the CLEAR Domain Ontology's ImpactPrior), inferred from
 historical Events similar to the input Event. Produced by a Worker from an
-`event.impact_prior` Task. Supersede, never overwrite: a later request
-produces a new ImpactPrior pointing at the previous one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`event.impact_prior.*` Task. Supersede, never overwrite, within a source
+kind: a later request produces a new ImpactPrior pointing at the previous
+one of the same `sourceKind`; proposals from different sources sit side
+by side on the Event and are decided one by one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -5221,6 +5235,12 @@ produces a new ImpactPrior pointing at the previous one.</p><table class="ref-ta
     <td><code>state</code></td>
     <td><code>ImpactPriorState!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>sourceKind</code></td>
+    <td><code>String!</code></td>
+    <td>The kind of the Task that produced it — `event.impact_prior.clear`
+(CLEAR data), `event.impact_prior.web` (the web), or the pre-fan-out
+`event.impact_prior` — so a client can label the source.</td>
   </tr><tr>
     <td><code>hazardType</code></td>
     <td><code>String!</code></td>
@@ -5277,7 +5297,8 @@ produces a new ImpactPrior pointing at the previous one.</p><table class="ref-ta
   </tr><tr>
     <td><code>supersedesId</code></td>
     <td><code>String</code></td>
-    <td>The previous ImpactPrior for the same Event, if any.</td>
+    <td>The previous ImpactPrior of the same `sourceKind` for the same
+Event, if any. Never crosses sources.</td>
   </tr><tr>
     <td><code>supersedes</code></td>
     <td><code>ImpactPrior</code></td>
@@ -6421,7 +6442,11 @@ skipped (an id that no longer resolves to an event).</p><table class="ref-table"
   </tr><tr>
     <td><code>kind</code></td>
     <td><code>String!</code></td>
-    <td>The kind of work, e.g. `event.impact_prior`. A Worker claims by kind.</td>
+    <td>The kind of work, e.g. `event.impact_prior.clear` (the Dagster
+drain over CLEAR data) or `event.impact_prior.web` (the web). A Worker
+claims by exact kind. One request fans out into one Task per enabled
+source kind. The bare `event.impact_prior` is the pre-fan-out kind,
+still claimable for one release.</td>
   </tr><tr>
     <td><code>subjectType</code></td>
     <td><code>String!</code></td>
@@ -6442,6 +6467,12 @@ skipped (an id that no longer resolves to an event).</p><table class="ref-table"
     <td><code>origin</code></td>
     <td><code>TaskOrigin!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>requestId</code></td>
+    <td><code>String!</code></td>
+    <td>Shared by every Task one request fanned out into (one per source
+kind). The per-requester daily cap counts distinct requests, not
+Tasks.</td>
   </tr><tr>
     <td><code>requesterId</code></td>
     <td><code>String</code></td>
@@ -6500,7 +6531,7 @@ heartbeat or completion and stops.</td>
   </tr><tr>
     <td><code>outcome</code></td>
     <td><code>String</code></td>
-    <td>Kind-specific result vocabulary. For `event.impact_prior`:
+    <td>Kind-specific result vocabulary. For `event.impact_prior.*`:
 `produced` or `no_prior_found`.</td>
   </tr><tr>
     <td><code>result</code></td>

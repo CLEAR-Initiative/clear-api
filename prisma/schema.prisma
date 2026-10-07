@@ -2287,8 +2287,9 @@ enum ImpactPriorState {
 /// Tasks are never deleted.
 model task {
   id          String @id @default(cuid())
-  /// e.g. `event.impact_prior`. The handler vocabulary, not an enum, so a new
-  /// kind is a Worker and a handler, not a migration.
+  /// e.g. `event.impact_prior.clear`. The handler vocabulary, not an enum, so
+  /// a new kind is a Worker and a handler, not a migration. One enrichment
+  /// request fans out into one Task per enabled kind (TASK_IMPACT_PRIOR_KINDS).
   kind        String
   /// e.g. `event`.
   subjectType String @map("subject_type")
@@ -2299,6 +2300,9 @@ model task {
   status TaskStatus @default(PENDING)
   origin TaskOrigin @default(user)
 
+  /// Shared by every Task one request fanned out into. The per-requester
+  /// daily cap counts distinct requests, not rows.
+  requestId   String  @map("request_id")
   /// `context.user.id` of the requester; null for origin `rule`.
   requesterId String? @map("requester_id")
   /// The view-scope team the requester passed (Events have no team of their
@@ -2355,15 +2359,22 @@ model task {
 /// What has typically happened before given a hazard type, a context and a
 /// population (the CLEAR Domain Ontology's ImpactPrior), inferred from
 /// historical Events similar to the input Event. Produced by a Worker from
-/// an `event.impact_prior` Task; shaped on the ontology's attributes, the
+/// an `event.impact_prior.*` Task; shaped on the ontology's attributes, the
 /// quantitative ones nullable until a later step fills them. Supersede,
-/// never overwrite: a new result is a new row pointing at the previous one.
+/// never overwrite: a new result is a new row pointing at the previous one
+/// of the same source kind; different sources sit side by side.
 model impactPrior {
   id      String @id @default(cuid())
   eventId String @map("event_id")
   taskId  String @map("task_id")
 
   state ImpactPriorState @default(proposed)
+
+  /// The kind of the Task that produced it (`event.impact_prior.clear`,
+  /// `event.impact_prior.web`, …), so the UI can label the source.
+  /// Supersession is within a source kind: proposals from different
+  /// Workers sit side by side on the Event.
+  sourceKind String @map("source_kind")
 
   /// GLIDE code, one of the Event's `types`.
   hazardType        String @map("hazard_type")

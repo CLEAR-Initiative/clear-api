@@ -1082,20 +1082,25 @@ export const mutationTypeDef = gql`
 
   # ─── Tasks (ADR-0010) ────────────────────────────────────────────────
   extend type Mutation {
-    """Request an Event enrichment: records a Task of \`kind\` about the
-    Event, or returns the open (PENDING / LEASED) Task if one already
-    exists for that Event and kind. Same rights as \`escalateEvent\`: a
-    global admin or analyst anywhere; a team content writer for the
-    \`teamId\` they act on behalf of. Capped per requester per UTC day
-    (FORBIDDEN with subCode \`DAILY_CAP\`). The only kind today is
-    \`event.impact_prior\`; \`horizonYears\` (default 10) is how far back
-    the Worker looks for cases."""
+    """Request an Event enrichment. Always fans out: one Task per enabled
+    source kind of the \`kind\` family (server-configured; today
+    \`event.impact_prior.clear\` for CLEAR data and \`event.impact_prior.web\`
+    for the web), so every Worker proposes on the Event side by side and
+    nothing marks it done. Returns the open (PENDING / LEASED) Task per
+    kind, in configured order — an already-open one is returned unchanged
+    rather than duplicated; only kinds with none get a new Task. Same
+    rights as \`escalateEvent\`: a global admin or analyst anywhere; a team
+    content writer for the \`teamId\` they act on behalf of. Capped per
+    requester per UTC day, counting requests not Tasks (FORBIDDEN with
+    subCode \`DAILY_CAP\`); a request that creates nothing does not count.
+    The only family today is \`event.impact_prior\`; \`horizonYears\`
+    (default 10) is how far back each Worker looks for cases."""
     requestEventEnrichment(
       eventId: String!
       kind: String = "event.impact_prior"
       teamId: String
       horizonYears: Int
-    ): Task!
+    ): [Task!]!
 
     """Decide a proposed ImpactPrior: a platform admin or analyst accepts or
     rejects it with a rationale, recorded as who, when and why (the Domain
@@ -1111,10 +1116,13 @@ export const mutationTypeDef = gql`
     cancelTask(id: String!): Task!
 
     """WORKER CONTRACT (\`worker\` role): lease up to \`limit\` of the
-    oldest claimable Tasks of \`kind\` — PENDING, or LEASED past their
-    expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two Workers
-    hold the same Task. \`limit\` is clamped to the platform cap. Each
-    lease lasts TASK_LEASE_MINUTES; heartbeat to keep it."""
+    oldest claimable Tasks of exactly \`kind\` — PENDING, or LEASED past
+    their expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two
+    Workers hold the same Task. A Worker drains its own source kind
+    (\`event.impact_prior.clear\`, \`event.impact_prior.web\`, …); the bare
+    \`event.impact_prior\` stays claimable for one release. \`limit\` is
+    clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
+    heartbeat to keep it."""
     claimTasks(kind: String!, limit: Int = 1): [Task!]!
     # Each leased row carries a fresh \`leaseToken\`; keep it for the writes below.
 
@@ -1133,9 +1141,11 @@ export const mutationTypeDef = gql`
     failTask(id: String!, leaseToken: String!, error: String!): Task!
 
     """WORKER CONTRACT: report the Task done. \`result\` is the raw output
-    (audit only). For \`event.impact_prior\`, pass \`impactPrior\` to
-    record a proposal (outcome \`produced\`) or omit it to record
-    \`no_prior_found\`. Only the lease owner, only while LEASED (CONFLICT
+    (audit only). For an \`event.impact_prior.*\` Task, pass \`impactPrior\`
+    to record a proposal (outcome \`produced\`; its \`sourceKind\` is the
+    Task's kind, and it supersedes only the newest proposal of that same
+    kind) or omit it to record \`no_prior_found\`. Only the lease owner,
+    only while LEASED (CONFLICT
     \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
     requested meanwhile the Task becomes CANCELLED and the result is
     discarded."""
