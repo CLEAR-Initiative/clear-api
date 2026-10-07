@@ -600,6 +600,13 @@ export const queryTypeDef = gql`
     \`task\`."""
     eventTasks(eventId: String!): [Task!]!
 
+    """The caller's own requests: Tasks they asked for, across every Event,
+    newest first — "what happened to the thing I asked for". Always scoped
+    to the signed-in requester; \`status\` narrows it. \`lastError\` is
+    present (the caller is the requester). Any approved content reader
+    except the worker role, which requests nothing."""
+    myTasks(status: TaskStatus, limit: Int = 50, offset: Int = 0): [Task!]!
+
     """ImpactPriors produced for an Event, newest first. An \`accepted\`
     one follows the Event's visibility; a \`proposed\` one is visible to its
     requester and to deciders (admins and analysts); a \`rejected\` one to

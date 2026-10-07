@@ -216,7 +216,7 @@ const pipeline: User = { id: "u-pipe", role: "pipeline" };
 const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
   taskResolvers.Mutation;
 const { leaseToken: leaseTokenField } = taskResolvers.Task;
-const { task: taskQuery, eventTasks, eventImpactPriors, impactPriors: impactPriorsQuery } = taskResolvers.Query;
+const { task: taskQuery, eventTasks, eventImpactPriors, impactPriors: impactPriorsQuery, myTasks } = taskResolvers.Query;
 
 const TOKEN = "tok-1";
 const leased = (overrides: Row = {}) =>
@@ -1111,6 +1111,55 @@ describe("impactPriors — the Inbox query", () => {
     const err = await errorOf(impactPriorsQuery(null, {}, ctx(user, prisma)));
     expect(err.extensions.code).toBe("FORBIDDEN");
     expect(prisma.impactPrior.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("myTasks — the requester's own requests", () => {
+  it("lists only the caller's Tasks, newest first, with lastError present, defaulting the page", async () => {
+    const prisma = makePrisma();
+    const mine = makeTask({ id: "t-mine", requesterId: "u-coord", status: "FAILED", lastError: "boom" });
+    prisma.task.findMany.mockResolvedValue([mine]);
+    const rows = await myTasks(null, {}, ctx(coordinator, prisma));
+    expect(rows).toEqual([mine]);
+    expect(rows[0].lastError).toBe("boom");
+    expect(prisma.task.findMany).toHaveBeenCalledWith({
+      where: { requesterId: "u-coord" },
+      // id breaks createdAt ties so offset pages are stable.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 50,
+      skip: 0,
+    });
+  });
+
+  it("narrows by status and clamps the page to [1, 200] / offset ≥ 0", async () => {
+    const prisma = makePrisma();
+    await myTasks(null, { status: "PENDING", limit: 500, offset: -3 }, ctx(analyst, prisma));
+    expect(prisma.task.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { requesterId: "u-analyst", status: "PENDING" }, take: 200, skip: 0 }),
+    );
+    await myTasks(null, { limit: 0 }, ctx(analyst, prisma));
+    expect(prisma.task.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 1 }));
+  });
+
+  it("is always the caller's scope — an admin asking for another user's Tasks gets their own", async () => {
+    const prisma = makePrisma();
+    await myTasks(null, {}, ctx(admin, prisma));
+    expect(prisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { requesterId: "u-admin" } }));
+  });
+
+  it.each([
+    ["a worker — it requests nothing", worker, "FORBIDDEN"],
+    ["a pending user", { id: "u-p", role: "pending" }, "FORBIDDEN"],
+  ])("refuses %s", async (_name, user, code) => {
+    const prisma = makePrisma();
+    const err = await errorOf(myTasks(null, {}, ctx(user, prisma)));
+    expect(err.extensions.code).toBe(code);
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it("is UNAUTHENTICATED without a user", async () => {
+    const err = await errorOf(myTasks(null, {}, ctx(null)));
+    expect(err.extensions.code).toBe("UNAUTHENTICATED");
   });
 });
 

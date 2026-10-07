@@ -31,6 +31,7 @@ import {
   isPlatformAdmin,
   requireContentReader,
   requireNonWorker,
+  requireNonWorkerContentReader,
   requireRole,
   requireTeamContentWriter,
   WORKER_ROLE,
@@ -405,6 +406,26 @@ export const taskResolvers = {
         orderBy: { createdAt: "desc" },
       });
       return rows.map((r) => redactForViewer(r, user));
+    },
+
+    // "My requests" (V2): the caller's own Tasks across every Event, newest
+    // first. Scoped to the requester by construction, so nothing is redacted
+    // — lastError is theirs to see. A Worker requests nothing, so the role
+    // is refused here as on every non-Task-mutation surface.
+    myTasks: async (
+      _parent: unknown,
+      args: { status?: TaskRow["status"] | null; limit?: number | null; offset?: number | null },
+      context: Context,
+    ) => {
+      const user = requireNonWorkerContentReader(context);
+      return context.prisma.task.findMany({
+        where: { requesterId: user.id, ...(args.status ? { status: args.status } : {}) },
+        // `id` breaks createdAt ties so offset pages neither repeat nor skip
+        // a row (Tasks of one request are created within the same instant).
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: Math.min(Math.max(args.limit ?? 50, 1), 200),
+        skip: Math.max(args.offset ?? 0, 0),
+      });
     },
 
     eventImpactPriors: async (
