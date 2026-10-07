@@ -27,7 +27,8 @@ import { describeIfDb } from "../helpers/db.js";
 
 const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
   taskResolvers.Mutation;
-const { eventTasks, eventImpactPriors } = taskResolvers.Query;
+const { eventTasks, eventImpactPriors, eventCaseProposals, caseProposals, rejectedCaseUrls, impactPriors } =
+  taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
 const ANALYST_ID = `${RUN}-analyst`;
@@ -124,6 +125,7 @@ describeIfDb("Tasks against the real schema", () => {
   afterAll(async () => {
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
     await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
+    await prisma.caseProposal.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
@@ -486,6 +488,91 @@ describeIfDb("Tasks against the real schema", () => {
     }
     expect(log).toHaveLength(1);
     expect(log[0].metadata).toMatchObject({ decision: "rejected", eventId: id });
+  });
+
+  it("a web Worker's cases land one row each; a URL already proposed for the Event is skipped (V4)", async () => {
+    const id = await makeEvent();
+    const pastId = await makeEvent();
+    const { web, clear } = await request(id, analystB);
+    // Only the web Worker matters here; leave nothing for later tests' claims.
+    await cancelTask(null, { id: clear.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const at = new Date(Date.now() - 400 * 24 * 3600_000);
+    const done = await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: { searched: 4 },
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          {
+            sourceUrl: "https://example.test/case-a",
+            quote: "Floods displaced 4,000 people.",
+            occurredAt: at,
+            locationLabel: "Testville",
+            locationId: DISTRICT_ID,
+            hazardType: "FL",
+            geographicScope: "district",
+            figures: [{ metric: "people_displaced_new", value: 4000 }],
+            matchedEventId: pastId,
+          },
+          {
+            sourceUrl: "https://example.test/case-b",
+            quote: "Rivers burst their banks.",
+            occurredAt: at,
+            locationLabel: "Testland",
+            hazardType: "FL",
+            geographicScope: "country",
+          },
+        ],
+      },
+      workerB,
+    );
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
+    expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
+
+    const seen = await eventCaseProposals(null, { eventId: id }, analystB);
+    expect(seen.map((c) => c.sourceUrl).sort()).toEqual(["https://example.test/case-a", "https://example.test/case-b"]);
+    const a = seen.find((c) => c.sourceUrl.endsWith("case-a"))!;
+    expect(a).toMatchObject({ state: "proposed", matchedEventId: pastId, locationId: DISTRICT_ID, taskId: held.id });
+    expect(a.figures).toEqual([{ metric: "people_displaced_new", value: 4000 }]);
+    // A viewer sees no proposed case; the Inbox lists them for a decider.
+    expect(await eventCaseProposals(null, { eventId: id }, viewer)).toEqual([]);
+    const inbox = await caseProposals(null, { limit: 200 }, analyst);
+    expect(inbox.filter((c) => c.eventId === id)).toHaveLength(2);
+
+    // A rejected URL is what the Worker asks for before searching again.
+    await prisma.caseProposal.update({ where: { id: a.id }, data: { state: "rejected" } });
+    expect(await rejectedCaseUrls(null, { eventId: id }, workerA)).toEqual(["https://example.test/case-a"]);
+
+    // A later request re-proposing it is skipped, not an error, and the
+    // rejection stands.
+    const { web: again, clear: clearAgain } = await request(id, analystB);
+    await cancelTask(null, { id: clearAgain.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, again.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: held2.id,
+        leaseToken: held2.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { sourceUrl: "https://example.test/case-a", quote: "again", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+          { sourceUrl: "https://example.test/case-c", quote: "new", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+        ],
+      },
+      workerB,
+    );
+    const after = await prisma.caseProposal.findMany({ where: { eventId: id }, orderBy: { sourceUrl: "asc" } });
+    expect(after.map((c) => [c.sourceUrl, c.state])).toEqual([
+      ["https://example.test/case-a", "rejected"],
+      ["https://example.test/case-b", "proposed"],
+      ["https://example.test/case-c", "proposed"],
+    ]);
+    // Web proposals are decided case by case: the whole-prior Inbox leaves them out.
+    expect((await impactPriors(null, { limit: 200 }, analyst)).every((p) => p.sourceKind === CLEAR_KIND)).toBe(true);
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

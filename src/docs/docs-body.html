@@ -799,7 +799,27 @@ deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</
     <td>The Inbox's Review items: ImpactPriors in one state across every
 Event, newest first — `proposed` by default, i.e. what is waiting
 for a decision. Platform admins and analysts only, so the list is
-exactly what the caller may decide.<div class="field-args"><span class="arg"><code>state: ImpactPriorState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+exactly what the caller may decide. Web proposals (and the bare
+pre-fan-out kind) are left out: their cases are decided one by one
+through `caseProposals` (V4).<div class="field-args"><span class="arg"><code>state: ImpactPriorState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>caseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>The Inbox's per-case Review items (V4): CaseProposals in one state
+across every Event, newest first — `proposed` by default. Platform
+admins and analysts only, so the list is exactly what the caller may
+decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>eventCaseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>Web cases proposed for an Event, newest first. Same visibility as
+`Event.caseProposals`.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>rejectedCaseUrls</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Source URLs already rejected for an Event: a web Worker reads this
+before searching and never proposes one again. The worker role,
+platform admins and analysts.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -1646,17 +1666,24 @@ claims have been used. Only the lease owner, only while LEASED.<div class="field
 (audit only). For an `event.impact_prior.*` Task, pass `impactPrior`
 to record a proposal (outcome `produced`; its `sourceKind` is the
 Task's kind, and it supersedes only the newest proposal of that same
-kind) or omit it to record `no_prior_found`. Only the lease owner,
+kind) or omit it to record `no_prior_found`. For an
+`event.impact_prior.web` Task, pass `cases` and `methodVersion`
+instead (V4): one CaseProposal per case, each decided on its own; a URL
+already proposed for the Event is skipped; an empty list records
+`no_prior_found`. The web cases inside an `impactPrior`'s
+`basis` become CaseProposals too. Only the lease owner,
 only while LEASED (CONFLICT
 `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
 requested meanwhile the Task becomes CANCELLED and the result is
-discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>impactPrior: ImpactPriorInput</code></span></div></td>
+discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>impactPrior: ImpactPriorInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
   </tr></tbody>
     </table>
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
+accepts or rejects each case; a rejected one stays, so its URL is never
+proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
@@ -1843,6 +1870,71 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
     <td><code>windowEnd</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-casefigureinput"><code>CaseFigureInput</code> <span class="type-badge">input</span></h3><p>One figure a case's source gives.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>String!</code></td>
+    <td>One of `people_affected`, `people_displaced_new`,
+`people_displaced_cumulative`, `people_in_need`, `people_targeted`,
+`people_reached`, `households_affected`.</td>
+  </tr><tr>
+    <td><code>value</code></td>
+    <td><code>Float!</code></td>
+    <td>Non-negative. With bounds, `lowerBound ≤ value ≤ upperBound`.</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-caseproposalinput"><code>CaseProposalInput</code> <span class="type-badge">input</span></h3><p>One case a web Worker proposes on completing an
+`event.impact_prior.web` Task (V4).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>Absolute http(s) URL; one case per URL per Event.</td>
+  </tr><tr>
+    <td><code>quote</code></td>
+    <td><code>String!</code></td>
+    <td>The source's own words, verbatim.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the incident happened: within the request's horizon, not in the future.</td>
+  </tr><tr>
+    <td><code>locationLabel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A CLEAR location in the Event's country, if resolved.</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>Must be one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`.</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>[CaseFigureInput!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>matchedEventId</code></td>
+    <td><code>String</code></td>
+    <td>The CLEAR Event this case describes, if the Worker found one: it must
+exist, not be the Event being enriched, manifest the case's hazard and
+sit in the same country.</td>
   </tr></tbody></table><h3 id="type-conversationmessageinput"><code>ConversationMessageInput</code> <span class="type-badge">input</span></h3><p>One message to create or replace, matched by id.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -4213,6 +4305,108 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td><code>alertsArchived</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-caseproposal"><code>CaseProposal</code> <span class="type-badge">object</span></h3><p>One historical case a web Worker found while enriching an Event (V4):
+a past incident like it, the source that reports it, the figures it gives,
+and the CLEAR Event it describes when CLEAR already holds one. The unit an
+analyst accepts or rejects, one by one, in the Inbox and on the Event page.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>The Event whose enrichment request produced the case.</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>taskId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>CaseProposalState!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>quote</code></td>
+    <td><code>String!</code></td>
+    <td>The source's own words, verbatim.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the incident happened (valid time), not when it was reported.</td>
+  </tr><tr>
+    <td><code>locationLabel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A CLEAR location for the place, when the Worker resolved one.</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the requesting Event's `types`.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`: the scope the case was matched at.</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>JSON!</code></td>
+    <td>The figures the source gives, each on one of the Domain Ontology's
+seven metric types —
+`[{ metric, value, lowerBound?, upperBound?, unit?, populationGroup? }]`.
+Empty when the source states none.</td>
+  </tr><tr>
+    <td><code>matchedEventId</code></td>
+    <td><code>String</code></td>
+    <td>The CLEAR Event this case describes, when CLEAR already holds it.</td>
+  </tr><tr>
+    <td><code>matchedEvent</code></td>
+    <td><code>Event</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version string of the skill or handler that produced the case.</td>
+  </tr><tr>
+    <td><code>decidedById</code></td>
+    <td><code>String</code></td>
+    <td>Who decided it, when and why (null while `proposed`).</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decisionRationale</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>resultSignalId</code></td>
+    <td><code>String</code></td>
+    <td>What accepting wrote into CLEAR: the Signal, and the Event it sits on.</td>
+  </tr><tr>
+    <td><code>resultEventId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-commenttag"><code>CommentTag</code> <span class="type-badge">object</span></h3><p>A tag linking a user to a comment.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -4691,6 +4885,13 @@ requester and platform admins.</td>
 source side by side (see `sourceKind`). `accepted` follows the
 Event's visibility; `proposed` is visible to its requester and to
 deciders; `rejected` to deciders only.</td>
+  </tr><tr>
+    <td><code>caseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>Web cases proposed while enriching this Event (V4), newest first,
+under the ImpactPrior visibility rule: `accepted` follows the Event,
+`proposed` is visible to the requester and deciders, `rejected` to
+deciders only.</td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>

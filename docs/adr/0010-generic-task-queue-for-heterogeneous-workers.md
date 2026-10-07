@@ -152,3 +152,29 @@ queue without taking each other's work.
   (the Domain Ontology's rule is supersede-never-overwrite, and the sources' evidence tiers
   differ); counting the cap in Task rows (a two-source fan-out would halve every requester's
   allowance overnight).
+
+## Amendment (V4, 2026-10-07): the analyst decides cases, not priors
+
+Reviewed against the CLEAR Domain Ontology v0.3.0. An ImpactPrior is a lookup — "what has
+typically happened before, given a hazard type, a context and a population", with a central
+value and bounds — inferred from historical Events. V1–V3 instead had a Worker propose a whole
+ImpactPrior per Event and an analyst accept or reject it whole: the cases sat in a JSON
+`basis` that could not be decided one by one, accepting changed nothing but the row's state,
+and web cases were never checked against the Events CLEAR already holds.
+
+- **CaseProposal** (`case_proposals`): one row per historical case a web Worker found — source
+  URL, verbatim quote, when it happened, where, hazard, figures on the ontology's seven metric
+  types, and the CLEAR Event it describes when CLEAR already holds one (`matchedEventId`). It is
+  the unit an analyst accepts or rejects. Unique on (Event, URL): a later request never
+  re-proposes a URL already proposed, accepted or rejected for the same Event.
+- `completeTask(cases, methodVersion)` on an `event.impact_prior.web` Task writes CaseProposals
+  instead of an ImpactPrior. A Worker still on the whole-prior contract keeps working: the web
+  cases inside its `basis` become CaseProposals too, and its ImpactPrior row stays as history.
+  Migration `20261007162436_add_case_proposals` backfills the web cases of every still-proposed
+  ImpactPrior the same way.
+- Reads: `caseProposals(state)` (the Inbox, deciders only), `eventCaseProposals` /
+  `Event.caseProposals` under the ImpactPrior visibility rule, and `rejectedCaseUrls(eventId)`
+  for the Worker. The whole-prior Inbox (`impactPriors`) no longer lists the web and bare kinds.
+- Still to land in V4: accepting a case writes it into CLEAR as a Signal on the matched Event or
+  a new historical Event, with its figures as Estimates; the ImpactPrior is then computed from
+  that history, not reviewed.

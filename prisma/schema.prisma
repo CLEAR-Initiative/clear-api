@@ -754,6 +754,10 @@ model events {
   eventCrises           eventCrises[]
   translations          translations[]
   impactPriors          impactPrior[]
+  /// Web cases proposed while enriching this Event (V4).
+  caseProposals         caseProposal[] @relation("CaseProposalEvent")
+  /// Web cases a Worker matched to this (historical) Event.
+  matchedCaseProposals  caseProposal[] @relation("CaseProposalMatchedEvent")
 }
 
 model disasterTypes {
@@ -2280,6 +2284,15 @@ enum ImpactPriorState {
   rejected
 }
 
+/// A Worker writes `proposed` only. A named admin or analyst accepts or
+/// rejects each case (V4); a rejected one stays, so its URL is not proposed
+/// again for the same Event.
+enum CaseProposalState {
+  proposed
+  accepted
+  rejected
+}
+
 /// One unit of Worker-performed work (ADR-0010): exactly one `kind`, exactly
 /// one subject, a status, a row-level lease (owner + expiry), an attempt
 /// counter and the raw Worker output. Postgres is the broker — `claimTasks`
@@ -2345,7 +2358,8 @@ model task {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  impactPriors impactPrior[]
+  impactPriors  impactPrior[]
+  caseProposals caseProposal[]
 
   /// (status, kind, created_at) serves the oldest-first claim; the partial
   /// unique `tasks_open_subject_uk` — one PENDING/LEASED Task per (kind,
@@ -2418,4 +2432,62 @@ model impactPrior {
   @@index([eventId, createdAt])
   @@index([state, createdAt])
   @@map("impact_priors")
+}
+
+/// One historical case a Worker found on the web while enriching an Event
+/// (V4): a past incident like it, the source that reports it, the figures it
+/// gives, and the CLEAR Event it describes when CLEAR already holds one. The
+/// unit an analyst accepts or rejects. Accepting writes the case into CLEAR
+/// as history; the ImpactPrior is computed from that history rather than
+/// reviewed itself.
+model caseProposal {
+  id      String @id @default(cuid())
+  /// The Event whose enrichment request produced the case.
+  eventId String @map("event_id")
+  taskId  String @map("task_id")
+
+  state CaseProposalState @default(proposed)
+
+  sourceUrl       String   @map("source_url")
+  /// The source's own words, verbatim.
+  quote           String
+  /// When the incident happened (valid time), not when it was reported.
+  occurredAt      DateTime @map("occurred_at")
+  locationLabel   String   @map("location_label")
+  /// A CLEAR location for the place, when the Worker resolved one.
+  locationId      String?  @map("location_id")
+  /// GLIDE code; one of the requesting Event's `types`.
+  hazardType      String   @map("hazard_type")
+  /// `district` | `country` — the scope the case was matched at.
+  geographicScope String   @map("geographic_scope")
+  /// `[{ metric, value, lowerBound?, upperBound?, unit?, populationGroup? }]`,
+  /// `metric` one of the Domain Ontology's seven metric types.
+  figures         Json     @default("[]")
+  /// The CLEAR Event this case describes, when CLEAR already holds it.
+  matchedEventId  String?  @map("matched_event_id")
+  /// Skill / handler version string that produced the case.
+  methodVersion   String   @map("method_version")
+
+  /// DecisionRecord fields (who, when, why). Null while `proposed`; the
+  /// rationale is required on reject.
+  decidedById       String?   @map("decided_by_id")
+  decidedAt         DateTime? @map("decided_at")
+  decisionRationale String?   @map("decision_rationale")
+
+  /// What accepting wrote into CLEAR: the Signal and the Event it sits on.
+  resultSignalId String? @map("result_signal_id")
+  resultEventId  String? @map("result_event_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event        events  @relation("CaseProposalEvent", fields: [eventId], references: [id], onDelete: Restrict)
+  matchedEvent events? @relation("CaseProposalMatchedEvent", fields: [matchedEventId], references: [id], onDelete: SetNull)
+  task         task    @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  /// One proposal per source per Event: a later request never re-proposes a
+  /// URL already proposed, accepted or rejected for the same Event.
+  @@unique([eventId, sourceUrl])
+  @@index([state, createdAt])
+  @@index([taskId])
+  @@map("case_proposals")
 }

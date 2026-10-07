@@ -42,7 +42,7 @@ const WORKER_READS = [
   "signals", "signal", "signalsByLocation", "signalsPage",
   "events", "event", "eventsByLocation", "eventsPage",
   "crises", "crisis",
-  "task", "eventTasks", "eventImpactPriors",
+  "task", "eventTasks", "eventImpactPriors", "eventCaseProposals", "rejectedCaseUrls",
 ];
 
 const schema = makeExecutableSchema({ typeDefs, resolvers });

@@ -12,7 +12,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { taskOutcome as taskOutcomeEmail } from "../services/messaging/templates.js";
-import { taskKindLabel } from "../utils/task-kinds.js";
+import { impactPriorSource, taskKindLabel } from "../utils/task-kinds.js";
 
 export type TaskOutcomeKind = "completed" | "failed";
 
@@ -69,6 +69,8 @@ export function taskOutcomeMessage(task: TaskForNotification, outcomeKind: TaskO
   const what = taskKindLabel(task.kind);
   if (outcomeKind === "failed") return `${what} enrichment failed`;
   if (task.outcome === "no_prior_found") return `${what}: no prior found`;
+  // The web kind proposes cases, decided one by one (V4).
+  if (impactPriorSource(task.kind) === "web") return `${what}: cases proposed — review them`;
   return `${what} proposed — review it`;
 }
 

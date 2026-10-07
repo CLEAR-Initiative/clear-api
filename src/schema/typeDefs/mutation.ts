@@ -1144,7 +1144,12 @@ export const mutationTypeDef = gql`
     (audit only). For an \`event.impact_prior.*\` Task, pass \`impactPrior\`
     to record a proposal (outcome \`produced\`; its \`sourceKind\` is the
     Task's kind, and it supersedes only the newest proposal of that same
-    kind) or omit it to record \`no_prior_found\`. Only the lease owner,
+    kind) or omit it to record \`no_prior_found\`. For an
+    \`event.impact_prior.web\` Task, pass \`cases\` and \`methodVersion\`
+    instead (V4): one CaseProposal per case, each decided on its own; a URL
+    already proposed for the Event is skipped; an empty list records
+    \`no_prior_found\`. The web cases inside an \`impactPrior\`'s
+    \`basis\` become CaseProposals too. Only the lease owner,
     only while LEASED (CONFLICT
     \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
     requested meanwhile the Task becomes CANCELLED and the result is
@@ -1155,6 +1160,9 @@ export const mutationTypeDef = gql`
       result: JSON!
       usage: TaskUsageInput
       impactPrior: ImpactPriorInput
+      cases: [CaseProposalInput!]
+      """Skill or handler version that produced \`cases\`; required with them."""
+      methodVersion: String
     ): Task!
   }
 `;
