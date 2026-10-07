@@ -178,17 +178,21 @@ export const alertResolvers = {
         const locationNames = locations.map((l) => l.name).join(", ");
         console.log(`[createAlert] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
-        const eventSeverity = event.severity ?? 1;
-        const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
-          where: {
-            active: true,
-            frequency: "immediately",
-            alertType: { in: event.types },
-            locationId: { in: [...allLocationIds] },
-            minSeverity: { lte: eventSeverity },
-          },
-          select: { userId: true },
-        });
+        // An event with unknown (null) severity does not fan out to
+        // severity-gated subscriptions — we don't invent a severity to force a match.
+        const subscriptions =
+          event.severity == null
+            ? []
+            : await context.prisma.userAlertSubscriptions.findMany({
+                where: {
+                  active: true,
+                  frequency: "immediately",
+                  alertType: { in: event.types },
+                  locationId: { in: [...allLocationIds] },
+                  minSeverity: { lte: event.severity },
+                },
+                select: { userId: true },
+              });
 
         const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
         console.log(`[createAlert] Found ${subscriptions.length} subscriptions → ${uniqueUserIds.length} unique users`);

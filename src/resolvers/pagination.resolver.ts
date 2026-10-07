@@ -180,7 +180,9 @@ async function buildEventsWhere(
     ands.push({ types: { hasSome: f.eventTypes } });
   }
   const sev = severityFilter(f.severityMin, f.severityMax);
-  if (sev) ands.push({ severity: sev });
+  // Keep unknown-severity (null) rows visible — they're "unknown", not "below
+  // the floor", so a severity range filter must not silently drop them.
+  if (sev) ands.push({ OR: [{ severity: sev }, { severity: null }] });
   const dt = dateFilter(f.from, f.to);
   if (dt) ands.push({ firstSignalCreatedAt: dt });
 
@@ -205,7 +207,8 @@ async function buildSignalsWhere(
 
   if (!f.includeDummy) ands.push({ isDummy: false });
   const sev = severityFilter(f.severityMin, f.severityMax);
-  if (sev) ands.push({ severity: sev });
+  // Keep unknown-severity (null) rows visible — see events filter above.
+  if (sev) ands.push({ OR: [{ severity: sev }, { severity: null }] });
   const dt = dateFilter(f.from, f.to);
   if (dt) ands.push({ publishedAt: dt });
 

@@ -881,7 +881,7 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String!
-    validTo: String!
+    validTo: String
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
     """When the real-world event started (onset), parsed from signal text.

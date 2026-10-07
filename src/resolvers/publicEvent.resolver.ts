@@ -54,7 +54,7 @@ interface PublicEventSnapshot {
   description: string | null;
   severity: number | null;
   validFrom: string;
-  validTo: string;
+  validTo: string | null;
   types: string[];
   primaryLocationName: string | null;
   primaryLocationCoords: [number, number] | null;
@@ -329,7 +329,7 @@ export const publicEventResolvers = {
         description: event.description ?? null,
         severity: event.severity ?? null,
         validFrom: event.validFrom.toISOString(),
-        validTo: event.validTo.toISOString(),
+        validTo: event.validTo ? event.validTo.toISOString() : null,
         types: event.types,
         primaryLocationName: primary?.name ?? null,
         primaryLocationCoords: primaryCoords,
