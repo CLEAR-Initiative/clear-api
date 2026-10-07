@@ -268,6 +268,9 @@ export const taskTypeDef = gql`
     """One of the Domain Ontology's seven metric types."""
     metric: String!
     populationGroup: String
+    """The figures' unit (lower-cased), or null when they state none.
+    Figures in different units are never summarised together."""
+    unit: String
     """The median of the historical figures."""
     centralValue: Float!
     """The smallest historical figure."""

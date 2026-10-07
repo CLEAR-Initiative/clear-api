@@ -32,6 +32,8 @@ export interface ComputedImpactPrior {
   horizonYears: number;
   metric: string;
   populationGroup: string | null;
+  /** The figures' unit; null when they state none (people, by the metric). */
+  unit: string | null;
   centralValue: number;
   lowerBound: number;
   upperBound: number;
@@ -49,6 +51,7 @@ interface FigureRow {
   estimate_id: string;
   metric: string;
   population_group: string | null;
+  unit: string | null;
   value: number;
 }
 
@@ -59,7 +62,8 @@ function median(sorted: number[]): number {
 
 /**
  * Summarise one figure per historical Event into priors, one per (metric,
- * population group). Pure, so the arithmetic is tested without a database.
+ * population group, unit) — figures in different units are never averaged
+ * together. Pure, so the arithmetic is tested without a database.
  */
 export function summarisePriors(
   rows: FigureRow[],
@@ -67,7 +71,7 @@ export function summarisePriors(
 ): ComputedImpactPrior[] {
   const groups = new Map<string, FigureRow[]>();
   for (const r of rows) {
-    const key = `${r.metric}\u0000${r.population_group ?? ""}`;
+    const key = `${r.metric}\u0000${r.population_group ?? ""}\u0000${r.unit ?? ""}`;
     const list = groups.get(key) ?? [];
     list.push(r);
     groups.set(key, list);
@@ -79,6 +83,7 @@ export function summarisePriors(
       ...context,
       metric: list[0].metric,
       populationGroup: list[0].population_group,
+      unit: list[0].unit,
       centralValue: median(values),
       lowerBound: values[0],
       upperBound: values[values.length - 1],
@@ -124,9 +129,9 @@ export async function computeImpactPriors(
     // before this one (onset, else first Signal), in the same country, with
     // the same hazard.
     const rows = await prisma.$queryRaw<FigureRow[]>`
-      SELECT DISTINCT ON (es."event_id", es."metric", es."population_group")
+      SELECT DISTINCT ON (es."event_id", es."metric", es."population_group", NULLIF(lower(btrim(es."unit")), ''))
              es."event_id", es."id" AS estimate_id, es."metric"::text AS metric,
-             es."population_group", es."value"
+             es."population_group", NULLIF(lower(btrim(es."unit")), '') AS unit, es."value"
       FROM "estimates" es
       JOIN "events" e ON e."id" = es."event_id"
       JOIN "locations" l ON l."id" = COALESCE(e."location_id", e."origin_id", e."destination_id")
@@ -137,7 +142,8 @@ export async function computeImpactPriors(
         AND COALESCE(e."started_at", e."first_signal_created_at") >= (${from.toISOString()}::timestamptz AT TIME ZONE 'UTC')
         AND COALESCE(e."started_at", e."first_signal_created_at") <  (${start.toISOString()}::timestamptz AT TIME ZONE 'UTC')
         AND NOT EXISTS (SELECT 1 FROM "estimates" s2 WHERE s2."supersedes_id" = es."id")
-      ORDER BY es."event_id", es."metric", es."population_group", es."estimated_at" DESC, es."id" DESC`;
+      ORDER BY es."event_id", es."metric", es."population_group", NULLIF(lower(btrim(es."unit")), ''),
+               es."estimated_at" DESC, es."id" DESC`;
     priors.push(...summarisePriors(rows, { hazardType, countryLocationId: countryId, horizonYears }));
   }
   return priors;

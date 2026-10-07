@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import { MIN_CONFIDENT_CASES, summarisePriors } from "../../src/services/computed-impact-prior.js";
 
 const ctx = { hazardType: "FL", countryLocationId: "c-1", horizonYears: 10 };
-const row = (event_id: string, metric: string, value: number, population_group: string | null = null) => ({
-  event_id, estimate_id: `es-${event_id}-${metric}`, metric, population_group, value,
+const row = (event_id: string, metric: string, value: number, population_group: string | null = null, unit: string | null = null) => ({
+  event_id, estimate_id: `es-${event_id}-${metric}`, metric, population_group, unit, value,
 });
 
 describe("summarisePriors", () => {
@@ -47,6 +47,17 @@ describe("summarisePriors", () => {
   it(`flags a prior on fewer than ${MIN_CONFIDENT_CASES} cases as low-confidence`, () => {
     const [p] = summarisePriors([row("a", "people_affected", 10), row("b", "people_affected", 20)], ctx);
     expect(p).toMatchObject({ numberOfCases: 2, lowConfidence: true, centralValue: 15 });
+  });
+
+  it("never summarises figures in different units together", () => {
+    const priors = summarisePriors(
+      [row("a", "people_affected", 1000), row("b", "people_affected", 200, null, "households"), row("c", "people_affected", 3000)],
+      ctx,
+    );
+    expect(priors.map((p) => [p.unit, p.numberOfCases, p.centralValue])).toEqual([
+      [null, 2, 2000],
+      ["households", 1, 200],
+    ]);
   });
 
   it("returns nothing without history", () => {
