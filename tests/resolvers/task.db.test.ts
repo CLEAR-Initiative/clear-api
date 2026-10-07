@@ -716,6 +716,8 @@ describeIfDb("Tasks against the real schema", () => {
     expect(dx.state).toBe("accepted");
     expect(dy.state).toBe("accepted");
     expect(dx.resultSignalId).toBe(dy.resultSignalId);
+    // …and one historical Event: the second borrows the first's.
+    expect(dx.resultEventId).toBe(dy.resultEventId);
     expect(await prisma.signals.count({ where: { url: "https://example.test/race" } })).toBe(1);
     eventIds.push(dx.resultEventId!, dy.resultEventId!);
 

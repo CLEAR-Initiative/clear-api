@@ -82,7 +82,11 @@ async function webEnrichmentSourceId(tx: Tx): Promise<string> {
  * index and rolling its decision back (Prisma's `upsert` is a read then a
  * write, so it would race).
  */
-async function writeCaseSignal(tx: Tx, c: AcceptedCase, opts: { userId: string; now: Date }): Promise<string> {
+async function writeCaseSignal(
+  tx: Tx,
+  c: AcceptedCase,
+  opts: { userId: string; now: Date },
+): Promise<{ id: string; created: boolean }> {
   const sourceId = await webEnrichmentSourceId(tx);
   const externalId = `url:${createHash("sha256").update(c.sourceUrl).digest("hex")}`;
   const rawData = {
@@ -110,9 +114,9 @@ async function writeCaseSignal(tx: Tx, c: AcceptedCase, opts: { userId: string; 
     )
     ON CONFLICT ("source_id", "external_id") DO NOTHING
     RETURNING "id"`;
-  if (inserted.length > 0) return inserted[0].id;
+  if (inserted.length > 0) return { id: inserted[0].id, created: true };
   const existing = await tx.signals.findFirstOrThrow({ where: { sourceId, externalId }, select: { id: true } });
-  return existing.id;
+  return { id: existing.id, created: false };
 }
 
 /**
@@ -213,13 +217,24 @@ export async function acceptCase(
   const reused = await tx.signals.findFirst({
     where: { url: c.sourceUrl, status: { not: "NEW" } },
     orderBy: { publishedAt: "asc" },
-    select: { id: true, signalEvents: { select: { eventId: true }, orderBy: { collectedAt: "asc" } } },
+    select: { id: true },
   });
-  const signalId = reused ? reused.id : await writeCaseSignal(tx, c, opts);
+  const written = reused ? null : await writeCaseSignal(tx, c, opts);
+  const signalId = reused ? reused.id : written!.id;
 
+  // A Signal this decision did not create already has a home: one CLEAR
+  // ingested earlier, or one a concurrent accept of the same URL just wrote
+  // (the insert waited for it to commit, so its Event link is visible now).
+  // Borrow that Event when it is the same incident, rather than open a
+  // second historical Event for it.
   let existingEventId = c.matchedEventId;
-  if (!existingEventId && reused) {
-    for (const { eventId } of reused.signalEvents) {
+  if (!existingEventId && !written?.created) {
+    const linked = await tx.signalEvents.findMany({
+      where: { signalId },
+      select: { eventId: true },
+      orderBy: { collectedAt: "asc" },
+    });
+    for (const { eventId } of linked) {
       if (await isSameIncidentContext(tx, eventId, c.hazardType, opts.countryId)) {
         existingEventId = eventId;
         break;
