@@ -113,3 +113,30 @@ queue without taking each other's work.
   email through the messaging registry (`taskOutcome` template) for those
   who opted in, with the Worker's error shown only to the requester and
   admins. Recipients are the Task's team (Events have no team of their own).
+
+## What landed (V3, 2026-10-07): several Workers propose on one Event
+
+- A request for enrichment no longer names a single Worker's work. `requestEventEnrichment`
+  always fans out — no picker — into one Task per enabled **source kind** from
+  `TASK_IMPACT_PRIOR_KINDS` (default `event.impact_prior.clear`, the Dagster drain over CLEAR
+  data, and `event.impact_prior.web`, the Claude routine over the web) and returns the list.
+  The kind stays free text on the Task, so a new source is a Worker and an entry in that list,
+  not a migration. Each Worker claims by its exact kind, as before.
+- Dedupe stays per (kind, subject) through the existing partial unique index: a request made
+  while one source is still working hands that Task back and creates only the missing kinds.
+  The Tasks of one request share `tasks.request_id`, and the per-requester daily cap counts
+  distinct requests, not rows — one click is one request however many Workers it feeds.
+- `impact_priors.source_kind` records which kind produced a proposal (from the Task, never from
+  the Worker's input). `completeTask` supersedes only the newest existing proposal **of the same
+  kind** for the Event, so proposals from different sources sit side by side and a decider
+  accepts or rejects each; nothing marks the Event done. Migration
+  `20261007120000_parallel_impact_prior_proposals` backfills both columns.
+- The bare `event.impact_prior` kind remains claimable and completable for one release so an old
+  Worker does not strand its open Tasks; it supersedes within its own kind like any other.
+- Notifications name the source ("Impact prior from CLEAR data proposed — review it"), since a
+  requester now hears from each Worker.
+- Rejected: a `kind` argument that picks one source (the decision is that every enabled Worker
+  gets to propose; the UI should not offer a choice); a server-side merge of proposals into one
+  (the Domain Ontology's rule is supersede-never-overwrite, and the sources' evidence tiers
+  differ); counting the cap in Task rows (a two-source fan-out would halve every requester's
+  allowance overnight).

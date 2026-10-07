@@ -96,6 +96,14 @@ by its kind. A sibling of Signal enrichment (the pipeline's geo and classificati
 Crisis enrichment (the narrative and scenarios on a Crisis).
 _Avoid_: investigation, research, verification (as the family name); bare "enrichment" in field names
 
+**Source kind**:
+The kind of **Task** a **Worker** drains, naming where its evidence comes from: `event.impact_prior.clear`
+(the Dagster drain over CLEAR's own Events and knowledge base), `event.impact_prior.web` (the Claude
+routine over the web), any later source. One **Request enrichment** fans out into one Task per enabled
+source kind, so several Workers propose on the same Event side by side; each proposal carries its
+source kind so a person can see who said what. The bare `event.impact_prior` is the pre-fan-out kind.
+_Avoid_: worker type, provider, channel, tier (that is a label on a single piece of evidence)
+
 **ImpactPrior**:
 The first kind of **Event enrichment**, named and defined by the CLEAR Domain Ontology: what has
 typically happened before given a hazard type, a context and a population, inferred from
@@ -130,11 +138,13 @@ _Avoid_: event prior, precedent, history, related events
 - Each **Conversation** turn records what it cost (model, tokens, latency) alongside what was said
 
 - A **Task** has exactly one kind and exactly one subject; at most one Task per subject and kind is open at a time
+- **Request enrichment** always fans out: one **Task** per enabled **Source kind**, sharing one request id. A kind that already has an open Task is handed back, not duplicated; only the missing kinds get a new Task. The per-requester daily cap counts requests, not Tasks
+- Nothing ever marks an Event "done": proposals from each **Source kind** accumulate and a decider accepts or rejects each on its own
 - A claimed **Task** is held under a lease the **Worker** keeps alive by heartbeat; a lapsed lease goes back to the pool at the next claim, and a Task that has used up its attempts is failed with its last error. There is no sweeper
 - A requester or a platform admin may cancel a **Task**: a waiting one ends at once; a held one ends at the Worker's next heartbeat, completion or failure, with whatever it produced discarded
 - A **Task** is never deleted; what it recorded (requester, Worker, attempts, error, spend) is its history
 - Only a **Worker** completes a **Task**; what it produces for an enrichment kind is an **Event enrichment**
-- An **Event enrichment** is superseded, never overwritten: a new result is a new record and earlier ones stay (the Domain Ontology's rule for Estimates and ContextObservations)
+- An **Event enrichment** is superseded, never overwritten: a new result is a new record and earlier ones stay (the Domain Ontology's rule for Estimates and ContextObservations). Supersession stays within a **Source kind**: a new proposal from CLEAR data points at the previous one from CLEAR data, never at one from the web, so proposals from different Workers sit side by side
 - **Request enrichment** and escalation are independent actions on an Event
 - An **ImpactPrior** draws on CLEAR's own Events and on external sources, each labelled by tier, as knowledge base results are
 - An **ImpactPrior** case shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**

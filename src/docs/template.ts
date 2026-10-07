@@ -234,7 +234,7 @@ export function renderDocsBody(schema: SchemaData): string {
             <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
-            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (first kind: an <a href="#type-impactprior">ImpactPrior</a>) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
+            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (first kind: an <a href="#type-impactprior">ImpactPrior</a>, proposed by several Workers side by side — one Task per source kind) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
           </tbody>
         </table>
       </div>
