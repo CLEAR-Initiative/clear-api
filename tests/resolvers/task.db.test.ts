@@ -672,6 +672,67 @@ describeIfDb("Tasks against the real schema", () => {
     await expect(decideCaseProposal(null, { id: matched.id, decision: "rejected", rationale: "x" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
   });
 
+  it("accepting is safe under concurrency and only borrows an Event that is the same incident (V4)", async () => {
+    const longAgo = new Date(Date.now() - 300 * 24 * 3600_000);
+    const base = { quote: "Floods.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    /** A fresh requesting Event with one proposed case for `url`. */
+    async function proposedCase(url: string) {
+      const id = await makeEvent();
+      const { web, clear } = await request(id, analystB);
+      await cancelTask(null, { id: clear.id }, analystB);
+      const held = await claimOwn(WEB_KIND, web.id, workerB);
+      await completeTask(
+        null,
+        { id: held.id, leaseToken: held.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0", cases: [{ ...base, sourceUrl: url }] },
+        workerB,
+      );
+      return prisma.caseProposal.findFirstOrThrow({ where: { eventId: id } });
+    }
+
+    // Two deciders accept cases with the same URL at once: both succeed, one Signal.
+    const [x, y] = [await proposedCase("https://example.test/race"), await proposedCase("https://example.test/race")];
+    const [dx, dy] = await Promise.all([
+      decideCaseProposal(null, { id: x.id, decision: "accepted" }, analyst),
+      decideCaseProposal(null, { id: y.id, decision: "accepted" }, admin),
+    ]);
+    expect(dx.state).toBe("accepted");
+    expect(dy.state).toBe("accepted");
+    expect(dx.resultSignalId).toBe(dy.resultSignalId);
+    expect(await prisma.signals.count({ where: { url: "https://example.test/race" } })).toBe(1);
+    eventIds.push(dx.resultEventId!, dy.resultEventId!);
+
+    // A pipeline Signal the drain has not processed yet is not borrowed.
+    const pipelineSource = await prisma.dataSources.create({ data: { name: `${RUN}-pipe`, type: "test" } });
+    const pending = await prisma.signals.create({
+      data: { sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/still-new" },
+    });
+    const n = await proposedCase("https://example.test/still-new");
+    const dn = await decideCaseProposal(null, { id: n.id, decision: "accepted" }, analyst);
+    expect(dn.resultSignalId).not.toBe(pending.id);
+    eventIds.push(dn.resultEventId!);
+
+    // A processed Signal on an Event of another hazard: the Signal is reused,
+    // its Event is not; the case gets its own historical Event.
+    const quake = await makeEvent();
+    await prisma.events.update({ where: { id: quake }, data: { types: ["EQ"] } });
+    const quakeSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/quake-article", status: "PROCESSED",
+        signalEvents: { create: { eventId: quake, collectedAt: new Date() } },
+      },
+    });
+    const q = await proposedCase("https://example.test/quake-article");
+    const dq = await decideCaseProposal(null, { id: q.id, decision: "accepted" }, analyst);
+    expect(dq.resultSignalId).toBe(quakeSignal.id);
+    expect(dq.resultEventId).not.toBe(quake);
+    eventIds.push(dq.resultEventId!);
+    const quakeAfter = await prisma.events.findUniqueOrThrow({ where: { id: quake } });
+    expect(quakeAfter.firstSignalCreatedAt).not.toEqual(longAgo);
+
+    await prisma.signals.deleteMany({ where: { sourceId: pipelineSource.id } });
+    await prisma.dataSources.delete({ where: { id: pipelineSource.id } });
+  });
+
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {
     const id = await makeEvent();
     const { clear: first, web } = await request(id, analystB);

@@ -40,6 +40,7 @@ import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
 import { acceptCase } from "../services/case-acceptance.js";
+import { resolveEventCountryId } from "../utils/event-country.js";
 import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind } from "../utils/task-kinds.js";
 import {
   casesFromBasis,
@@ -95,32 +96,6 @@ function utcMidnight(now: Date): Date {
 }
 
 const GEOGRAPHIC_SCOPES: ReadonlySet<string> = new Set(["district", "country"]);
-
-/**
- * The level-0 (country) ancestor of an Event's primary location — the
- * location → origin → destination preference `escalateEvent` uses — walking
- * `ancestorIds` the way `resolveEmailLocation` does. Events have no country
- * column. Null when the Event has no location or the walk finds no level 0.
- */
-async function resolveEventCountryId(
-  prisma: Prisma.TransactionClient | Context["prisma"],
-  event: { locationId: string | null; originId: string | null; destinationId: string | null },
-): Promise<string | null> {
-  const primaryId = event.locationId ?? event.originId ?? event.destinationId;
-  if (!primaryId) return null;
-  const primary = await prisma.locations.findUnique({
-    where: { id: primaryId },
-    select: { id: true, level: true, ancestorIds: true },
-  });
-  if (!primary) return null;
-  if (primary.level === 0) return primary.id;
-  if (primary.ancestorIds.length === 0) return null;
-  const country = await prisma.locations.findFirst({
-    where: { id: { in: primary.ancestorIds }, level: 0 },
-    select: { id: true },
-  });
-  return country?.id ?? null;
-}
 
 /** Usage as a Worker reports it, validated like recordConversationTurnUsage:
  *  non-negative integer token counts, a finite non-negative cost. */
@@ -863,13 +838,13 @@ export const taskResolvers = {
         });
         if (count === 0) throw conflict("CaseProposal was decided meanwhile");
       } else {
-        // A historical Event without a resolved place sits at the requesting
-        // Event's country, so it is still findable by geography.
+        // The requesting Event's country: where a historical Event without a
+        // resolved place sits, and the context a reused Signal's Event must share.
         const requesting = await context.prisma.events.findUnique({
           where: { id: existing.eventId },
           select: { locationId: true, originId: true, destinationId: true },
         });
-        const fallbackLocationId = requesting ? await resolveEventCountryId(context.prisma, requesting) : null;
+        const countryId = requesting ? await resolveEventCountryId(context.prisma, requesting) : null;
         createdEvent = await context.prisma.$transaction(async (tx) => {
           // Claim the decision first: the conditional write is what stops two
           // deciders accepting the same case (and writing it twice).
@@ -878,7 +853,7 @@ export const taskResolvers = {
             data: decision,
           });
           if (count === 0) throw conflict("CaseProposal was decided meanwhile");
-          const result = await acceptCase(tx, existing, { userId: user.id, fallbackLocationId, now });
+          const result = await acceptCase(tx, existing, { userId: user.id, countryId, now });
           await tx.caseProposal.update({
             where: { id: existing.id },
             data: { resultSignalId: result.signalId, resultEventId: result.eventId },

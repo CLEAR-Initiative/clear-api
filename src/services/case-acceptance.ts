@@ -13,8 +13,9 @@
  * newest Signal is the incident's date.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma } from "../generated/prisma/client.js";
+import { resolveEventCountryId } from "../utils/event-country.js";
 
 /** The DataSource every accepted web case is filed under (seeded by the
  *  `add_case_proposals` migration). */
@@ -61,60 +62,107 @@ async function webEnrichmentSourceId(tx: Tx): Promise<string> {
 }
 
 /**
+ * The Signal for the case's URL, written once however many deciders accept
+ * a case with that URL at the same moment. `INSERT … ON CONFLICT DO
+ * NOTHING` on the unique (source, externalId) makes the second writer wait
+ * for the first and then read its row, instead of failing on the unique
+ * index and rolling its decision back (Prisma's `upsert` is a read then a
+ * write, so it would race).
+ */
+async function writeCaseSignal(tx: Tx, c: AcceptedCase, opts: { userId: string; now: Date }): Promise<string> {
+  const sourceId = await webEnrichmentSourceId(tx);
+  const externalId = `url:${createHash("sha256").update(c.sourceUrl).digest("hex")}`;
+  const rawData = {
+    caseProposalId: c.id,
+    quote: c.quote,
+    locationLabel: c.locationLabel,
+    hazardType: c.hazardType,
+    methodVersion: c.methodVersion,
+    acceptedBy: opts.userId,
+  };
+  // Timestamp columns are without time zone and hold UTC, as Prisma writes them.
+  const inserted = await tx.$queryRaw<{ id: string }[]>`
+    INSERT INTO "signals" (
+      "id", "source_id", "external_id", "raw_data", "published_at", "collected_at",
+      "status", "processed_at", "url", "description", "location_id", "submitted_by_id",
+      "media", "isDummy"
+    ) VALUES (
+      ${`case${randomUUID().replace(/-/g, "")}`}, ${sourceId}, ${externalId}, ${JSON.stringify(rawData)}::jsonb,
+      (${c.occurredAt.toISOString()}::timestamptz AT TIME ZONE 'UTC'),
+      (${opts.now.toISOString()}::timestamptz AT TIME ZONE 'UTC'),
+      'PROCESSED'::"SignalStatus",
+      (${opts.now.toISOString()}::timestamptz AT TIME ZONE 'UTC'),
+      ${c.sourceUrl}, ${c.quote}, ${c.locationId}, ${opts.userId},
+      ARRAY[]::text[], false
+    )
+    ON CONFLICT ("source_id", "external_id") DO NOTHING
+    RETURNING "id"`;
+  if (inserted.length > 0) return inserted[0].id;
+  const existing = await tx.signals.findFirstOrThrow({ where: { sourceId, externalId }, select: { id: true } });
+  return existing.id;
+}
+
+/**
+ * Whether an Event a reused Signal already sits on is the same incident as
+ * the case: it manifests the case's hazard and lies in the requesting
+ * Event's country — the checks `completeTask` puts on an explicit match.
+ */
+async function isSameIncidentContext(
+  tx: Tx,
+  eventId: string,
+  hazardType: string,
+  countryId: string | null,
+): Promise<boolean> {
+  if (!countryId) return false;
+  const event = await tx.events.findUnique({
+    where: { id: eventId },
+    select: { types: true, locationId: true, originId: true, destinationId: true },
+  });
+  if (!event || !event.types.includes(hazardType)) return false;
+  return (await resolveEventCountryId(tx, event)) === countryId;
+}
+
+/**
  * Write one accepted case into CLEAR. Must run inside the transaction that
  * moved the case to `accepted`, so a failure here leaves it `proposed`.
  *
  * - A Signal with the same URL already in CLEAR, from any source, is reused
  *   rather than duplicated (exact-duplicate removal is the one judgement the
- *   ontology allows at ingestion); otherwise a new Signal is written.
- * - The Event is, in order: the Worker's matched Event; an Event the reused
- *   Signal already sits on; a new historical Event.
+ *   ontology allows at ingestion) — unless the pipeline has not processed it
+ *   yet (`NEW`): the drain will group that one itself, so the case gets its
+ *   own `web_enrichment` Signal instead of being regrouped with it.
+ * - The Event is, in order: the Worker's matched Event (checked at
+ *   proposal); an Event the reused Signal already sits on, if it manifests
+ *   the case's hazard in the same country; a new historical Event.
  * - Linking a Signal to an existing Event widens its first/last Signal
  *   times to cover the incident but never moves them inward, so a backdated
  *   Signal cannot make a live Event look stale.
+ *
+ * The case row, not the Signal, is the audit record of the decision (who,
+ * when, why, the quote): a reused Signal keeps the details it was ingested
+ * with.
  */
 export async function acceptCase(
   tx: Tx,
   c: AcceptedCase,
-  opts: { userId: string; fallbackLocationId: string | null; now: Date },
+  opts: { userId: string; countryId: string | null; now: Date },
 ): Promise<AcceptanceResult> {
   const reused = await tx.signals.findFirst({
-    where: { url: c.sourceUrl },
+    where: { url: c.sourceUrl, status: { not: "NEW" } },
     orderBy: { publishedAt: "asc" },
-    select: { id: true, signalEvents: { select: { eventId: true }, take: 1, orderBy: { collectedAt: "asc" } } },
+    select: { id: true, signalEvents: { select: { eventId: true }, orderBy: { collectedAt: "asc" } } },
   });
+  const signalId = reused ? reused.id : await writeCaseSignal(tx, c, opts);
 
-  const signalId = reused
-    ? reused.id
-    : (
-        await tx.signals.create({
-          data: {
-            sourceId: await webEnrichmentSourceId(tx),
-            // One Signal per URL: the unique (source, externalId) stops a
-            // concurrent accept of the same article writing it twice.
-            externalId: `url:${createHash("sha256").update(c.sourceUrl).digest("hex")}`,
-            rawData: {
-              caseProposalId: c.id,
-              quote: c.quote,
-              locationLabel: c.locationLabel,
-              hazardType: c.hazardType,
-              methodVersion: c.methodVersion,
-              acceptedBy: opts.userId,
-            },
-            publishedAt: c.occurredAt,
-            collectedAt: opts.now,
-            status: "PROCESSED",
-            processedAt: opts.now,
-            url: c.sourceUrl,
-            description: c.quote,
-            locationId: c.locationId,
-            submittedById: opts.userId,
-          },
-          select: { id: true },
-        })
-      ).id;
-
-  const existingEventId = c.matchedEventId ?? reused?.signalEvents[0]?.eventId ?? null;
+  let existingEventId = c.matchedEventId;
+  if (!existingEventId && reused) {
+    for (const { eventId } of reused.signalEvents) {
+      if (await isSameIncidentContext(tx, eventId, c.hazardType, opts.countryId)) {
+        existingEventId = eventId;
+        break;
+      }
+    }
+  }
   const existing = existingEventId
     ? await tx.events.findUnique({
         where: { id: existingEventId },
@@ -137,7 +185,7 @@ export async function acceptCase(
 
   const event = await tx.events.create({
     data: {
-      title: c.locationLabel ? `${c.locationLabel}`.slice(0, TITLE_MAX) : null,
+      title: c.locationLabel ? c.locationLabel.slice(0, TITLE_MAX) : null,
       description: c.quote,
       types: [c.hazardType],
       startedAt: c.occurredAt,
@@ -145,7 +193,8 @@ export async function acceptCase(
       validTo: new Date(c.occurredAt.getTime() + HISTORICAL_EVENT_WINDOW_MS),
       firstSignalCreatedAt: c.occurredAt,
       lastSignalCreatedAt: c.occurredAt,
-      locationId: c.locationId ?? opts.fallbackLocationId,
+      // Without a resolved place it sits at the country, still findable by geography.
+      locationId: c.locationId ?? opts.countryId,
       rank: 0,
       signalEvents: { create: { signalId, collectedAt: opts.now } },
     },
