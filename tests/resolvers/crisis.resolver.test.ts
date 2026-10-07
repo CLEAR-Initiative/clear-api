@@ -592,6 +592,38 @@ describe("Mutation.updateCrisisDescription", () => {
 // ---------------------------------------------------------------------------
 // Mutation.deleteCrisis
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Crisis content edits — approved users only (ticket 721)
+// ---------------------------------------------------------------------------
+
+describe("Crisis content edits are refused to unapproved callers", () => {
+  // Title, description and attachments are open to any APPROVED user (admin,
+  // analyst, viewer — the app offers them on the crisis page). A fresh signup
+  // is `pending` and must not be able to rewrite a crisis; the worker role
+  // writes only Tasks. Both are refused before any database access.
+  const edits: [string, (ctx: Context) => Promise<unknown>][] = [
+    ["updateCrisisTitle", (ctx) => updateCrisisTitle(null, { id: "c1", title: "x" }, ctx)],
+    ["updateCrisisDescription", (ctx) => updateCrisisDescription(null, { id: "c1", description: "x" }, ctx)],
+    ["addCrisisAttachments", (ctx) => addCrisisAttachments(null, { id: "c1", keys: ["k"] }, ctx)],
+    ["removeCrisisAttachment", (ctx) => removeCrisisAttachment(null, { id: "c1", key: "k" }, ctx)],
+  ];
+  const callers = [
+    ["a pending signup", { id: "p1", role: "pending" }],
+    ["the worker role", { id: "w1", role: "worker" }],
+  ] as const;
+
+  for (const [who, user] of callers) {
+    it.each(edits)(`%s is FORBIDDEN for ${who}, with no database access`, async (_name, edit) => {
+      const anyCall = vi.fn();
+      const prisma = new Proxy({}, { get: () => new Proxy({}, { get: () => anyCall }) });
+      await expect(Promise.resolve().then(() => edit(buildContext(user, prisma)))).rejects.toMatchObject({
+        extensions: { code: "FORBIDDEN" },
+      });
+      expect(anyCall).not.toHaveBeenCalled();
+    });
+  }
+});
+
 describe("Mutation.deleteCrisis", () => {
   it("rejects a viewer with FORBIDDEN", async () => {
     await expect(
