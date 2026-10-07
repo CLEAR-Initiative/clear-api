@@ -250,6 +250,12 @@ export const taskTypeDef = gql`
     matchedEventId: String
   }
 
+  """The decision a named admin or analyst records on a proposed case."""
+  enum CaseProposalDecision {
+    accepted
+    rejected
+  }
+
   """The decision a named admin or analyst records on a proposed ImpactPrior."""
   enum ImpactPriorDecision {
     accepted

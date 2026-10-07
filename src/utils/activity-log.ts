@@ -41,7 +41,8 @@ export type ActivityAction =
   // Worker-produced ImpactPrior.
   | "task.requested"
   | "task.cancelled"
-  | "impact_prior.decided";
+  | "impact_prior.decided"
+  | "case_proposal.decided";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -57,7 +58,8 @@ export type ActivityResourceType =
   | "user"
   | "conversation"
   | "task"
-  | "impact_prior";
+  | "impact_prior"
+  | "case_proposal";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */

@@ -1109,6 +1109,25 @@ export const mutationTypeDef = gql`
     superseded, with its reason."""
     decideImpactPrior(id: String!, decision: ImpactPriorDecision!, rationale: String!): ImpactPrior!
 
+    """Decide one web case (V4): a platform admin or analyst accepts or
+    rejects it, recorded as who, when and why (the Domain Ontology's
+    DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
+    \`rationale\` is required to reject and optional to accept.
+
+    Accepting writes the case into CLEAR as history, in one transaction:
+    a Signal (source \`web_enrichment\`, \`url\` the case's source,
+    \`publishedAt\` the date the incident happened, submitted by the decider)
+    on the CLEAR Event it describes — the Worker's matched Event, else the
+    Event that already carries the same URL, else a new historical Event
+    dated to the incident. A Signal with the same URL already in CLEAR is
+    reused, not duplicated. Historical Events never alert: their newest
+    Signal is the incident's date. The returned case carries
+    \`resultSignalId\` and \`resultEventId\`.
+
+    Rejecting keeps the case, so its URL is never proposed again for that
+    Event."""
+    decideCaseProposal(id: String!, decision: CaseProposalDecision!, rationale: String): CaseProposal!
+
     """Cancel a Task. The requester or a platform admin only. A PENDING
     Task is CANCELLED at once; a LEASED one is flagged and becomes
     CANCELLED at the Worker's next heartbeat, completion or failure (its

@@ -53,6 +53,17 @@ ALTER TABLE "case_proposals" ADD CONSTRAINT "case_proposals_matched_event_id_fke
 -- AddForeignKey
 ALTER TABLE "case_proposals" ADD CONSTRAINT "case_proposals_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "tasks"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+-- Signals record who submitted them (the Domain Ontology's submitted_by_user):
+-- accepting a web case writes a Signal the analyst vouched for.
+ALTER TABLE "signals" ADD COLUMN "submitted_by_id" TEXT;
+ALTER TABLE "signals" ADD CONSTRAINT "signals_submitted_by_id_fkey" FOREIGN KEY ("submitted_by_id") REFERENCES "user"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- The source of every Signal written by accepting a web case. One row, found
+-- by name; created here so the accept path never has to.
+INSERT INTO "data_sources" ("id", "name", "type", "is_active", "updated_at")
+SELECT 'web_enrichment', 'web_enrichment', 'web', true, now()
+WHERE NOT EXISTS (SELECT 1 FROM "data_sources" WHERE "name" = 'web_enrichment');
+
 -- Backfill: the web cases of still-proposed ImpactPriors. A case without a
 -- URL or a parseable date cannot be decided or written into CLEAR, so it is
 -- left behind on its ImpactPrior. A URL already proposed for the Event is

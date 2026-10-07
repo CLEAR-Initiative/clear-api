@@ -24,9 +24,13 @@ import { prisma } from "../../src/lib/prisma.js";
 import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
+import { paginationResolvers } from "../../src/resolvers/pagination.resolver.js";
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
-  taskResolvers.Mutation;
+const {
+  requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior,
+  decideCaseProposal,
+} = taskResolvers.Mutation;
 const { eventTasks, eventImpactPriors, eventCaseProposals, caseProposals, rejectedCaseUrls, impactPriors } =
   taskResolvers.Query;
 
@@ -50,6 +54,7 @@ const asUser = (id: string, role: string): Context =>
 const analyst = asUser(ANALYST_ID, "analyst");
 const analystB = asUser(ANALYST_B_ID, "analyst");
 const viewer = asUser(VIEWER_ID, "viewer");
+const admin = asUser(ADMIN_ID, "admin");
 const workerA = asUser(WORKER_A, "worker");
 const workerB = asUser(WORKER_B, "worker");
 
@@ -126,6 +131,10 @@ describeIfDb("Tasks against the real schema", () => {
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
     await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
     await prisma.caseProposal.deleteMany({ where: { eventId: { in: eventIds } } });
+    // Events and Signals that accepting cases wrote.
+    const written = await prisma.signals.findMany({ where: { submittedById: { in: [ANALYST_ID, ANALYST_B_ID, ADMIN_ID] } }, select: { id: true, signalEvents: { select: { eventId: true } } } });
+    eventIds.push(...written.flatMap((s) => s.signalEvents.map((e) => e.eventId)));
+    await prisma.signals.deleteMany({ where: { id: { in: written.map((s) => s.id) } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
@@ -573,6 +582,92 @@ describeIfDb("Tasks against the real schema", () => {
     ]);
     // Web proposals are decided case by case: the whole-prior Inbox leaves them out.
     expect((await impactPriors(null, { limit: 200 }, analyst)).every((p) => p.sourceKind === CLEAR_KIND)).toBe(true);
+  });
+
+  it("accepting a case writes it into CLEAR as history; rejecting needs a reason; each case is decided once (V4)", async () => {
+    const id = await makeEvent();
+    // A past flood CLEAR already holds, last heard of 30 days ago.
+    const pastId = await makeEvent();
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: pastId }, data: { firstSignalCreatedAt: monthAgo, lastSignalCreatedAt: monthAgo } });
+    const { web, clear } = await request(id, analystB);
+    await cancelTask(null, { id: clear.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const longAgo = new Date(Date.now() - 400 * 24 * 3600_000);
+    const base = { quote: "Floods displaced thousands.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { ...base, sourceUrl: "https://example.test/accept-matched", matchedEventId: pastId },
+          { ...base, sourceUrl: "https://example.test/accept-new", locationId: DISTRICT_ID },
+          { ...base, sourceUrl: "https://example.test/reject-me" },
+        ],
+      },
+      workerB,
+    );
+    const byUrl = new Map((await prisma.caseProposal.findMany({ where: { eventId: id } })).map((c) => [c.sourceUrl, c]));
+    const matched = byUrl.get("https://example.test/accept-matched")!;
+    const fresh = byUrl.get("https://example.test/accept-new")!;
+    const rejectMe = byUrl.get("https://example.test/reject-me")!;
+
+    // Only deciders decide; a reason is required to reject.
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "accepted" }, viewer)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "  " }, analyst)).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+
+    // Matched: a Signal on the past Event, which widens back to the incident
+    // but keeps its newest-Signal time (a backdated Signal never makes it look stale).
+    const a = await decideCaseProposal(null, { id: matched.id, decision: "accepted" }, analyst);
+    expect(a).toMatchObject({ state: "accepted", decidedById: ANALYST_ID, resultEventId: pastId, decisionRationale: null });
+    const signal = await prisma.signals.findUniqueOrThrow({ where: { id: a.resultSignalId! }, include: { source: true, signalEvents: true } });
+    expect(signal).toMatchObject({ url: "https://example.test/accept-matched", status: "PROCESSED", submittedById: ANALYST_ID, publishedAt: longAgo });
+    expect(signal.source.name).toBe("web_enrichment");
+    expect(signal.signalEvents.map((e) => e.eventId)).toEqual([pastId]);
+    const past = await prisma.events.findUniqueOrThrow({ where: { id: pastId } });
+    expect(past.firstSignalCreatedAt).toEqual(longAgo);
+    expect(past.lastSignalCreatedAt).toEqual(monthAgo);
+
+    // Unmatched: a new historical Event dated to the incident.
+    const b = await decideCaseProposal(null, { id: fresh.id, decision: "accepted", rationale: "Same district, same season." }, analyst);
+    expect(b.resultEventId).not.toBe(pastId);
+    const historical = await prisma.events.findUniqueOrThrow({ where: { id: b.resultEventId! } });
+    eventIds.push(historical.id);
+    expect(historical).toMatchObject({ types: ["FL"], locationId: DISTRICT_ID, startedAt: longAgo, firstSignalCreatedAt: longAgo, lastSignalCreatedAt: longAgo });
+    // Never alerts, even at top severity, and stays out of a recent feed.
+    await prisma.events.update({ where: { id: historical.id }, data: { severity: 5 } });
+    const pending = await eventResolvers.Query.eventsPendingAlert(null, { first: 500, minSeverity: 1 }, asUser(ADMIN_ID, "admin"));
+    expect(pending.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+    const recent = await paginationResolvers.Query.eventsPage(
+      null,
+      { input: { from: new Date(Date.now() - 7 * 24 * 3600_000).toISOString(), limit: 200 } },
+      analyst,
+    );
+    expect(recent.items.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+
+    // The same article accepted for another Event reuses its Signal and Event.
+    const other = await makeEvent();
+    const { web: web2, clear: clear2 } = await request(other, analystB);
+    await cancelTask(null, { id: clear2.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, web2.id, workerB);
+    await completeTask(
+      null,
+      { id: held2.id, leaseToken: held2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0", cases: [{ ...base, sourceUrl: "https://example.test/accept-new" }] },
+      workerB,
+    );
+    const again = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: other } });
+    const c = await decideCaseProposal(null, { id: again.id, decision: "accepted" }, admin);
+    expect(c).toMatchObject({ resultSignalId: b.resultSignalId, resultEventId: b.resultEventId });
+    expect(await prisma.signals.count({ where: { url: "https://example.test/accept-new" } })).toBe(1);
+
+    // Reject keeps the reason; a second decision is CONFLICT.
+    const r = await decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "Not a flood." }, analyst);
+    expect(r).toMatchObject({ state: "rejected", decisionRationale: "Not a flood.", resultSignalId: null });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "accepted" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "rejected", rationale: "x" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

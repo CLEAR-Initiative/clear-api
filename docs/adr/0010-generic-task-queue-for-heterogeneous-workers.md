@@ -175,6 +175,16 @@ and web cases were never checked against the Events CLEAR already holds.
 - Reads: `caseProposals(state)` (the Inbox, deciders only), `eventCaseProposals` /
   `Event.caseProposals` under the ImpactPrior visibility rule, and `rejectedCaseUrls(eventId)`
   for the Worker. The whole-prior Inbox (`impactPriors`) no longer lists the web and bare kinds.
-- Still to land in V4: accepting a case writes it into CLEAR as a Signal on the matched Event or
-  a new historical Event, with its figures as Estimates; the ImpactPrior is then computed from
-  that history, not reviewed.
+- `decideCaseProposal(id, decision, rationale)`: a platform admin or analyst decides one case,
+  once (rationale required to reject). Accepting writes the case into CLEAR in the same
+  transaction: a Signal (source `web_enrichment`, `publishedAt` = when the incident happened,
+  `submittedById` = the decider, written `PROCESSED` so the Dagster drain never regroups it) on
+  the matched Event, else the Event already carrying that URL, else a new historical Event dated
+  to the incident. A Signal with the same URL is reused, never duplicated. Linking widens an
+  Event's first/last Signal times but never moves them inward. Historical Events stay out of
+  alerting because `eventsPendingAlert` only returns Events whose newest Signal is under 48 hours
+  old; no separate "historical" flag. Rejected: routing accepted cases through the Dagster drain
+  (its grouping only matches Events active in the last 7 days of wall-clock time, so every
+  backdated Signal would open a new Event).
+- Still to land in V4: the case's figures as Estimates (needs the Estimate table); the
+  ImpactPrior computed from accepted history rather than reviewed.

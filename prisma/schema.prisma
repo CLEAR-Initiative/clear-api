@@ -106,6 +106,8 @@ model user {
   invitationsSent       invitations[]           @relation("InvitedBy")
   activityLogs          activityLogs[]
   conversations         conversations[]
+  /// Signals this person submitted (the Domain Ontology's `submitted_by_user`).
+  submittedSignals      signals[]               @relation("SignalSubmittedBy")
   agentWorkingMemory    agentWorkingMemory?
 }
 
@@ -625,6 +627,12 @@ model signals {
   casualties  Int?
   media       String[]
   isDummy     Boolean  @default(false)
+
+  /// The person who submitted this Signal, when one did (the Domain
+  /// Ontology's `submitted_by_user`): e.g. the analyst who accepted a web
+  /// case (V4). Null for Signals a pipeline ingested.
+  submittedById String? @map("submitted_by_id")
+  submittedBy   user?   @relation("SignalSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("SignalOrigin", fields: [originId], references: [id])

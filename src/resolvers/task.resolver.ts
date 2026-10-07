@@ -39,6 +39,7 @@ import {
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
+import { acceptCase } from "../services/case-acceptance.js";
 import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind } from "../utils/task-kinds.js";
 import {
   casesFromBasis,
@@ -814,6 +815,85 @@ export const taskResolvers = {
         metadata: { eventId: existing.eventId, taskId: existing.taskId, decision: args.decision },
       });
       return context.prisma.impactPrior.findUniqueOrThrow({ where: { id: args.id } });
+    },
+
+    // The per-case decision (V4). A named admin or analyst accepts or
+    // rejects one case, exactly once. Rejecting keeps the row (and its URL,
+    // so the Worker never proposes it again) with the reason, which is
+    // required. Accepting writes the case into CLEAR as history in the same
+    // transaction that claims the decision, so a failed write leaves the case
+    // `proposed` rather than accepted with nothing behind it.
+    decideCaseProposal: async (
+      _parent: unknown,
+      args: { id: string; decision: "accepted" | "rejected"; rationale?: string | null },
+      context: Context,
+    ) => {
+      const user = requireRole(context, DECIDER_ROLES);
+      if (args.decision !== "accepted" && args.decision !== "rejected") {
+        throw badInput('decision must be "accepted" or "rejected"');
+      }
+      const rationale = args.rationale?.trim() || null;
+      if (args.decision === "rejected" && !rationale) {
+        throw badInput("rationale is required to reject a case");
+      }
+      if (rationale && rationale.length > MAX_RATIONALE_LENGTH) {
+        throw badInput(`rationale must be at most ${MAX_RATIONALE_LENGTH} characters`);
+      }
+      const existing = await context.prisma.caseProposal.findUnique({ where: { id: args.id } });
+      if (!existing) throw notFound("CaseProposal");
+      if (existing.state !== "proposed") throw conflict(`CaseProposal is already ${existing.state}`);
+
+      const now = new Date();
+      const decision = { state: args.decision, decidedById: user.id, decidedAt: now, decisionRationale: rationale };
+      let createdEvent = false;
+      if (args.decision === "rejected") {
+        const { count } = await context.prisma.caseProposal.updateMany({
+          where: { id: existing.id, state: "proposed" },
+          data: decision,
+        });
+        if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+      } else {
+        // A historical Event without a resolved place sits at the requesting
+        // Event's country, so it is still findable by geography.
+        const requesting = await context.prisma.events.findUnique({
+          where: { id: existing.eventId },
+          select: { locationId: true, originId: true, destinationId: true },
+        });
+        const fallbackLocationId = requesting ? await resolveEventCountryId(context.prisma, requesting) : null;
+        createdEvent = await context.prisma.$transaction(async (tx) => {
+          // Claim the decision first: the conditional write is what stops two
+          // deciders accepting the same case (and writing it twice).
+          const { count } = await tx.caseProposal.updateMany({
+            where: { id: existing.id, state: "proposed" },
+            data: decision,
+          });
+          if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+          const result = await acceptCase(tx, existing, { userId: user.id, fallbackLocationId, now });
+          await tx.caseProposal.update({
+            where: { id: existing.id },
+            data: { resultSignalId: result.signalId, resultEventId: result.eventId },
+          });
+          return result.createdEvent;
+        });
+      }
+
+      const decided = await context.prisma.caseProposal.findUniqueOrThrow({ where: { id: existing.id } });
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "case_proposal.decided",
+        resourceType: "case_proposal",
+        resourceId: decided.id,
+        metadata: {
+          eventId: decided.eventId,
+          taskId: decided.taskId,
+          decision: args.decision,
+          sourceUrl: decided.sourceUrl,
+          resultSignalId: decided.resultSignalId,
+          resultEventId: decided.resultEventId,
+          createdEvent,
+        },
+      });
+      return decided;
     },
 
     // Cancellation, by the requester or a platform admin. PENDING ends now;
