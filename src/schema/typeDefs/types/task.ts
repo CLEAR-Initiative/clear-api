@@ -103,7 +103,8 @@ export const taskTypeDef = gql`
     cancelRequestedAt: DateTime
     cancelledById: String
     """Kind-specific result vocabulary. For \`event.impact_prior.*\`:
-    \`produced\` or \`no_prior_found\`."""
+    \`produced\` or \`no_prior_found\`; for the web kind also
+    \`no_new_cases\` (every case found was already proposed for the Event)."""
     outcome: String
     """Raw Worker output, kept for audit. The typed result lives beside the
     subject (see \`Event.impactPriors\`)."""

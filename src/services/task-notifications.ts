@@ -69,6 +69,7 @@ export function taskOutcomeMessage(task: TaskForNotification, outcomeKind: TaskO
   const what = taskKindLabel(task.kind);
   if (outcomeKind === "failed") return `${what} enrichment failed`;
   if (task.outcome === "no_prior_found") return `${what}: no prior found`;
+  if (task.outcome === "no_new_cases") return `${what}: no new cases`;
   // The web kind proposes cases, decided one by one (V4).
   if (impactPriorSource(task.kind) === "web") return `${what}: cases proposed — review them`;
   return `${what} proposed — review it`;

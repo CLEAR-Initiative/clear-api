@@ -528,8 +528,9 @@ export const taskResolvers = {
     // The Inbox's list (V2): ImpactPriors in one state across every Event,
     // newest first. Deciders only — it lists exactly what the caller may
     // decide, so clear-mvp needs no rule of its own. `proposed` by default.
-    // Web proposals are decided case by case (V4, `caseProposals`), so the
-    // kinds whose evidence became CaseProposals are left out.
+    // Web proposals are decided case by case (V4, `caseProposals`), so a
+    // proposal of the kinds whose evidence became CaseProposals is left out
+    // once its cases are there.
     impactPriors: async (
       _parent: unknown,
       args: { state?: "proposed" | "accepted" | "rejected" | null; limit?: number | null; offset?: number | null },
@@ -537,7 +538,16 @@ export const taskResolvers = {
     ) => {
       requireRole(context, DECIDER_ROLES);
       return context.prisma.impactPrior.findMany({
-        where: { state: args.state ?? "proposed", sourceKind: { notIn: CASE_REVIEWED_PRIOR_KINDS } },
+        // A web or bare-kind proposal leaves only once its cases reached the
+        // per-case Inbox; one whose cases could not be converted (no URL or
+        // no parseable date) stays here, decidable whole, rather than vanish.
+        where: {
+          state: args.state ?? "proposed",
+          OR: [
+            { sourceKind: { notIn: CASE_REVIEWED_PRIOR_KINDS } },
+            { task: { caseProposals: { none: {} } } },
+          ],
+        },
         orderBy: { createdAt: "desc" },
         take: Math.min(Math.max(args.limit ?? 50, 1), 200),
         skip: Math.max(args.offset ?? 0, 0),
@@ -1214,7 +1224,13 @@ export const taskResolvers = {
             args.impactPrior.methodVersion,
           );
         }
-        await writeCases(tx, task, cases, caseMethodVersion);
+        const inserted = await writeCases(tx, task, cases, caseMethodVersion);
+        // Every case was a URL already proposed for this Event: the Worker
+        // found something, but nothing new for anyone to review, so the Task
+        // must not announce cases waiting in the Inbox.
+        if (cases.length > 0 && inserted === 0) {
+          return tx.task.update({ where: { id: task.id }, data: { outcome: "no_new_cases" } });
+        }
         return completed;
       });
       // The fan-out (V2): requester, team analysts and platform admins hear

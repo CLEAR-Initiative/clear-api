@@ -2349,7 +2349,8 @@ model task {
   cancelledById     String?   @map("cancelled_by_id")
 
   /// Kind-specific vocabulary: `produced` | `no_prior_found` for
-  /// `event.impact_prior`.
+  /// `event.impact_prior`, plus `no_new_cases` for the web kind when every
+  /// case it found was already proposed for the Event.
   outcome String?
   /// Raw Worker output, kept for audit only — the typed result lives beside
   /// the subject (first: `impact_priors`).

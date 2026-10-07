@@ -580,8 +580,10 @@ describeIfDb("Tasks against the real schema", () => {
       ["https://example.test/case-b", "proposed"],
       ["https://example.test/case-c", "proposed"],
     ]);
-    // Web proposals are decided case by case: the whole-prior Inbox leaves them out.
-    expect((await impactPriors(null, { limit: 200 }, analyst)).every((p) => p.sourceKind === CLEAR_KIND)).toBe(true);
+    // Web proposals whose cases reached the per-case Inbox leave the whole-prior one.
+    const withCases = new Set((await prisma.caseProposal.findMany({ select: { taskId: true } })).map((c) => c.taskId));
+    const wholeInbox = await impactPriors(null, { limit: 200 }, analyst);
+    expect(wholeInbox.filter((p) => p.sourceKind !== CLEAR_KIND && withCases.has(p.taskId))).toEqual([]);
   });
 
   it("accepting a case writes it into CLEAR as history; rejecting needs a reason; each case is decided once (V4)", async () => {

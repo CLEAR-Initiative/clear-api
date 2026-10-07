@@ -1097,6 +1097,27 @@ describe("completeTask with cases (V4)", () => {
     expect(prisma.caseProposal.store.has("ev-1|https://example.test/new")).toBe(true);
   });
 
+  it("records no_new_cases, not produced, when every case was already proposed for the Event", async () => {
+    const prisma = seeded(webLeased());
+    prisma.caseProposal.store.set("ev-1|https://example.test/flood-2021", { state: "proposed" });
+    const done = await complete(prisma, { cases: [aCase()] });
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_new_cases" });
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ outcome: "no_new_cases" }), "completed");
+  });
+
+  it("caps the cases a whole-prior basis turns into, like a direct submission", async () => {
+    const prisma = seeded(webLeased());
+    const basis = Array.from({ length: 60 }, (_, i) => ({ tier: "web", sourceUrl: `https://example.test/${i}`, occurredAt: "2026-01-11" }));
+    await complete(prisma, {
+      methodVersion: undefined,
+      impactPrior: {
+        hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country", horizonYears: 10,
+        numberOfCases: 60, basis, methodVersion: "clear-impact-prior-web@0.3.0",
+      },
+    });
+    expect(prisma.caseProposal.store.size).toBe(50);
+  });
+
   it.each([
     ["a non-web kind", { kind: CLEAR_KIND }, { cases: [] }, 'Cases can only complete an "event.impact_prior.web" Task'],
     ["both cases and an impactPrior", {}, {
@@ -1294,16 +1315,20 @@ describe("impactPriors — the Inbox query", () => {
     const rows = await impactPriorsQuery(null, {}, ctx(analyst, prisma));
     expect(rows.map((r) => r.id)).toEqual(["ip-1"]);
     // Web proposals (and the bare kind) are decided case by case (V4).
-    const notCaseReviewed = { notIn: ["event.impact_prior", "event.impact_prior.web"] };
+    // …once their cases are there; a proposal none of whose cases converted stays.
+    const caseReviewedOut = [
+      { sourceKind: { notIn: ["event.impact_prior", "event.impact_prior.web"] } },
+      { task: { caseProposals: { none: {} } } },
+    ];
     expect(prisma.impactPrior.findMany).toHaveBeenCalledWith({
-      where: { state: "proposed", sourceKind: notCaseReviewed },
+      where: { state: "proposed", OR: caseReviewedOut },
       orderBy: { createdAt: "desc" },
       take: 50,
       skip: 0,
     });
     await impactPriorsQuery(null, { state: "rejected", limit: 500, offset: -3 }, ctx(admin, prisma));
     expect(prisma.impactPrior.findMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ where: { state: "rejected", sourceKind: notCaseReviewed }, take: 200, skip: 0 }),
+      expect.objectContaining({ where: { state: "rejected", OR: caseReviewedOut }, take: 200, skip: 0 }),
     );
   });
 

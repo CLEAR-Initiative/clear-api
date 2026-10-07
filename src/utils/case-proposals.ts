@@ -186,6 +186,8 @@ export function casesFromBasis(
   const seen = new Set<string>();
   const out: ValidCase[] = [];
   for (const entry of basis) {
+    // The same cap as a direct submission: one completion never floods the Inbox.
+    if (out.length >= MAX_CASES_PER_TASK) break;
     if (!entry || typeof entry !== "object") continue;
     const e = entry as Record<string, unknown>;
     if (e.tier !== "web") continue;
