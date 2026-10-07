@@ -399,6 +399,17 @@ describe("Conversation writes outside the CLEAR Agent", () => {
     });
     expect(anyCall).not.toHaveBeenCalled();
   });
+
+  it.each(writes)("%s is FORBIDDEN for the worker role even with a session and the agent key", async (_name, write) => {
+    // Refused by role, not only by auth method: a change to how the Agent
+    // authenticates must never let a Task Worker write a Conversation.
+    const { anyCall, stubs } = untouchedPrisma();
+    const worker = { id: "w1", role: "worker" };
+    await expect(Promise.resolve().then(() => write(buildContext(worker, stubs, "session", true)))).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(anyCall).not.toHaveBeenCalled();
+  });
 });
 
 describe("Mutation.upsertConversationMessages", () => {

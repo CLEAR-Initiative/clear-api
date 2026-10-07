@@ -119,11 +119,14 @@ function validateUsage(usage: TaskUsageInput): TaskUsageInput {
 
 /** A DateTime input as a valid Date. The scalar's parseValue is
  *  `new Date(value)`, so an unparseable string arrives as an Invalid Date —
- *  which compares false against anything and makes Prisma throw on write. */
+ *  which compares false against anything and makes Prisma throw on write.
+ *  The original string is gone by now, so this checks validity, not ISO 8601
+ *  form; the message says so (strict ISO would mean changing the shared
+ *  scalar for every DateTime input). */
 function parseDateTimeInput(value: Date, field: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    throw badInput(`impactPrior.${field} must be an ISO 8601 date-time`);
+    throw badInput(`impactPrior.${field} must be a valid date-time, e.g. 2026-01-01T00:00:00Z`);
   }
   return date;
 }

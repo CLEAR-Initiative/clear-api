@@ -220,7 +220,7 @@ describe("Worker protocol schema contract", () => {
   });
 
   it.each([
-    ["an unparseable validFrom", { validFrom: "not a date" }, /validFrom must be an ISO 8601/],
+    ["an unparseable validFrom", { validFrom: "not a date" }, /validFrom must be a valid date-time/],
     ["validTo before validFrom", { validFrom: "2026-02-01T00:00:00Z", validTo: "2026-01-01T00:00:00Z" }, /validTo must not precede/],
   ])("completeTask rejects %s on the wire with BAD_USER_INPUT, before any write", async (_name, window, message) => {
     const prisma = mockPrisma();
