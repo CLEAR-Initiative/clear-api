@@ -9,8 +9,11 @@ import { gql } from "graphql-tag";
  * heartbeat, complete, fail — and is the only writer of its database:
  * Postgres is the broker, GraphQL the only door.
  *
- * The first kind of work is `event.impact_prior`, whose typed result is an
- * ImpactPrior (the CLEAR Domain Ontology's class) stored beside the Event.
+ * The first kind of work is the `event.impact_prior` family, whose typed
+ * result is an ImpactPrior (the CLEAR Domain Ontology's class) stored beside
+ * the Event. One request fans out into one Task per source kind
+ * (`event.impact_prior.clear`, `event.impact_prior.web`, …), so several
+ * Workers propose on one Event side by side.
  */
 export const taskTypeDef = gql`
   """Lifecycle of a Task. PENDING → LEASED (claimed) → COMPLETED | FAILED;
@@ -44,7 +47,11 @@ export const taskTypeDef = gql`
   """One unit of Worker-performed work (ADR-0010)."""
   type Task {
     id: String!
-    """The kind of work, e.g. \`event.impact_prior\`. A Worker claims by kind."""
+    """The kind of work, e.g. \`event.impact_prior.clear\` (the Dagster
+    drain over CLEAR data) or \`event.impact_prior.web\` (the web). A Worker
+    claims by exact kind. One request fans out into one Task per enabled
+    source kind. The bare \`event.impact_prior\` is the pre-fan-out kind,
+    still claimable for one release."""
     kind: String!
     """The subject's type, e.g. \`event\`."""
     subjectType: String!
@@ -54,6 +61,10 @@ export const taskTypeDef = gql`
     payload: JSON!
     status: TaskStatus!
     origin: TaskOrigin!
+    """Shared by every Task one request fanned out into (one per source
+    kind). The per-requester daily cap counts distinct requests, not
+    Tasks."""
+    requestId: String!
     """The user who requested it; null for origin \`rule\`."""
     requesterId: String
     requester: User
@@ -82,7 +93,7 @@ export const taskTypeDef = gql`
     heartbeat or completion and stops."""
     cancelRequestedAt: DateTime
     cancelledById: String
-    """Kind-specific result vocabulary. For \`event.impact_prior\`:
+    """Kind-specific result vocabulary. For \`event.impact_prior.*\`:
     \`produced\` or \`no_prior_found\`."""
     outcome: String
     """Raw Worker output, kept for audit. The typed result lives beside the
@@ -101,8 +112,10 @@ export const taskTypeDef = gql`
   """What has typically happened before given a hazard type, a context and a
   population (the CLEAR Domain Ontology's ImpactPrior), inferred from
   historical Events similar to the input Event. Produced by a Worker from an
-  \`event.impact_prior\` Task. Supersede, never overwrite: a later request
-  produces a new ImpactPrior pointing at the previous one."""
+  \`event.impact_prior.*\` Task. Supersede, never overwrite, within a source
+  kind: a later request produces a new ImpactPrior pointing at the previous
+  one of the same \`sourceKind\`; proposals from different sources sit side
+  by side on the Event and are decided one by one."""
   type ImpactPrior {
     id: String!
     eventId: String!
@@ -110,6 +123,10 @@ export const taskTypeDef = gql`
     taskId: String!
     task: Task!
     state: ImpactPriorState!
+    """The kind of the Task that produced it — \`event.impact_prior.clear\`
+    (CLEAR data), \`event.impact_prior.web\` (the web), or the pre-fan-out
+    \`event.impact_prior\` — so a client can label the source."""
+    sourceKind: String!
     """GLIDE code; one of the Event's \`types\`."""
     hazardType: String!
     """The level-0 (country) ancestor of the Event's primary location."""
@@ -130,7 +147,8 @@ export const taskTypeDef = gql`
     validTo: DateTime
     """Version string of the skill or handler that produced it."""
     methodVersion: String!
-    """The previous ImpactPrior for the same Event, if any."""
+    """The previous ImpactPrior of the same \`sourceKind\` for the same
+    Event, if any. Never crosses sources."""
     supersedesId: String
     supersedes: ImpactPrior
     """Who decided it, when and why (null while \`proposed\`)."""
@@ -157,8 +175,9 @@ export const taskTypeDef = gql`
   }
 
   """An ImpactPrior proposal, given by a Worker on completing an
-  \`event.impact_prior\` Task with at least one case. Omit it entirely to
-  record \`no_prior_found\`."""
+  \`event.impact_prior.*\` Task with at least one case. Omit it entirely to
+  record \`no_prior_found\`. The source kind is taken from the Task, never
+  from the input."""
   input ImpactPriorInput {
     """Must be one of the Event's \`types\`."""
     hazardType: String!
@@ -184,9 +203,10 @@ export const taskTypeDef = gql`
     authenticated content reader; \`lastError\` is redacted for all but the
     requester and platform admins."""
     enrichmentTasks: [Task!]!
-    """ImpactPriors produced for this Event, newest first. \`accepted\`
-    follows the Event's visibility; \`proposed\` is visible to its requester
-    and to deciders; \`rejected\` to deciders only."""
+    """ImpactPriors produced for this Event, newest first, from every
+    source side by side (see \`sourceKind\`). \`accepted\` follows the
+    Event's visibility; \`proposed\` is visible to its requester and to
+    deciders; \`rejected\` to deciders only."""
     impactPriors: [ImpactPrior!]!
   }
 `;

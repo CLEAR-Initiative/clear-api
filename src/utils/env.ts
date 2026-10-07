@@ -207,11 +207,35 @@ const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.coerce.number().int().positive().default(10),
   ),
-  /** Enrichment requests one requester may create per UTC day. */
+  /** Enrichment requests one requester may create per UTC day. A request
+   *  that fans out into several Tasks counts once. */
   TASK_REQUEST_DAILY_CAP: z.preprocess(
     (v) => (v === "" ? undefined : v),
     z.coerce.number().int().positive().default(20),
   ),
+  /** The source kinds one enrichment request fans out into — one Task per
+   *  kind, each drained by its own Worker (`.clear`: the Dagster drain over
+   *  CLEAR data; `.web`: the Claude routine over the web). Comma-separated;
+   *  each must be `event.impact_prior` or `event.impact_prior.<source>`.
+   *  Dropping a kind here stops new Tasks of it; open ones stay claimable. */
+  TASK_IMPACT_PRIOR_KINDS: z
+    .preprocess(
+      (v) => (v === "" ? undefined : v),
+      z.string().default("event.impact_prior.clear,event.impact_prior.web"),
+    )
+    .transform((s) => [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))])
+    .pipe(
+      z
+        .array(
+          z
+            .string()
+            .regex(
+              /^event\.impact_prior(\.[a-z0-9_]+)?$/,
+              "each kind must be event.impact_prior or event.impact_prior.<source> (lowercase letters, digits, _)",
+            ),
+        )
+        .min(1, "TASK_IMPACT_PRIOR_KINDS must name at least one kind"),
+    ),
 });
 
 const parsed = envSchema.parse(process.env);

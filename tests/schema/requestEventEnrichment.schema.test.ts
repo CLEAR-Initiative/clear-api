@@ -3,7 +3,8 @@
  * clear-mvp's `tasks.requestEnrichment` procedure sends, executed through a
  * real ApolloServer so the argument shape, the selection set and the error
  * `subCode`s a client branches on are pinned at the seam — resolver-level
- * tests never validate a document against the schema.
+ * tests never validate a document against the schema. Since the fan-out
+ * (V3) the field returns a list: one Task per source kind.
  *
  * DB-FREE: `context.prisma` is a `vi.fn()` mock.
  */
@@ -18,6 +19,7 @@ const REQUEST_EVENT_ENRICHMENT = `
     requestEventEnrichment(eventId: $eventId, teamId: $teamId, horizonYears: $horizonYears) {
       id
       kind
+      requestId
       subjectType
       subjectId
       status
@@ -44,10 +46,11 @@ const CANCEL_TASK = `
   }
 `;
 
-function mockPrisma(todayCount = 0) {
+function mockPrisma(todayCount = 0): Record<string, unknown> {
   const created = {
     id: "t-1",
-    kind: "event.impact_prior",
+    kind: "event.impact_prior.clear",
+    requestId: "req-1",
     subjectType: "event",
     subjectId: "ev-1",
     payload: { horizonYears: 10 },
@@ -72,7 +75,7 @@ function mockPrisma(todayCount = 0) {
     createdAt: new Date("2026-10-06T10:00:00Z"),
     updatedAt: new Date("2026-10-06T10:00:00Z"),
   };
-  return {
+  const prisma: Record<string, unknown> = {
     events: { findUnique: vi.fn().mockResolvedValue({ id: "ev-1" }) },
     task: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -81,11 +84,17 @@ function mockPrisma(todayCount = 0) {
         ...created, status: "CANCELLED", cancelRequestedAt: new Date(), cancelledById: "u-1",
       }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      count: vi.fn().mockResolvedValue(todayCount),
-      create: vi.fn().mockResolvedValue(created),
+      // The cap counts distinct requests (one row per requestId), not Tasks.
+      groupBy: vi.fn().mockResolvedValue(Array.from({ length: todayCount }, (_, i) => ({ requestId: `r-${i}` }))),
+      create: vi.fn(async ({ data }: { data: { kind: string; requestId: string } }) => ({
+        ...created, id: `t-${data.kind}`, kind: data.kind, requestId: data.requestId,
+      })),
     },
     activityLogs: { create: vi.fn().mockResolvedValue({}) },
   };
+  // The fan-out creates inside one transaction; run the callback against the mock.
+  prisma.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+  return prisma;
 }
 
 function buildContext(prisma: unknown, user: { id: string; role: string } | null): Context {
@@ -113,12 +122,14 @@ async function run(
 }
 
 describe("requestEventEnrichment schema contract", () => {
-  it("executes clear-mvp's document and returns the PENDING Task", async () => {
+  it("executes clear-mvp's document and returns one PENDING Task per source kind, sharing a requestId", async () => {
     const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" });
     expect(result.errors).toBeUndefined();
-    expect(result.data?.requestEventEnrichment).toMatchObject({
-      id: "t-1",
-      kind: "event.impact_prior",
+    const tasks = result.data?.requestEventEnrichment as { kind: string; requestId: string }[];
+    expect(tasks.map((t) => t.kind)).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+    expect(new Set(tasks.map((t) => t.requestId)).size).toBe(1);
+    expect(tasks[0]).toMatchObject({
+      id: "t-event.impact_prior.clear",
       status: "PENDING",
       origin: "user",
       payload: { horizonYears: 10 },

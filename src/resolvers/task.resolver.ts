@@ -5,9 +5,17 @@
  * protocol over GraphQL: request (the trigger), claim (atomic, leased,
  * `FOR UPDATE SKIP LOCKED`), heartbeat, complete, fail, cancel. Postgres is
  * the broker; GraphQL is the only door; clear-api is the only writer of its
- * database. The first kind of work is `event.impact_prior`, whose typed
- * result is an ImpactPrior row beside the Event (supersede, never
- * overwrite); the raw Worker output stays on the Task for audit.
+ * database. The first kind of work is the `event.impact_prior` family,
+ * whose typed result is an ImpactPrior row beside the Event (supersede,
+ * never overwrite); the raw Worker output stays on the Task for audit.
+ *
+ * Several Workers propose on one Event: a request fans out into one Task
+ * per enabled source kind (`TASK_IMPACT_PRIOR_KINDS`, e.g.
+ * `event.impact_prior.clear` for the Dagster drain over CLEAR data and
+ * `event.impact_prior.web` for the Claude routine over the web). Each
+ * Worker claims by exact kind; each proposal supersedes only the newest
+ * one of its own kind, so proposals from different sources sit side by
+ * side and deciders accept or reject each. Nothing marks an Event done.
  *
  * Guards: a requester needs the same rights as `escalateEvent`
  * (`requireTeamContentWriter`); claim / heartbeat / complete / fail need the
@@ -15,6 +23,7 @@
  * the content-reader gate the Event itself uses.
  */
 
+import { randomUUID } from "node:crypto";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
@@ -29,8 +38,9 @@ import {
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
+import { IMPACT_PRIOR_KIND, isImpactPriorKind } from "../utils/task-kinds.js";
 
-export const IMPACT_PRIOR_KIND = "event.impact_prior";
+export { IMPACT_PRIOR_KIND };
 const EVENT_SUBJECT = "event";
 const DEFAULT_HORIZON_YEARS = 10;
 const DECIDER_ROLES = ["admin", "analyst"];
@@ -416,7 +426,8 @@ export const taskResolvers = {
     // The trigger. Same gate as `escalateEvent`: a global admin or analyst
     // anywhere, a team content writer for the `teamId` they act on behalf
     // of. Records the CALLER as requester (escalateEvent records its
-    // `userId` argument; a Task must not).
+    // `userId` argument; a Task must not). Always fans out: one Task per
+    // enabled source kind, no picker — every Worker gets to propose.
     requestEventEnrichment: async (
       _parent: unknown,
       args: {
@@ -428,9 +439,10 @@ export const taskResolvers = {
       context: Context,
     ) => {
       const { user } = await requireTeamContentWriter(context, args.teamId);
-      const kind = args.kind ?? IMPACT_PRIOR_KIND;
-      if (kind !== IMPACT_PRIOR_KIND) {
-        throw badInput(`Unknown enrichment kind "${kind}"; the only kind is "${IMPACT_PRIOR_KIND}"`);
+      // `kind` names the enrichment family; the server decides the sources.
+      const family = args.kind ?? IMPACT_PRIOR_KIND;
+      if (family !== IMPACT_PRIOR_KIND) {
+        throw badInput(`Unknown enrichment kind "${family}"; the only kind is "${IMPACT_PRIOR_KIND}"`);
       }
       const horizonYears = args.horizonYears ?? DEFAULT_HORIZON_YEARS;
       if (!Number.isInteger(horizonYears) || horizonYears <= 0) {
@@ -443,67 +455,113 @@ export const taskResolvers = {
       });
       if (!event) throw notFound("Event");
 
-      // One open Task per Event and kind: a second request returns the
-      // existing one unchanged (its requester, team and horizon stay).
-      const openWhere: Prisma.taskWhereInput = {
+      // One open Task per Event and kind: for each source kind, a second
+      // request returns the existing one unchanged (its requester, team and
+      // horizon stay). A kind with no open Task is created below, so a
+      // request made while one source is still working fills in the others.
+      const kinds = env.TASK_IMPACT_PRIOR_KINDS;
+      const openWhere = (kind: string): Prisma.taskWhereInput => ({
         kind,
         subjectType: EVENT_SUBJECT,
         subjectId: event.id,
         status: { in: ["PENDING", "LEASED"] },
-      };
-      const existing = await context.prisma.task.findFirst({ where: openWhere });
-      if (existing) return redactForViewer(existing, user);
-
-      // Per-requester daily cap, enforced here (not merely reported) because
-      // API callers will not self-limit. Counts every Task this requester
-      // created since UTC midnight, whatever became of it. Checked after the
-      // dedupe: handing back an already-open Task costs nothing.
-      const cap = env.TASK_REQUEST_DAILY_CAP;
-      const today = await context.prisma.task.count({
-        where: { requesterId: user.id, createdAt: { gte: utcMidnight(new Date()) } },
       });
-      if (today >= cap) {
-        throw forbidden(
-          `Daily enrichment request cap reached: ${cap} requests per day. Try again after 00:00 UTC.`,
-          "DAILY_CAP",
-        );
+      const byKind = new Map<string, TaskRow>();
+      for (const kind of kinds) {
+        const existing = await context.prisma.task.findFirst({ where: openWhere(kind) });
+        if (existing) byKind.set(kind, existing);
       }
+      const missing = kinds.filter((kind) => !byKind.has(kind));
 
-      let created: TaskRow;
-      try {
-        created = await context.prisma.task.create({
-          data: {
-            kind,
-            subjectType: EVENT_SUBJECT,
-            subjectId: event.id,
-            payload: { horizonYears },
-            // A signed-in person is `user`; an API-key caller is `api`.
-            // Nothing writes `rule` yet.
-            origin: context.authMethod === "api-key" ? "api" : "user",
-            requesterId: user.id,
-            teamId: args.teamId ?? null,
-            maxAttempts: env.TASK_MAX_ATTEMPTS,
-          },
+      if (missing.length > 0) {
+        // Per-requester daily cap, enforced here (not merely reported)
+        // because API callers will not self-limit. Counts the REQUESTS this
+        // requester made since UTC midnight — the Tasks of one request
+        // share a requestId — whatever became of them. Checked after the
+        // dedupe: handing back already-open Tasks costs nothing.
+        const cap = env.TASK_REQUEST_DAILY_CAP;
+        const today = await context.prisma.task.groupBy({
+          by: ["requestId"],
+          where: { requesterId: user.id, createdAt: { gte: utcMidnight(new Date()) } },
         });
-      } catch (e) {
-        // Lost the create race against a concurrent identical request — the
-        // partial unique index (tasks_open_subject_uk) rejected the
-        // duplicate; return the winner instead of queueing the work twice.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-          const winner = await context.prisma.task.findFirst({ where: openWhere });
-          if (winner) return redactForViewer(winner, user);
+        if (today.length >= cap) {
+          throw forbidden(
+            `Daily enrichment request cap reached: ${cap} requests per day. Try again after 00:00 UTC.`,
+            "DAILY_CAP",
+          );
         }
-        throw e;
+
+        // One requestId for the whole fan-out, created atomically: either
+        // every missing kind lands or none does, so a failure midway never
+        // leaves a half-created request that still counts toward the cap.
+        // A unique-index rejection (a concurrent identical request won a
+        // kind) aborts the transaction; the open rows are re-read, the
+        // winners taken, and only the kinds still missing are retried.
+        const requestId = randomUUID();
+        const data = (kind: string): Prisma.taskUncheckedCreateInput => ({
+          kind,
+          subjectType: EVENT_SUBJECT,
+          subjectId: event.id,
+          payload: { horizonYears },
+          requestId,
+          // A signed-in person is `user`; an API-key caller is `api`.
+          // Nothing writes `rule` yet.
+          origin: context.authMethod === "api-key" ? "api" : "user",
+          requesterId: user.id,
+          teamId: args.teamId ?? null,
+          maxAttempts: env.TASK_MAX_ATTEMPTS,
+        });
+        const MAX_FAN_OUT_ATTEMPTS = 3;
+        for (let attempt = 1; ; attempt++) {
+          const toCreate = kinds.filter((kind) => !byKind.has(kind));
+          if (toCreate.length === 0) break;
+          let created: TaskRow[];
+          try {
+            created = await context.prisma.$transaction(async (tx) => {
+              const rows: TaskRow[] = [];
+              for (const kind of toCreate) rows.push(await tx.task.create({ data: data(kind) }));
+              return rows;
+            });
+          } catch (e) {
+            // Lost a create race against a concurrent identical request —
+            // the partial unique index (tasks_open_subject_uk) rejected a
+            // duplicate; take the winners instead of queueing the work twice.
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+              if (attempt >= MAX_FAN_OUT_ATTEMPTS) {
+                // The winner keeps completing before it can be read back:
+                // a client-visible retry beats a raw constraint error.
+                throw conflict("Tasks changed while requesting; retry");
+              }
+              for (const kind of toCreate) {
+                const winner = await context.prisma.task.findFirst({ where: openWhere(kind) });
+                if (winner) byKind.set(kind, winner);
+              }
+              continue;
+            }
+            throw e;
+          }
+          for (const row of created) {
+            byKind.set(row.kind, row);
+            void logActivity(context.prisma, {
+              userId: user.id,
+              action: "task.requested",
+              resourceType: "task",
+              resourceId: row.id,
+              metadata: {
+                kind: row.kind,
+                requestId,
+                subjectType: EVENT_SUBJECT,
+                subjectId: event.id,
+                teamId: args.teamId ?? null,
+                horizonYears,
+              },
+            });
+          }
+        }
       }
 
-      void logActivity(context.prisma, {
-        userId: user.id,
-        action: "task.requested",
-        resourceType: "task",
-        resourceId: created.id,
-        metadata: { kind, subjectType: EVENT_SUBJECT, subjectId: event.id, teamId: args.teamId ?? null, horizonYears },
-      });
-      return created;
+      // In configured order, so a client can rely on it.
+      return kinds.map((kind) => redactForViewer(byKind.get(kind)!, user));
     },
 
     // The acceptance gate (V2). A Worker writes `proposed` only; a named
@@ -730,8 +788,8 @@ export const taskResolvers = {
       return written;
     },
 
-    // Completion: the Task's raw output, optional usage, and for
-    // `event.impact_prior` an optional ImpactPrior proposal. With a proposal
+    // Completion: the Task's raw output, optional usage, and for an
+    // `event.impact_prior.*` Task an optional ImpactPrior proposal. With a proposal
     // the typed row is inserted (state `proposed`) in the same transaction
     // and the outcome is `produced`.
     completeTask: async (
@@ -752,10 +810,10 @@ export const taskResolvers = {
       // left leased until the Worker resubmits or the lease lapses.
       if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const now = new Date();
-      const isImpactPriorTask =
-        task.kind === IMPACT_PRIOR_KIND && task.subjectType === EVENT_SUBJECT;
+      // The bare kind counts too: an old Worker may still hold one.
+      const isImpactPriorTask = isImpactPriorKind(task.kind) && task.subjectType === EVENT_SUBJECT;
       if (args.impactPrior && !isImpactPriorTask) {
-        throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
+        throw badInput(`An ImpactPrior can only complete an "${IMPACT_PRIOR_KIND}" Task, not "${task.kind}"`);
       }
       const usage = args.usage ? validateUsage(args.usage) : null;
       const validity = args.impactPrior ? validateImpactPriorShape(args.impactPrior) : null;
@@ -785,9 +843,9 @@ export const taskResolvers = {
         }
       }
 
-      // For `event.impact_prior`, completing without a proposal means the
-      // Worker looked and found no case: the Task records it, no row is
-      // written, and the Event stays unenriched.
+      // For an `event.impact_prior.*` Task, completing without a proposal
+      // means the Worker looked and found no case: the Task records it, no
+      // row is written, and the Event stays without this source's proposal.
       const outcome = !isImpactPriorTask ? null : args.impactPrior ? "produced" : "no_prior_found";
 
       const completed = await context.prisma.$transaction(async (tx) => {
@@ -805,11 +863,13 @@ export const taskResolvers = {
         // A cancel that landed mid-write won: nothing is produced.
         if (completed.status === "CANCELLED") return completed;
         if (args.impactPrior) {
-          // Supersede, never overwrite: the newest existing ImpactPrior for
-          // the Event (whatever its state) becomes this one's predecessor
-          // and stays as it was.
+          // Supersede, never overwrite — within this source kind: the newest
+          // existing ImpactPrior the same kind produced for the Event
+          // (whatever its state) becomes this one's predecessor and stays as
+          // it was. Another source's proposal is a sibling, not a
+          // predecessor, so parallel Workers' proposals sit side by side.
           const previous = await tx.impactPrior.findFirst({
-            where: { eventId: task.subjectId },
+            where: { eventId: task.subjectId, sourceKind: task.kind },
             orderBy: { createdAt: "desc" },
             select: { id: true },
           });
@@ -817,6 +877,7 @@ export const taskResolvers = {
             data: {
               eventId: task.subjectId,
               taskId: task.id,
+              sourceKind: task.kind,
               supersedesId: previous?.id ?? null,
               hazardType: args.impactPrior.hazardType,
               countryLocationId: args.impactPrior.countryLocationId,

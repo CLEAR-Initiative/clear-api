@@ -1,6 +1,6 @@
 /**
  * Notification fan-out for Task outcomes (ADR-0010, V2). When an
- * `event.impact_prior` Task completes or fails, the requester, the Task's
+ * `event.impact_prior.*` Task completes or fails, the requester, the Task's
  * team analysts (Events have no team; the Task carries the requester's
  * view-scope team) and every platform admin get an in-app notification
  * with a link to the Event page, and an email when they opted in — the
@@ -12,6 +12,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { taskOutcome as taskOutcomeEmail } from "../services/messaging/templates.js";
+import { taskKindLabel } from "../utils/task-kinds.js";
 
 export type TaskOutcomeKind = "completed" | "failed";
 
@@ -61,9 +62,11 @@ export async function taskRecipients(prisma: PrismaClient, task: TaskForNotifica
   return [...byId.values()];
 }
 
-/** The in-app message, in the recipient's terms: what the Task was and how it ended. */
+/** The in-app message, in the recipient's terms: what the Task was, which
+ *  source did it (several Workers propose on one Event, so the recipient
+ *  hears from each) and how it ended. */
 export function taskOutcomeMessage(task: TaskForNotification, outcomeKind: TaskOutcomeKind): string {
-  const what = task.kind === "event.impact_prior" ? "Impact prior" : task.kind;
+  const what = taskKindLabel(task.kind);
   if (outcomeKind === "failed") return `${what} enrichment failed`;
   if (task.outcome === "no_prior_found") return `${what}: no prior found`;
   return `${what} proposed — review it`;

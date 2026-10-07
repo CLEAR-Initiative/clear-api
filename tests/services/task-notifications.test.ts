@@ -74,6 +74,19 @@ describe("taskOutcomeMessage", () => {
     expect(taskOutcomeMessage({ ...TASK, outcome: "no_prior_found" }, "completed")).toBe("Impact prior: no prior found");
     expect(taskOutcomeMessage({ ...TASK, lastError: "x" }, "failed")).toBe("Impact prior enrichment failed");
   });
+
+  it("names the source when the kind has one — several Workers report on one Event", () => {
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.clear" }, "completed")).toBe(
+      "Impact prior from CLEAR data proposed — review it",
+    );
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web", outcome: "no_prior_found" }, "completed")).toBe(
+      "Impact prior from the web: no prior found",
+    );
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.satellite", lastError: "x" }, "failed")).toBe(
+      "Impact prior from satellite enrichment failed",
+    );
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.other", lastError: "x" }, "failed")).toBe("event.other enrichment failed");
+  });
 });
 
 describe("notifyTaskOutcome", () => {
