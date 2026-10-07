@@ -27,7 +27,7 @@ describe("slugifyName", () => {
 describe("renderAdminOrganisations", () => {
   it("lists organisations and shows create form", () => {
     const html = renderAdminOrganisations({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 2,
       organisations: [
         {
@@ -66,7 +66,7 @@ describe("renderAdminOrganisations", () => {
 
   it("renders flash as a bottom-right toast instead of a page banner", () => {
     const html = renderAdminOrganisations({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       organisations: [],
       flash: { kind: "success", message: 'Created "Acme".' },
@@ -83,7 +83,7 @@ describe("renderAdminOrganisations", () => {
 describe("renderAdminOrgDetail", () => {
   it("renders team management and per-team invite forms", () => {
     const html = renderAdminOrgDetail({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       defaultInviteOrgRole: "org_admin",
       org: {
@@ -222,7 +222,7 @@ describe("renderAdminOrgDetail", () => {
 
   it("marks the current org role selected so Update can detect a change", () => {
     const html = renderAdminOrgDetail({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       defaultInviteOrgRole: "member",
       org: {
@@ -254,7 +254,7 @@ describe("renderAdminOrgDetail", () => {
 
   it("sole-team member removal shows org-removal warning", () => {
     const html = renderAdminOrgDetail({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       defaultInviteOrgRole: "member",
       org: {
@@ -300,7 +300,7 @@ describe("renderAdminOrgDetail", () => {
 
   it("multi-team member removal shows team-scoped warning", () => {
     const html = renderAdminOrgDetail({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       defaultInviteOrgRole: "member",
       org: {
