@@ -186,5 +186,7 @@ and web cases were never checked against the Events CLEAR already holds.
   old; no separate "historical" flag. Rejected: routing accepted cases through the Dagster drain
   (its grouping only matches Events active in the last 7 days of wall-clock time, so every
   backdated Signal would open a new Event).
-- Still to land in V4: the case's figures as Estimates (needs the Estimate table); the
-  ImpactPrior computed from accepted history rather than reviewed.
+- The case's figures become Estimates on that Event (method `media_report`, attribution
+  `event_caused`, valid for the incident's date, `sourceSignalId` the case's Signal), insert-only;
+  the same source's figure for the same metric and population group is not written twice.
+- Still to land in V4: the ImpactPrior computed from accepted history rather than reviewed.

@@ -1125,7 +1125,8 @@ export const mutationTypeDef = gql`
     Event that already carries the same URL, else a new historical Event
     dated to the incident. A Signal with the same URL already in CLEAR is
     reused, not duplicated. Historical Events never alert: their newest
-    Signal is the incident's date. The returned case carries
+    Signal is the incident's date. The case's figures become Estimates on
+    that Event (\`media_report\`, \`event_caused\`). The returned case carries
     \`resultSignalId\` and \`resultEventId\`.
 
     Rejecting keeps the case, so its URL is never proposed again for that

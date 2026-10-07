@@ -24,8 +24,19 @@ export const WEB_ENRICHMENT_SOURCE = "web_enrichment";
  *  window the pipeline gives a new Event. */
 const HISTORICAL_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const TITLE_MAX = 200;
+/** The Domain Ontology version whose metric definitions a case's figures use. */
+const DEFINITION_VERSION = "0.3.0";
 
 type Tx = Prisma.TransactionClient;
+
+export interface CaseFigure {
+  metric: string;
+  value: number;
+  lowerBound?: number;
+  upperBound?: number;
+  unit?: string;
+  populationGroup?: string;
+}
 
 export interface AcceptedCase {
   id: string;
@@ -37,6 +48,8 @@ export interface AcceptedCase {
   hazardType: string;
   matchedEventId: string | null;
   methodVersion: string;
+  /** Validated at proposal: ontology metrics, ordered bounds. */
+  figures: unknown;
 }
 
 export interface AcceptanceResult {
@@ -138,10 +151,60 @@ async function isSameIncidentContext(
  *   times to cover the incident but never moves them inward, so a backdated
  *   Signal cannot make a live Event look stale.
  *
+ * The case's figures become Estimates on that Event.
+ *
  * The case row, not the Signal, is the audit record of the decision (who,
  * when, why, the quote): a reused Signal keeps the details it was ingested
  * with.
  */
+/**
+ * The case's figures as Estimates on the Event it now sits on (the Domain
+ * Ontology's Estimate): method `media_report` (a figure a published source
+ * states), attribution `event_caused` (a case is an incident's own toll),
+ * valid for the date the incident happened. Insert-only — Estimates are
+ * never updated. A figure already recorded for that Event from the same
+ * source, metric and population group is not written twice.
+ */
+async function writeCaseEstimates(
+  tx: Tx,
+  c: AcceptedCase,
+  target: { eventId: string; signalId: string },
+  opts: { userId: string; now: Date },
+): Promise<number> {
+  const figures = Array.isArray(c.figures) ? (c.figures as CaseFigure[]) : [];
+  let written = 0;
+  for (const f of figures) {
+    const populationGroup = f.populationGroup ?? null;
+    const metric = f.metric as Prisma.estimateCreateManyInput["metric"];
+    const already = await tx.estimate.findFirst({
+      where: { eventId: target.eventId, sourceUrl: c.sourceUrl, metric, populationGroup },
+      select: { id: true },
+    });
+    if (already) continue;
+    await tx.estimate.create({
+      data: {
+        eventId: target.eventId,
+        metric,
+        populationGroup,
+        value: f.value,
+        unit: f.unit ?? null,
+        lowerBound: f.lowerBound ?? null,
+        upperBound: f.upperBound ?? null,
+        method: "media_report",
+        attribution: "event_caused",
+        validFor: c.occurredAt,
+        estimatedAt: opts.now,
+        sourceSignalId: target.signalId,
+        sourceUrl: c.sourceUrl,
+        definitionVersion: DEFINITION_VERSION,
+        createdById: opts.userId,
+      },
+    });
+    written++;
+  }
+  return written;
+}
+
 export async function acceptCase(
   tx: Tx,
   c: AcceptedCase,
@@ -180,6 +243,7 @@ export async function acceptCase(
     if (c.occurredAt < existing.firstSignalCreatedAt) widen.firstSignalCreatedAt = c.occurredAt;
     if (c.occurredAt > existing.lastSignalCreatedAt) widen.lastSignalCreatedAt = c.occurredAt;
     if (Object.keys(widen).length > 0) await tx.events.update({ where: { id: existing.id }, data: widen });
+    await writeCaseEstimates(tx, c, { eventId: existing.id, signalId }, opts);
     return { signalId, eventId: existing.id, createdEvent: false };
   }
 
@@ -200,5 +264,6 @@ export async function acceptCase(
     },
     select: { id: true },
   });
+  await writeCaseEstimates(tx, c, { eventId: event.id, signalId }, opts);
   return { signalId, eventId: event.id, createdEvent: true };
 }
