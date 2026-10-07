@@ -918,7 +918,11 @@ export const mutationTypeDef = gql`
     descriptionSignals: JSON
     validFrom: String
     validTo: String
+    """ISO-8601. Only ever moves earlier: a value later than the stored one is
+    ignored."""
     firstSignalCreatedAt: String
+    """ISO-8601. Only ever moves later: a value earlier than the stored one is
+    ignored, so an out-of-order signal can't pull it back."""
     lastSignalCreatedAt: String
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""

@@ -3176,11 +3176,13 @@ caller from its own price table.</p><table class="ref-table"><thead><tr><th>Fiel
   </tr><tr>
     <td><code>firstSignalCreatedAt</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>ISO-8601. Only ever moves earlier: a value later than the stored one is
+ignored.</td>
   </tr><tr>
     <td><code>lastSignalCreatedAt</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>ISO-8601. Only ever moves later: a value earlier than the stored one is
+ignored, so an out-of-order signal can't pull it back.</td>
   </tr><tr>
     <td><code>startedAt</code></td>
     <td><code>String</code></td>

@@ -21,7 +21,9 @@
  *                           BigInt population conversion + undefined defaults;
  *                           signalEvents dedupe; activity log fire.
  *   Mutation.updateEvent  — requireRole gate, NOT_FOUND, additive/idempotent
- *                           signal linking (only unlinked ids created).
+ *                           signal linking (only unlinked ids created);
+ *                           signal-time bounds written via conditional
+ *                           updateMany (behaviour: event.db.test.ts).
  *   Mutation.deleteEvent  — admin-only gate, NOT_FOUND, delete call.
  *   Mutation.escalateEvent— requireRole gate, NOT_FOUND, skip-alert-when-exists,
  *                           idempotent escalation upsert.
@@ -98,8 +100,10 @@ function buildContext(
   locale: "en" | "ar" | "fr" = "en",
   translationLoader: { load: ReturnType<typeof vi.fn> } = { load: vi.fn() },
 ): Context {
+  // Interactive transactions run their callback against the same stubs.
+  const prismaWithTx = { $transaction: (fn: (tx: unknown) => unknown) => fn(prismaWithTx), ...prisma };
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: prismaWithTx as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -404,6 +408,47 @@ describe("Mutation.updateEvent", () => {
     expect(data.populationDisplaced).toBe(BigInt(50));
     expect(data.title).toBe("New");
     expect(data.casualties).toBeUndefined();
+  });
+
+  it("widens the signal-time bounds with conditional updateMany, never in the main update", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "e1" });
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }), update, updateMany },
+    });
+    const first = "2026-05-01T00:00:00.000Z";
+    const last = "2026-05-03T00:00:00.000Z";
+    await updateEvent(
+      null,
+      { id: "e1", input: { firstSignalCreatedAt: first, lastSignalCreatedAt: last } },
+      ctx,
+    );
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "e1", lastSignalCreatedAt: { lt: new Date(last) } },
+      data: { lastSignalCreatedAt: new Date(last) },
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "e1", firstSignalCreatedAt: { gt: new Date(first) } },
+      data: { firstSignalCreatedAt: new Date(first) },
+    });
+    // The bounds land before the main update, so its returned row has them.
+    expect(updateMany.mock.invocationCallOrder[1]).toBeLessThan(update.mock.invocationCallOrder[0]);
+    const data = update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("firstSignalCreatedAt");
+    expect(data).not.toHaveProperty("lastSignalCreatedAt");
+  });
+
+  it("skips the bound writes when neither timestamp is supplied", async () => {
+    const updateMany = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      events: {
+        findUnique: vi.fn().mockResolvedValue({ id: "e1" }),
+        update: vi.fn().mockResolvedValue({ id: "e1" }),
+        updateMany,
+      },
+    });
+    await updateEvent(null, { id: "e1", input: { title: "New" } }, ctx);
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });
 
