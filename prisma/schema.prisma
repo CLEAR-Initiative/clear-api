@@ -2303,7 +2303,8 @@ enum EstimateAttribution {
 /// axes. Never overwritten — a correction is a new row whose `supersedesId`
 /// points at the one it replaces; the sequence over time is the measurement.
 /// The migration enforces `lowerBound ≤ value ≤ upperBound` where bounds are
-/// present (CHECK) and immutability (trigger `estimates_immutable`).
+/// present (CHECK), immutability (trigger `estimates_immutable`) and that a
+/// correction is of the same figure (trigger `estimates_supersede_same_figure`).
 model estimate {
   id      String @id @default(cuid())
   eventId String @map("event_id")
@@ -2329,10 +2330,13 @@ model estimate {
   sourceSignalId String? @map("source_signal_id")
   sourceUrl      String? @map("source_url")
 
-  /// The Estimate this one corrects. Unique: an Estimate is superseded at
-  /// most once, so the history of a figure is a chain, not a tree.
+  /// The Estimate this one corrects: same Event, metric and population
+  /// group. Unique: an Estimate is superseded at most once, so the history
+  /// of a figure is a chain, not a tree. NoAction, never SetNull: clearing
+  /// the link would make the corrected figure current again. A chain lives
+  /// on one Event, so the Event cascade removes it whole.
   supersedesId String?   @unique @map("supersedes_id")
-  supersedes   estimate? @relation("EstimateSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersedes   estimate? @relation("EstimateSupersedes", fields: [supersedesId], references: [id], onDelete: NoAction)
   supersededBy estimate? @relation("EstimateSupersedes")
 
   /// The ontology version whose definitions the figure was made under, so

@@ -166,6 +166,49 @@ describeIfDb("Estimates against the real schema", () => {
     expect((await estimateResolvers.Estimate.supersedes(second, {}, VIEWER))?.id).toBe(first.id);
   });
 
+  it("never clears a link by hand: supersedes, source Signal and creator stay put", async () => {
+    const source = await prisma.dataSources.create({ data: { name: `${RUN}-source-2`, type: "test" } });
+    const signal = await prisma.signals.create({ data: { sourceId: source.id, rawData: {}, publishedAt: AT } });
+    const first = await prisma.estimate.create({ data: figure(eventId, { metric: "people_in_need" }) });
+    const second = await prisma.estimate.create({
+      data: figure(eventId, { metric: "people_in_need", supersedesId: first.id, sourceSignalId: signal.id }),
+    });
+    // Clearing supersedes_id would make the corrected figure current again.
+    for (const data of [{ supersedesId: null }, { sourceSignalId: null }]) {
+      expect(await refusal(prisma.estimate.update({ where: { id: second.id }, data }))).toMatch(/never overwritten/);
+    }
+    const after = await prisma.estimate.findUniqueOrThrow({ where: { id: second.id } });
+    expect(after).toMatchObject({ supersedesId: first.id, sourceSignalId: signal.id });
+    // A superseded Estimate can't be deleted out from under its correction.
+    expect(await refusal(prisma.estimate.delete({ where: { id: first.id } }))).toMatch(/supersedes_id_fkey|Foreign key/);
+    await prisma.estimate.deleteMany({ where: { id: { in: [second.id, first.id] } } });
+    await prisma.signals.delete({ where: { id: signal.id } });
+    await prisma.dataSources.delete({ where: { id: source.id } });
+  });
+
+  it("supersedes only the same figure: same Event, metric and population group", async () => {
+    const elsewhere = await createEvent();
+    const base = await prisma.estimate.create({ data: figure(eventId, { metric: "people_reached", populationGroup: "IDP" }) });
+    const crossings = [
+      figure(elsewhere, { metric: "people_reached", populationGroup: "IDP" }),
+      figure(eventId, { metric: "people_targeted", populationGroup: "IDP" }),
+      figure(eventId, { metric: "people_reached", populationGroup: "refugee" }),
+      figure(eventId, { metric: "people_reached" }),
+    ];
+    for (const data of crossings) {
+      expect(await refusal(prisma.estimate.create({ data: { ...data, supersedesId: base.id } }))).toMatch(
+        /same event, metric and population group/,
+      );
+    }
+    expect(
+      await refusal(prisma.estimate.create({ data: figure(eventId, { supersedesId: `${RUN}-missing` }) })),
+    ).toMatch(/does not exist|Foreign key constraint/);
+    const ok = await prisma.estimate.create({
+      data: figure(eventId, { metric: "people_reached", populationGroup: "IDP", supersedesId: base.id, value: 1500 }),
+    });
+    expect(ok.supersedesId).toBe(base.id);
+  });
+
   it("lets ON DELETE SET NULL through the trigger: deleting the source Signal keeps the figure", async () => {
     const source = await prisma.dataSources.create({ data: { name: `${RUN}-source`, type: "test" } });
     const signal = await prisma.signals.create({

@@ -42,7 +42,7 @@ CREATE INDEX "estimates_event_id_metric_estimated_at_idx" ON "estimates"("event_
 CREATE INDEX "estimates_source_signal_id_idx" ON "estimates"("source_signal_id");
 
 -- AddForeignKey
-ALTER TABLE "estimates" ADD CONSTRAINT "estimates_supersedes_id_fkey" FOREIGN KEY ("supersedes_id") REFERENCES "estimates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "estimates" ADD CONSTRAINT "estimates_supersedes_id_fkey" FOREIGN KEY ("supersedes_id") REFERENCES "estimates"("id") ON DELETE NO ACTION ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "estimates" ADD CONSTRAINT "estimates_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "events"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -64,24 +64,27 @@ ALTER TABLE "estimates" ADD CONSTRAINT "estimates_bounds_check" CHECK (
 );
 
 -- Never overwrite an Estimate: a correction is a new row whose
--- `supersedes_id` points at this one. The only UPDATEs allowed are the
--- foreign keys' ON DELETE SET NULL actions (a deleted Signal, user or
--- superseded Estimate), so the three nullable references may change to NULL
--- and nothing else may change at all.
+-- `supersedes_id` points at this one. Nothing may change on an existing row,
+-- `supersedes_id` included (clearing it would make the corrected figure
+-- current again). The one exception is the ON DELETE SET NULL actions of the
+-- `source_signal_id` and `created_by_id` foreign keys when that Signal or
+-- user is deleted: those run inside the RI trigger, so pg_trigger_depth() is
+-- above 1, whereas a direct UPDATE fires this trigger at depth 1.
 CREATE FUNCTION "estimates_immutable"() RETURNS trigger AS $$
 BEGIN
   IF (NEW."id", NEW."event_id", NEW."metric", NEW."population_group", NEW."value",
       NEW."unit", NEW."lower_bound", NEW."upper_bound", NEW."method",
       NEW."attribution", NEW."valid_for", NEW."estimated_at", NEW."is_ground_truth",
-      NEW."source_url", NEW."definition_version", NEW."created_at")
+      NEW."source_url", NEW."supersedes_id", NEW."definition_version", NEW."created_at")
      IS DISTINCT FROM
      (OLD."id", OLD."event_id", OLD."metric", OLD."population_group", OLD."value",
       OLD."unit", OLD."lower_bound", OLD."upper_bound", OLD."method",
       OLD."attribution", OLD."valid_for", OLD."estimated_at", OLD."is_ground_truth",
-      OLD."source_url", OLD."definition_version", OLD."created_at")
-     OR (NEW."source_signal_id" IS NOT NULL AND NEW."source_signal_id" IS DISTINCT FROM OLD."source_signal_id")
-     OR (NEW."created_by_id" IS NOT NULL AND NEW."created_by_id" IS DISTINCT FROM OLD."created_by_id")
-     OR (NEW."supersedes_id" IS NOT NULL AND NEW."supersedes_id" IS DISTINCT FROM OLD."supersedes_id")
+      OLD."source_url", OLD."supersedes_id", OLD."definition_version", OLD."created_at")
+     OR (NEW."source_signal_id" IS DISTINCT FROM OLD."source_signal_id"
+         AND (NEW."source_signal_id" IS NOT NULL OR pg_trigger_depth() <= 1))
+     OR (NEW."created_by_id" IS DISTINCT FROM OLD."created_by_id"
+         AND (NEW."created_by_id" IS NOT NULL OR pg_trigger_depth() <= 1))
   THEN
     RAISE EXCEPTION 'estimates are never overwritten: insert a new row with supersedes_id = %', OLD."id"
       USING ERRCODE = 'check_violation';
@@ -93,6 +96,36 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "estimates_immutable"
   BEFORE UPDATE ON "estimates"
   FOR EACH ROW EXECUTE FUNCTION "estimates_immutable"();
+
+-- A correction is of the same figure: same Event, metric and population
+-- group as the Estimate it supersedes. Otherwise it would retire a figure
+-- it does not replace, and `Event.estimates(current: true)` would drop it.
+-- The superseded row is immutable, so this check cannot go stale.
+CREATE FUNCTION "estimates_supersede_same_figure"() RETURNS trigger AS $$
+DECLARE
+  prev RECORD;
+BEGIN
+  IF NEW."supersedes_id" IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT "event_id", "metric", "population_group" INTO prev
+    FROM "estimates" WHERE "id" = NEW."supersedes_id";
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'estimate % supersedes %, which does not exist', NEW."id", NEW."supersedes_id"
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+  IF (prev."event_id", prev."metric", prev."population_group")
+     IS DISTINCT FROM (NEW."event_id", NEW."metric", NEW."population_group") THEN
+    RAISE EXCEPTION 'an estimate can only supersede one of the same event, metric and population group (supersedes %)', NEW."supersedes_id"
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "estimates_supersede_same_figure"
+  BEFORE INSERT ON "estimates"
+  FOR EACH ROW EXECUTE FUNCTION "estimates_supersede_same_figure"();
 
 -- ─── One-off backfill from the Event scalars ─────────────────────────────
 --
