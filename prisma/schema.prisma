@@ -109,6 +109,7 @@ model user {
   /// Signals this person submitted (the Domain Ontology's `submitted_by_user`).
   submittedSignals      signals[]               @relation("SignalSubmittedBy")
   agentWorkingMemory    agentWorkingMemory?
+  estimatesCreated      estimate[]              @relation("EstimateCreatedBy")
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -669,6 +670,7 @@ model signals {
   signalEvents  signalEvents[]
 
   signalLocationChallenges signalLocationChallenges[]
+  estimates                estimate[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
@@ -753,6 +755,11 @@ model events {
   populationDisplaced   BigInt?                 @map("population_displaced")
   /// Aggregated casualties for this event (max across constituent signals).
   casualties            Int?
+  /// Figures for this Event in the Domain Ontology's shape. The three loose
+  /// scalars above were backfilled into it once (population affected and
+  /// displaced; casualties has no ontology metric yet) and are still written
+  /// by the pipeline.
+  estimates             estimate[]
   rank                  Float
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]
@@ -2262,6 +2269,105 @@ model agentWorkingMemory {
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agent_working_memory")
+}
+
+// ─── Estimates (CLEAR Domain Ontology v0.3.0) ──────────────────────────────
+
+/// The seven distinct figures the sector routinely conflates (the ontology's
+/// Metric types). Keeping them apart is the point; a new one is an ontology
+/// change first.
+enum EstimateMetric {
+  people_affected
+  people_displaced_new
+  people_displaced_cumulative
+  people_in_need
+  people_targeted
+  people_reached
+  households_affected
+}
+
+/// How a figure was arrived at (the ontology's Estimate methods).
+enum EstimateMethod {
+  exposure_model
+  model_inference
+  rapid_assessment
+  formal_assessment
+  registration
+  field_staff_judgement
+  partner_or_cluster_figure
+  prior_caseload_analogue
+  government_figure
+  media_report
+  not_documented
+}
+
+/// Whether a figure counts need caused by the Event, need that existed
+/// beforehand, or both. Required: conflating the two claims credit for
+/// baseline conditions.
+enum EstimateAttribution {
+  event_caused
+  pre_existing
+  combined
+}
+
+/// A figure for one metric on an Event (the CLEAR Domain Ontology's
+/// Estimate): its value and bounds, how it was arrived at, and both time
+/// axes. Never overwritten — a correction is a new row whose `supersedesId`
+/// points at the one it replaces; the sequence over time is the measurement.
+/// The migration enforces `lowerBound ≤ value ≤ upperBound` where bounds are
+/// present (CHECK), immutability (trigger `estimates_immutable`) and that a
+/// correction is of the same figure (trigger `estimates_supersede_same_figure`).
+model estimate {
+  id      String @id @default(cuid())
+  eventId String @map("event_id")
+
+  metric          EstimateMetric
+  /// IDP, refugee, returnee, host community, non-displaced affected.
+  populationGroup String?             @map("population_group")
+  value           Float
+  /// e.g. `people`, `households`.
+  unit            String?
+  lowerBound      Float?              @map("lower_bound")
+  upperBound      Float?              @map("upper_bound")
+  method          EstimateMethod
+  attribution     EstimateAttribution
+
+  /// The date the figure describes (valid time).
+  validFor      DateTime @map("valid_for")
+  /// When the figure was made (transaction time).
+  estimatedAt   DateTime @map("estimated_at")
+  /// True for verified figures used to score earlier estimates.
+  isGroundTruth Boolean  @default(false) @map("is_ground_truth")
+
+  sourceSignalId String? @map("source_signal_id")
+  sourceUrl      String? @map("source_url")
+
+  /// The Estimate this one corrects: same Event, metric and population
+  /// group. Unique: an Estimate is superseded at most once, so the history
+  /// of a figure is a chain, not a tree. NoAction, never SetNull: clearing
+  /// the link would make the corrected figure current again. A chain lives
+  /// on one Event, so the Event cascade removes it whole.
+  supersedesId String?   @unique @map("supersedes_id")
+  supersedes   estimate? @relation("EstimateSupersedes", fields: [supersedesId], references: [id], onDelete: NoAction)
+  supersededBy estimate? @relation("EstimateSupersedes")
+
+  /// The ontology version whose definitions the figure was made under, so
+  /// figures stay interpretable if a metric is redefined.
+  definitionVersion String  @map("definition_version")
+  /// Null for system-written rows (the backfill, pipelines).
+  createdById       String? @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Cascade: an Estimate's subject is its Event; `deleteEvent` (admin)
+  /// must keep working for the Events the backfill gave figures to.
+  event        events   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sourceSignal signals? @relation(fields: [sourceSignalId], references: [id], onDelete: SetNull)
+  createdBy    user?    @relation("EstimateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([eventId, metric, estimatedAt])
+  @@index([sourceSignalId])
+  @@map("estimates")
 }
 
 // ─── Tasks and Workers (ADR-0010) ──────────────────────────────────────────
