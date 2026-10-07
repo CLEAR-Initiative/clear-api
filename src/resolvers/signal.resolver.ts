@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireNonWorkerContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -637,7 +637,7 @@ export const signalResolvers = {
       { input }: { input: SubmitLocationChallengeInput },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireNonWorkerContentReader(context);
 
       // 1. Signal must exist. (Team scope is a view filter, not a hard access
       //    gate here — mirrors the signal(id) / signals queries.)

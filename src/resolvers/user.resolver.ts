@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import {
-  requireAuth,
+  requireNonWorker,
   requireRole,
   canSeeUserPii,
   canSeeUserPrivate,
@@ -51,7 +51,7 @@ export const userResolvers = {
       args: { input: UpdateProfileInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { input } = args;
 
       const data: Record<string, string | boolean> = {};

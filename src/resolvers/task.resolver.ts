@@ -20,10 +20,11 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
   isPlatformAdmin,
-  requireAuth,
   requireContentReader,
+  requireNonWorker,
   requireRole,
   requireTeamContentWriter,
+  WORKER_ROLE,
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
@@ -32,7 +33,6 @@ import { notifyTaskOutcome } from "../services/task-notifications.js";
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
 const EVENT_SUBJECT = "event";
 const DEFAULT_HORIZON_YEARS = 10;
-const WORKER_ROLE = "worker";
 const DECIDER_ROLES = ["admin", "analyst"];
 const MAX_RATIONALE_LENGTH = 4000;
 /** A Worker's error is stored and emailed; cap it so neither bloats. */
@@ -117,8 +117,25 @@ function validateUsage(usage: TaskUsageInput): TaskUsageInput {
   return { ...usage, model };
 }
 
-/** Shape checks on an ImpactPrior proposal that need no database. */
-function validateImpactPriorShape(input: ImpactPriorInput): void {
+/** A DateTime input as a valid Date. The scalar's parseValue is
+ *  `new Date(value)`, so an unparseable string arrives as an Invalid Date —
+ *  which compares false against anything and makes Prisma throw on write.
+ *  The original string is gone by now, so this checks validity, not ISO 8601
+ *  form; the message says so (strict ISO would mean changing the shared
+ *  scalar for every DateTime input). */
+function parseDateTimeInput(value: Date, field: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw badInput(`impactPrior.${field} must be a valid date-time, e.g. 2026-01-01T00:00:00Z`);
+  }
+  return date;
+}
+
+/** Shape checks on an ImpactPrior proposal that need no database. Returns
+ *  the parsed validity window. */
+function validateImpactPriorShape(
+  input: ImpactPriorInput,
+): { validFrom: Date | null; validTo: Date | null } {
   if (!GEOGRAPHIC_SCOPES.has(input.geographicScope)) {
     throw badInput('impactPrior.geographicScope must be "district" or "country"');
   }
@@ -132,9 +149,12 @@ function validateImpactPriorShape(input: ImpactPriorInput): void {
     throw badInput("impactPrior.basis must list exactly one entry per case");
   }
   if (!input.methodVersion?.trim()) throw badInput("impactPrior.methodVersion is required");
-  if (input.validFrom && input.validTo && input.validTo < input.validFrom) {
+  const validFrom = input.validFrom == null ? null : parseDateTimeInput(input.validFrom, "validFrom");
+  const validTo = input.validTo == null ? null : parseDateTimeInput(input.validTo, "validTo");
+  if (validFrom && validTo && validTo.getTime() < validFrom.getTime()) {
     throw badInput("impactPrior.validTo must not precede validFrom");
   }
+  return { validFrom, validTo };
 }
 
 const notFound = (what: string) =>
@@ -528,7 +548,7 @@ export const taskResolvers = {
     // LEASED is flagged and the Worker finishes it at its next heartbeat,
     // completion or failure (a claim never hands out a flagged Task).
     cancelTask: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const task = await context.prisma.task.findUnique({ where: { id: args.id } });
       if (!task) throw notFound("Task");
       if (!isPlatformAdmin(user) && task.requesterId !== user.id) {
@@ -692,9 +712,11 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
+      // A requested cancel wins regardless of what the Worker brought back:
+      // the requester's decision stands, and the payload is discarded.
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const error = args.error.trim().slice(0, MAX_ERROR_LENGTH);
       if (!error) throw badInput("error must not be empty");
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const exhausted = task.attempts >= task.maxAttempts;
       const written = await writeAsLeaseOwner(context.prisma, task.id, user.id, args.leaseToken, {
         lastError: error,
@@ -725,6 +747,10 @@ export const taskResolvers = {
     ) => {
       const task = await requireLeaseOwner(context, args.id, args.leaseToken);
       const user = context.user!;
+      // A requested cancel wins regardless of what the Worker brought back,
+      // even a malformed proposal: the Task is CANCELLED now rather than
+      // left leased until the Worker resubmits or the lease lapses.
+      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
       const now = new Date();
       const isImpactPriorTask =
         task.kind === IMPACT_PRIOR_KIND && task.subjectType === EVENT_SUBJECT;
@@ -732,8 +758,7 @@ export const taskResolvers = {
         throw badInput(`An ImpactPrior can only complete a "${IMPACT_PRIOR_KIND}" Task`);
       }
       const usage = args.usage ? validateUsage(args.usage) : null;
-      if (args.impactPrior) validateImpactPriorShape(args.impactPrior);
-      if (task.cancelRequestedAt) return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
+      const validity = args.impactPrior ? validateImpactPriorShape(args.impactPrior) : null;
 
       // The proposal must describe THIS Event: its hazard is one of the
       // Event's types and its country is the Event's. A Worker that found
@@ -803,8 +828,8 @@ export const taskResolvers = {
               upperBound: args.impactPrior.upperBound ?? null,
               numberOfCases: args.impactPrior.numberOfCases,
               basis: args.impactPrior.basis,
-              validFrom: args.impactPrior.validFrom ?? null,
-              validTo: args.impactPrior.validTo ?? null,
+              validFrom: validity?.validFrom ?? null,
+              validTo: validity?.validTo ?? null,
               methodVersion: args.impactPrior.methodVersion,
             },
           });

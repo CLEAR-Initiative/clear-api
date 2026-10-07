@@ -24,6 +24,7 @@ import { env } from "../utils/env.js";
 import {
   canSeeUserPrivate,
   requireContentReader,
+  requireNonWorkerContentReader,
   requireRole,
 } from "../utils/auth-guard.js";
 
@@ -187,7 +188,9 @@ function assertId(id: string, what: string): void {
  * API key alone, or the owner's session alone, is not enough.
  */
 function requireConversationWriter(context: Context): User {
-  const user = requireContentReader(context);
+  // The worker role is refused by role, not only by the auth-method check
+  // below, so a change to how the Agent authenticates can never admit it.
+  const user = requireNonWorkerContentReader(context);
   if (context.authMethod !== "session" || !context.viaAgent) {
     throw forbidden("Conversations are written only by the CLEAR Agent in the app");
   }

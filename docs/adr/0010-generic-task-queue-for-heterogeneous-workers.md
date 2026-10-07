@@ -64,7 +64,10 @@ queue without taking each other's work.
   as it could mark signals processed or crises enriched. `worker` can claim,
   heartbeat, complete and fail only Tasks it holds, write nothing but
   `proposed` ImpactPriors, and read content like any approved user. That
-  narrow role is the compensating control for unattended Workers.
+  narrow role is the compensating control for unattended Workers. Every
+  other mutation rejects it up front (`requireNonWorker` /
+  `requireNonWorkerContentReader`), and `tests/schema/worker-write-scope.test.ts`
+  walks the whole Mutation type so a new one can't widen it.
 - The Dagster drain shape (poll sensor, Redis single-flight, batch loop) stays
   and gains a reusable claim/complete helper so a new kind is a handler, not a
   module.

@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireNonWorker } from "../utils/auth-guard.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
 // Valid team-member roles. Legacy values (lead/analyst/viewer) were folded
@@ -86,7 +86,7 @@ export const teamResolvers = {
       args: { input: CreateTeamInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       await requireOrgAdminForTeam(
         context.prisma,
         user,
@@ -114,7 +114,7 @@ export const teamResolvers = {
       args: { id: string; input: UpdateTeamInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.id },
       });
@@ -142,7 +142,7 @@ export const teamResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.id },
       });
@@ -163,7 +163,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string; role?: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -218,7 +218,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -261,7 +261,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string; role: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -306,7 +306,7 @@ export const teamResolvers = {
       args: { teamId: string; locationIds: string[] },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -343,7 +343,7 @@ export const teamResolvers = {
       args: { teamId: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       // Verify team exists
       const team = await context.prisma.teams.findUnique({

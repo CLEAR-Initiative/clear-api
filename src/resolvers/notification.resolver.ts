@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { NotificationStatus, PrismaClient } from "../generated/prisma/client.js";
-import { requireAuth, requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification, alertDigest } from "../services/messaging/templates.js";
@@ -490,7 +490,7 @@ export const notificationResolvers = {
       return result.count;
     },
     deleteNotification: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const notification = await context.prisma.notifications.findUnique({
         where: { id: args.id },
@@ -506,7 +506,7 @@ export const notificationResolvers = {
       return true;
     },
     markNotificationRead: async (_parent: unknown, args: { id: string }, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const notification = await context.prisma.notifications.findUnique({
         where: { id: args.id },
@@ -524,7 +524,7 @@ export const notificationResolvers = {
       });
     },
     markAllNotificationsRead: async (_parent: unknown, _args: unknown, context: Context) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       await context.prisma.notifications.updateMany({
         where: { userId: user.id, status: { not: "READ" } },

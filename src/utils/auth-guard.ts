@@ -54,16 +54,17 @@ export const TEAM_CONTENT_WRITER_ROLES: ReadonlySet<string> = new Set([
  *      role (currently: any team membership) on it → allowed.
  *   4. Everything else → FORBIDDEN.
  *
- * A viewer with no team membership and anyone whose only role is
- * `pending` are rejected. Returns the authenticated user so the caller
- * can attribute activity, and `via` so an audit log can distinguish
- * global from team-scoped writes.
+ * A viewer with no team membership, anyone whose only role is `pending`,
+ * and the `worker` role (even with a team membership) are rejected.
+ * Returns the authenticated user so the caller can attribute activity,
+ * and `via` so an audit log can distinguish global from team-scoped
+ * writes.
  */
 export async function requireTeamContentWriter(
   context: Context,
   teamId?: string | null,
 ): Promise<{ user: NonNullable<Context["user"]>; via: "global" | "team" }> {
-  const user = requireAuth(context);
+  const user = requireNonWorker(context);
   if (isPlatformAdmin(user) || user.role === "analyst") {
     return { user, via: "global" };
   }
@@ -103,9 +104,10 @@ export function requireRole(context: Context, roles: string[]) {
  *
  * `worker` is the narrow service role a Task Worker runs as (ADR-0010):
  * it reads content like any approved user so it can research its Task,
- * and its only writes are the Task mutations on Tasks it holds — every
- * write guard is an explicit `requireRole` list, so admitting it here
- * opens nothing else. `pipeline` and `agent` are deliberately not here.
+ * and its only writes are the Task mutations on Tasks it holds. This gate
+ * admits it, so a mutation must never rely on it alone — use
+ * `requireNonWorkerContentReader` for writes. `pipeline` and `agent` are
+ * deliberately not here.
  *
  * Use this on every content-read resolver (signals, events, alerts,
  * crises and their by-location / by-id variants). Pending users still
@@ -132,6 +134,36 @@ export function requireContentReader(context: Context) {
     );
   }
   return user;
+}
+
+/** The Task Worker service role (ADR-0010). */
+export const WORKER_ROLE = "worker";
+
+function rejectWorker<U extends { role?: string | null }>(user: U): U {
+  if (user.role === WORKER_ROLE) {
+    throw new GraphQLError("The worker role may only call the Task mutations", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+  return user;
+}
+
+/**
+ * `requireAuth` for writes. A Task Worker's key lives in an unattended,
+ * prompt-injectable routine, so its write surface is exactly the four Task
+ * mutations (claim / heartbeat / complete / fail) — every other mutation a
+ * signed-in caller can reach uses this or `requireNonWorkerContentReader`
+ * instead of the bare gates. Call it first, before any lookup, so a worker
+ * learns nothing about the target. tests/schema/worker-write-scope.test.ts
+ * fails any new mutation that lets the worker role through.
+ */
+export function requireNonWorker(context: Context) {
+  return rejectWorker(requireAuth(context));
+}
+
+/** `requireContentReader` for writes: approved tier, minus the worker role. */
+export function requireNonWorkerContentReader(context: Context) {
+  return rejectWorker(requireContentReader(context));
 }
 
 /**
