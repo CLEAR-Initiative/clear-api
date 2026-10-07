@@ -18,7 +18,7 @@
  *   bun run scripts/create-worker-user.ts --new-key  # rotate: mint a fresh key
  *
  * Env overrides:
- *   WORKER_USER_EMAIL  (default "worker@clear.dev")
+ *   WORKER_USER_EMAIL  (default "worker@clearinitiative.io")
  *   WORKER_USER_NAME   (default "CLEAR Worker")
  */
 import "dotenv/config";
@@ -26,7 +26,7 @@ import { prisma } from "../src/lib/prisma.js";
 import { generateApiKey } from "../src/utils/api-key.js";
 
 const WORKER_ROLE = "worker";
-const email = process.env.WORKER_USER_EMAIL ?? "worker@clear.dev";
+const email = process.env.WORKER_USER_EMAIL ?? "worker@clearinitiative.io";
 const name = process.env.WORKER_USER_NAME ?? "CLEAR Worker";
 const rotate = process.argv.includes("--new-key");
 

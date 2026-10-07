@@ -19,7 +19,7 @@ describe("HTML surfaces use the shared icon links", () => {
     for (const html of [
       renderHomePage(),
       renderLoginPage(),
-      renderPortal({ userEmail: "admin@clear.dev", userRole: "admin" }),
+      renderPortal({ userEmail: "admin@clearinitiative.io", userRole: "admin" }),
     ]) {
       expect(html).toContain('href="/favicon.ico"');
       expect(html).toContain('href="/apple-touch-icon.png"');

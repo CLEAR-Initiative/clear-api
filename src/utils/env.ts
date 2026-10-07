@@ -121,7 +121,7 @@ const envSchema = z.object({
   S3_ENDPOINT: z.string().optional(),
 
   // Global admin seed (env overrides seed defaults)
-  ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
+  ADMIN_EMAIL: z.string().email().default("admin@clearinitiative.io"),
   ADMIN_PASSWORD: z.string().min(8).default("password123"),
 
   // ─── Exponential CRM integration ─────────────────────────────────────

@@ -227,12 +227,12 @@ describe("UI polish smoke", () => {
     it("dashboard, users, orgs, and webhook pages share shell + toast CSS", () => {
       const pages = [
         renderAdminMetrics({
-          currentUserEmail: "admin@clear.dev",
+          currentUserEmail: "admin@clearinitiative.io",
           pendingCount: 2,
           metrics,
         }),
         renderAdminUsers({
-          currentUserEmail: "admin@clear.dev",
+          currentUserEmail: "admin@clearinitiative.io",
           pendingCount: 1,
           users: [
             {
@@ -246,12 +246,12 @@ describe("UI polish smoke", () => {
           ],
         }),
         renderAdminOrganisations({
-          currentUserEmail: "admin@clear.dev",
+          currentUserEmail: "admin@clearinitiative.io",
           pendingCount: 0,
           organisations: [],
         }),
         renderAdminWebhooksList({
-          currentUserEmail: "admin@clear.dev",
+          currentUserEmail: "admin@clearinitiative.io",
           pendingCount: 0,
           rows: [],
         }),
@@ -272,7 +272,7 @@ describe("UI polish smoke", () => {
 
     it("users approve posts to the admin approve action", () => {
       const html = renderAdminUsers({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 1,
         users: [
           {
@@ -291,7 +291,7 @@ describe("UI polish smoke", () => {
 
     it("users role posts to the admin users role action", () => {
       const html = renderAdminUsers({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         users: [
           {
@@ -309,14 +309,14 @@ describe("UI polish smoke", () => {
 
     it("org list and detail expose every mutating form action", () => {
       const list = renderAdminOrganisations({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         organisations: [],
       });
       expect(list).toContain('action="/portal/admin/orgs/create"');
 
       const detail = renderAdminOrgDetail({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         defaultInviteOrgRole: "org_admin",
         org: {
@@ -372,7 +372,7 @@ describe("UI polish smoke", () => {
 
     it("webhook list, create, and detail expose manage/create/update/test/rotate/delete/retry", () => {
       const list = renderAdminWebhooksList({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         rows: [
           {
@@ -392,14 +392,14 @@ describe("UI polish smoke", () => {
       expect(list).toContain("Manage");
 
       const create = renderAdminWebhookNew({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
       });
       expect(create).toContain('action="/portal/admin/webhooks/create"');
       expect(create).toContain("Create route");
 
       const detail = renderAdminWebhookDetail({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         subscription: {
           id: "wh_1",
@@ -439,7 +439,7 @@ describe("UI polish smoke", () => {
 
     it("admin flash lands in a toast, not a top banner", () => {
       const html = renderAdminOrganisations({
-        currentUserEmail: "admin@clear.dev",
+        currentUserEmail: "admin@clearinitiative.io",
         pendingCount: 0,
         organisations: [],
         flash: { kind: "success", message: "Created Acme." },

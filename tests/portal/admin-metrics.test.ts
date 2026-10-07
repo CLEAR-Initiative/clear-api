@@ -23,7 +23,7 @@ const baseMetrics = {
 describe("renderAdminMetrics — newsletter card", () => {
   it("shows not configured when the API key is absent", () => {
     const html = renderAdminMetrics({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       metrics: {
         ...baseMetrics,
@@ -37,7 +37,7 @@ describe("renderAdminMetrics — newsletter card", () => {
 
   it("shows the subscriber count when configured", () => {
     const html = renderAdminMetrics({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       metrics: {
         ...baseMetrics,
@@ -51,7 +51,7 @@ describe("renderAdminMetrics — newsletter card", () => {
 
   it("shows an error hint when Buttondown fails", () => {
     const html = renderAdminMetrics({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 0,
       metrics: {
         ...baseMetrics,

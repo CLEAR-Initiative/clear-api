@@ -48,7 +48,7 @@ function buildPrisma(opts: {
 }
 
 const viewer: UserRow = { id: "u1", email: "ok@example.com", role: "viewer" };
-const admin: UserRow = { id: "admin-1", email: "admin@clear.dev", role: "admin" };
+const admin: UserRow = { id: "admin-1", email: "admin@clearinitiative.io", role: "admin" };
 
 beforeEach(() => {
   logActivityMock.mockClear();
