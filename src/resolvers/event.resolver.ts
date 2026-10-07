@@ -383,48 +383,51 @@ export const eventResolvers = {
       // active window and eventsPendingAlert's 48h window. Each bound is a
       // conditional updateMany, so the comparison runs inside the row-locked
       // UPDATE rather than against `existing`, which a concurrent writer may
-      // have already moved. Run before the main update so the row it returns
-      // carries the result.
-      if (input.lastSignalCreatedAt) {
-        const last = new Date(input.lastSignalCreatedAt);
-        await context.prisma.events.updateMany({
-          where: { id, lastSignalCreatedAt: { lt: last } },
-          data: { lastSignalCreatedAt: last },
-        });
-      }
-      if (input.firstSignalCreatedAt) {
-        const first = new Date(input.firstSignalCreatedAt);
-        await context.prisma.events.updateMany({
-          where: { id, firstSignalCreatedAt: { gt: first } },
-          data: { firstSignalCreatedAt: first },
-        });
-      }
+      // have already moved. They run before the main update so the row it
+      // returns carries the result, and in one transaction with it so a
+      // failed update (bad locationId, say) leaves the bounds untouched.
+      return context.prisma.$transaction(async (tx) => {
+        if (input.lastSignalCreatedAt) {
+          const last = new Date(input.lastSignalCreatedAt);
+          await tx.events.updateMany({
+            where: { id, lastSignalCreatedAt: { lt: last } },
+            data: { lastSignalCreatedAt: last },
+          });
+        }
+        if (input.firstSignalCreatedAt) {
+          const first = new Date(input.firstSignalCreatedAt);
+          await tx.events.updateMany({
+            where: { id, firstSignalCreatedAt: { gt: first } },
+            data: { firstSignalCreatedAt: first },
+          });
+        }
 
-      return context.prisma.events.update({
-        where: { id },
-        data: {
-          title: input.title ?? undefined,
-          description: input.description ?? undefined,
-          description_signals: input.descriptionSignals
-            ? (input.descriptionSignals as InputJsonValue)
-            : undefined,
-          validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
-          validTo: input.validTo ? new Date(input.validTo) : undefined,
-          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
-          originId: input.originId,
-          destinationId: input.destinationId,
-          locationId: input.locationId,
-          types: input.types ?? undefined,
-          severity: input.severity ?? undefined,
-          populationAffected: input.populationAffected !== undefined
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced !== undefined
-            ? BigInt(input.populationDisplaced)
-            : undefined,
-          casualties: input.casualties ?? undefined,
-          rank: input.rank ?? undefined,
-        },
+        return tx.events.update({
+          where: { id },
+          data: {
+            title: input.title ?? undefined,
+            description: input.description ?? undefined,
+            description_signals: input.descriptionSignals
+              ? (input.descriptionSignals as InputJsonValue)
+              : undefined,
+            validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
+            validTo: input.validTo ? new Date(input.validTo) : undefined,
+            startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            originId: input.originId,
+            destinationId: input.destinationId,
+            locationId: input.locationId,
+            types: input.types ?? undefined,
+            severity: input.severity ?? undefined,
+            populationAffected: input.populationAffected !== undefined
+              ? BigInt(input.populationAffected)
+              : undefined,
+            populationDisplaced: input.populationDisplaced !== undefined
+              ? BigInt(input.populationDisplaced)
+              : undefined,
+            casualties: input.casualties ?? undefined,
+            rank: input.rank ?? undefined,
+          },
+        });
       });
     },
 

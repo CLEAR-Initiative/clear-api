@@ -100,8 +100,10 @@ function buildContext(
   locale: "en" | "ar" | "fr" = "en",
   translationLoader: { load: ReturnType<typeof vi.fn> } = { load: vi.fn() },
 ): Context {
+  // Interactive transactions run their callback against the same stubs.
+  const prismaWithTx = { $transaction: (fn: (tx: unknown) => unknown) => fn(prismaWithTx), ...prisma };
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: prismaWithTx as unknown as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,

@@ -87,6 +87,19 @@ describeIfDb("updateEvent signal-time bounds against the real schema", () => {
     expect(moved.firstSignalCreatedAt).toEqual(earlier);
   });
 
+  it("rolls the bounds back when the rest of the update fails", async () => {
+    const id = await makeEvent();
+    const newer = new Date(LAST.getTime() + DAY);
+    await expect(
+      updateEvent(
+        null,
+        { id, input: { lastSignalCreatedAt: newer.toISOString(), locationId: "no-such-location" } },
+        analyst,
+      ),
+    ).rejects.toThrow();
+    expect((await prisma.events.findUniqueOrThrow({ where: { id } })).lastSignalCreatedAt).toEqual(LAST);
+  });
+
   it("keeps the newest lastSignalCreatedAt under concurrent out-of-order writes", async () => {
     const id = await makeEvent();
     const stamps = [3, 1, 4, 2].map((d) => new Date(LAST.getTime() + d * DAY));
