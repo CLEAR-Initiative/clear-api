@@ -377,6 +377,29 @@ export const eventResolvers = {
         }
       }
 
+      // The signal-time bounds only ever widen. Signals arrive out of order
+      // (a backdated ACLED/IDMC record, a delayed Dataminr item), and a
+      // stale lastSignalCreatedAt drops a live Event out of grouping's
+      // active window and eventsPendingAlert's 48h window. Each bound is a
+      // conditional updateMany, so the comparison runs inside the row-locked
+      // UPDATE rather than against `existing`, which a concurrent writer may
+      // have already moved. Run before the main update so the row it returns
+      // carries the result.
+      if (input.lastSignalCreatedAt) {
+        const last = new Date(input.lastSignalCreatedAt);
+        await context.prisma.events.updateMany({
+          where: { id, lastSignalCreatedAt: { lt: last } },
+          data: { lastSignalCreatedAt: last },
+        });
+      }
+      if (input.firstSignalCreatedAt) {
+        const first = new Date(input.firstSignalCreatedAt);
+        await context.prisma.events.updateMany({
+          where: { id, firstSignalCreatedAt: { gt: first } },
+          data: { firstSignalCreatedAt: first },
+        });
+      }
+
       return context.prisma.events.update({
         where: { id },
         data: {
@@ -387,12 +410,6 @@ export const eventResolvers = {
             : undefined,
           validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
           validTo: input.validTo ? new Date(input.validTo) : undefined,
-          firstSignalCreatedAt: input.firstSignalCreatedAt
-            ? new Date(input.firstSignalCreatedAt)
-            : undefined,
-          lastSignalCreatedAt: input.lastSignalCreatedAt
-            ? new Date(input.lastSignalCreatedAt)
-            : undefined,
           startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
           originId: input.originId,
           destinationId: input.destinationId,
