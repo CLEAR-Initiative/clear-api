@@ -72,6 +72,17 @@ asked, what the Agent answered, and what it drew on to answer (tools run, Source
 cited). Owned by that user.
 _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
 
+### Estimates
+
+**Estimate**:
+A figure for one metric on an Event, named and defined by the CLEAR Domain Ontology (v0.3.0):
+its value and optional bounds, how it was arrived at (**method**), whether it counts need caused
+by the Event, need that existed before it, or both (**attribution**), the date it describes
+(valid time) and when it was made (transaction time). The metric is one of the ontology's seven
+(`people_affected`, `people_displaced_new`, `people_displaced_cumulative`, `people_in_need`,
+`people_targeted`, `people_reached`, `households_affected`).
+_Avoid_: figure (in code), population number, casualty count, datapoint (that is a report figure)
+
 ### Tasks and Workers
 
 **Task**:
@@ -138,6 +149,11 @@ _Avoid_: event prior, precedent, history, related events
 - A **Conversation** is readable by its owner and, read-only, by platform admins; every admin read is logged
 - A **Conversation** keeps what the Agent actually said, even if the owner's access later narrows
 - Each **Conversation** turn records what it cost (model, tokens, latency) alongside what was said
+
+- An **Estimate** is never overwritten: a correction is a new Estimate that supersedes the old one, at most once, so a figure's history is a chain. The database refuses an update
+- An **Estimate** always states its attribution; where bounds are present, lower bound ≤ value ≤ upper bound
+- An **Estimate** follows its Event: visible to whoever may read the Event, deleted with it
+- The Event fields `populationAffected` and `populationDisplaced` were backfilled once as `people_affected` and `people_displaced_new` Estimates with method `not_documented`, skipping the pipeline's placeholder defaults. `casualties` has no ontology metric and was not backfilled
 
 - A **Task** has exactly one kind and exactly one subject; at most one Task per subject and kind is open at a time
 - **Request enrichment** always fans out: one **Task** per enabled **Source kind**, sharing one request id. A kind that already has an open Task is handed back, not duplicated; only the missing kinds get a new Task. The per-requester daily cap counts requests, not Tasks
