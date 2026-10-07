@@ -491,57 +491,72 @@ export const taskResolvers = {
           );
         }
 
-        // One requestId for the whole fan-out. Created one by one, outside
-        // a transaction: a unique-index rejection inside one would abort it,
-        // and a Task that did land is still the right Task (the next
-        // request dedupes onto it and fills in the rest).
+        // One requestId for the whole fan-out, created atomically: either
+        // every missing kind lands or none does, so a failure midway never
+        // leaves a half-created request that still counts toward the cap.
+        // A unique-index rejection (a concurrent identical request won a
+        // kind) aborts the transaction; the open rows are re-read, the
+        // winners taken, and only the kinds still missing are retried.
         const requestId = randomUUID();
-        for (const kind of missing) {
-          let created: TaskRow;
+        const data = (kind: string): Prisma.taskUncheckedCreateInput => ({
+          kind,
+          subjectType: EVENT_SUBJECT,
+          subjectId: event.id,
+          payload: { horizonYears },
+          requestId,
+          // A signed-in person is `user`; an API-key caller is `api`.
+          // Nothing writes `rule` yet.
+          origin: context.authMethod === "api-key" ? "api" : "user",
+          requesterId: user.id,
+          teamId: args.teamId ?? null,
+          maxAttempts: env.TASK_MAX_ATTEMPTS,
+        });
+        const MAX_FAN_OUT_ATTEMPTS = 3;
+        for (let attempt = 1; ; attempt++) {
+          const toCreate = kinds.filter((kind) => !byKind.has(kind));
+          if (toCreate.length === 0) break;
+          let created: TaskRow[];
           try {
-            created = await context.prisma.task.create({
-              data: {
-                kind,
-                subjectType: EVENT_SUBJECT,
-                subjectId: event.id,
-                payload: { horizonYears },
-                requestId,
-                // A signed-in person is `user`; an API-key caller is `api`.
-                // Nothing writes `rule` yet.
-                origin: context.authMethod === "api-key" ? "api" : "user",
-                requesterId: user.id,
-                teamId: args.teamId ?? null,
-                maxAttempts: env.TASK_MAX_ATTEMPTS,
-              },
+            created = await context.prisma.$transaction(async (tx) => {
+              const rows: TaskRow[] = [];
+              for (const kind of toCreate) rows.push(await tx.task.create({ data: data(kind) }));
+              return rows;
             });
           } catch (e) {
-            // Lost the create race against a concurrent identical request —
-            // the partial unique index (tasks_open_subject_uk) rejected the
-            // duplicate; take the winner instead of queueing the work twice.
+            // Lost a create race against a concurrent identical request —
+            // the partial unique index (tasks_open_subject_uk) rejected a
+            // duplicate; take the winners instead of queueing the work twice.
             if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-              const winner = await context.prisma.task.findFirst({ where: openWhere(kind) });
-              if (winner) {
-                byKind.set(kind, winner);
-                continue;
+              if (attempt >= MAX_FAN_OUT_ATTEMPTS) {
+                // The winner keeps completing before it can be read back:
+                // a client-visible retry beats a raw constraint error.
+                throw conflict("Tasks changed while requesting; retry");
               }
+              for (const kind of toCreate) {
+                const winner = await context.prisma.task.findFirst({ where: openWhere(kind) });
+                if (winner) byKind.set(kind, winner);
+              }
+              continue;
             }
             throw e;
           }
-          byKind.set(kind, created);
-          void logActivity(context.prisma, {
-            userId: user.id,
-            action: "task.requested",
-            resourceType: "task",
-            resourceId: created.id,
-            metadata: {
-              kind,
-              requestId,
-              subjectType: EVENT_SUBJECT,
-              subjectId: event.id,
-              teamId: args.teamId ?? null,
-              horizonYears,
-            },
-          });
+          for (const row of created) {
+            byKind.set(row.kind, row);
+            void logActivity(context.prisma, {
+              userId: user.id,
+              action: "task.requested",
+              resourceType: "task",
+              resourceId: row.id,
+              metadata: {
+                kind: row.kind,
+                requestId,
+                subjectType: EVENT_SUBJECT,
+                subjectId: event.id,
+                teamId: args.teamId ?? null,
+                horizonYears,
+              },
+            });
+          }
         }
       }
 

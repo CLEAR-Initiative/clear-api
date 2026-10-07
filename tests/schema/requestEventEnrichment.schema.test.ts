@@ -46,7 +46,7 @@ const CANCEL_TASK = `
   }
 `;
 
-function mockPrisma(todayCount = 0) {
+function mockPrisma(todayCount = 0): Record<string, unknown> {
   const created = {
     id: "t-1",
     kind: "event.impact_prior.clear",
@@ -75,7 +75,7 @@ function mockPrisma(todayCount = 0) {
     createdAt: new Date("2026-10-06T10:00:00Z"),
     updatedAt: new Date("2026-10-06T10:00:00Z"),
   };
-  return {
+  const prisma: Record<string, unknown> = {
     events: { findUnique: vi.fn().mockResolvedValue({ id: "ev-1" }) },
     task: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -92,6 +92,9 @@ function mockPrisma(todayCount = 0) {
     },
     activityLogs: { create: vi.fn().mockResolvedValue({}) },
   };
+  // The fan-out creates inside one transaction; run the callback against the mock.
+  prisma.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+  return prisma;
 }
 
 function buildContext(prisma: unknown, user: { id: string; role: string } | null): Context {

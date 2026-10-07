@@ -405,10 +405,35 @@ describe("requestEventEnrichment", () => {
       expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, racing)))[0].lastError).toBeNull();
     });
 
+    it("creates every missing kind in one transaction — a failure midway leaves no half-created request", async () => {
+      const prisma = makePrisma();
+      await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.task.create).toHaveBeenCalledTimes(2);
+      // The transaction rolls back on any failure, so the first kind never lands alone.
+      const failing = makePrisma();
+      failing.task.create.mockImplementationOnce(async ({ data }: { data: Row }) => makeTask({ id: "t-x", ...data }))
+        .mockRejectedValueOnce(new Error("connection lost"));
+      await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, failing))).rejects.toThrow("connection lost");
+      expect(failing.$transaction).toHaveBeenCalledTimes(1);
+      expect(failing.activityLogs.create).not.toHaveBeenCalled();
+    });
+
     it("rethrows any other create failure", async () => {
       const prisma = makePrisma();
       prisma.task.create.mockRejectedValueOnce(new Error("connection lost"));
       await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).rejects.toThrow("connection lost");
+    });
+
+    it("gives up with CONFLICT when the winner keeps vanishing before it can be read back", async () => {
+      const prisma = makePrisma();
+      prisma.task.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+      );
+      const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)));
+      expect(err.extensions.code).toBe("CONFLICT");
+      expect(err.message).toMatch(/retry/);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(3);
     });
   });
 
