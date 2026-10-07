@@ -749,6 +749,28 @@ describeIfDb("Tasks against the real schema", () => {
     const quakeAfter = await prisma.events.findUniqueOrThrow({ where: { id: quake } });
     expect(quakeAfter.firstSignalCreatedAt).not.toEqual(longAgo);
 
+    // One article, two incidents months apart: the second keeps its own Event.
+    const first = await proposedCase("https://example.test/two-floods");
+    const df = await decideCaseProposal(null, { id: first.id, decision: "accepted" }, analyst);
+    eventIds.push(df.resultEventId!);
+    const id2 = await makeEvent();
+    const { web: w2, clear: c2 } = await request(id2, analystB);
+    await cancelTask(null, { id: c2.id }, analystB);
+    const h2 = await claimOwn(WEB_KIND, w2.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: h2.id, leaseToken: h2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{ ...base, occurredAt: new Date(longAgo.getTime() + 90 * 24 * 3600_000), sourceUrl: "https://example.test/two-floods" }],
+      },
+      workerB,
+    );
+    const second = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: id2 } });
+    const ds = await decideCaseProposal(null, { id: second.id, decision: "accepted" }, analyst);
+    eventIds.push(ds.resultEventId!);
+    expect(ds.resultSignalId).toBe(df.resultSignalId);
+    expect(ds.resultEventId).not.toBe(df.resultEventId);
+
     await prisma.signals.deleteMany({ where: { sourceId: pipelineSource.id } });
     await prisma.dataSources.delete({ where: { id: pipelineSource.id } });
   });

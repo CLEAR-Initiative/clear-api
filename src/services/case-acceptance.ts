@@ -24,6 +24,9 @@ export const WEB_ENRICHMENT_SOURCE = "web_enrichment";
  *  window the pipeline gives a new Event. */
 const HISTORICAL_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const TITLE_MAX = 200;
+/** How close an Event's onset must be to the case's date for a shared
+ *  Signal's Event to count as the same incident — the Worker's matching rule. */
+const SAME_INCIDENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 /** The Domain Ontology version whose metric definitions a case's figures use. */
 const DEFINITION_VERSION = "0.3.0";
 
@@ -120,22 +123,29 @@ async function writeCaseSignal(
 }
 
 /**
- * Whether an Event a reused Signal already sits on is the same incident as
- * the case: it manifests the case's hazard and lies in the requesting
- * Event's country — the checks `completeTask` puts on an explicit match.
+ * Whether an Event a shared Signal already sits on is the same incident as
+ * the case: it manifests the case's hazard, lies in the requesting Event's
+ * country (the checks `completeTask` puts on an explicit match), and began
+ * within three days of the case's date — one article can report several
+ * incidents, and each must keep its own Event.
  */
-async function isSameIncidentContext(
+async function isSameIncident(
   tx: Tx,
   eventId: string,
-  hazardType: string,
+  c: AcceptedCase,
   countryId: string | null,
 ): Promise<boolean> {
   if (!countryId) return false;
   const event = await tx.events.findUnique({
     where: { id: eventId },
-    select: { types: true, locationId: true, originId: true, destinationId: true },
+    select: {
+      types: true, locationId: true, originId: true, destinationId: true,
+      startedAt: true, firstSignalCreatedAt: true,
+    },
   });
-  if (!event || !event.types.includes(hazardType)) return false;
+  if (!event || !event.types.includes(c.hazardType)) return false;
+  const onset = event.startedAt ?? event.firstSignalCreatedAt;
+  if (Math.abs(onset.getTime() - c.occurredAt.getTime()) > SAME_INCIDENT_WINDOW_MS) return false;
   return (await resolveEventCountryId(tx, event)) === countryId;
 }
 
@@ -149,8 +159,9 @@ async function isSameIncidentContext(
  *   yet (`NEW`): the drain will group that one itself, so the case gets its
  *   own `web_enrichment` Signal instead of being regrouped with it.
  * - The Event is, in order: the Worker's matched Event (checked at
- *   proposal); an Event the reused Signal already sits on, if it manifests
- *   the case's hazard in the same country; a new historical Event.
+ *   proposal); an Event the shared Signal already sits on, if it is the same
+ *   incident (hazard, country, onset within three days); a new historical
+ *   Event.
  * - Linking a Signal to an existing Event widens its first/last Signal
  *   times to cover the incident but never moves them inward, so a backdated
  *   Signal cannot make a live Event look stale.
@@ -235,7 +246,7 @@ export async function acceptCase(
       orderBy: { collectedAt: "asc" },
     });
     for (const { eventId } of linked) {
-      if (await isSameIncidentContext(tx, eventId, c.hazardType, opts.countryId)) {
+      if (await isSameIncident(tx, eventId, c, opts.countryId)) {
         existingEventId = eventId;
         break;
       }
