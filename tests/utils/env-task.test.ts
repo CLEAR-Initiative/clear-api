@@ -1,6 +1,7 @@
 /**
  * Task queue env parsing (ADR-0010): `TASK_LEASE_MINUTES`,
- * `TASK_MAX_ATTEMPTS`, `TASK_CLAIM_MAX`, `TASK_REQUEST_DAILY_CAP`.
+ * `TASK_MAX_ATTEMPTS`, `TASK_CLAIM_MAX`, `TASK_REQUEST_DAILY_CAP`, and the
+ * fan-out list `TASK_IMPACT_PRIOR_KINDS`.
  * Terraform-rendered env files always emit the variable, so an empty value
  * must fall back to the default rather than crash the API on boot; zero or a
  * negative value is a misconfiguration (a zero cap would reject every
@@ -15,16 +16,18 @@ const REQUIRED = {
   BETTER_AUTH_URL: "http://localhost:4000",
 };
 
+/** The numeric ones, which share the positive-integer rule. */
 const TASK_VARS = [
   "TASK_LEASE_MINUTES",
   "TASK_MAX_ATTEMPTS",
   "TASK_CLAIM_MAX",
   "TASK_REQUEST_DAILY_CAP",
 ] as const;
+const ALL_VARS = [...TASK_VARS, "TASK_IMPACT_PRIOR_KINDS"] as const;
 
-async function loadEnv(values: Partial<Record<(typeof TASK_VARS)[number], string | undefined>>) {
+async function loadEnv(values: Partial<Record<(typeof ALL_VARS)[number], string | undefined>>) {
   for (const [key, value] of Object.entries(REQUIRED)) vi.stubEnv(key, value);
-  for (const key of TASK_VARS) vi.stubEnv(key, values[key]);
+  for (const key of ALL_VARS) vi.stubEnv(key, values[key]);
   vi.resetModules();
   return (await import("../../src/utils/env.js")).env;
 }
@@ -75,5 +78,43 @@ describe("Task queue env", () => {
     await expect(loadEnv({ [key]: "0" })).rejects.toThrow();
     await expect(loadEnv({ [key]: "-1" })).rejects.toThrow();
     await expect(loadEnv({ [key]: "1.5" })).rejects.toThrow();
+  });
+});
+
+describe("TASK_IMPACT_PRIOR_KINDS — the source kinds one request fans out into", () => {
+  it("defaults to the CLEAR-data and web kinds, in that order", async () => {
+    const env = await loadEnv({});
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+  });
+
+  it("treats an empty value as unset", async () => {
+    const env = await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "" });
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+  });
+
+  it("parses a comma-separated list, keeping order, trimming, dropping blanks and duplicates", async () => {
+    const env = await loadEnv({
+      TASK_IMPACT_PRIOR_KINDS: " event.impact_prior.web, ,event.impact_prior.clear,event.impact_prior.web ",
+    });
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web", "event.impact_prior.clear"]);
+  });
+
+  it("accepts a single kind, including the bare pre-fan-out one", async () => {
+    expect((await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior.clear" })).TASK_IMPACT_PRIOR_KINDS).toEqual([
+      "event.impact_prior.clear",
+    ]);
+    expect((await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior" })).TASK_IMPACT_PRIOR_KINDS).toEqual([
+      "event.impact_prior",
+    ]);
+  });
+
+  it.each([
+    ["a kind outside the family", "event.something_else"],
+    ["a trailing dot", "event.impact_prior."],
+    ["an upper-case source", "event.impact_prior.Web"],
+    ["a source with a dash", "event.impact_prior.web-search"],
+    ["a list that is all separators", ", ,"],
+  ])("rejects %s", async (_name, value) => {
+    await expect(loadEnv({ TASK_IMPACT_PRIOR_KINDS: value })).rejects.toThrow();
   });
 });

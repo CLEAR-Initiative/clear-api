@@ -24,15 +24,23 @@ import type { Context } from "../../src/context.js";
 
 type Row = Record<string, unknown>;
 
+/** The default fan-out (TASK_IMPACT_PRIOR_KINDS): one Task per source kind. */
+const CLEAR_KIND = "event.impact_prior.clear";
+const WEB_KIND = "event.impact_prior.web";
+const KINDS = [CLEAR_KIND, WEB_KIND];
+/** What `task.groupBy({ by: ["requestId"] })` returns for n requests today. */
+const requests = (n: number) => Array.from({ length: n }, (_, i) => ({ requestId: `r-${i}` }));
+
 function makeTask(overrides: Row = {}): Row {
   return {
     id: "t-1",
-    kind: IMPACT_PRIOR_KIND,
+    kind: CLEAR_KIND,
     subjectType: "event",
     subjectId: "ev-1",
     payload: { horizonYears: 10 },
     status: "PENDING",
     origin: "user",
+    requestId: "r-1",
     requesterId: "u-analyst",
     teamId: null,
     leaseOwnerId: null,
@@ -70,6 +78,8 @@ function matches(row: Row, where: Row): boolean {
 
 function makePrisma(overrides: Record<string, unknown> = {}) {
   const store = new Map<string, Row>();
+  // Created rows get t-1, t-2, … in creation order (a fan-out creates several).
+  let seq = 0;
   const task = {
     store,
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => store.get(where.id) ?? null),
@@ -78,11 +88,12 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
       if (!row) throw new Error("not found");
       return row;
     }),
-    findFirst: vi.fn(async (): Promise<Row | null> => null),
+    findFirst: vi.fn(async (_args: { where: Row }): Promise<Row | null> => null),
     findMany: vi.fn(async (): Promise<Row[]> => []),
     count: vi.fn(async () => 0),
+    groupBy: vi.fn(async (): Promise<{ requestId: string }[]> => []),
     create: vi.fn(async ({ data }: { data: Row }) => {
-      const row = makeTask({ ...data });
+      const row = makeTask({ id: `t-${++seq}`, ...data });
       store.set(row.id as string, row);
       return row;
     }),
@@ -266,8 +277,9 @@ describe("requestEventEnrichment", () => {
     ])("allows a %s", async (_name, user, teamId) => {
       const prisma = makePrisma();
       const result = await requestEventEnrichment(null, { eventId: "ev-1", teamId }, ctx(user, prisma));
-      expect(result).toMatchObject({ kind: IMPACT_PRIOR_KIND, subjectType: "event", subjectId: "ev-1" });
-      expect(prisma.task.create).toHaveBeenCalledOnce();
+      expect(result.map((t) => t.kind)).toEqual(KINDS);
+      expect(result.every((t) => t.subjectType === "event" && t.subjectId === "ev-1")).toBe(true);
+      expect(prisma.task.create).toHaveBeenCalledTimes(KINDS.length);
     });
 
     it.each([
@@ -287,68 +299,110 @@ describe("requestEventEnrichment", () => {
     });
   });
 
-  it("records the CALLER as requester and the view-scope team", async () => {
-    const prisma = makePrisma();
-    await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma));
-    expect(prisma.task.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ requesterId: "u-coord", teamId: "team-a" }),
+  describe("fan-out — one Task per enabled source kind (TASK_IMPACT_PRIOR_KINDS, default .clear and .web)", () => {
+    it("creates one Task per kind, in configured order, all sharing one requestId", async () => {
+      const prisma = makePrisma();
+      const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(result.map((t) => t.kind)).toEqual(KINDS);
+      expect(result.map((t) => t.id)).toEqual(["t-1", "t-2"]);
+      const requestIds = new Set(result.map((t) => t.requestId));
+      expect(requestIds.size).toBe(1);
+      expect([...requestIds][0]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(result.every((t) => t.status === "PENDING")).toBe(true);
     });
-  });
 
-  it("stores the horizon in the payload, defaulting to 10 years", async () => {
-    const prisma = makePrisma();
-    await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-    expect(prisma.task.create).toHaveBeenLastCalledWith({
-      data: expect.objectContaining({ payload: { horizonYears: 10 } }),
+    it("records the CALLER as requester and the view-scope team on every Task", async () => {
+      const prisma = makePrisma();
+      await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma));
+      expect(prisma.task.create).toHaveBeenCalledTimes(2);
+      for (const kind of KINDS) {
+        expect(prisma.task.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ kind, requesterId: "u-coord", teamId: "team-a" }),
+        });
+      }
     });
-    await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 5 }, ctx(analyst, prisma));
-    expect(prisma.task.create).toHaveBeenLastCalledWith({
-      data: expect.objectContaining({ payload: { horizonYears: 5 } }),
+
+    it("stores the horizon in every payload, defaulting to 10 years", async () => {
+      const prisma = makePrisma();
+      await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      for (const call of prisma.task.create.mock.calls) {
+        expect(call[0].data).toMatchObject({ payload: { horizonYears: 10 } });
+      }
+      prisma.task.create.mockClear();
+      await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 5 }, ctx(analyst, prisma));
+      for (const call of prisma.task.create.mock.calls) {
+        expect(call[0].data).toMatchObject({ payload: { horizonYears: 5 } });
+      }
+    });
+
+    it("never picks a source: a per-source kind as the argument is BAD_USER_INPUT naming the family", async () => {
+      const prisma = makePrisma();
+      const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1", kind: WEB_KIND }, ctx(analyst, prisma)));
+      expect(err.extensions.code).toBe("BAD_USER_INPUT");
+      expect(err.message).toContain(IMPACT_PRIOR_KIND);
+      expect(prisma.task.create).not.toHaveBeenCalled();
     });
   });
 
   describe("dedupe — one open Task per Event and kind", () => {
-    it.each(["PENDING", "LEASED"])("returns the existing %s Task unchanged instead of creating a second", async (status) => {
+    const openFor = (kind: string, row: Row) => async ({ where }: { where: Row }) => (where.kind === kind ? row : null);
+
+    it.each(["PENDING", "LEASED"])("returns the existing %s Task of a kind unchanged and creates only the kinds with none", async (status) => {
       const prisma = makePrisma();
-      const open = makeTask({ id: "t-open", status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
-      prisma.task.findFirst.mockResolvedValue(open);
+      const open = makeTask({ id: "t-open", kind: CLEAR_KIND, status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
+      prisma.task.findFirst.mockImplementation(openFor(CLEAR_KIND, open));
       const result = await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 10 }, ctx(analyst, prisma));
-      expect(result).toEqual(open);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual(open);
+      expect(result[1]).toMatchObject({ kind: WEB_KIND, status: "PENDING", payload: { horizonYears: 10 } });
       expect(prisma.task.findFirst).toHaveBeenCalledWith({
         where: expect.objectContaining({
-          kind: IMPACT_PRIOR_KIND, subjectType: "event", subjectId: "ev-1",
+          kind: CLEAR_KIND, subjectType: "event", subjectId: "ev-1",
           status: { in: ["PENDING", "LEASED"] },
         }),
       });
+      expect(prisma.task.create).toHaveBeenCalledTimes(1);
+      expect(prisma.task.create).toHaveBeenCalledWith({ data: expect.objectContaining({ kind: WEB_KIND }) });
+    });
+
+    it("creates nothing, checks no cap and logs nothing when every kind already has an open Task", async () => {
+      const prisma = makePrisma();
+      prisma.task.findFirst.mockImplementation(async ({ where }) => makeTask({ id: `open-${where.kind}`, kind: where.kind }));
+      const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
+      expect(result.map((t) => t.id)).toEqual(KINDS.map((k) => `open-${k}`));
       expect(prisma.task.create).not.toHaveBeenCalled();
+      expect(prisma.task.groupBy).not.toHaveBeenCalled();
       expect(prisma.activityLogs.create).not.toHaveBeenCalled();
     });
 
-    it("returns the winner when the partial unique index rejects a concurrent create", async () => {
+    it("returns the winner when the partial unique index rejects a concurrent create, and still creates the other kinds", async () => {
       const prisma = makePrisma();
-      const winner = makeTask({ id: "t-winner" });
-      prisma.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+      const winner = makeTask({ id: "t-winner", kind: CLEAR_KIND });
+      // The dedupe pass finds nothing for either kind; the re-read after P2002 on .clear finds the winner.
+      prisma.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
       prisma.task.create.mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
       );
       const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-      expect(result).toEqual(winner);
+      expect(result[0]).toEqual(winner);
+      expect(result[1]).toMatchObject({ kind: WEB_KIND, status: "PENDING" });
+      expect(prisma.task.create).toHaveBeenCalledTimes(2);
     });
 
     it("redacts the open Task's lastError for a different requester, on both dedupe paths", async () => {
-      const open = makeTask({ id: "t-open", requesterId: "u-someone-else", lastError: "attempt 1 failed" });
+      const open = makeTask({ id: "t-open", kind: CLEAR_KIND, requesterId: "u-someone-else", lastError: "attempt 1 failed" });
       const prisma = makePrisma();
-      prisma.task.findFirst.mockResolvedValue(open);
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).lastError).toBeNull();
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma))).lastError).toBe("attempt 1 failed");
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx({ id: "u-someone-else", role: "analyst" }, prisma))).lastError).toBe("attempt 1 failed");
+      prisma.task.findFirst.mockImplementation(openFor(CLEAR_KIND, open));
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)))[0].lastError).toBeNull();
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma)))[0].lastError).toBe("attempt 1 failed");
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx({ id: "u-someone-else", role: "analyst" }, prisma)))[0].lastError).toBe("attempt 1 failed");
 
       const racing = makePrisma();
-      racing.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(open);
+      racing.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(open);
       racing.task.create.mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
       );
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, racing))).lastError).toBeNull();
+      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, racing)))[0].lastError).toBeNull();
     });
 
     it("rethrows any other create failure", async () => {
@@ -358,44 +412,56 @@ describe("requestEventEnrichment", () => {
     });
   });
 
-  describe("per-requester daily cap (TASK_REQUEST_DAILY_CAP, default 20)", () => {
-    it("counts the caller's Tasks since UTC midnight", async () => {
+  describe("per-requester daily cap (TASK_REQUEST_DAILY_CAP, default 20) — counts requests, not Tasks", () => {
+    it("counts the caller's distinct requests since UTC midnight, never Task rows", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-10-06T15:30:00Z"));
       const prisma = makePrisma();
       await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-      expect(prisma.task.count).toHaveBeenCalledWith({
+      expect(prisma.task.groupBy).toHaveBeenCalledWith({
+        by: ["requestId"],
         where: { requesterId: "u-analyst", createdAt: { gte: new Date("2026-10-06T00:00:00Z") } },
       });
+      expect(prisma.task.count).not.toHaveBeenCalled();
     });
 
     it("allows the 20th request and rejects the 21st with FORBIDDEN / DAILY_CAP naming the cap", async () => {
       const prisma = makePrisma();
-      prisma.task.count.mockResolvedValueOnce(19);
-      await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).resolves.toBeDefined();
-      prisma.task.count.mockResolvedValueOnce(20);
+      // 19 requests today — 38 Task rows, which must not be what is counted.
+      prisma.task.groupBy.mockResolvedValueOnce(requests(19));
+      await expect(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma))).resolves.toHaveLength(2);
+      prisma.task.groupBy.mockResolvedValueOnce(requests(20));
       const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)));
       expect(err.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "DAILY_CAP" });
       expect(err.message).toContain("20");
-      expect(prisma.task.create).toHaveBeenCalledTimes(1);
+      expect(prisma.task.create).toHaveBeenCalledTimes(2);
     });
 
     it("applies to admins too, and to API-key callers", async () => {
       const prisma = makePrisma();
-      prisma.task.count.mockResolvedValue(20);
+      prisma.task.groupBy.mockResolvedValue(requests(20));
       const a = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma)));
       expect(a.extensions.subCode).toBe("DAILY_CAP");
       const b = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma, "api-key")));
       expect(b.extensions.subCode).toBe("DAILY_CAP");
     });
 
-    it("does not apply when the request dedupes onto an open Task", async () => {
+    it("does not apply when the request dedupes onto open Tasks for every kind", async () => {
       const prisma = makePrisma();
-      prisma.task.findFirst.mockResolvedValue(makeTask({ id: "t-open" }));
-      prisma.task.count.mockResolvedValue(20);
+      prisma.task.findFirst.mockImplementation(async ({ where }) => makeTask({ id: `open-${where.kind}`, kind: where.kind }));
+      prisma.task.groupBy.mockResolvedValue(requests(20));
       const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
-      expect(result.id).toBe("t-open");
-      expect(prisma.task.count).not.toHaveBeenCalled();
+      expect(result.map((t) => t.id)).toEqual(KINDS.map((k) => `open-${k}`));
+      expect(prisma.task.groupBy).not.toHaveBeenCalled();
+    });
+
+    it("applies when only some kinds need a Task — a request that creates anything is a request", async () => {
+      const prisma = makePrisma();
+      prisma.task.findFirst.mockImplementation(async ({ where }) => (where.kind === CLEAR_KIND ? makeTask({ id: "t-open" }) : null));
+      prisma.task.groupBy.mockResolvedValue(requests(20));
+      const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)));
+      expect(err.extensions.subCode).toBe("DAILY_CAP");
+      expect(prisma.task.create).not.toHaveBeenCalled();
     });
   });
 
@@ -409,20 +475,23 @@ describe("requestEventEnrichment", () => {
     });
   });
 
-  it("logs task.requested against the caller with the new Task's id", async () => {
+  it("logs task.requested once per created Task, against the caller, with the shared requestId", async () => {
     const prisma = makePrisma();
-    await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma));
+    const [first, second] = await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma));
     // logActivity is fire-and-forget; let it settle.
     await new Promise((r) => setImmediate(r));
-    expect(prisma.activityLogs.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        userId: "u-coord",
-        action: "task.requested",
-        resourceType: "task",
-        resourceId: "t-1",
-        metadata: expect.objectContaining({ kind: IMPACT_PRIOR_KIND, subjectId: "ev-1", teamId: "team-a" }),
-      }),
-    });
+    expect(prisma.activityLogs.create).toHaveBeenCalledTimes(2);
+    for (const task of [first, second]) {
+      expect(prisma.activityLogs.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "u-coord",
+          action: "task.requested",
+          resourceType: "task",
+          resourceId: task.id,
+          metadata: expect.objectContaining({ kind: task.kind, requestId: first.requestId, subjectId: "ev-1", teamId: "team-a" }),
+        }),
+      });
+    }
   });
 
   it("is NOT_FOUND for a missing Event", async () => {
@@ -577,6 +646,8 @@ describe("completeTask", () => {
       data: expect.objectContaining({
         eventId: "ev-1",
         taskId: "t-1",
+        // The source is the Task's kind, never anything the Worker sends.
+        sourceKind: CLEAR_KIND,
         hazardType: "FL",
         numberOfCases: 1,
       }),
@@ -585,7 +656,7 @@ describe("completeTask", () => {
     expect(prisma.impactPrior.create.mock.calls[0][0].data).not.toHaveProperty("state");
   });
 
-  it("without an impactPrior on an event.impact_prior Task records no_prior_found and writes no row", async () => {
+  it("without an impactPrior on an event.impact_prior.* Task records no_prior_found and writes no row", async () => {
     const prisma = seeded(leased());
     const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { searched: 3, cases: 0 } }, ctx(worker, prisma));
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
@@ -677,18 +748,38 @@ describe("completeTask", () => {
       expect(err.message).toMatch(/country cannot be resolved/);
     });
 
-    it("supersedes the newest existing ImpactPrior for the Event, never overwriting it", async () => {
+    it("supersedes the newest existing ImpactPrior of the same source kind for the Event, never overwriting it", async () => {
       const prisma = seeded(leased());
       prisma.impactPrior.findFirst.mockResolvedValueOnce({ id: "ip-old" });
       await complete(prisma, proposal());
       expect(prisma.impactPrior.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { eventId: "ev-1" }, orderBy: { createdAt: "desc" } }),
+        expect.objectContaining({ where: { eventId: "ev-1", sourceKind: CLEAR_KIND }, orderBy: { createdAt: "desc" } }),
       );
       expect(prisma.impactPrior.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ supersedesId: "ip-old" }),
       });
       // Nothing touched the earlier row: there is no update delegate call to make.
       expect(prisma.impactPrior).not.toHaveProperty("update");
+    });
+
+    it("a .web proposal looks for its predecessor among .web proposals only — another source's is a sibling", async () => {
+      const prisma = seeded(leased({ kind: WEB_KIND }));
+      await complete(prisma, proposal());
+      expect(prisma.impactPrior.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { eventId: "ev-1", sourceKind: WEB_KIND } }),
+      );
+      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sourceKind: WEB_KIND, supersedesId: null }),
+      });
+    });
+
+    it("the bare event.impact_prior kind (claimable for one release) still takes a proposal, as its own source", async () => {
+      const prisma = seeded(leased({ kind: IMPACT_PRIOR_KIND }));
+      const done = await complete(prisma, proposal());
+      expect(done.outcome).toBe("produced");
+      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ sourceKind: IMPACT_PRIOR_KIND }),
+      });
     });
   });
 
