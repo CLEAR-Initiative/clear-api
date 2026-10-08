@@ -199,3 +199,13 @@ and web cases were never checked against the Events CLEAR already holds.
   consumer needs a frozen copy until `Estimate.informed_by` exists; storing them would bring
   back the per-Event supersede chain the ontology does not have). The LLM-proposed `.clear`
   ImpactPriors still exist; whether that Worker is retired or repurposed is open.
+
+## Amendment (V4, 2026-10-08): the web Worker alone by default
+
+`TASK_IMPACT_PRIOR_KINDS` now defaults to `event.impact_prior.web`. The Claude routine searches
+CLEAR's Events and knowledge base before the web (clear-mcp 0.4.1) and proposes cases that
+analysts decide one by one, and the prior is computed from accepted history, so the Dagster
+drain's LLM-proposed `.clear` ImpactPrior is no longer requested. The fan-out, the `.clear`
+handler and the drain stay: adding `event.impact_prior.clear` back to the env restores it, and
+the drain remains the generic Task Worker for future kinds. Open `.clear` Tasks stay claimable
+and are drained as before.

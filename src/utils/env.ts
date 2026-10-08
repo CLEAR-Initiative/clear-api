@@ -214,14 +214,19 @@ const envSchema = z.object({
     z.coerce.number().int().positive().default(20),
   ),
   /** The source kinds one enrichment request fans out into — one Task per
-   *  kind, each drained by its own Worker (`.clear`: the Dagster drain over
-   *  CLEAR data; `.web`: the Claude routine over the web). Comma-separated;
-   *  each must be `event.impact_prior` or `event.impact_prior.<source>`.
-   *  Dropping a kind here stops new Tasks of it; open ones stay claimable. */
+   *  kind, each drained by its own Worker. Comma-separated; each must be
+   *  `event.impact_prior` or `event.impact_prior.<source>`. Dropping a kind
+   *  here stops new Tasks of it; open ones stay claimable.
+   *
+   *  Default `.web` only (V4): the Claude routine searches CLEAR's Events and
+   *  knowledge base before the web and proposes cases, and the prior is
+   *  computed from accepted history, so the Dagster drain's LLM-proposed
+   *  `.clear` prior is no longer requested. Add `event.impact_prior.clear`
+   *  back to have it propose again. */
   TASK_IMPACT_PRIOR_KINDS: z
     .preprocess(
       (v) => (v === "" ? undefined : v),
-      z.string().default("event.impact_prior.clear,event.impact_prior.web"),
+      z.string().default("event.impact_prior.web"),
     )
     .transform((s) => [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))])
     .pipe(
