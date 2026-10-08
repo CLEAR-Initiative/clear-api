@@ -82,14 +82,14 @@ describe("Task queue env", () => {
 });
 
 describe("TASK_IMPACT_PRIOR_KINDS — the source kinds one request fans out into", () => {
-  it("defaults to the CLEAR-data and web kinds, in that order", async () => {
+  it("defaults to the web kind alone (V4: the Dagster drain no longer proposes priors)", async () => {
     const env = await loadEnv({});
-    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web"]);
   });
 
   it("treats an empty value as unset", async () => {
     const env = await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "" });
-    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web"]);
   });
 
   it("parses a comma-separated list, keeping order, trimming, dropping blanks and duplicates", async () => {

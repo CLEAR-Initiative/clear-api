@@ -9,3 +9,8 @@ process.env.NODE_ENV = "development";
 // available to Prisma. Matches the app's own entrypoint
 // (`src/index.ts: import "dotenv/config"`).
 import "dotenv/config";
+
+// The Task suites exercise a two-source fan-out (several Workers proposing on
+// one Event), which the code still supports; production defaults to the web
+// kind alone (env.ts). Keep both here unless a run sets its own list.
+process.env.TASK_IMPACT_PRIOR_KINDS ??= "event.impact_prior.clear,event.impact_prior.web";
