@@ -541,6 +541,17 @@ describeIfDb("Tasks against the real schema", () => {
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
     expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
 
+    // The requester hears how many proposed signals there are to review.
+    let told: { message: string }[] = [];
+    for (let i = 0; i < 20 && told.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      told = await prisma.notifications.findMany({
+        where: { userId: ANALYST_B_ID, notificationType: "task", actionUrl: `/event/${id}` },
+        select: { message: true },
+      });
+    }
+    expect(told.map((n) => n.message)).toEqual(["Web search: 2 proposed signals to review"]);
+
     const seen = await eventCaseProposals(null, { eventId: id }, analystB);
     expect(seen.map((c) => c.sourceUrl).sort()).toEqual(["https://example.test/case-a", "https://example.test/case-b"]);
     const a = seen.find((c) => c.sourceUrl.endsWith("case-a"))!;

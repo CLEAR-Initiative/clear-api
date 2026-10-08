@@ -26,7 +26,7 @@ describe("task kinds", () => {
   it("labels name the source in a person's terms, and leave other kinds alone", () => {
     expect(taskKindLabel("event.impact_prior")).toBe("Impact prior");
     expect(taskKindLabel("event.impact_prior.clear")).toBe("Impact prior from CLEAR data");
-    expect(taskKindLabel("event.impact_prior.web")).toBe("Impact prior from the web");
+    expect(taskKindLabel("event.impact_prior.web")).toBe("Web search");
     expect(taskKindLabel("event.impact_prior.satellite")).toBe("Impact prior from satellite");
     expect(taskKindLabel("event.other")).toBe("event.other");
   });

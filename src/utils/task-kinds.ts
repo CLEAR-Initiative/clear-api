@@ -31,15 +31,20 @@ export function impactPriorSource(kind: string): string | null {
 
 const SOURCE_NAMES: Record<string, string> = {
   clear: "CLEAR data",
-  web: "the web",
 };
 
-/** A kind in a person's terms, for notifications: "Impact prior from CLEAR
- *  data", "Impact prior from the web", "Impact prior" for the bare kind; any
- *  other kind as itself. */
+/**
+ * A kind in a person's terms, for notifications. The web kind is "Web
+ * search": it proposes signals for analysts to review, not an ImpactPrior
+ * (the ImpactPrior is computed from history), so its wire name
+ * `event.impact_prior.web` is historical and never shown. The legacy kinds
+ * that did propose a whole prior keep their names: "Impact prior from CLEAR
+ * data", "Impact prior" for the bare kind. Any other kind as itself.
+ */
 export function taskKindLabel(kind: string): string {
   if (!isImpactPriorKind(kind)) return kind;
   const source = impactPriorSource(kind);
+  if (source === "web") return "Web search";
   if (!source) return "Impact prior";
   return `Impact prior from ${SOURCE_NAMES[source] ?? source}`;
 }
