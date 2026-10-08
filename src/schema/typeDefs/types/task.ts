@@ -251,6 +251,44 @@ export const taskTypeDef = gql`
     matchedEventId: String
   }
 
+  """What has typically happened before (the Domain Ontology's ImpactPrior),
+  computed from CLEAR's history (V4): the Events before this one that
+  manifest the same hazard in the same country within the horizon, one
+  current figure each for one metric and population group. Computed on
+  read from accepted history — nothing to review. Read \`numberOfCases\`
+  beside the figure: a prior resting on three Events is not one resting on
+  ninety."""
+  type ComputedImpactPrior {
+    """GLIDE code; one of the Event's \`types\`."""
+    hazardType: String!
+    """The Event's country (level-0 location)."""
+    countryLocationId: String!
+    """How far back history was taken, in years."""
+    horizonYears: Int!
+    """One of the Domain Ontology's seven metric types."""
+    metric: String!
+    populationGroup: String
+    """The figures' unit (lower-cased), or null when they state none.
+    Figures in different units are never summarised together."""
+    unit: String
+    """The median of the historical figures."""
+    centralValue: Float!
+    """The smallest historical figure."""
+    lowerBound: Float!
+    """The largest historical figure."""
+    upperBound: Float!
+    """How many historical Events it rests on."""
+    numberOfCases: Int!
+    """True below three cases: a starting point, not a basis."""
+    lowConfidence: Boolean!
+    """The historical Events it rests on."""
+    eventIds: [String!]!
+    """The Estimates it rests on, one per Event."""
+    estimateIds: [String!]!
+    """Version of the method that computed it."""
+    methodVersion: String!
+  }
+
   """The decision a named admin or analyst records on a proposed case."""
   enum CaseProposalDecision {
     accepted
@@ -311,5 +349,10 @@ export const taskTypeDef = gql`
     \`proposed\` is visible to the requester and deciders, \`rejected\` to
     deciders only."""
     caseProposals: [CaseProposal!]!
+    """ImpactPriors computed from CLEAR's history (V4), one per hazard the
+    Event manifests × metric × population group with any history, most
+    evidence first. Follows the Event's visibility. \`horizonYears\`
+    (default 10, at most 50) is how far back history is taken."""
+    computedImpactPriors(horizonYears: Int = 10): [ComputedImpactPrior!]!
   }
 `;
