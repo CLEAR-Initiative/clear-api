@@ -261,6 +261,11 @@ type EventOrderBy =
   | "SEVERITY_ASC";
 type SignalOrderBy = "PUBLISHED_DESC" | "PUBLISHED_ASC" | "SEVERITY_DESC" | "SEVERITY_ASC";
 
+// Postgres sorts NULLs first under DESC. Unknown severity is unranked, not
+// "highest", so it goes last in both directions.
+const SEVERITY_DESC_NULLS_LAST = { sort: "desc", nulls: "last" } as const;
+const SEVERITY_ASC_NULLS_LAST = { sort: "asc", nulls: "last" } as const;
+
 function alertsOrderBy(o?: AlertOrderBy | null): Prisma.alertsOrderByWithRelationInput[] {
   // Severity ties resolve to newest-first within the tier, then to a stable
   // id order so paging is deterministic.
@@ -269,13 +274,13 @@ function alertsOrderBy(o?: AlertOrderBy | null): Prisma.alertsOrderByWithRelatio
       return [{ event: { firstSignalCreatedAt: "asc" } }, { id: "asc" }];
     case "SEVERITY_DESC":
       return [
-        { event: { severity: "desc" } },
+        { event: { severity: SEVERITY_DESC_NULLS_LAST } },
         { event: { firstSignalCreatedAt: "desc" } },
         { id: "desc" },
       ];
     case "SEVERITY_ASC":
       return [
-        { event: { severity: "asc" } },
+        { event: { severity: SEVERITY_ASC_NULLS_LAST } },
         { event: { firstSignalCreatedAt: "desc" } },
         { id: "asc" },
       ];
@@ -294,9 +299,9 @@ function eventsOrderBy(o?: EventOrderBy | null): Prisma.eventsOrderByWithRelatio
     case "CREATED_ASC":
       return [{ firstSignalCreatedAt: "asc" }, { id: "asc" }];
     case "SEVERITY_DESC":
-      return [{ severity: "desc" }, { firstSignalCreatedAt: "desc" }, { id: "desc" }];
+      return [{ severity: SEVERITY_DESC_NULLS_LAST }, { firstSignalCreatedAt: "desc" }, { id: "desc" }];
     case "SEVERITY_ASC":
-      return [{ severity: "asc" }, { firstSignalCreatedAt: "desc" }, { id: "asc" }];
+      return [{ severity: SEVERITY_ASC_NULLS_LAST }, { firstSignalCreatedAt: "desc" }, { id: "asc" }];
     case "LAST_SIGNAL_DESC":
     default:
       return [{ lastSignalCreatedAt: "desc" }, { id: "desc" }];
@@ -308,9 +313,9 @@ function signalsOrderBy(o?: SignalOrderBy | null): Prisma.signalsOrderByWithRela
     case "PUBLISHED_ASC":
       return [{ publishedAt: "asc" }, { id: "asc" }];
     case "SEVERITY_DESC":
-      return [{ severity: "desc" }, { publishedAt: "desc" }, { id: "desc" }];
+      return [{ severity: SEVERITY_DESC_NULLS_LAST }, { publishedAt: "desc" }, { id: "desc" }];
     case "SEVERITY_ASC":
-      return [{ severity: "asc" }, { publishedAt: "desc" }, { id: "asc" }];
+      return [{ severity: SEVERITY_ASC_NULLS_LAST }, { publishedAt: "desc" }, { id: "asc" }];
     case "PUBLISHED_DESC":
     default:
       return [{ publishedAt: "desc" }, { id: "desc" }];
@@ -390,8 +395,14 @@ async function statsScope(
   // runs this SQL against the migrated schema).
   const conds: Prisma.Sql[] = [];
   if (!input.includeDummy) conds.push(Prisma.sql`${col('"isDummy"')} = false`);
-  if (input.severityMin != null) conds.push(Prisma.sql`${col("severity")} >= ${input.severityMin}`);
-  if (input.severityMax != null) conds.push(Prisma.sql`${col("severity")} <= ${input.severityMax}`);
+  // Null-inclusive, matching buildEventsWhere/buildSignalsWhere: unknown
+  // severity is "unknown", not "outside the range".
+  const sevBounds: Prisma.Sql[] = [];
+  if (input.severityMin != null) sevBounds.push(Prisma.sql`${col("severity")} >= ${input.severityMin}`);
+  if (input.severityMax != null) sevBounds.push(Prisma.sql`${col("severity")} <= ${input.severityMax}`);
+  if (sevBounds.length > 0) {
+    conds.push(Prisma.sql`(${col("severity")} IS NULL OR (${Prisma.join(sevBounds, " AND ")}))`);
+  }
   if (input.from) conds.push(Prisma.sql`${Prisma.raw(tsCol)} >= ${new Date(input.from)}`);
   if (input.to) conds.push(Prisma.sql`${Prisma.raw(tsCol)} <= ${new Date(input.to)}`);
   if (input.eventTypes && input.eventTypes.length > 0 && input.entity !== "signal") {

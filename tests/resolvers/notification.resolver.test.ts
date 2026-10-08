@@ -309,6 +309,30 @@ describe("Mutation.notifyAlertSubscribers", () => {
     expect(sendBulk).not.toHaveBeenCalled();
   });
 
+  it("queries only all-severities (minSeverity 1) subscriptions for a null-severity event", async () => {
+    const subFindMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(
+      { id: "an1", role: "analyst" },
+      {
+        alerts: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: "a1",
+            event: {
+              id: "e1", types: ["FLOOD"], originId: "loc1", destinationId: null, locationId: null,
+              severity: null, title: "t", description: "d", generalLocation: null, originLocation: null,
+            },
+          }),
+        },
+        locations: { findMany: vi.fn().mockResolvedValue([{ ancestorIds: [] }]) },
+        userAlertSubscriptions: { findMany: subFindMany },
+        notifications: { createMany: vi.fn() },
+      },
+    );
+
+    await notifyAlertSubscribers(null, { input: { alertId: "a1" } }, ctx);
+    expect(subFindMany.mock.calls[0][0].where.minSeverity).toEqual({ lte: 1 });
+  });
+
   it("sends email only to recipients with emailNotification enabled", async () => {
     const ctx = buildContext(
       { id: "an1", role: "analyst" },
@@ -447,6 +471,37 @@ describe("Mutation.notifyAlertDigest", () => {
     expect(rows[0].notificationType).toBe("alert_digest");
     expect(rows[0].message).toContain("Daily digest (1)");
     expect(rows[0].message).toContain("Big Flood");
+  });
+
+  it("matches a null-severity alert only to all-severities (minSeverity 1) subscriptions", async () => {
+    const notifCreateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const ctx = buildContext(
+      { id: "an1", role: "analyst" },
+      {
+        alerts: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: "a1",
+              event: { id: "e1", types: ["FLOOD"], originId: "district1", destinationId: null, locationId: null, severity: null, title: "Unscored Flood", description: "d" },
+            },
+          ]),
+        },
+        locations: { findMany: vi.fn().mockResolvedValue([{ ancestorIds: [] }]) },
+        userAlertSubscriptions: {
+          findMany: vi.fn().mockResolvedValue([
+            { userId: "u-all", alertType: "FLOOD", locationId: "district1", minSeverity: 1 },
+            { userId: "u-floor2", alertType: "FLOOD", locationId: "district1", minSeverity: 2 },
+          ]),
+        },
+        userAlerts: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        notifications: { createMany: notifCreateMany },
+        user: { findMany: vi.fn().mockResolvedValue([]) },
+      },
+    );
+
+    expect(await notifyAlertDigest(null, { input: goodInput }, ctx)).toBe(1);
+    const rows = notifCreateMany.mock.calls[0][0].data;
+    expect(rows.map((r: { userId: string }) => r.userId)).toEqual(["u-all"]);
   });
 
   it("caps the digest preview at 3 titles and appends an overflow suffix", async () => {

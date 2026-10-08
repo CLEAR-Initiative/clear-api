@@ -6,6 +6,7 @@ import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
+import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -77,7 +78,8 @@ interface UpdateEventInput {
   description?: string;
   descriptionSignals?: Record<string, unknown>;
   validFrom?: string;
-  validTo?: string;
+  /** Explicit null clears a known end back to "ongoing / no known end". */
+  validTo?: string | null;
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
   startedAt?: string;
@@ -411,7 +413,9 @@ export const eventResolvers = {
               ? (input.descriptionSignals as InputJsonValue)
               : undefined,
             validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
-            validTo: input.validTo ? new Date(input.validTo) : undefined,
+            // null clears the end date; omitted leaves it untouched.
+            validTo:
+              input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
             startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
             originId: input.originId,
             destinationId: input.destinationId,
@@ -510,21 +514,17 @@ export const eventResolvers = {
           const locationNames = locations.map((l) => l.name).join(", ");
           console.log(`[escalateEvent] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
-          // An event with unknown (null) severity does not fan out to
-          // severity-gated subscriptions — we don't invent a severity to force a match.
-          const subscriptions =
-            event.severity == null
-              ? []
-              : await context.prisma.userAlertSubscriptions.findMany({
-                  where: {
-                    active: true,
-                    frequency: "immediately",
-                    alertType: { in: event.types },
-                    locationId: { in: [...allLocationIds] },
-                    minSeverity: { lte: event.severity },
-                  },
-                  select: { userId: true },
-                });
+          // Unknown (null) severity reaches only "all severities" subscribers.
+          const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
+            where: {
+              active: true,
+              frequency: "immediately",
+              alertType: { in: event.types },
+              locationId: { in: [...allLocationIds] },
+              minSeverity: minSeverityFilterFor(event.severity),
+            },
+            select: { userId: true },
+          });
 
           const uniqueUserIds = [...new Set(subscriptions.map((s) => s.userId))];
           console.log(`[escalateEvent] Found ${subscriptions.length} subscriptions → ${uniqueUserIds.length} unique users`);
