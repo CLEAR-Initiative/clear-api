@@ -961,7 +961,11 @@ lastRevisedAt and moves a grouped signal to NEEDS_RECOMPUTE. A changed
     <td><code>Event!</code></td>
     <td>Overwrite an event's aggregates with values recomputed from scratch from
 its live (non-retracted) member signals. Absent fields are left unchanged;
-explicit nulls clear them. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span></div></td>
+explicit nulls clear them. `members` is the (id, revision) snapshot the
+values were computed from; if the live members differ, nothing is written
+and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
+it; do not retry).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span><span class="arg"><code>members: [SignalRevisionInput!]!</code></span></div></td>
   </tr><tr id="mutation-submitsignallocationchallenge">
     <td><code>submitSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
@@ -2842,7 +2846,7 @@ Admin only — a non-admin passing `true` is rejected.</td>
   </tr><tr>
     <td><code>revision</code></td>
     <td><code>Int!</code></td>
-    <td>The revision the drain fetched; the row is marked only if it still matches.</td>
+    <td>The revision the caller read; the write applies only if it still matches.</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>

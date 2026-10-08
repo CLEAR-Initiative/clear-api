@@ -423,7 +423,7 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
     // The last casualty-bearing member was retracted: the recompute sends casualties=null.
     const ev = await seedEvent();
 
-    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { casualties: null, rank: 0 } } as never, baseCtx);
+    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { casualties: null, rank: 0 }, members: [] } as never, baseCtx);
 
     const row = await prisma.events.findUniqueOrThrow({ where: { id: ev.id } });
     expect(row.casualties).toBeNull();
@@ -437,12 +437,12 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
     const ev = await seedEvent();
     const big = "9007199254740993";
 
-    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: big, populationDisplaced: "-5", rank: 0.2 } } as never, baseCtx);
+    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: big, populationDisplaced: "-5", rank: 0.2 }, members: [] } as never, baseCtx);
     const row = await prisma.events.findUniqueOrThrow({ where: { id: ev.id } });
     expect(row.populationAffected?.toString()).toBe(big);
     expect(row.populationDisplaced?.toString()).toBe("-5");
 
-    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: null, rank: 0.2 } } as never, baseCtx);
+    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: null, rank: 0.2 }, members: [] } as never, baseCtx);
     const cleared = await prisma.events.findUniqueOrThrow({ where: { id: ev.id } });
     expect(cleared.populationAffected).toBeNull();
     expect(cleared.populationDisplaced?.toString()).toBe("-5");
@@ -451,17 +451,69 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
   it("API-I-18 setEventAggregates rejects non-decimal population strings and writes nothing; unknown event -> NOT_FOUND", async () => {
     // A bare BigInt() would accept '' as 0 and '0x10' as 16.
     const ev = await seedEvent();
-    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: "42", rank: 0.1 } } as never, baseCtx);
+    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: "42", rank: 0.1 }, members: [] } as never, baseCtx);
 
     for (const bad of ["", "0x10", "12.5", "1e3", " 7"]) {
       await expect(
-        eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: bad, rank: 0.1 } } as never, baseCtx),
+        eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { populationAffected: bad, rank: 0.1 }, members: [] } as never, baseCtx),
       ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     }
     expect((await prisma.events.findUniqueOrThrow({ where: { id: ev.id } })).populationAffected?.toString()).toBe("42");
 
     await expect(
-      eventResolvers.Mutation.setEventAggregates({}, { id: `${RUN}-nope`, input: { rank: 0 } } as never, baseCtx),
+      eventResolvers.Mutation.setEventAggregates({}, { id: `${RUN}-nope`, input: { rank: 0 }, members: [] } as never, baseCtx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it("setEventAggregates: totals from a stale member snapshot never overwrite newer ones", async () => {
+    // Run A reads members, a retraction lands, run B recomputes and writes, then A writes last.
+    const ev = await seedEvent();
+    const a = await seedSignal({ status: "PROCESSED", casualties: 4 });
+    const b = await seedSignal({ status: "PROCESSED", casualties: 6 });
+    await link(a.id, ev.id);
+    await link(b.id, ev.id);
+    const snap = (rows: { id: string; revision: number }[]) => rows.map(({ id, revision }) => ({ id, revision }));
+    const runA = snap((await signalResolvers.Query.eventMembers({}, { eventId: ev.id }, baseCtx)) as never);
+
+    await update(updateInput(b, { retracted: true }));
+    const runB = snap((await signalResolvers.Query.eventMembers({}, { eventId: ev.id }, baseCtx)) as never);
+    await eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { casualties: 4, rank: 0.6 }, members: runB } as never, baseCtx);
+
+    await expect(
+      eventResolvers.Mutation.setEventAggregates({}, { id: ev.id, input: { casualties: 10, rank: 0.6 }, members: runA } as never, baseCtx),
+    ).rejects.toMatchObject({ extensions: { code: "STALE_EVENT_MEMBERS" } });
+    expect((await prisma.events.findUniqueOrThrow({ where: { id: ev.id } })).casualties).toBe(4);
+  });
+
+  it("setEventAggregates: the member check waits for a writer holding the event row", async () => {
+    // The holder retracts a member and writes totals under the event lock. Without the
+    // lock, the writer's check would read the pre-retraction members, pass, and its
+    // update would land after the holder's commit.
+    const ev = await seedEvent();
+    const s1 = await seedSignal({ status: "PROCESSED", casualties: 4 });
+    const s2 = await seedSignal({ status: "PROCESSED", casualties: 6 });
+    await link(s1.id, ev.id);
+    await link(s2.id, ev.id);
+    const stale = [s1, s2].map(({ id, revision }) => ({ id, revision }));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((r) => (locked = r));
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "events" WHERE id = ${ev.id} FOR UPDATE`;
+      await tx.signals.update({ where: { id: s2.id }, data: { retracted: true, revision: { increment: 1 } } });
+      await tx.events.update({ where: { id: ev.id }, data: { casualties: 4 } });
+      locked();
+      await held;
+    });
+    await lockTaken;
+    const writer = eventResolvers.Mutation.setEventAggregates(
+      {}, { id: ev.id, input: { casualties: 10, rank: 0.6 }, members: stale } as never, baseCtx,
+    );
+    await new Promise((r) => setTimeout(r, 200)); // writer is now blocked on the lock
+    release();
+    await holder;
+    await expect(writer).rejects.toMatchObject({ extensions: { code: "STALE_EVENT_MEMBERS" } });
+    expect((await prisma.events.findUniqueOrThrow({ where: { id: ev.id } })).casualties).toBe(4);
   });
 });

@@ -142,20 +142,34 @@ describe("signal recompute schema contract", () => {
     expect((r.errors ?? []).map((e) => e.extensions?.code)).not.toContain("BAD_USER_INPUT");
   });
 
-  it("API-S-10 setEventAggregates without rank fails validation; with rank it runs", async () => {
+  it("API-S-10 setEventAggregates without rank or members fails validation; with both it runs", async () => {
     const bad = await exec(
-      `mutation($id: String!, $input: EventAggregatesInput!) { setEventAggregates(id: $id, input: $input) { id } }`,
+      `mutation($id: String!, $input: EventAggregatesInput!) { setEventAggregates(id: $id, input: $input, members: []) { id } }`,
       { id: "e1", input: { severity: 3 } },
     );
     expect(bad.errors?.[0].message).toMatch(/rank/);
 
-    const findUnique = vi.fn(async () => ({ id: "e1" }));
+    const noMembers = await exec(
+      `mutation($id: String!, $input: EventAggregatesInput!) { setEventAggregates(id: $id, input: $input) { id } }`,
+      { id: "e1", input: { rank: 1 } },
+    );
+    expect(noMembers.errors?.[0].message).toMatch(/members/);
+
     const update = vi.fn(async () => ({ id: "e1", rewriteMembersHash: "hh", rank: 1, populationAffected: null }));
+    const tx = {
+      $queryRaw: vi.fn(async () => [{ id: "e1" }]),
+      signals: { findMany: vi.fn(async () => [{ id: "s1", revision: 2 }]) },
+      events: { update },
+    };
     const ok = await exec(
-      `mutation($id: String!, $input: EventAggregatesInput!) {
-         setEventAggregates(id: $id, input: $input) { id rewriteMembersHash } }`,
-      { id: "e1", input: { rank: 1, populationAffected: "9007199254740993", rewriteMembersHash: "hh" } },
-      { events: { findUnique, update } },
+      `mutation($id: String!, $input: EventAggregatesInput!, $members: [SignalRevisionInput!]!) {
+         setEventAggregates(id: $id, input: $input, members: $members) { id rewriteMembersHash } }`,
+      {
+        id: "e1",
+        input: { rank: 1, populationAffected: "9007199254740993", rewriteMembersHash: "hh" },
+        members: [{ id: "s1", revision: 2 }],
+      },
+      { $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) },
     );
     expect(ok.errors).toBeUndefined();
     expect(ok.data?.setEventAggregates).toEqual({ id: "e1", rewriteMembersHash: "hh" });

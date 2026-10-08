@@ -175,8 +175,12 @@ export const mutationTypeDef = gql`
 
     """Overwrite an event's aggregates with values recomputed from scratch from
     its live (non-retracted) member signals. Absent fields are left unchanged;
-    explicit nulls clear them. Admin/pipeline only."""
-    setEventAggregates(id: String!, input: EventAggregatesInput!): Event!
+    explicit nulls clear them. \`members\` is the (id, revision) snapshot the
+    values were computed from; if the live members differ, nothing is written
+    and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
+    it; do not retry).
+    Admin/pipeline only."""
+    setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
 
     """Create or replace the open (consideration) Location challenge for a Signal.
     Auth: any approved logged-in team member who can view the Signal. Queue only —
@@ -861,7 +865,7 @@ export const mutationTypeDef = gql`
 
   input SignalRevisionInput {
     id: String!
-    """The revision the drain fetched; the row is marked only if it still matches."""
+    """The revision the caller read; the write applies only if it still matches."""
     revision: Int!
   }
 

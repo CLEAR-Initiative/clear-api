@@ -1,5 +1,5 @@
 /** Unit tests (mocked Prisma) for Query.eventMembers and Mutation.setEventAggregates:
- *  auth and the args passed to Prisma, not SQL. */
+ *  auth, the args passed to Prisma and the stale-member check, not SQL. */
 import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
@@ -68,17 +68,27 @@ describe("eventMembers", () => {
 
 // ─── setEventAggregates ──────────────────────────────────────────────────────
 
-function eventPrisma(existing: unknown = { id: "e1" }) {
-  const findUnique = vi.fn(async () => existing);
+const LIVE = [{ id: "s1", revision: 0 }, { id: "s2", revision: 3 }];
+
+function eventPrisma(existing: unknown = { id: "e1" }, live = LIVE) {
+  const $queryRaw = vi.fn(async () => (existing ? [existing] : []));
+  const findMany = vi.fn(async () => live);
   const update = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "e1", ...args.data }));
   const signalEvents = {
     create: vi.fn(), createMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(),
     delete: vi.fn(), deleteMany: vi.fn(), upsert: vi.fn(),
   };
-  return { events: { findUnique, update }, signalEvents };
+  const tx = { $queryRaw, events: { update }, signals: { findMany }, signalEvents };
+  const $transaction = vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx));
+  return { $transaction, $queryRaw, events: { update }, signals: { findMany }, signalEvents };
 }
 
-const set = eventResolvers.Mutation.setEventAggregates;
+const setEventAggregates = eventResolvers.Mutation.setEventAggregates;
+const set = (
+  parent: unknown,
+  args: { id: string; input: Parameters<typeof setEventAggregates>[1]["input"]; members?: { id: string; revision: number }[] },
+  context: Context,
+) => setEventAggregates(parent, { members: LIVE, ...args }, context);
 const dataOf = (p: ReturnType<typeof eventPrisma>) =>
   (p.events.update.mock.calls[0][0] as unknown as { where: unknown; data: Record<string, unknown> });
 
@@ -160,6 +170,51 @@ describe("setEventAggregates", () => {
     expect(p.events.update).not.toHaveBeenCalled();
   });
 
+  it("locks the event row before reading live members", async () => {
+    const p = eventPrisma();
+    await set({}, { id: "e1", input: { rank: 1 } }, ctx(p));
+    const sql = (p.$queryRaw.mock.calls[0][0] as unknown as string[]).join("?");
+    expect(sql).toMatch(/FROM "events" WHERE id = \? FOR UPDATE/);
+    expect(p.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(p.signals.findMany.mock.invocationCallOrder[0]);
+    expect(p.signals.findMany.mock.calls[0][0]).toEqual({
+      where: { retracted: false, signalEvents: { some: { eventId: "e1" } } },
+      select: { id: true, revision: true },
+    });
+  });
+
+  it("members in any order matching the live set -> written", async () => {
+    const p = eventPrisma();
+    await set({}, { id: "e1", input: { rank: 1 }, members: [...LIVE].reverse() }, ctx(p));
+    expect(p.events.update).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a member's revision moved", [{ id: "s1", revision: 0 }, { id: "s2", revision: 2 }]],
+    ["a member was retracted since", [...LIVE, { id: "s3", revision: 1 }]],
+    ["a member was linked or un-retracted since", [{ id: "s1", revision: 0 }]],
+    ["a different member", [{ id: "s1", revision: 0 }, { id: "s9", revision: 3 }]],
+  ])("stale snapshot (%s) -> STALE_EVENT_MEMBERS, no write", async (_label, members) => {
+    const p = eventPrisma();
+    await expect(set({}, { id: "e1", input: { rank: 1 }, members }, ctx(p))).rejects.toMatchObject({
+      extensions: { code: "STALE_EVENT_MEMBERS" },
+    });
+    expect(p.events.update).not.toHaveBeenCalled();
+  });
+
+  it("duplicate member ids -> BAD_USER_INPUT before the transaction", async () => {
+    const p = eventPrisma();
+    await expect(
+      set({}, { id: "e1", input: { rank: 1 }, members: [LIVE[0], LIVE[1], LIVE[1]] }, ctx(p)),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(p.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("no live members and none sent -> written (last member retracted)", async () => {
+    const p = eventPrisma({ id: "e1" }, []);
+    await set({}, { id: "e1", input: { rank: 0, casualties: null }, members: [] }, ctx(p));
+    expect(p.events.update).toHaveBeenCalledTimes(1);
+  });
+
   it("API-U-68 roles: admin and pipeline ok; viewer and anonymous rejected before the DB", async () => {
     for (const role of ["admin", "pipeline"]) {
       const p = eventPrisma();
@@ -169,7 +224,7 @@ describe("setEventAggregates", () => {
     for (const role of ["viewer", null]) {
       const p = eventPrisma();
       await expect(set({}, { id: "e1", input: { rank: 1 } }, ctx(p, role))).rejects.toBeInstanceOf(GraphQLError);
-      expect(p.events.findUnique).not.toHaveBeenCalled();
+      expect(p.$transaction).not.toHaveBeenCalled();
       expect(p.events.update).not.toHaveBeenCalled();
     }
   });

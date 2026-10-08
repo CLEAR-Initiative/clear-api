@@ -374,31 +374,58 @@ export const eventResolvers = {
     // its live members. Absent fields are kept; explicit nulls clear them.
     setEventAggregates: async (
       _parent: unknown,
-      args: { id: string; input: EventAggregatesInput },
+      args: { id: string; input: EventAggregatesInput; members: { id: string; revision: number }[] },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
-      const { id, input } = args;
-
-      const existing = await context.prisma.events.findUnique({ where: { id } });
-      if (!existing) {
-        throw new GraphQLError("Event not found", {
-          extensions: { code: "NOT_FOUND" },
+      const { id, input, members } = args;
+      const data = {
+        severity: input.severity,
+        casualties: input.casualties,
+        populationAffected: bigIntOrKeep(input.populationAffected, "populationAffected"),
+        populationDisplaced: bigIntOrKeep(input.populationDisplaced, "populationDisplaced"),
+        rank: input.rank,
+        title: input.title,
+        description: input.description,
+        rewriteMembersHash: input.rewriteMembersHash,
+      };
+      const sent = new Map(members.map((m) => [m.id, m.revision]));
+      // Would otherwise read as stale and be silently dropped.
+      if (sent.size !== members.length) {
+        throw new GraphQLError("members has duplicate ids", {
+          extensions: { code: "BAD_USER_INPUT" },
         });
       }
 
-      return context.prisma.events.update({
-        where: { id },
-        data: {
-          severity: input.severity,
-          casualties: input.casualties,
-          populationAffected: bigIntOrKeep(input.populationAffected, "populationAffected"),
-          populationDisplaced: bigIntOrKeep(input.populationDisplaced, "populationDisplaced"),
-          rank: input.rank,
-          title: input.title,
-          description: input.description,
-          rewriteMembersHash: input.rewriteMembersHash,
-        },
+      return context.prisma.$transaction(async (tx) => {
+        // Serialises writers per event: the member check below sees every
+        // write committed by an earlier writer.
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "events" WHERE id = ${id} FOR UPDATE
+        `;
+        if (locked.length === 0) {
+          throw new GraphQLError("Event not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+
+        // Totals computed from a stale member snapshot must not overwrite newer
+        // ones. A change committed after this check leaves its signal pending,
+        // so a later recompute writes after this one.
+        const live = await tx.signals.findMany({
+          where: { retracted: false, signalEvents: { some: { eventId: id } } },
+          select: { id: true, revision: true },
+        });
+        const stale =
+          live.length !== sent.size || live.some((s) => sent.get(s.id) !== s.revision);
+        if (stale) {
+          throw new GraphQLError(
+            "Event members changed since they were read; a newer recompute supersedes this one",
+            { extensions: { code: "STALE_EVENT_MEMBERS" } },
+          );
+        }
+
+        return tx.events.update({ where: { id }, data });
       });
     },
 
