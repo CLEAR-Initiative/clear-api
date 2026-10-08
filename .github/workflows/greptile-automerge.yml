@@ -1,0 +1,250 @@
+name: Greptile auto-merge
+
+# Squash-merges a PR into the default branch once Greptile has reviewed the PR's latest
+# commit and left no unresolved P0/P1 finding on it, and every required check has passed.
+# P2s don't block. Anything else — a P0/P1, no Greptile review on the latest commit, a
+# draft, a fork, a bot author (Dependabot, Copilot…), the `no-automerge` label — leaves the
+# PR for a human.
+#
+# The merge is always pinned to the commit Greptile reviewed (`sha` on the merge call), and
+# GitHub's branch rules decide whether the required checks have passed at that moment. So
+# a later push can never merge on the strength of an earlier review: GitHub refuses a
+# pinned merge whose head has moved. That's also why this doesn't queue GitHub auto-merge —
+# a queued auto-merge isn't pinned and would merge a newer head. Instead it retries
+# whenever Greptile finishes a review or a required-check workflow finishes.
+#
+# How a finding is counted: a top-level review comment by greptile-apps[bot] whose body
+# opens with a P0/P1 badge, whose `commit_id` is the head commit, and whose thread isn't
+# resolved. GitHub moves `commit_id` forward when later pushes leave the line untouched, so
+# an earlier finding on an unchanged line still counts until someone resolves its thread.
+#
+# Greptile's own check passes even when it leaves findings, so its conclusion only tells
+# us a review happened. Greptile also skips some pushes; no review on the head = no merge.
+#
+# Kill switch (Greptile trial):  gh workflow disable greptile-automerge.yml
+# Re-evaluate a PR by hand (e.g. after resolving a Greptile thread — there's no Actions
+# event for that):              gh workflow run greptile-automerge.yml -f pr=<number>
+#
+# Merges use the auto-merge GitHub App's token, not GITHUB_TOKEN: a merge made with
+# GITHUB_TOKEN doesn't trigger other workflows (deploys, exponential-promote).
+#
+# check_run and workflow_run use the default branch's copy of this file.
+# pull_request_target uses the PR's base branch; workflow_dispatch uses the selected ref.
+# This workflow never checks out or runs PR code. The App's private key lives in the
+# `greptile-automerge` environment, which must be restricted to the default branch.
+# That environment restriction keeps workflows on other branches from reading the key.
+
+on:
+  check_run:
+    types: [completed]
+  workflow_run:
+    # The workflows that produce the required checks, across the CLEAR repos. A name a
+    # repo doesn't have is ignored.
+    workflows: [CI, E2E smoke, Unit tests]
+    types: [completed]
+  pull_request_target:
+    types: [synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to re-evaluate
+        required: true
+
+concurrency:
+  group: greptile-automerge-${{ github.event.pull_request.head.ref || github.event.check_run.check_suite.head_branch || github.event.workflow_run.head_branch || inputs.pr }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: read
+
+env:
+  # Dry run: decide and post the PR comment, but never merge.
+  DRY_RUN: 'false'
+
+jobs:
+  evaluate:
+    if: >-
+      (github.event_name == 'check_run' && github.event.check_run.app.slug == 'greptile-apps') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]' &&
+        (!contains(fromJSON('["labeled","unlabeled"]'), github.event.action) || github.event.label.name == 'no-automerge')) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: greptile-automerge
+      deployment: false
+    steps:
+      - id: app-token
+        if: env.DRY_RUN != 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const dryRun = process.env.DRY_RUN === 'true';
+            const botLogin = process.env.BOT_LOGIN;
+            const base = context.payload.repository.default_branch;
+            const MARKER = '<!-- greptile-automerge -->';
+            const LABEL = 'no-automerge';
+            const BLOCKING = /^\s*(<a[^>]*>\s*)?<img[^>]*alt="(P[01])"/;
+            const SETTLE_MS = 15000;
+            const MERGE_ATTEMPTS = 3;
+            const SUMMARY_ATTEMPTS = 4;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+            let numbers;
+            if (context.eventName === 'check_run' || context.eventName === 'workflow_run') {
+              const event = context.payload.check_run ?? context.payload.workflow_run;
+              const sha = event.head_sha;
+              const branch = event.check_suite?.head_branch ?? event.head_branch;
+              // Also match on branch: runs share a concurrency slot per branch, and a newer
+              // event for an older commit can replace a pending run for the current one.
+              const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+              numbers = open
+                .filter(p => p.head.sha === sha || (branch && p.head.ref === branch && p.head.repo?.full_name === `${owner}/${repo}`))
+                .map(p => p.number);
+              if (!numbers.length) core.info(`No open PR has ${sha} as its latest commit; nothing to do.`);
+            } else if (context.eventName === 'pull_request_target') {
+              numbers = [context.payload.pull_request.number];
+            } else {
+              numbers = [Number(context.payload.inputs.pr)];
+            }
+            for (const number of numbers) await evaluate(number);
+
+            async function evaluate(number) {
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              if (pr.state !== 'open') return core.info(`#${number} is ${pr.state}; nothing to do.`);
+              const sha = pr.head.sha;
+              const short = sha.slice(0, 7);
+              const skip = reason => report(number, `Greptile auto-merge skipped on \`${short}\`: ${reason}.`);
+
+              if (pr.base.ref !== base) return skip(`the PR targets \`${pr.base.ref}\`; auto-merge only applies to PRs into \`${base}\``);
+              if (pr.head.repo?.full_name !== `${owner}/${repo}`) return skip('the PR comes from a fork');
+              if (pr.user?.type === 'Bot') return skip(`the PR was opened by a bot (@${pr.user.login})`);
+              if (pr.draft) return skip('the PR is a draft');
+              if (pr.labels.some(l => l.name === LABEL)) return skip(`the PR has the \`${LABEL}\` label`);
+
+              const { data: { check_runs: runs } } = await github.rest.checks.listForRef({
+                owner, repo, ref: sha, check_name: 'Greptile Review', filter: 'latest',
+              });
+              const run = runs.find(r => r.app?.slug === 'greptile-apps');
+              if (!run) return skip(`Greptile hasn't reviewed \`${short}\``);
+              if (run.status !== 'completed') return skip(`Greptile's review of \`${short}\` is still running`);
+              if (run.conclusion !== 'success') return skip(`Greptile's review of \`${short}\` ended \`${run.conclusion}\``);
+
+              // Greptile posts its comments a few seconds before it completes the check, so
+              // reading the comment list right after completion can miss one. Wait until the
+              // check has been complete for SETTLE_MS, whatever event got us here — a CI
+              // workflow_run can land seconds after Greptile finishes.
+              const age = Date.now() - Date.parse(run.completed_at);
+              const settle = Number.isFinite(age) ? SETTLE_MS - age : SETTLE_MS;
+              if (settle > 0) await sleep(settle);
+
+              // The check belongs to the commit, not the PR: if two PRs point at the same
+              // commit, Greptile may have reviewed the other one and left its findings there.
+              // Require this PR's own Greptile summary to name the commit it last reviewed.
+              // Greptile edits the summary a few seconds after completing the check; give a
+              // fresh review up to SUMMARY_ATTEMPTS reads before giving up.
+              let reviewed;
+              for (let attempt = 1; ; attempt++) {
+                const issueComments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: number, per_page: 100,
+                });
+                const summary = issueComments.find(c =>
+                  c.user?.login === 'greptile-apps[bot]' && c.body?.includes('<!-- greptile_summary -->'));
+                reviewed = summary?.body.match(/Last reviewed commit:.*?\/commit\/([0-9a-f]{40})/)?.[1];
+                if (reviewed === sha || attempt >= SUMMARY_ATTEMPTS || Date.now() - Date.parse(run.completed_at) > 120000) break;
+                await sleep(10000);
+              }
+              if (reviewed !== sha) return skip(`Greptile's summary on this PR doesn't show a review of \`${short}\``);
+
+              // Threads past the first 100 aren't in this set, so their findings count as
+              // unresolved — the safe direction.
+              const { repository: { pullRequest: { reviewThreads } } } = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { databaseId } } } }
+                    }
+                  }
+                }`, { owner, repo, number });
+              const resolved = new Set(reviewThreads.nodes
+                .filter(t => t.isResolved)
+                .map(t => t.comments.nodes[0]?.databaseId));
+              const comments = await github.paginate(github.rest.pulls.listReviewComments, {
+                owner, repo, pull_number: number, per_page: 100,
+              });
+              const blocking = comments.filter(c =>
+                c.user?.login === 'greptile-apps[bot]' && !c.in_reply_to_id &&
+                c.commit_id === sha && !resolved.has(c.id) && BLOCKING.test(c.body));
+              if (blocking.length) {
+                const links = blocking.map(c => `[${c.body.match(BLOCKING)[2]}](${c.html_url})`).join(', ');
+                return skip(`${blocking.length} unresolved P0/P1 finding(s) from Greptile — ${links}`);
+              }
+
+              if (dryRun) return report(number, `[dry run] Greptile: no P0/P1 on \`${short}\` — would merge once the required checks pass.`);
+              for (let attempt = 1; ; attempt++) {
+                // The waits above and between attempts give people time to opt out (label,
+                // draft, close, retarget), and the run that event starts queues behind this
+                // one. So re-read the PR and recheck right before every merge attempt.
+                const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (now.state !== 'open' || now.head.sha !== sha) {
+                  return core.info(`#${number} changed before merging (closed or new head); leaving it to its own run.`);
+                }
+                if (now.base.ref !== base) return skip(`the PR now targets \`${now.base.ref}\``);
+                if (now.draft) return skip('the PR is a draft');
+                if (now.labels.some(l => l.name === LABEL)) return skip(`the PR has the \`${LABEL}\` label`);
+                try {
+                  // Pinned to the reviewed commit: GitHub refuses the merge if the head has moved
+                  // (409) or a required check hasn't passed (405).
+                  await github.rest.pulls.merge({ owner, repo, pull_number: number, sha, merge_method: 'squash' });
+                  return report(number, `Greptile: no P0/P1 on \`${short}\` — required checks passed, merged.`);
+                } catch (e) {
+                  if (e.status === 409) return core.info(`#${number}: head moved past ${short} while merging; the newer commit gets its own run.`);
+                  if (e.status !== 405) {
+                    await report(number, `Greptile: no P0/P1 on \`${short}\`, but the merge failed: ${e.message}`);
+                    throw e;
+                  }
+                  // A pending required check is retried by the next CI workflow_run.
+                  if (/status check/i.test(e.message)) {
+                    return report(number, `Greptile: no P0/P1 on \`${short}\` — will merge when the required checks pass. GitHub says: ${e.message}`);
+                  }
+                  // Any other 405 (the base moved under a concurrent merge, mergeability still
+                  // being computed) has no later event to retry it, so retry it here.
+                  if (attempt < MERGE_ATTEMPTS) {
+                    core.info(`#${number}: GitHub refused the merge (${e.message}); retrying in ${SETTLE_MS / 1000}s.`);
+                    await sleep(SETTLE_MS);
+                    continue;
+                  }
+                  return report(number, `Greptile: no P0/P1 on \`${short}\`, but GitHub refused the merge ${MERGE_ATTEMPTS} times (${e.message}). ` +
+                    `If nothing else changes on the PR, re-run with \`gh workflow run greptile-automerge.yml -f pr=${number}\`.`);
+                }
+              }
+            }
+
+            async function report(number, text) {
+              core.info(`#${number}: ${text}`);
+              await core.summary.addRaw(`#${number}: ${text}\n`).write();
+              const body = `${MARKER}\n${text}`;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              });
+              const mine = comments.find(c => c.user?.login === botLogin && c.body?.includes(MARKER));
+              if (mine?.body === body) return;
+              if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+              else await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+            }

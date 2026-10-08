@@ -83,7 +83,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   getSessionMock.mockReset().mockResolvedValue({
-    user: { id: "admin-1", email: "admin@clear.dev", role: "admin", name: "Admin" },
+    user: { id: "admin-1", email: "admin@clearinitiative.io", role: "admin", name: "Admin" },
   });
   portalUpdateOrgMemberRoleMock.mockReset().mockResolvedValue({ id: "m1" });
   portalUpdateTeamMemberRoleMock.mockReset().mockResolvedValue({ id: "tm1" });

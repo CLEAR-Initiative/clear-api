@@ -12,7 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireContentReader } from "../utils/auth-guard.js";
+import { requireContentReader, requireNonWorkerContentReader } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import {
   cacheDel,
@@ -54,7 +54,7 @@ interface PublicEventSnapshot {
   description: string | null;
   severity: number | null;
   validFrom: string;
-  validTo: string;
+  validTo: string | null;
   types: string[];
   primaryLocationName: string | null;
   primaryLocationCoords: [number, number] | null;
@@ -166,7 +166,7 @@ export const publicEventResolvers = {
     ) => {
       // Mint requires read access to the event — same gate as the
       // authenticated `event(id)` query. Pending users blocked.
-      requireContentReader(context);
+      requireNonWorkerContentReader(context);
 
       const { eventId } = args.input;
       const ttlDays = Math.min(
@@ -330,7 +330,7 @@ export const publicEventResolvers = {
         description: event.description ?? null,
         severity: event.severity ?? null,
         validFrom: event.validFrom.toISOString(),
-        validTo: event.validTo.toISOString(),
+        validTo: event.validTo ? event.validTo.toISOString() : null,
         types: event.types,
         primaryLocationName: primary?.name ?? null,
         primaryLocationCoords: primaryCoords,
@@ -377,7 +377,7 @@ export const publicEventResolvers = {
       // admin can all revoke. Ownership-of-link isn't checked because
       // the link is unauthenticated by design and the only revocable
       // state is the cache entry itself.
-      requireContentReader(context);
+      requireNonWorkerContentReader(context);
       await cacheDel(publicEventCacheKey(args.eventId, args.token));
       return true;
     },

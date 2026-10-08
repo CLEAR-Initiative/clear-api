@@ -600,5 +600,45 @@ export const queryTypeDef = gql`
     canonical fetch for a queued groundMessage translation — text and
     detected language, no sender identity. Null if the message is gone."""
     groundMessageForTranslation(id: String!): GroundMessageForTranslation
+
+    # ─── Tasks (ADR-0010) ──────────────────────────────────────────────────
+    """One Task by id, or null. Any authenticated content reader; the
+    Task's status follows its Event's visibility. \`lastError\` is visible
+    to the requester and platform admins only."""
+    task(id: String!): Task
+
+    """Enrichment Tasks about an Event, newest first. Same gate as
+    \`task\`."""
+    eventTasks(eventId: String!): [Task!]!
+
+    """The caller's own requests: Tasks they asked for, across every Event,
+    newest first — "what happened to the thing I asked for". Always scoped
+    to the signed-in requester; \`status\` narrows it. \`lastError\` is
+    present (the caller is the requester). Any approved content reader
+    except the worker role, which requests nothing."""
+    myTasks(status: TaskStatus, limit: Int = 50, offset: Int = 0): [Task!]!
+
+    """History: the whole ImpactPriors Workers proposed for an Event in
+    V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
+    computed, see \`Event.computedImpactPriors\`) and none can be decided.
+    An \`accepted\` one follows the Event's visibility; a \`proposed\` one
+    is visible to its requester and to deciders (admins and analysts); a
+    \`rejected\` one to deciders only."""
+    eventImpactPriors(eventId: String!): [ImpactPrior!]!
+
+    """The Inbox's per-case Review items (V4): CaseProposals in one state
+    across every Event, newest first — \`proposed\` by default. Platform
+    admins and analysts only, so the list is exactly what the caller may
+    decide."""
+    caseProposals(state: CaseProposalState = proposed, limit: Int = 50, offset: Int = 0): [CaseProposal!]!
+
+    """Web cases proposed for an Event, newest first. Same visibility as
+    \`Event.caseProposals\`."""
+    eventCaseProposals(eventId: String!): [CaseProposal!]!
+
+    """Source URLs already rejected for an Event: a web Worker reads this
+    before searching and never proposes one again. The worker role,
+    platform admins and analysts."""
+    rejectedCaseUrls(eventId: String!): [String!]!
   }
 `;

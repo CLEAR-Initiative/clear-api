@@ -1,0 +1,912 @@
+/**
+ * Integration tests for the Task / Worker protocol against the real, migrated
+ * schema (ADR-0010).
+ *
+ * The DB-free suite stubs Prisma, so it can't catch a wrong column, the
+ * partial unique index, or the raw `FOR UPDATE SKIP LOCKED` claim. These run
+ * the Task migrations for real: the tracer bullet (request → claim →
+ * complete → the outcome on the Task), the claim's atomicity under
+ * concurrency, the fan-out (one Task per source kind, Workers side by side),
+ * the web Worker's cases, the retired whole-prior kinds, and the whole
+ * ImpactPriors V1–V3 left behind, now read-only history.
+ *
+ * A request fans out into the suites' kinds (tests/setup.ts): `.satellite`,
+ * a fictional stand-in for any source beside the web, and `.web`. Most
+ * tests drive the `.satellite` Task and leave the `.web` one PENDING; the
+ * web tests drain the `.web` pool to reach their own.
+ *
+ * Self-seeding: every row hangs off a fresh Event and fresh users, deleted
+ * in afterAll (Tasks and ImpactPriors are never deleted by the API, so the
+ * cleanup goes through Prisma directly), so this runs against an empty
+ * scratch database: `bun run test:db tests/resolvers/task.db.test.ts`.
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { prisma } from "../../src/lib/prisma.js";
+import { readFileSync } from "node:fs";
+import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resolver.js";
+import type { Context } from "../../src/context.js";
+import { describeIfDb } from "../helpers/db.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
+import { paginationResolvers } from "../../src/resolvers/pagination.resolver.js";
+
+const {
+  requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideCaseProposal,
+} = taskResolvers.Mutation;
+const { eventTasks, eventImpactPriors, eventCaseProposals, caseProposals, rejectedCaseUrls } = taskResolvers.Query;
+
+const RUN = `task-db-${Date.now()}`;
+const ANALYST_ID = `${RUN}-analyst`;
+/** A second requester: the per-requester daily cap (20) is real, and this
+ *  suite makes more requests than that. */
+const ANALYST_B_ID = `${RUN}-analyst-b`;
+const VIEWER_ID = `${RUN}-viewer`;
+/** A team coordinator (platform role viewer, not a decider) who requested
+ *  the V1–V3 whole priors the history test seeds. */
+const COORD_ID = `${RUN}-coord`;
+const WORKER_A = `${RUN}-worker-a`;
+const WORKER_B = `${RUN}-worker-b`;
+const ADMIN_ID = `${RUN}-admin`;
+const COUNTRY_ID = `${RUN}-country`;
+const DISTRICT_ID = `${RUN}-district`;
+/** The suites' fan-out (TASK_IMPACT_PRIOR_KINDS, tests/setup.ts). */
+const OTHER_KIND = "event.impact_prior.satellite";
+const WEB_KIND = "event.impact_prior.web";
+/** The whole-prior kinds, retired 2026-10-08. */
+const RETIRED_CLEAR_KIND = `${IMPACT_PRIOR_KIND}.clear`;
+
+const asUser = (id: string, role: string): Context =>
+  ({ prisma, user: { id, role }, session: null, authMethod: "session" }) as unknown as Context;
+const analyst = asUser(ANALYST_ID, "analyst");
+const analystB = asUser(ANALYST_B_ID, "analyst");
+const viewer = asUser(VIEWER_ID, "viewer");
+const coord = asUser(COORD_ID, "viewer");
+const admin = asUser(ADMIN_ID, "admin");
+const workerA = asUser(WORKER_A, "worker");
+const workerB = asUser(WORKER_B, "worker");
+
+let eventId: string;
+const eventIds: string[] = [];
+
+/** Request enrichment and pick out the per-source Tasks the fan-out created. */
+async function request(id: string, as: Context, args: { horizonYears?: number } = {}) {
+  const tasks = await requestEventEnrichment(null, { eventId: id, ...args }, as);
+  const byKind = new Map(tasks.map((t) => [t.kind, t]));
+  return { tasks, other: byKind.get(OTHER_KIND)!, web: byKind.get(WEB_KIND)! };
+}
+
+/** Claim Tasks of `kind` (oldest first) until `id` is held, completing the
+ *  leftovers earlier tests left PENDING with no proposal. */
+async function claimOwn(kind: string, id: string, as: Context) {
+  for (let round = 0; round < 10; round++) {
+    const claimed = await claimTasks(null, { kind, limit: 10 }, as);
+    if (claimed.length === 0) break;
+    let mine: (typeof claimed)[number] | undefined;
+    for (const t of claimed) {
+      if (t.id === id) mine = t;
+      else await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: { leftover: true } }, as);
+    }
+    if (mine) return mine;
+  }
+  throw new Error(`never claimed ${kind} Task ${id}`);
+}
+
+/** The `.satellite` Task's view on the Event page: eventTasks is newest-first
+ *  and the fan-out leaves a `.web` sibling beside it. */
+const otherTaskSeenBy = async (id: string, taskId: string, as: Context) =>
+  (await eventTasks(null, { eventId: id }, as)).find((t) => t.id === taskId)!;
+
+async function makeEvent(): Promise<string> {
+  const at = new Date();
+  const row = await prisma.events.create({
+    data: {
+      types: ["FL"],
+      validTo: at,
+      firstSignalCreatedAt: at,
+      lastSignalCreatedAt: at,
+      rank: 0,
+      locationId: DISTRICT_ID,
+    },
+  });
+  eventIds.push(row.id);
+  return row.id;
+}
+
+describeIfDb("Tasks against the real schema", () => {
+  beforeAll(async () => {
+    for (const [id, role] of [
+      [ANALYST_ID, "analyst"],
+      [ANALYST_B_ID, "analyst"],
+      [ADMIN_ID, "admin"],
+      [VIEWER_ID, "viewer"],
+      [COORD_ID, "viewer"],
+      [WORKER_A, "worker"],
+      [WORKER_B, "worker"],
+    ]) {
+      await prisma.user.create({
+        data: { id, name: id, email: `${id}@example.test`, role },
+      });
+    }
+    // A country and a district under it (no geometry needed for Tasks).
+    await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "ancestor_ids", "geometry")
+      VALUES (${COUNTRY_ID}, 'Testland', 0, ARRAY[]::text[], ST_GeomFromText('POINT(0 0)', 4326))`;
+    await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
+      VALUES (${DISTRICT_ID}, 'Testville', 2, ${COUNTRY_ID}, ARRAY[${COUNTRY_ID}]::text[], ST_GeomFromText('POINT(0 0)', 4326))`;
+    eventId = await makeEvent();
+  });
+
+  afterAll(async () => {
+    await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
+    await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
+    await prisma.caseProposal.deleteMany({ where: { eventId: { in: eventIds } } });
+    // Events and Signals that accepting cases wrote.
+    const written = await prisma.signals.findMany({ where: { submittedById: { in: [ANALYST_ID, ANALYST_B_ID, ADMIN_ID] } }, select: { id: true, signalEvents: { select: { eventId: true } } } });
+    eventIds.push(...written.flatMap((s) => s.signalEvents.map((e) => e.eventId)));
+    await prisma.signals.deleteMany({ where: { id: { in: written.map((s) => s.id) } } });
+    await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
+    await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
+    await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
+    await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT_ID, COUNTRY_ID] } } });
+    await prisma.user.deleteMany({
+      where: { id: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, COORD_ID, WORKER_A, WORKER_B, ADMIN_ID] } },
+    });
+  });
+
+  it("tracer bullet: request → claim → complete → the outcome on the Task, told to the requester", async () => {
+    const { tasks: fanned, other: requested, web } = await request(eventId, analyst);
+    // The fan-out: one Task per enabled source kind, in configured order, one requestId.
+    expect(fanned.map((t) => t.kind)).toEqual([OTHER_KIND, WEB_KIND]);
+    expect(web.requestId).toBe(requested.requestId);
+    expect(requested).toMatchObject({
+      kind: OTHER_KIND,
+      subjectType: "event",
+      subjectId: eventId,
+      status: "PENDING",
+      origin: "user",
+      requesterId: ANALYST_ID,
+      payload: { horizonYears: 10 },
+      attempts: 0,
+    });
+
+    const [claimed] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(claimed.id).toBe(requested.id);
+    expect(claimed).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_A, attempts: 1 });
+    expect(claimed.leaseToken).toMatch(/^[0-9a-f-]{36}$/);
+    // The token is the owner's secret: the requester reading eventTasks never sees it.
+    const [seenByRequester] = await eventTasks(null, { eventId }, analyst);
+    expect(taskResolvers.Task.leaseToken(seenByRequester, null, analyst)).toBeNull();
+    expect(taskResolvers.Task.leaseToken(claimed, null, workerA)).toBe(claimed.leaseToken);
+    expect(claimed.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 10 * 60_000);
+
+    // Nothing left for a second Worker.
+    expect(await claimTasks(null, { kind: OTHER_KIND }, workerB)).toEqual([]);
+
+    const done = await completeTask(
+      null,
+      { id: claimed.id, leaseToken: claimed.leaseToken!, result: { summary: "searched, nothing found" } },
+      workerA,
+    );
+    expect(done).toMatchObject({
+      status: "COMPLETED",
+      outcome: "no_prior_found",
+      result: { summary: "searched, nothing found" },
+      leaseOwnerId: WORKER_A,
+      leaseExpiresAt: null,
+    });
+    expect(done.completedAt).toBeInstanceOf(Date);
+
+    // The fan-out: the requester and the platform admin were told in-app, with a link to the Event.
+    let rows: { userId: string; actionUrl: string | null; notificationType: string }[] = [];
+    for (let i = 0; i < 20 && rows.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      rows = await prisma.notifications.findMany({ where: { notificationType: "task", actionUrl: `/event/${eventId}` } });
+    }
+    expect(rows.map((r) => r.userId).sort()).toEqual([ADMIN_ID, ANALYST_ID].sort());
+
+    // The Event page's reads: both Tasks (the .web Worker has not reported).
+    const tasks = await eventTasks(null, { eventId }, analyst);
+    expect(tasks.map((t) => t.id).sort()).toEqual([done.id, web.id].sort());
+    expect(await eventTasks(null, { eventId }, viewer)).toHaveLength(2);
+    // Completing writes no whole ImpactPrior any more, and no case for a non-web source.
+    expect(await prisma.impactPrior.count({ where: { eventId } })).toBe(0);
+    expect(await prisma.caseProposal.count({ where: { eventId } })).toBe(0);
+  });
+
+  it("two Workers claiming at once never hold the same Task", async () => {
+    const ids = await Promise.all([makeEvent(), makeEvent(), makeEvent()]);
+    const requested = [];
+    for (const id of ids) {
+      requested.push((await request(id, analyst)).other.id);
+    }
+
+    const [a, b] = await Promise.all([
+      claimTasks(null, { kind: OTHER_KIND, limit: 2 }, workerA),
+      claimTasks(null, { kind: OTHER_KIND, limit: 2 }, workerB),
+    ]);
+    const held = [...a, ...b].map((t) => t.id);
+    expect(held).toHaveLength(3);
+    expect(new Set(held).size).toBe(3);
+    expect(new Set(held)).toEqual(new Set(requested));
+    for (const t of a) expect(t.leaseOwnerId).toBe(WORKER_A);
+    for (const t of b) expect(t.leaseOwnerId).toBe(WORKER_B);
+    expect(await claimTasks(null, { kind: OTHER_KIND, limit: 5 }, workerA)).toEqual([]);
+
+    for (const t of [...a, ...b]) {
+      await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {} }, t.leaseOwnerId === WORKER_A ? workerA : workerB);
+    }
+  });
+
+  it("a second request returns the open Task; after completion a new request opens a new one", async () => {
+    const id = await makeEvent();
+    const { other: first, web: firstWeb } = await request(id, analyst, { horizonYears: 4 });
+    const { other: again, web: againWeb } = await request(id, analyst, { horizonYears: 9 });
+    expect(again.id).toBe(first.id);
+    expect(againWeb.id).toBe(firstWeb.id);
+    expect(again.payload).toEqual({ horizonYears: 4 });
+    const [claimed] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect((await request(id, analyst)).other.id).toBe(first.id);
+    await completeTask(null, { id: claimed.id, leaseToken: claimed.leaseToken!, result: {} }, workerA);
+    // Dedupe is per kind: only .satellite is re-created; the still-open .web Task is returned as is.
+    const { other: second, web: secondWeb } = await request(id, analyst);
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe("PENDING");
+    expect(secondWeb.id).toBe(firstWeb.id);
+    expect(second.requestId).not.toBe(first.requestId);
+    // logActivity is fire-and-forget: give it a moment to land.
+    let log: { id: string }[] = [];
+    for (let i = 0; i < 20 && log.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      log = await prisma.activityLogs.findMany({
+        where: { action: "task.requested", resourceId: { in: [first.id, second.id] } },
+      });
+    }
+    expect(log).toHaveLength(2);
+    // Leave the pool empty for the next test (claims are oldest-first).
+    const [again2] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(again2.id).toBe(second.id);
+    await completeTask(null, { id: second.id, leaseToken: again2.leaseToken!, result: {} }, workerA);
+  });
+
+  /** Age a lease so the next claim sees it as lapsed. */
+  const expireLease = (id: string) =>
+    prisma.task.update({ where: { id }, data: { leaseExpiresAt: new Date(Date.now() - 60_000) } });
+
+  it("heartbeat extends the lease; a lapsed lease is reclaimed by the next claim and the old owner is locked out", async () => {
+    const id = await makeEvent();
+    const { other: requested } = await request(id, analyst);
+    const [a] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(a.id).toBe(requested.id);
+
+    const beat = await heartbeatTask(null, { id: a.id, leaseToken: a.leaseToken! }, workerA);
+    expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThanOrEqual(a.leaseExpiresAt!.getTime());
+    expect(beat.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+    // Another Worker gets nothing while the lease is live.
+    expect(await claimTasks(null, { kind: OTHER_KIND }, workerB)).toEqual([]);
+
+    await expireLease(a.id);
+    const [b] = await claimTasks(null, { kind: OTHER_KIND }, workerB);
+    expect(b).toMatchObject({ id: a.id, status: "LEASED", leaseOwnerId: WORKER_B, attempts: 2 });
+    expect(b.leaseToken).not.toBe(a.leaseToken);
+
+    // The old owner is told it no longer holds the lease, on every write.
+    await expect(heartbeatTask(null, { id: a.id, leaseToken: a.leaseToken! }, workerA)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN", subCode: "NOT_LEASE_OWNER" },
+    });
+    await expect(completeTask(null, { id: a.id, leaseToken: a.leaseToken!, result: { stale: true } }, workerA)).rejects.toMatchObject({
+      extensions: { subCode: "NOT_LEASE_OWNER" },
+    });
+    const row = await prisma.task.findUniqueOrThrow({ where: { id: a.id } });
+    expect(row).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_B, result: null });
+
+    await completeTask(null, { id: a.id, leaseToken: b.leaseToken!, result: {} }, workerB);
+  });
+
+  it("a lapsed lease on a Task out of attempts is marked FAILED at the next claim, not handed out again", async () => {
+    const id = await makeEvent();
+    const { other: requested } = await request(id, analyst);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const [t] = await claimTasks(null, { kind: OTHER_KIND }, attempt % 2 ? workerA : workerB);
+      expect(t).toMatchObject({ id: requested.id, attempts: attempt });
+      await expireLease(t.id);
+    }
+    expect(await claimTasks(null, { kind: OTHER_KIND }, workerA)).toEqual([]);
+    const row = await prisma.task.findUniqueOrThrow({ where: { id: requested.id } });
+    expect(row).toMatchObject({
+      status: "FAILED",
+      attempts: 3,
+      lastError: "lease expired after max attempts",
+      leaseExpiresAt: null,
+    });
+    // Visible to the requester on the Event page; redacted for a viewer.
+    expect((await otherTaskSeenBy(id, requested.id, analyst)).lastError).toBe("lease expired after max attempts");
+    expect((await otherTaskSeenBy(id, requested.id, viewer)).lastError).toBeNull();
+  });
+
+  it("failTask retries until maxAttempts, then FAILED with the last error visible to the requester", async () => {
+    const id = await makeEvent();
+    const { other: requested } = await request(id, analyst);
+    const [first] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    const retry = await failTask(null, { id: first.id, leaseToken: first.leaseToken!, error: "attempt 1 failed" }, workerA);
+    expect(retry).toMatchObject({ status: "PENDING", attempts: 1, lastError: "attempt 1 failed", leaseOwnerId: null });
+    // Still the one open Task for the Event: a new request dedupes onto it.
+    expect((await request(id, analyst)).other.id).toBe(requested.id);
+
+    const [second] = await claimTasks(null, { kind: OTHER_KIND }, workerB);
+    expect(second).toMatchObject({ id: requested.id, attempts: 2, leaseOwnerId: WORKER_B });
+    await failTask(null, { id: second.id, leaseToken: second.leaseToken!, error: "attempt 2 failed" }, workerB);
+    const [third] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(third.attempts).toBe(3);
+    const failed = await failTask(null, { id: third.id, leaseToken: third.leaseToken!, error: "attempt 3 failed" }, workerA);
+    expect(failed).toMatchObject({ status: "FAILED", attempts: 3, lastError: "attempt 3 failed", leaseOwnerId: WORKER_A });
+
+    expect(await claimTasks(null, { kind: OTHER_KIND }, workerB)).toEqual([]);
+    expect((await otherTaskSeenBy(id, requested.id, analyst)).lastError).toBe("attempt 3 failed");
+    expect((await otherTaskSeenBy(id, requested.id, viewer)).lastError).toBeNull();
+    // FAILED is terminal history: a new request opens a fresh Task.
+    const { other: again } = await request(id, analyst);
+    expect(again.id).not.toBe(requested.id);
+    const [t] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: {} }, workerA);
+  });
+
+  it("cancel: PENDING ends now; LEASED is flagged, never re-claimed, and finished by the Worker", async () => {
+    const pendingEvent = await makeEvent();
+    const { other: pending } = await request(pendingEvent, analyst);
+    const cancelled = await cancelTask(null, { id: pending.id }, analyst);
+    expect(cancelled).toMatchObject({ status: "CANCELLED", cancelledById: ANALYST_ID });
+    expect(await claimTasks(null, { kind: OTHER_KIND, limit: 10 }, workerA)).toEqual([]);
+    // CANCELLED is history: the Event can be requested again.
+    const { other: fresh } = await request(pendingEvent, analyst);
+    expect(fresh.id).not.toBe(pending.id);
+
+    const [held] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(held.id).toBe(fresh.id);
+    await expect(cancelTask(null, { id: held.id }, viewer)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const flagged = await cancelTask(null, { id: held.id }, analyst);
+    expect(flagged).toMatchObject({ status: "LEASED", leaseOwnerId: WORKER_A });
+    expect(flagged.cancelRequestedAt).toBeInstanceOf(Date);
+    // The Worker's completion is discarded and the Task ends CANCELLED.
+    const done = await completeTask(null, { id: held.id, leaseToken: held.leaseToken!, result: { late: true } }, workerA);
+    expect(done).toMatchObject({ status: "CANCELLED", result: null, leaseExpiresAt: null });
+    await expect(cancelTask(null, { id: held.id }, analyst)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+  });
+
+  it("a flagged Task whose Worker died is finished at the next claim, and the Event is requestable again", async () => {
+    const id = await makeEvent();
+    await request(id, analyst);
+    const [held] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    await cancelTask(null, { id: held.id }, analyst);
+    await expireLease(held.id);
+    // Not handed out, but finished: CANCELLED, so the Event is free again.
+    expect(await claimTasks(null, { kind: OTHER_KIND, limit: 10 }, workerB)).toEqual([]);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: held.id } })).status).toBe("CANCELLED");
+    const { other: fresh } = await request(id, analyst);
+    expect(fresh.id).not.toBe(held.id);
+
+    // And cancelling a lapsed lease directly ends it at once, no claim needed.
+    const [held2] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(held2.id).toBe(fresh.id);
+    await expireLease(held2.id);
+    const ended = await cancelTask(null, { id: held2.id }, analyst);
+    expect(ended).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: ANALYST_ID });
+    await expect(
+      heartbeatTask(null, { id: held2.id, leaseToken: held2.leaseToken! }, workerA),
+    ).rejects.toMatchObject({ extensions: { subCode: "NOT_LEASED" } });
+  });
+
+  it("a non-web source completes with no_prior_found and usage, refuses cases, and writes nothing beside the Event", async () => {
+    const id = await makeEvent();
+    const usage = { model: "anthropic/claude-sonnet-5-5", inputTokens: 900, outputTokens: 120, costUsd: 0.0045 };
+    const { other: requested } = await request(id, analyst);
+    const [t] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(t.id).toBe(requested.id);
+
+    // Cases are the web kind's result only: refused, and the Task stays LEASED.
+    await expect(
+      completeTask(
+        null,
+        {
+          id: t.id, leaseToken: t.leaseToken!, result: {}, methodVersion: "satellite@0.1.0",
+          cases: [{
+            sourceUrl: "https://example.test/sat", quote: "q", occurredAt: new Date(Date.now() - 400 * 24 * 3600_000),
+            locationLabel: "Testville", hazardType: "FL", geographicScope: "district",
+          }],
+        },
+        workerA,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("LEASED");
+
+    // No cases: no_prior_found, usage recorded, no row.
+    const none = await completeTask(null, { id: t.id, leaseToken: t.leaseToken!, result: { cases: 0 }, usage }, workerA);
+    expect(none).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found", ...usage });
+    expect(await eventImpactPriors(null, { eventId: id }, analyst)).toEqual([]);
+    expect(await prisma.impactPrior.count({ where: { eventId: id } })).toBe(0);
+    expect(await prisma.caseProposal.count({ where: { eventId: id } })).toBe(0);
+  });
+
+  it("a web Worker's cases land one row each; a URL already proposed for the Event is skipped (V4)", async () => {
+    const id = await makeEvent();
+    const pastId = await makeEvent();
+    const { web, other: sibling } = await request(id, analystB);
+    // Only the web Worker matters here; leave nothing for later tests' claims.
+    await cancelTask(null, { id: sibling.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const at = new Date(Date.now() - 400 * 24 * 3600_000);
+    const done = await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: { searched: 4 },
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          {
+            sourceUrl: "https://example.test/case-a",
+            quote: "Floods displaced 4,000 people.",
+            occurredAt: at,
+            locationLabel: "Testville",
+            locationId: DISTRICT_ID,
+            hazardType: "FL",
+            geographicScope: "district",
+            figures: [{ metric: "people_displaced_new", value: 4000 }],
+            matchedEventId: pastId,
+          },
+          {
+            sourceUrl: "https://example.test/case-b",
+            quote: "Rivers burst their banks.",
+            occurredAt: at,
+            locationLabel: "Testland",
+            hazardType: "FL",
+            geographicScope: "country",
+          },
+        ],
+      },
+      workerB,
+    );
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
+    expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
+
+    // The requester hears how many proposed signals there are to review.
+    let told: { message: string }[] = [];
+    for (let i = 0; i < 20 && told.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      told = await prisma.notifications.findMany({
+        where: { userId: ANALYST_B_ID, notificationType: "task", actionUrl: `/event/${id}` },
+        select: { message: true },
+      });
+    }
+    expect(told.map((n) => n.message)).toEqual(["Web search: 2 proposed signals to review"]);
+
+    const seen = await eventCaseProposals(null, { eventId: id }, analystB);
+    expect(seen.map((c) => c.sourceUrl).sort()).toEqual(["https://example.test/case-a", "https://example.test/case-b"]);
+    const a = seen.find((c) => c.sourceUrl.endsWith("case-a"))!;
+    expect(a).toMatchObject({ state: "proposed", matchedEventId: pastId, locationId: DISTRICT_ID, taskId: held.id });
+    expect(a.figures).toEqual([{ metric: "people_displaced_new", value: 4000 }]);
+    // A viewer sees no proposed case; the Inbox lists them for a decider.
+    expect(await eventCaseProposals(null, { eventId: id }, viewer)).toEqual([]);
+    const inbox = await caseProposals(null, { limit: 200 }, analyst);
+    expect(inbox.filter((c) => c.eventId === id)).toHaveLength(2);
+
+    // A rejected URL is what the Worker asks for before searching again.
+    await prisma.caseProposal.update({ where: { id: a.id }, data: { state: "rejected" } });
+    expect(await rejectedCaseUrls(null, { eventId: id }, workerA)).toEqual(["https://example.test/case-a"]);
+
+    // A later request re-proposing it is skipped, not an error, and the
+    // rejection stands.
+    const { web: again, other: siblingAgain } = await request(id, analystB);
+    await cancelTask(null, { id: siblingAgain.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, again.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: held2.id,
+        leaseToken: held2.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { sourceUrl: "https://example.test/case-a", quote: "again", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+          { sourceUrl: "https://example.test/case-c", quote: "new", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+        ],
+      },
+      workerB,
+    );
+    const after = await prisma.caseProposal.findMany({ where: { eventId: id }, orderBy: { sourceUrl: "asc" } });
+    expect(after.map((c) => [c.sourceUrl, c.state])).toEqual([
+      ["https://example.test/case-a", "rejected"],
+      ["https://example.test/case-b", "proposed"],
+      ["https://example.test/case-c", "proposed"],
+    ]);
+  });
+
+  it("accepting a case writes it into CLEAR as history; rejecting needs a reason; each case is decided once (V4)", async () => {
+    const id = await makeEvent();
+    // A past flood CLEAR already holds, last heard of 30 days ago.
+    const pastId = await makeEvent();
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: pastId }, data: { firstSignalCreatedAt: monthAgo, lastSignalCreatedAt: monthAgo } });
+    const { web, other: sibling } = await request(id, analystB);
+    await cancelTask(null, { id: sibling.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const longAgo = new Date(Date.now() - 400 * 24 * 3600_000);
+    const base = { quote: "Floods displaced thousands.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { ...base, sourceUrl: "https://example.test/accept-matched", matchedEventId: pastId },
+          {
+            ...base,
+            sourceUrl: "https://example.test/accept-new",
+            locationId: DISTRICT_ID,
+            figures: [{ metric: "people_displaced_new", value: 4000, lowerBound: 3500, upperBound: 4500, populationGroup: "IDP" }],
+          },
+          { ...base, sourceUrl: "https://example.test/reject-me" },
+        ],
+      },
+      workerB,
+    );
+    const byUrl = new Map((await prisma.caseProposal.findMany({ where: { eventId: id } })).map((c) => [c.sourceUrl, c]));
+    const matched = byUrl.get("https://example.test/accept-matched")!;
+    const fresh = byUrl.get("https://example.test/accept-new")!;
+    const rejectMe = byUrl.get("https://example.test/reject-me")!;
+
+    // Only deciders decide; a reason is required to reject.
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "accepted" }, viewer)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "  " }, analyst)).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+
+    // Matched: a Signal on the past Event, which widens back to the incident
+    // but keeps its newest-Signal time (a backdated Signal never makes it look stale).
+    const a = await decideCaseProposal(null, { id: matched.id, decision: "accepted" }, analyst);
+    expect(a).toMatchObject({ state: "accepted", decidedById: ANALYST_ID, resultEventId: pastId, decisionRationale: null });
+    const signal = await prisma.signals.findUniqueOrThrow({ where: { id: a.resultSignalId! }, include: { source: true, signalEvents: true } });
+    expect(signal).toMatchObject({ url: "https://example.test/accept-matched", status: "PROCESSED", submittedById: ANALYST_ID, publishedAt: longAgo });
+    expect(signal.source.name).toBe("web_enrichment");
+    expect(signal.signalEvents.map((e) => e.eventId)).toEqual([pastId]);
+    const past = await prisma.events.findUniqueOrThrow({ where: { id: pastId } });
+    expect(past.firstSignalCreatedAt).toEqual(longAgo);
+    expect(past.lastSignalCreatedAt).toEqual(monthAgo);
+
+    // Unmatched: a new historical Event dated to the incident.
+    const b = await decideCaseProposal(null, { id: fresh.id, decision: "accepted", rationale: "Same district, same season." }, analyst);
+    expect(b.resultEventId).not.toBe(pastId);
+    const historical = await prisma.events.findUniqueOrThrow({ where: { id: b.resultEventId! } });
+    eventIds.push(historical.id);
+    expect(historical).toMatchObject({ types: ["FL"], locationId: DISTRICT_ID, startedAt: longAgo, firstSignalCreatedAt: longAgo, lastSignalCreatedAt: longAgo });
+    // Its figures are Estimates on that Event, sourced to the case's Signal.
+    const estimates = await prisma.estimate.findMany({ where: { eventId: historical.id } });
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]).toMatchObject({
+      metric: "people_displaced_new", value: 4000, lowerBound: 3500, upperBound: 4500, populationGroup: "IDP",
+      method: "media_report", attribution: "event_caused", validFor: longAgo,
+      sourceSignalId: b.resultSignalId, sourceUrl: "https://example.test/accept-new", definitionVersion: "0.3.0", createdById: ANALYST_ID,
+    });
+    // Never alerts, even at top severity, and stays out of a recent feed.
+    await prisma.events.update({ where: { id: historical.id }, data: { severity: 5 } });
+    const pending = await eventResolvers.Query.eventsPendingAlert(null, { first: 500, minSeverity: 1 }, asUser(ADMIN_ID, "admin"));
+    expect(pending.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+    const recent = await paginationResolvers.Query.eventsPage(
+      null,
+      { input: { from: new Date(Date.now() - 7 * 24 * 3600_000).toISOString(), limit: 200 } },
+      analyst,
+    );
+    expect(recent.items.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+
+    // The same article accepted for another Event reuses its Signal and Event.
+    const other = await makeEvent();
+    const { web: web2, other: sibling2 } = await request(other, analystB);
+    await cancelTask(null, { id: sibling2.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, web2.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: held2.id, leaseToken: held2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{ ...base, sourceUrl: "https://example.test/accept-new", figures: [{ metric: "people_displaced_new", value: 4000, populationGroup: "IDP" }] }],
+      },
+      workerB,
+    );
+    const again = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: other } });
+    const c = await decideCaseProposal(null, { id: again.id, decision: "accepted" }, admin);
+    expect(c).toMatchObject({ resultSignalId: b.resultSignalId, resultEventId: b.resultEventId });
+    expect(await prisma.signals.count({ where: { url: "https://example.test/accept-new" } })).toBe(1);
+    // …and does not record the same source's figure on that Event twice.
+    expect(await prisma.estimate.count({ where: { eventId: b.resultEventId! } })).toBe(1);
+
+    // Reject keeps the reason; a second decision is CONFLICT.
+    const r = await decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "Not a flood." }, analyst);
+    expect(r).toMatchObject({ state: "rejected", decisionRationale: "Not a flood.", resultSignalId: null });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "accepted" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "rejected", rationale: "x" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+  });
+
+  it("accepting is safe under concurrency and only borrows an Event that is the same incident (V4)", async () => {
+    const longAgo = new Date(Date.now() - 300 * 24 * 3600_000);
+    const base = { quote: "Floods.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    /** A fresh requesting Event with one proposed case for `url`. */
+    async function proposedCase(url: string) {
+      const id = await makeEvent();
+      const { web, other: sibling } = await request(id, analystB);
+      await cancelTask(null, { id: sibling.id }, analystB);
+      const held = await claimOwn(WEB_KIND, web.id, workerB);
+      await completeTask(
+        null,
+        { id: held.id, leaseToken: held.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0", cases: [{ ...base, sourceUrl: url }] },
+        workerB,
+      );
+      return prisma.caseProposal.findFirstOrThrow({ where: { eventId: id } });
+    }
+
+    // Two deciders accept cases with the same URL at once: both succeed, one Signal.
+    const [x, y] = [await proposedCase("https://example.test/race"), await proposedCase("https://example.test/race")];
+    const [dx, dy] = await Promise.all([
+      decideCaseProposal(null, { id: x.id, decision: "accepted" }, analyst),
+      decideCaseProposal(null, { id: y.id, decision: "accepted" }, admin),
+    ]);
+    expect(dx.state).toBe("accepted");
+    expect(dy.state).toBe("accepted");
+    expect(dx.resultSignalId).toBe(dy.resultSignalId);
+    // …and one historical Event: the second borrows the first's.
+    expect(dx.resultEventId).toBe(dy.resultEventId);
+    expect(await prisma.signals.count({ where: { url: "https://example.test/race" } })).toBe(1);
+    eventIds.push(dx.resultEventId!, dy.resultEventId!);
+
+    // A pipeline Signal the drain has not processed yet is not borrowed.
+    const pipelineSource = await prisma.dataSources.create({ data: { name: `${RUN}-pipe`, type: "test" } });
+    const pending = await prisma.signals.create({
+      data: { sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/still-new" },
+    });
+    const n = await proposedCase("https://example.test/still-new");
+    const dn = await decideCaseProposal(null, { id: n.id, decision: "accepted" }, analyst);
+    expect(dn.resultSignalId).not.toBe(pending.id);
+    eventIds.push(dn.resultEventId!);
+
+    // A processed Signal on an Event of another hazard: the Signal is reused,
+    // its Event is not; the case gets its own historical Event.
+    const quake = await makeEvent();
+    await prisma.events.update({ where: { id: quake }, data: { types: ["EQ"] } });
+    const quakeSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/quake-article", status: "PROCESSED",
+        signalEvents: { create: { eventId: quake, collectedAt: new Date() } },
+      },
+    });
+    const q = await proposedCase("https://example.test/quake-article");
+    const dq = await decideCaseProposal(null, { id: q.id, decision: "accepted" }, analyst);
+    expect(dq.resultSignalId).toBe(quakeSignal.id);
+    expect(dq.resultEventId).not.toBe(quake);
+    eventIds.push(dq.resultEventId!);
+    const quakeAfter = await prisma.events.findUniqueOrThrow({ where: { id: quake } });
+    expect(quakeAfter.firstSignalCreatedAt).not.toEqual(longAgo);
+
+    // One article, two incidents months apart: the second keeps its own Event.
+    const first = await proposedCase("https://example.test/two-floods");
+    const df = await decideCaseProposal(null, { id: first.id, decision: "accepted" }, analyst);
+    eventIds.push(df.resultEventId!);
+    const id2 = await makeEvent();
+    const { web: w2, other: c2 } = await request(id2, analystB);
+    await cancelTask(null, { id: c2.id }, analystB);
+    const h2 = await claimOwn(WEB_KIND, w2.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: h2.id, leaseToken: h2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{ ...base, occurredAt: new Date(longAgo.getTime() + 90 * 24 * 3600_000), sourceUrl: "https://example.test/two-floods" }],
+      },
+      workerB,
+    );
+    const second = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: id2 } });
+    const ds = await decideCaseProposal(null, { id: second.id, decision: "accepted" }, analyst);
+    eventIds.push(ds.resultEventId!);
+    expect(ds.resultSignalId).toBe(df.resultSignalId);
+    expect(ds.resultEventId).not.toBe(df.resultEventId);
+
+    // An Event with no resolved onset, first reported two weeks after the
+    // incident: a case for its article borrows it rather than duplicate it.
+    const lateEvent = await makeEvent();
+    const reportedAt = new Date(longAgo.getTime() + 14 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: lateEvent }, data: { startedAt: null, firstSignalCreatedAt: reportedAt, lastSignalCreatedAt: reportedAt } });
+    const lateSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: reportedAt, url: "https://example.test/late-report", status: "PROCESSED",
+        signalEvents: { create: { eventId: lateEvent, collectedAt: new Date() } },
+      },
+    });
+    const late = await proposedCase("https://example.test/late-report");
+    const dl = await decideCaseProposal(null, { id: late.id, decision: "accepted" }, analyst);
+    expect(dl).toMatchObject({ resultSignalId: lateSignal.id, resultEventId: lateEvent });
+
+    await prisma.signals.deleteMany({ where: { sourceId: pipelineSource.id } });
+    await prisma.dataSources.delete({ where: { id: pipelineSource.id } });
+  });
+
+  it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {
+    const id = await makeEvent();
+    const { other: first, web } = await request(id, analystB);
+    await expect(
+      prisma.task.create({
+        data: { kind: OTHER_KIND, subjectType: "event", subjectId: id, payload: {}, requestId: `${RUN}-dup` },
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
+    // Per kind: the .web Task sits open beside the .satellite one.
+    expect(web.status).toBe("PENDING");
+
+    const [claimed] = await claimTasks(null, { kind: OTHER_KIND }, workerA);
+    expect(claimed.id).toBe(first.id);
+    await completeTask(null, { id: first.id, leaseToken: claimed.leaseToken!, result: {} }, workerA);
+    // Once COMPLETED, a new open Task for the same Event is allowed.
+    const { other: second } = await request(id, analystB);
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("several Workers on one Event: each source's Task completes on its own, side by side", async () => {
+    const id = await makeEvent();
+    const { other, web } = await request(id, analystB);
+    expect(other.requestId).toBe(web.requestId);
+
+    // Oldest-first claims may hand back an earlier test's leftover first; reach our own.
+    const heldOther = await claimOwn(OTHER_KIND, other.id, workerA);
+    const heldWeb = await claimOwn(WEB_KIND, web.id, workerB);
+    const doneOther = await completeTask(null, { id: heldOther.id, leaseToken: heldOther.leaseToken!, result: {} }, workerA);
+    const doneWeb = await completeTask(
+      null,
+      {
+        id: heldWeb.id, leaseToken: heldWeb.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{
+          sourceUrl: "https://example.test/side-by-side", quote: "Floods.", occurredAt: new Date(Date.now() - 400 * 24 * 3600_000),
+          locationLabel: "Testville", hazardType: "FL", geographicScope: "district",
+        }],
+      },
+      workerB,
+    );
+    // Each Worker's outcome is its own: one found nothing, the other proposed a case.
+    expect(doneOther).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
+    expect(doneWeb).toMatchObject({ status: "COMPLETED", outcome: "produced" });
+    const cases = await prisma.caseProposal.findMany({ where: { eventId: id } });
+    expect(cases.map((c) => c.taskId)).toEqual([heldWeb.id]);
+
+    // A second request opens a fresh Task per kind; finishing one source leaves the other open.
+    const { other: other2, web: web2 } = await request(id, analystB);
+    expect(other2.id).not.toBe(other.id);
+    expect(web2.id).not.toBe(web.id);
+    const held2 = await claimOwn(OTHER_KIND, other2.id, workerA);
+    await completeTask(null, { id: held2.id, leaseToken: held2.leaseToken!, result: {} }, workerA);
+    // The .web Task of the second request is still open: nothing marks the Event done.
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: web2.id } })).status).toBe("PENDING");
+    await cancelTask(null, { id: web2.id }, analystB);
+  });
+
+  it("the retired whole-prior kinds are refused at claim even with a PENDING Task of them in the database", async () => {
+    const id = await makeEvent();
+    const stranded = await Promise.all(
+      [IMPACT_PRIOR_KIND, RETIRED_CLEAR_KIND].map((kind) =>
+        prisma.task.create({
+          data: {
+            kind, subjectType: "event", subjectId: id, payload: { horizonYears: 10 },
+            requestId: `${RUN}-retired-${kind}`, requesterId: ANALYST_B_ID, maxAttempts: 3,
+          },
+        }),
+      ),
+    );
+    for (const t of stranded) {
+      await expect(claimTasks(null, { kind: t.kind, limit: 10 }, workerA)).rejects.toMatchObject({
+        extensions: { code: "BAD_USER_INPUT" },
+      });
+      // Untouched: not leased, no attempt spent.
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: t.id } })).toMatchObject({
+        status: "PENDING", attempts: 0, leaseOwnerId: null,
+      });
+    }
+
+    // The migration cancels exactly these: open Tasks of the retired kinds.
+    // Re-running it is harmless (it only touches PENDING / LEASED rows).
+    const leased = await prisma.task.create({
+      data: {
+        kind: RETIRED_CLEAR_KIND, subjectType: "event", subjectId: await makeEvent(), payload: {}, requestId: `${RUN}-retired-leased`,
+        status: "LEASED", leaseOwnerId: WORKER_A, leaseToken: `${RUN}-tok`, leaseExpiresAt: new Date(Date.now() + 600_000), attempts: 1,
+      },
+    });
+    const finished = await prisma.task.create({
+      data: {
+        kind: RETIRED_CLEAR_KIND, subjectType: "event", subjectId: id, payload: {}, requestId: `${RUN}-retired-done`,
+        status: "COMPLETED", outcome: "produced", completedAt: new Date(),
+      },
+    });
+    const { other: live, web: liveWeb } = await request(id, analystB);
+    const sql = readFileSync(
+      new URL("../../prisma/migrations/20261008120000_cancel_retired_impact_prior_tasks/migration.sql", import.meta.url),
+      "utf8",
+    );
+    await prisma.$executeRawUnsafe(sql.replace(/^--.*$/gm, ""));
+    for (const t of [...stranded, leased]) {
+      const row = await prisma.task.findUniqueOrThrow({ where: { id: t.id } });
+      expect(row).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: null, requesterId: t.requesterId });
+      expect(row.cancelRequestedAt).toBeInstanceOf(Date);
+    }
+    // The LEASED one's Worker learns at its next heartbeat; nothing else moved.
+    await expect(heartbeatTask(null, { id: leased.id, leaseToken: leased.leaseToken! }, workerA)).rejects.toMatchObject({
+      extensions: { subCode: "NOT_LEASED" },
+    });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: finished.id } })).status).toBe("COMPLETED");
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: live.id } })).status).toBe("PENDING");
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: liveWeb.id } })).status).toBe("PENDING");
+    // Leave nothing open for other claims.
+    await cancelTask(null, { id: live.id }, analystB);
+    await cancelTask(null, { id: liveWeb.id }, analystB);
+  });
+
+  it("whole ImpactPriors from V1–V3 stay readable as history, under the same visibility rule", async () => {
+    const id = await makeEvent();
+    // Nothing creates them any more: seed what a V3 `.clear` Worker left behind.
+    const legacy = await prisma.task.create({
+      data: {
+        kind: RETIRED_CLEAR_KIND, subjectType: "event", subjectId: id, payload: { horizonYears: 10 },
+        requestId: `${RUN}-history`, requesterId: COORD_ID, status: "COMPLETED", outcome: "produced",
+        completedAt: new Date(), lastError: "attempt 1 timed out",
+      },
+    });
+    const base = {
+      eventId: id, taskId: legacy.id, sourceKind: RETIRED_CLEAR_KIND, hazardType: "FL", countryLocationId: COUNTRY_ID,
+      geographicScope: "country", horizonYears: 10, numberOfCases: 1,
+      basis: [{ tier: "clear", eventId: "some-earlier-event", scope: "country" }], methodVersion: "impact-prior@1.0.0",
+    };
+    const t0 = Date.now() - 3 * 3600_000;
+    const accepted = await prisma.impactPrior.create({
+      data: {
+        ...base, state: "accepted", createdAt: new Date(t0),
+        decidedById: ADMIN_ID, decidedAt: new Date(t0 + 60_000), decisionRationale: "Cases check out.",
+      },
+    });
+    const rejected = await prisma.impactPrior.create({
+      data: {
+        ...base, state: "rejected", supersedesId: accepted.id, createdAt: new Date(t0 + 3600_000),
+        decidedById: ANALYST_ID, decidedAt: new Date(t0 + 3660_000), decisionRationale: "Wrong season.",
+      },
+    });
+    const proposed = await prisma.impactPrior.create({
+      data: { ...base, state: "proposed", supersedesId: rejected.id, createdAt: new Date(t0 + 7200_000) },
+    });
+
+    const ids = async (as: Context) => (await eventImpactPriors(null, { eventId: id }, as)).map((r) => r.id);
+    // Deciders see everything, newest first.
+    expect(await ids(analyst)).toEqual([proposed.id, rejected.id, accepted.id]);
+    expect(await ids(admin)).toEqual([proposed.id, rejected.id, accepted.id]);
+    // The requester sees their own proposal and the accepted one, not the rejected history.
+    expect(await ids(coord)).toEqual([proposed.id, accepted.id]);
+    // Anyone else, accepted only.
+    expect(await ids(viewer)).toEqual([accepted.id]);
+    expect(await ids(workerA)).toEqual([accepted.id]);
+    // Event.impactPriors is the same read.
+    const onEvent = async (as: Context) => (await taskResolvers.Event.impactPriors({ id }, null, as)).map((r) => r.id);
+    expect(await onEvent(viewer)).toEqual([accepted.id]);
+    expect(await onEvent(coord)).toEqual([proposed.id, accepted.id]);
+    expect(await onEvent(analyst)).toEqual([proposed.id, rejected.id, accepted.id]);
+    // The visibility join never leaks into the result.
+    const [newest] = await eventImpactPriors(null, { eventId: id }, admin);
+    expect(newest).not.toHaveProperty("task");
+    expect(newest).toMatchObject({ state: "proposed", sourceKind: RETIRED_CLEAR_KIND, supersedesId: rejected.id });
+
+    // Walking the supersede chain obeys the same rule: the rejected predecessor
+    // is hidden from the requester and a viewer, shown to a decider.
+    const { ImpactPrior } = taskResolvers;
+    expect(await ImpactPrior.supersedes(newest, null, viewer)).toBeNull();
+    expect(await ImpactPrior.supersedes(newest, null, coord)).toBeNull();
+    const prev = await ImpactPrior.supersedes(newest, null, analyst);
+    expect(prev).toMatchObject({ id: rejected.id, state: "rejected", decisionRationale: "Wrong season." });
+    expect(prev).not.toHaveProperty("task");
+    // …and the accepted one further down is visible to anyone.
+    expect(await ImpactPrior.supersedes(prev!, null, viewer)).toMatchObject({ id: accepted.id });
+    const [oldest] = (await eventImpactPriors(null, { eventId: id }, viewer));
+    expect(await ImpactPrior.supersedes(oldest, null, admin)).toBeNull();
+
+    // The decision record and the Task read back too; lastError stays redacted.
+    expect(await ImpactPrior.decidedBy(oldest, null, viewer)).toMatchObject({ id: ADMIN_ID });
+    expect(await ImpactPrior.decidedBy(newest, null, viewer)).toBeNull();
+    expect((await ImpactPrior.event(oldest, null, viewer)).id).toBe(id);
+    expect((await ImpactPrior.task(oldest, null, viewer)).lastError).toBeNull();
+    expect((await ImpactPrior.task(oldest, null, coord)).lastError).toBe("attempt 1 timed out");
+  });
+});

@@ -365,7 +365,7 @@ async function seed() {
     data: { role: "admin", emailVerified: true },
   });
 
-  const analyst = await getOrCreateUser("Analyst User", "analyst@clear.dev", "password123");
+  const analyst = await getOrCreateUser("Analyst User", "analyst@clearinitiative.io", "password123");
   // Grant the global "analyst" role (not just org membership): alert-promotion
   // and crisis-creation are gated by requireRole(["admin","analyst"]) on the
   // GLOBAL role, and the demo analyst is meant to exercise those.
@@ -374,7 +374,7 @@ async function seed() {
     data: { emailVerified: true, role: "analyst" },
   });
 
-  const viewer = await getOrCreateUser("Viewer User", "viewer@clear.dev", "password123");
+  const viewer = await getOrCreateUser("Viewer User", "viewer@clearinitiative.io", "password123");
   // Set the "viewer" role explicitly. Creating users through the internal
   // adapter applies the model's new-user default role ("pending", from the
   // waitlist flow) rather than a read-only "viewer", so pin it to keep this a
@@ -384,8 +384,24 @@ async function seed() {
     data: { emailVerified: true, role: "viewer" },
   });
 
+  // Emergency-response-manager demo account. `emergency_response_manager` is a
+  // TEAM role, not a global one, so this user carries the global "viewer" role
+  // for now; its team membership (with the emergency_response_manager role) is
+  // assigned separately once a team exists.
+  // Distinct strong password (not the shared password123) for the ER-manager account.
+  const emrPassword = "Emr#09bc64391b2c5cd30802a3f7372907a2";
+  const emrUser = await getOrCreateUser(
+    "Emergency Response Manager",
+    "emr.user@clearinitiative.io",
+    emrPassword,
+  );
+  await prisma.user.update({
+    where: { id: emrUser.id },
+    data: { emailVerified: true, role: "viewer" },
+  });
+
   // ─── Organisation ────────────────────────────────────────────────────────
-  // Global admin (admin@clear.dev) does NOT need org membership — global role is sufficient.
+  // Global admin does NOT need org membership — global role is sufficient.
   // Analyst is added as the org owner for demo purposes.
   const org = await prisma.organisations.create({
     data: { name: "CLEAR Platform", slug: "clear-platform" },
@@ -396,11 +412,12 @@ async function seed() {
   });
 
   console.log(
-    `Created 3 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id})`,
+    `Created 4 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id}), emr.user (${emrUser.id})`,
   );
-  console.log("  admin@clear.dev is global admin (no org membership needed)");
-  console.log("  analyst@clear.dev is org owner of 'CLEAR Platform'");
-  console.log("  viewer@clear.dev has no org membership (invite-only)");
+  console.log(`  ${env.ADMIN_EMAIL} is global admin (no org membership needed)`);
+  console.log("  analyst@clearinitiative.io is org owner of 'CLEAR Platform'");
+  console.log("  viewer@clearinitiative.io has no org membership (invite-only)");
+  console.log("  emr.user@clearinitiative.io is global viewer (team role assigned separately)");
 
   const loc = await seedLocations();
 
@@ -904,9 +921,10 @@ async function seed() {
   console.log("  5 user alerts, 3 feedbacks, 2 comments, 1 escalation");
   console.log("");
   console.log("Seed complete! Demo credentials:");
-  console.log("  admin@clear.dev    / password123  (role: admin)");
-  console.log("  analyst@clear.dev  / password123  (role: analyst)");
-  console.log("  viewer@clear.dev   / password123  (role: viewer)");
+  console.log(`  ${env.ADMIN_EMAIL}  / password123  (role: admin)`);
+  console.log("  analyst@clearinitiative.io      / password123  (role: analyst)");
+  console.log("  viewer@clearinitiative.io       / password123  (role: viewer)");
+  console.log(`  emr.user@clearinitiative.io     / ${emrPassword}  (role: viewer; team ERM TBD)`);
 }
 
 // ─── CLI Entry Point ─────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ function generateToken(): string {
 
 async function main() {
   const email =
-    process.argv[2] ?? `onboarding-test+${Date.now()}@clear.dev`;
+    process.argv[2] ?? `onboarding-test+${Date.now()}@clearinitiative.io`;
 
   const org = await prisma.organisations.findFirst({
     where: { teams: { some: {} } },

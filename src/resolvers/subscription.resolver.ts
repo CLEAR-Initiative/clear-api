@@ -1,7 +1,8 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { Channel, Frequency } from "../generated/prisma/client.js";
-import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
+import { ALL_SEVERITIES_FLOOR } from "../utils/alert-severity.js";
 
 interface SubscribeToAlertsInput {
   locationId: string;
@@ -65,7 +66,7 @@ export const subscriptionResolvers = {
       args: { input: SubscribeToAlertsInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { input } = args;
 
       // Verify location exists
@@ -100,7 +101,7 @@ export const subscriptionResolvers = {
           alertType: input.alertType,
           channel: input.channel,
           frequency: input.frequency,
-          minSeverity: validateSeverity(input.minSeverity) ?? 1,
+          minSeverity: validateSeverity(input.minSeverity) ?? ALL_SEVERITIES_FLOOR,
         },
       });
     },
@@ -110,7 +111,7 @@ export const subscriptionResolvers = {
       args: { input: SubscribeToAlertsBatchInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { input } = args;
 
       if (input.locationIds.length === 0 || input.alertTypes.length === 0) {
@@ -119,7 +120,7 @@ export const subscriptionResolvers = {
         });
       }
 
-      const minSeverity = validateSeverity(input.minSeverity) ?? 1;
+      const minSeverity = validateSeverity(input.minSeverity) ?? ALL_SEVERITIES_FLOOR;
 
       // De-dupe incoming pairs in case the caller sent the same value twice
       const uniqueLocationIds = [...new Set(input.locationIds)];
@@ -199,7 +200,7 @@ export const subscriptionResolvers = {
       args: { id: string; input: UpdateAlertSubscriptionInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { id, input } = args;
 
       const subscription = await context.prisma.userAlertSubscriptions.findUnique({
@@ -232,7 +233,7 @@ export const subscriptionResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const subscription = await context.prisma.userAlertSubscriptions.findUnique({
         where: { id: args.id },

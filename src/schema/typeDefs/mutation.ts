@@ -423,29 +423,33 @@ export const mutationTypeDef = gql`
     until the async enrichment task completes)."""
     removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
 
-    """Edit a crisis's title in place. Any authenticated user. Pass an empty
-    string to clear the field."""
+    """Edit a crisis's title in place. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
+    empty string to clear the field."""
     updateCrisisTitle(id: String!, title: String!): Crisis!
 
     """Edit the human-facing description on a crisis. The crisis's summary
     column stores JSON of the form description+tldr — this mutation updates
     just the description key and preserves any existing tldr bullets (which
-    the LLM enrichment task generates). Any authenticated user. Pass an
+    the LLM enrichment task generates). Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
     empty string to clear the description without disturbing the tldr."""
     updateCrisisDescription(id: String!, description: String!): Crisis!
 
     """Delete a crisis. Cascades the eventCrises join rows, user feedback,
-    and user comments via the FK constraints. Any authenticated user."""
+    and user comments via the FK constraints. Platform admins only."""
     deleteCrisis(id: String!): Boolean!
 
     """Append S3 keys to a crisis's attachments list. Idempotent — keys
     already present in the list are skipped silently. Returns the updated
-    crisis with the new list."""
+    crisis with the new list. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
 
     """Remove an S3 key from a crisis's attachments list. Does NOT delete
     the underlying S3 object (operators can clean those up separately).
-    Returns the updated crisis."""
+    Returns the updated crisis. Any approved user (admin, analyst or
+    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     removeCrisisAttachment(id: String!, key: String!): Crisis!
 
     """Set the LLM-generated NRC SAF needs analysis inside the crisis's
@@ -922,7 +926,7 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String!
-    validTo: String!
+    validTo: String
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
     """When the real-world event started (onset), parsed from signal text.
@@ -958,8 +962,14 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String
+    """ISO-8601 event end. Pass \`null\` to clear it ("ongoing / no known end");
+    omit it to leave the stored value unchanged."""
     validTo: String
+    """ISO-8601. Only ever moves earlier: a value later than the stored one is
+    ignored."""
     firstSignalCreatedAt: String
+    """ISO-8601. Only ever moves later: a value earlier than the stored one is
+    ignored, so an out-of-order signal can't pull it back."""
     lastSignalCreatedAt: String
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
@@ -1119,5 +1129,104 @@ export const mutationTypeDef = gql`
     """Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
     schedules an immediate retry via the poller."""
     retryWebhookDelivery(id: String!): WebhookDelivery!
+  }
+
+  # ─── Tasks (ADR-0010) ────────────────────────────────────────────────
+  extend type Mutation {
+    """Request an Event enrichment. Always fans out: one Task per enabled
+    source kind of the \`kind\` family (server-configured; today
+    \`event.impact_prior.web\`, the web search that proposes signals for
+    analysts to review), so every Worker proposes on the Event side by side
+    and nothing marks it done. Returns the open (PENDING / LEASED) Task per
+    kind, in configured order — an already-open one is returned unchanged
+    rather than duplicated; only kinds with none get a new Task. Same
+    rights as \`escalateEvent\`: a global admin or analyst anywhere; a team
+    content writer for the \`teamId\` they act on behalf of. Capped per
+    requester per UTC day, counting requests not Tasks (FORBIDDEN with
+    subCode \`DAILY_CAP\`); a request that creates nothing does not count.
+    The only family today is \`event.impact_prior\` (a historical name: the
+    ImpactPrior itself is computed, see \`Event.computedImpactPriors\`);
+    \`horizonYears\` (default 10) is how far back each Worker looks for
+    cases."""
+    requestEventEnrichment(
+      eventId: String!
+      kind: String = "event.impact_prior"
+      teamId: String
+      horizonYears: Int
+    ): [Task!]!
+
+    """Decide one web case (V4): a platform admin or analyst accepts or
+    rejects it, recorded as who, when and why (the Domain Ontology's
+    DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
+    \`rationale\` is required to reject and optional to accept.
+
+    Accepting writes the case into CLEAR as history, in one transaction:
+    a Signal (source \`web_enrichment\`, \`url\` the case's source,
+    \`publishedAt\` the date the incident happened, submitted by the decider)
+    on the CLEAR Event it describes — the Worker's matched Event, else the
+    Event that already carries the same URL, else a new historical Event
+    dated to the incident. A Signal with the same URL already in CLEAR is
+    reused, not duplicated. Historical Events never alert: their newest
+    Signal is the incident's date. The case's figures become Estimates on
+    that Event (\`media_report\`, \`event_caused\`). The returned case carries
+    \`resultSignalId\` and \`resultEventId\`.
+
+    Rejecting keeps the case, so its URL is never proposed again for that
+    Event."""
+    decideCaseProposal(id: String!, decision: CaseProposalDecision!, rationale: String): CaseProposal!
+
+    """Cancel a Task. The requester or a platform admin only. A PENDING
+    Task is CANCELLED at once; a LEASED one is flagged and becomes
+    CANCELLED at the Worker's next heartbeat, completion or failure (its
+    result is discarded). Any other status is CONFLICT."""
+    cancelTask(id: String!): Task!
+
+    """WORKER CONTRACT (\`worker\` role): lease up to \`limit\` of the
+    oldest claimable Tasks of exactly \`kind\` — PENDING, or LEASED past
+    their expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two
+    Workers hold the same Task. A Worker drains its own source kind
+    (\`event.impact_prior.web\`, …). The retired whole-prior kinds — the
+    bare \`event.impact_prior\` and \`event.impact_prior.clear\` — are
+    BAD_USER_INPUT. \`limit\` is
+    clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
+    heartbeat to keep it."""
+    claimTasks(kind: String!, limit: Int = 1): [Task!]!
+    # Each leased row carries a fresh \`leaseToken\`; keep it for the writes below.
+
+    """WORKER CONTRACT: keep a lease alive. Extends \`leaseExpiresAt\` by
+    TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+    (CONFLICT \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\` — the latter
+    means the lease lapsed and was reclaimed, so this \`leaseToken\` is
+    stale; stop working on it). If cancellation was requested, the Task becomes
+    CANCELLED and the Worker should stop."""
+    heartbeatTask(id: String!, leaseToken: String!): Task!
+
+    """WORKER CONTRACT: give the Task up with an error. It returns to
+    PENDING for another Worker (or attempt) while attempts remain, and
+    becomes FAILED with this as its \`lastError\` once \`maxAttempts\`
+    claims have been used. Only the lease owner, only while LEASED."""
+    failTask(id: String!, leaseToken: String!, error: String!): Task!
+
+    """WORKER CONTRACT: report the Task done. \`result\` is the raw output
+    (audit only). For an \`event.impact_prior.web\` Task, pass \`cases\`
+    and \`methodVersion\` (V4): one CaseProposal per case, each decided on
+    its own (outcome \`produced\`); a URL already proposed for the Event is
+    skipped (\`no_new_cases\` when all were); an empty list or none records
+    \`no_prior_found\`. Any other kind completes with \`result\` only. The
+    whole-prior \`impactPrior\` input was removed (2026-10-08): the
+    ImpactPrior is computed from history. Only the lease owner,
+    only while LEASED (CONFLICT
+    \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
+    requested meanwhile the Task becomes CANCELLED and the result is
+    discarded."""
+    completeTask(
+      id: String!
+      leaseToken: String!
+      result: JSON!
+      usage: TaskUsageInput
+      cases: [CaseProposalInput!]
+      """Skill or handler version that produced \`cases\`; required with them."""
+      methodVersion: String
+    ): Task!
   }
 `;

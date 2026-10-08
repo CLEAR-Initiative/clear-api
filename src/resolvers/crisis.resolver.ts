@@ -2,7 +2,13 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireAuth, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import {
+  isPlatformAdmin,
+  requireContentReader,
+  requireNonWorkerContentReader,
+  requireRole,
+  requireTeamContentWriter,
+} from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
@@ -450,7 +456,7 @@ export const crisisResolvers = {
       args: { id: string; keys: string[] },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -540,7 +546,7 @@ export const crisisResolvers = {
       args: { id: string; key: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -578,7 +584,7 @@ export const crisisResolvers = {
       args: { id: string; title: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorkerContentReader(context);
       const { id, title } = args;
 
       const existing = await context.prisma.crises.findUnique({
@@ -626,7 +632,7 @@ export const crisisResolvers = {
       args: { id: string; description: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
       const { id, description } = args;
 
       const existing = await context.prisma.crises.findUnique({

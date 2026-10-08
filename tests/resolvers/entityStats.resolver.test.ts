@@ -293,4 +293,43 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     const none = await stats(entity, "none", extra);
     expect(grouped.total).toBe(none.total);
   });
+
+  // Last in the file: these rows would shift every count above. The outer
+  // afterAll cleans them up via the shared id arrays.
+  describe("unknown (null) severity under a severity bound", () => {
+    beforeAll(async () => {
+      const at = new Date("2020-01-09T12:00:00Z");
+      const ev = await prisma.events.create({
+        data: {
+          types: ["FL"], severity: null, isDummy: false, validTo: null,
+          firstSignalCreatedAt: at, lastSignalCreatedAt: at, rank: 0, originId: parentId,
+        },
+      });
+      eventIds.push(ev.id);
+      const sig = await prisma.signals.create({
+        data: { sourceId, rawData: {}, publishedAt: at, severity: null, isDummy: false, originId: parentId },
+      });
+      signalIds.push(sig.id);
+      alertIds.push((await prisma.alerts.create({ data: { eventId: ev.id, status: "published" } })).id);
+    });
+
+    it("keeps null-severity rows in the grouped buckets, as the list filter does", async () => {
+      expect(await stats("event", "severity", { severityMin: 3 })).toEqual({
+        total: 3,
+        buckets: { "3": 1, "4": 1, "(unknown)": 1 },
+      });
+    });
+
+    it.each<[Entity, GroupBy, Record<string, unknown>]>([
+      ["event", "week", { severityMin: 3 }],
+      ["event", "type", { severityMax: 2 }],
+      ["signal", "severity", { severityMin: 2 }],
+      ["alert", "week", { severityMin: 4 }],
+    ])("%s grouped by %s totals still match groupBy=none (%o)", async (entity, groupBy, extra) => {
+      const grouped = await stats(entity, groupBy, extra);
+      const none = await stats(entity, "none", extra);
+      expect(none.total).toBeGreaterThan(0);
+      expect(grouped.total).toBe(none.total);
+    });
+  });
 });

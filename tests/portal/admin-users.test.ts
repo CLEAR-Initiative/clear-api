@@ -4,7 +4,7 @@ import { renderAdminPending, renderAdminUsers } from "../../src/portal/template.
 describe("renderAdminUsers", () => {
   it("lists pending and approved signups with approve only on pending", () => {
     const html = renderAdminUsers({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 1,
       users: [
         {
@@ -61,7 +61,7 @@ describe("renderAdminUsers", () => {
 
   it("still works from the old pending tab alias renderer", () => {
     const html = renderAdminPending({
-      currentUserEmail: "admin@clear.dev",
+      currentUserEmail: "admin@clearinitiative.io",
       pendingCount: 1,
       pendingUsers: [
         {

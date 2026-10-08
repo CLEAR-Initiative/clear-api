@@ -11,6 +11,9 @@ import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import {
   requireAuth,
+  requireContentReader,
+  requireNonWorker,
+  requireNonWorkerContentReader,
   requireRole,
   requireTeamContentWriter,
   resolveTeamMembership,
@@ -81,6 +84,35 @@ describe("requireRole", () => {
     expect(codeOf(() => requireRole(buildContext(null), ["admin"]))).toBe(
       "UNAUTHENTICATED",
     );
+  });
+});
+
+describe("requireContentReader", () => {
+  it.each(["admin", "analyst", "viewer", "worker"])("admits the approved role %s", (role) => {
+    const user = { id: "u1", role };
+    expect(requireContentReader(buildContext(user))).toBe(user);
+  });
+
+  it.each(["pending", "pipeline", "agent", null])(
+    "rejects role %s with FORBIDDEN / PENDING_APPROVAL",
+    (role) => {
+      const ctx = buildContext({ id: "u1", role });
+      try {
+        requireContentReader(ctx);
+      } catch (e) {
+        expect(e).toBeInstanceOf(GraphQLError);
+        expect((e as GraphQLError).extensions).toMatchObject({
+          code: "FORBIDDEN",
+          subCode: "PENDING_APPROVAL",
+        });
+        return;
+      }
+      throw new Error("expected requireContentReader to throw");
+    },
+  );
+
+  it("throws UNAUTHENTICATED when unauthenticated", () => {
+    expect(codeOf(() => requireContentReader(buildContext(null)))).toBe("UNAUTHENTICATED");
   });
 });
 
@@ -159,6 +191,42 @@ describe("canSeeUserPii", () => {
   });
 });
 
+describe("requireNonWorker", () => {
+  it.each(["admin", "analyst", "viewer", "pending", "pipeline"])("admits role %s", (role) => {
+    const user = { id: "u1", role };
+    expect(requireNonWorker(buildContext(user))).toBe(user);
+  });
+
+  it("rejects the worker role with FORBIDDEN", () => {
+    expect(codeOf(() => requireNonWorker(buildContext({ id: "u1", role: "worker" })))).toBe("FORBIDDEN");
+  });
+
+  it("throws UNAUTHENTICATED when unauthenticated", () => {
+    expect(codeOf(() => requireNonWorker(buildContext(null)))).toBe("UNAUTHENTICATED");
+  });
+});
+
+describe("requireNonWorkerContentReader", () => {
+  it.each(["admin", "analyst", "viewer"])("admits the approved role %s", (role) => {
+    const user = { id: "u1", role };
+    expect(requireNonWorkerContentReader(buildContext(user))).toBe(user);
+  });
+
+  it("rejects the worker role, which requireContentReader admits", () => {
+    expect(codeOf(() => requireNonWorkerContentReader(buildContext({ id: "u1", role: "worker" })))).toBe("FORBIDDEN");
+  });
+
+  it("still rejects pending users as PENDING_APPROVAL", () => {
+    try {
+      requireNonWorkerContentReader(buildContext({ id: "u1", role: "pending" }));
+    } catch (e) {
+      expect((e as GraphQLError).extensions).toMatchObject({ code: "FORBIDDEN", subCode: "PENDING_APPROVAL" });
+      return;
+    }
+    throw new Error("expected requireNonWorkerContentReader to throw");
+  });
+});
+
 describe("requireTeamContentWriter", () => {
   // Every non-team path short-circuits before any prisma call — the stub
   // stays a `never` throw so we notice if the fast paths ever regress into
@@ -192,6 +260,15 @@ describe("requireTeamContentWriter", () => {
       extensions: { code: "FORBIDDEN" },
     });
     expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects the worker role even on a team it belongs to, without a lookup", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ role: "team_admin" });
+    const ctx = buildContext({ id: "w1", role: "worker" }, { teamMembers: { findUnique } });
+    await expect(requireTeamContentWriter(ctx, "t1")).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("rejects UNAUTHENTICATED when nobody is logged in", async () => {

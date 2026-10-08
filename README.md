@@ -129,6 +129,10 @@ crisis-edit mutations (title, description, delete, attachments) only require
 | `LOCATIONIQ_API_KEY` | LocationIQ key used by the pipeline geocoder; cached in `nominatim_cache` | _(optional)_        |
 | `S3_*`               | AWS credentials + bucket + region for media / attachment storage     | _(optional)_            |
 | `SENTRY_DSN`         | Error reporting                                                      | _(optional)_            |
+| `TASK_LEASE_MINUTES` | Minutes a claimed Task stays leased; a heartbeat extends by the same (ADR-0010) | `15`         |
+| `TASK_MAX_ATTEMPTS`  | Claims a Task may take before it is FAILED                           | `3`                     |
+| `TASK_CLAIM_MAX`     | Most Tasks one `claimTasks` call may lease                           | `10`                    |
+| `TASK_REQUEST_DAILY_CAP` | Enrichment requests one requester may make per UTC day           | `20`                    |
 
 ## Docker
 
@@ -154,6 +158,8 @@ dry-run; pass `--execute` to write.
 | `scripts/ingest-sudan-3w.ts`           | OCHA 3W partner-presence ingestion                                          |
 | `scripts/backfill-locations.ts`        | Re-resolve historical signal coordinates against the location hierarchy     |
 | `scripts/seed-disaster-types.ts`       | Seed the disaster-type taxonomy                                             |
+| `scripts/create-pipeline-user.ts`      | Create the `pipeline` service user and mint its API key (`--new-key` rotates) |
+| `scripts/create-worker-user.ts`        | Create the `worker` service user for Task Workers and mint its API key (`--new-key` rotates; ADR-0010) |
 
 ## Project Structure
 

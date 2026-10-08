@@ -282,6 +282,21 @@ describe("Mutation.createAlert", () => {
     expect(subFindMany).toHaveBeenCalled(); // fan-out reached the subscriber lookup
   });
 
+  it("fans a null-severity event out only to all-severities (minSeverity 1) subscribers", async () => {
+    // Unknown severity is unranked: it can't clear a raised floor, but people
+    // who subscribed to every severity still get it.
+    const event = { id: "e1", types: ["displacement"], severity: null, originId: "l1", destinationId: null, locationId: null };
+    const subFindMany = vi.fn().mockResolvedValue([]);
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 4, status: "published" }) },
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "l1", ancestorIds: [] }]) },
+      userAlertSubscriptions: { findMany: subFindMany },
+    });
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+    expect(subFindMany.mock.calls[0][0].where.minSeverity).toEqual({ lte: 1 });
+  });
+
   it("is idempotent: returns the existing alert and skips fan-out + activity log when status matches", async () => {
     const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
     const existing = { id: 7, status: "draft", eventId: "e1" };

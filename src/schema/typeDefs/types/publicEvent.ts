@@ -25,7 +25,8 @@ export const publicEventTypeDef = gql`
     severity: Float
     """Window during which the event is considered valid."""
     validFrom: DateTime!
-    validTo: DateTime!
+    """Event end / expiry. Null when no real end is known (not invented)."""
+    validTo: DateTime
     """Disaster type codes (e.g. \`fl\`, \`pa\`). The frontend resolves
     these to display names via its own disaster-type catalogue."""
     types: [String!]!

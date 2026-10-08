@@ -7,6 +7,7 @@ import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
+import { estimateTypeDef } from "./typeDefs/types/estimate.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
 import { locationTypeDef } from "./typeDefs/types/location.js";
 import { notificationTypeDef } from "./typeDefs/types/notification.js";
@@ -35,6 +36,7 @@ import { reportFigureTypeDef } from "./typeDefs/types/reportFigure.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 import { groundTypeDef } from "./typeDefs/types/ground.js";
 import { conversationTypeDef } from "./typeDefs/types/conversation.js";
+import { taskTypeDef } from "./typeDefs/types/task.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -46,6 +48,7 @@ export const typeDefs = [
   signalTypeDef,
   signalLocationChallengeTypeDef,
   eventTypeDef,
+  estimateTypeDef,
   dataSourceTypeDef,
   locationTypeDef,
   notificationTypeDef,
@@ -74,4 +77,5 @@ export const typeDefs = [
   webhookTypeDef,
   groundTypeDef,
   conversationTypeDef,
+  taskTypeDef,
 ];

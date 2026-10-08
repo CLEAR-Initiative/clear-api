@@ -5,6 +5,7 @@ import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
 import { signalResolvers } from "./signal.resolver.js";
 import { eventResolvers } from "./event.resolver.js";
+import { estimateResolvers } from "./estimate.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
 import { locationResolvers } from "./location.resolver.js";
 import { notificationResolvers } from "./notification.resolver.js";
@@ -34,6 +35,7 @@ import { reportFigureResolvers } from "./reportFigure.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
 import { groundResolvers } from "./ground.resolver.js";
 import { conversationResolvers } from "./conversation.resolver.js";
+import { taskResolvers } from "./task.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -42,6 +44,7 @@ export const resolvers: IResolvers[] = [
   alertResolvers,
   signalResolvers,
   eventResolvers,
+  estimateResolvers,
   dataSourceResolvers,
   locationResolvers,
   notificationResolvers,
@@ -71,4 +74,5 @@ export const resolvers: IResolvers[] = [
   webhookResolvers,
   groundResolvers,
   conversationResolvers,
+  taskResolvers,
 ];

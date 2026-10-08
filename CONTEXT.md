@@ -64,6 +64,10 @@ _Avoid_: webhook source (mechanism, not concept), platform source
 A Signal whose raw input is a single X (Twitter) post from a **Push Feed**. Ungraded reliability by design — never treated as verified reporting.
 _Avoid_: tweet signal (in product copy)
 
+**Severity**:
+A 1-5 magnitude on a Signal or Event. **Nullable** — `null` means *unknown* (the source supplied none), which is NOT the scale floor and must never be defaulted to one (no `?? 1`). Treatment of a null severity: severity range filters **include** it (unknown isn't "below the floor"); alert matching treats it as `ALL_SEVERITIES_FLOOR` **for matching only** — reaching subscribers who asked for every severity, not those who raised their minimum (`src/utils/alert-severity.ts`); it sorts **last**. See clear-pipeline ADR-0010 `docs/adr/0010-unknown-values-stay-null.md` (unknown values stay null).
+_Avoid_: defaulting null to 1 or 3, treating unknown as low
+
 ### Agent conversations
 
 **Conversation**:
@@ -71,6 +75,74 @@ The stored record of one exchange between a user and the **CLEAR Agent** — wha
 asked, what the Agent answered, and what it drew on to answer (tools run, Source documents
 cited). Owned by that user.
 _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
+
+### Estimates
+
+**Estimate**:
+A figure for one metric on an Event, named and defined by the CLEAR Domain Ontology (v0.3.0):
+its value and optional bounds, how it was arrived at (**method**), whether it counts need caused
+by the Event, need that existed before it, or both (**attribution**), the date it describes
+(valid time) and when it was made (transaction time). The metric is one of the ontology's seven
+(`people_affected`, `people_displaced_new`, `people_displaced_cumulative`, `people_in_need`,
+`people_targeted`, `people_reached`, `households_affected`).
+_Avoid_: figure (in code), population number, casualty count, datapoint (that is a report figure)
+
+### Tasks and Workers
+
+**Task**:
+One unit of work of a named kind, about one subject such as an Event, waiting for or held by a
+**Worker**. **Event enrichment** is the first kind of work.
+_Avoid_: job, ticket, queue item, request (that is the act of asking)
+
+**Worker**:
+Anything that claims a **Task** and completes it: code CLEAR owns, a scheduled Claude Code
+routine, a third-party agent, or a person. A Worker is whatever calls the four Task mutations
+over GraphQL; the Dagster drain is one Worker among these, not the queue (ADR-0010). The
+**CLEAR Agent** is never a Worker. A Worker doing web research plays what the CLEAR Domain
+Ontology calls a web agent.
+_Avoid_: agent, bot, enricher, consumer
+
+**Request enrichment**:
+The act of asking for an **Event enrichment** on an Event. Independent of escalation: an Event
+may have either, both or neither.
+_Avoid_: escalate to enrichment, flag for enrichment, send to queue
+
+**Event enrichment**:
+An analytical add-on to an Event, produced by a **Worker**, stored beside the Event and labelled
+by its kind. A sibling of Signal enrichment (the pipeline's geo and classification step) and
+Crisis enrichment (the narrative and scenarios on a Crisis).
+_Avoid_: investigation, research, verification (as the family name); bare "enrichment" in field names
+
+**Source kind**:
+The kind of **Task** a **Worker** drains, naming where its evidence comes from. Today there is one:
+`event.impact_prior.web`, shown to people as **Web search** (the Claude routine searching CLEAR's
+Events, its knowledge base, then the web). One **Request enrichment** fans out into one Task per
+enabled source kind, so several Workers could propose on the same Event side by side; each proposal
+carries its source kind so a person can see who said what. The `impact_prior` in the wire name is
+historical: the web Worker proposes signals, not an **ImpactPrior**, and the name stays because
+renaming it would need a coordinated release of every Worker for no visible gain. The bare
+`event.impact_prior` and `event.impact_prior.clear` (the Dagster drain's LLM-proposed prior) are
+retired kinds.
+_Avoid_: worker type, provider, channel, tier (that is a label on a single piece of evidence)
+
+**ImpactPrior**:
+Named and defined by the CLEAR Domain Ontology: what has typically happened before given a hazard
+type, a context and a population, inferred from historical Events similar to the input Event,
+with its evidence basis and number of cases. It informs an Estimate and is not itself one. In
+CLEAR it is only ever computed from history (`Event.computedImpactPriors`, "From CLEAR's
+history"): no **Worker** proposes one and nobody reviews one. The `impact_priors` table holds the
+retired whole-prior proposals of V1–V3, kept as history.
+_Avoid_: event prior, precedent, history, related events; "impact prior" for what the web Worker
+proposes (that is a **CaseProposal**)
+
+**CaseProposal**:
+One historical case a web **Worker** found while enriching an Event: a past incident like it,
+the source that reports it (URL and verbatim quote), when and where it happened, the figures it
+gives, and the CLEAR Event it describes when CLEAR already holds one. Shown to people as a
+**proposed signal**: the unit an analyst accepts or rejects. Accepting writes it into CLEAR as a
+Signal with its figures as Estimates; it is evidence an **ImpactPrior** is computed from, not one
+itself.
+_Avoid_: web result, search hit, prior case, impact prior
 
 ## Relationships
 
@@ -98,6 +170,27 @@ _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a C
 - A **Conversation** keeps what the Agent actually said, even if the owner's access later narrows
 - Each **Conversation** turn records what it cost (model, tokens, latency) alongside what was said
 
+- An **Estimate** is never overwritten: a correction is a new Estimate that supersedes the old one, at most once, so a figure's history is a chain. The database refuses an update
+- An **Estimate** always states its attribution; where bounds are present, lower bound ≤ value ≤ upper bound
+- An **Estimate** follows its Event: visible to whoever may read the Event, deleted with it
+- The Event fields `populationAffected` and `populationDisplaced` were backfilled once as `people_affected` and `people_displaced_new` Estimates with method `not_documented`, skipping the pipeline's placeholder defaults. `casualties` has no ontology metric and was not backfilled
+
+- A **Task** has exactly one kind and exactly one subject; at most one Task per subject and kind is open at a time
+- **Request enrichment** always fans out: one **Task** per enabled **Source kind**, sharing one request id. A kind that already has an open Task is handed back, not duplicated; only the missing kinds get a new Task. The per-requester daily cap counts requests, not Tasks
+- Nothing ever marks an Event "done": proposals from each **Source kind** accumulate and a decider accepts or rejects each on its own
+- A claimed **Task** is held under a lease the **Worker** keeps alive by heartbeat; a lapsed lease goes back to the pool at the next claim, and a Task that has used up its attempts is failed with its last error. There is no sweeper
+- A requester or a platform admin may cancel a **Task**: a waiting one ends at once; a held one ends at the Worker's next heartbeat, completion or failure, with whatever it produced discarded
+- A **Task** is never deleted; what it recorded (requester, Worker, attempts, error, spend) is its history
+- Only a **Worker** completes a **Task**; what it produces for an enrichment kind is an **Event enrichment**
+- An **Event enrichment** is superseded, never overwritten: a new result is a new record and earlier ones stay (the Domain Ontology's rule for Estimates and ContextObservations). Supersession stays within a **Source kind**: a new proposal from CLEAR data points at the previous one from CLEAR data, never at one from the web, so proposals from different Workers sit side by side
+- **Request enrichment** and escalation are independent actions on an Event
+- A **CaseProposal** shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
+- A **Task** whose **Worker** finds no case proposes nothing; the Task records the wire outcome `no_prior_found` ("nothing found") and the Event stays unenriched
+- A web **Worker** proposes **CaseProposals**, one per historical case, not a whole **ImpactPrior** (V4). A named person accepts or rejects each case, in the shape of the Domain Ontology's DecisionRecord (rationale required on reject); a rejected case stays, so its source is not proposed again for that Event
+- A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Accepting one writes it into CLEAR as history: a Signal on the matched or a new historical Event, its figures as Estimates
+- An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis The whole-prior proposals and their review (V1–V3) are retired (ADR-0010, 2026-10-08)
+- The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
+
 ## Example dialogue
 
 > **Dev:** "If someone opens **API Docs** from the home page without logging in, do they see the **Portal Shell**?"
@@ -107,4 +200,7 @@ _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a C
 
 - "navbar" / "main navbar" was used for both the old docs top bar and the portal left sidebar — resolved: product language is **Portal Shell** (left sidebar). The old docs top marketing nav is removed on `/docs`.
 - "sidebar" alone is ambiguous (portal left vs docs left vs right TOC) — resolved: **Portal Shell** (left), **On This Page** (right); the docs-only left sidebar is removed.
+- "escalate" — in code, `escalateEvent` raises an Event to a published Alert; in the CLEAR Domain Ontology, escalation turns an Event into a Crisis and requires a DecisionRecord. Unresolved; for the ontology owner. Neither meaning is **Request enrichment**.
+- "agent" — clear-mvp reserves it for the one **CLEAR Agent**; the Domain Ontology uses "Event web agent" and "Context web agent" for background collectors. Resolved for this repo: the runtime term is **Worker**; the overload is raised with the ontology owner.
+- "event prior" — resolved: the Domain Ontology already defines **ImpactPrior**, which is the concept meant.
 - "static HTML app" vs SPA — resolved for this work: keep Bun/Express HTML string templates; extract a shared **Portal Shell** module; keep **API Docs** prebuild + in-memory cache. No separate frontend framework.

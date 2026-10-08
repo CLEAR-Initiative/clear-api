@@ -6,6 +6,7 @@ import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
+import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import {
@@ -178,14 +179,14 @@ export const alertResolvers = {
         const locationNames = locations.map((l) => l.name).join(", ");
         console.log(`[createAlert] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
-        const eventSeverity = event.severity ?? 1;
+        // Unknown (null) severity reaches only "all severities" subscribers.
         const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
           where: {
             active: true,
             frequency: "immediately",
             alertType: { in: event.types },
             locationId: { in: [...allLocationIds] },
-            minSeverity: { lte: eventSeverity },
+            minSeverity: minSeverityFilterFor(event.severity),
           },
           select: { userId: true },
         });
