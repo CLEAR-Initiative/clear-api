@@ -24,4 +24,4 @@ It leaves the PR for a human when Greptile hasn't reviewed the latest commit (it
 
 - Merges are made by the `clear-pr-auto-merge` GitHub App, so they trigger the deploy and `exponential-promote` like a human merge.
 - After resolving a Greptile thread, nothing re-runs the check automatically: `gh workflow run greptile-automerge.yml -f pr=<number>`.
-- To switch it off: `gh workflow disable greptile-automerge.yml`.
+- To switch it off for the whole repo: `gh workflow disable greptile-automerge.yml`.
