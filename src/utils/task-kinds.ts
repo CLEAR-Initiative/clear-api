@@ -3,19 +3,28 @@
  *
  * A kind is free text on the Task so a new source is a Worker and a handler,
  * not a migration. One enrichment request fans out into one Task per
- * enabled kind (`TASK_IMPACT_PRIOR_KINDS`), each drained by its own Worker,
- * so several Workers propose on one Event side by side: the Dagster drain
- * over CLEAR data (`event.impact_prior.clear`), the Claude routine over the
- * web (`event.impact_prior.web`), any later source. The bare
- * `event.impact_prior` is the pre-fan-out kind, kept claimable for one
- * release so an old Worker does not strand its open Tasks.
+ * enabled kind (`TASK_IMPACT_PRIOR_KINDS`), each drained by its own Worker.
+ * Today there is one: `event.impact_prior.web`, the Claude routine that
+ * proposes signals (CaseProposals) — shown to people as "Web search". The
+ * `impact_prior` in its name is historical: the ImpactPrior is computed from
+ * history, never proposed (2026-10-08). The bare `event.impact_prior` and
+ * `event.impact_prior.clear`, which proposed a whole prior, are retired:
+ * never requested, never claimable.
  *
- * Shared by the resolver and the notification service, which must not
- * import each other.
+ * Shared by the resolver, env parsing and the notification service, which
+ * must not import each other.
  */
 
 /** The family: the bare kind, and the prefix of every per-source kind. */
 export const IMPACT_PRIOR_KIND = "event.impact_prior";
+
+/** Kinds that proposed a whole ImpactPrior (V1–V3): never requested or
+ *  claimed again. Their Tasks and rows stay as history. */
+export const RETIRED_KINDS: readonly string[] = [IMPACT_PRIOR_KIND, `${IMPACT_PRIOR_KIND}.clear`];
+
+export function isRetiredKind(kind: string): boolean {
+  return RETIRED_KINDS.includes(kind);
+}
 
 /** The bare kind or a per-source kind under it. */
 export function isImpactPriorKind(kind: string): boolean {

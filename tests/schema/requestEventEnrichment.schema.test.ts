@@ -49,7 +49,7 @@ const CANCEL_TASK = `
 function mockPrisma(todayCount = 0): Record<string, unknown> {
   const created = {
     id: "t-1",
-    kind: "event.impact_prior.clear",
+    kind: "event.impact_prior.satellite",
     requestId: "req-1",
     subjectType: "event",
     subjectId: "ev-1",
@@ -126,10 +126,10 @@ describe("requestEventEnrichment schema contract", () => {
     const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" });
     expect(result.errors).toBeUndefined();
     const tasks = result.data?.requestEventEnrichment as { kind: string; requestId: string }[];
-    expect(tasks.map((t) => t.kind)).toEqual(["event.impact_prior.clear", "event.impact_prior.web"]);
+    expect(tasks.map((t) => t.kind)).toEqual(["event.impact_prior.satellite", "event.impact_prior.web"]);
     expect(new Set(tasks.map((t) => t.requestId)).size).toBe(1);
     expect(tasks[0]).toMatchObject({
-      id: "t-event.impact_prior.clear",
+      id: "t-event.impact_prior.satellite",
       status: "PENDING",
       origin: "user",
       payload: { horizonYears: 10 },

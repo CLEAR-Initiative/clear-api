@@ -94,18 +94,53 @@ describe("TASK_IMPACT_PRIOR_KINDS — the source kinds one request fans out into
 
   it("parses a comma-separated list, keeping order, trimming, dropping blanks and duplicates", async () => {
     const env = await loadEnv({
-      TASK_IMPACT_PRIOR_KINDS: " event.impact_prior.web, ,event.impact_prior.clear,event.impact_prior.web ",
+      TASK_IMPACT_PRIOR_KINDS: " event.impact_prior.web, ,event.impact_prior.satellite,event.impact_prior.web ",
     });
-    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web", "event.impact_prior.clear"]);
+    expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web", "event.impact_prior.satellite"]);
   });
 
-  it("accepts a single kind, including the bare pre-fan-out one", async () => {
-    expect((await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior.clear" })).TASK_IMPACT_PRIOR_KINDS).toEqual([
-      "event.impact_prior.clear",
+  it("accepts a single per-source kind", async () => {
+    expect((await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior.satellite" })).TASK_IMPACT_PRIOR_KINDS).toEqual([
+      "event.impact_prior.satellite",
     ]);
-    expect((await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior" })).TASK_IMPACT_PRIOR_KINDS).toEqual([
-      "event.impact_prior",
-    ]);
+  });
+
+  it("drops the retired whole-prior kinds with a warning instead of failing boot", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const env = await loadEnv({
+        TASK_IMPACT_PRIOR_KINDS: "event.impact_prior.clear,event.impact_prior,event.impact_prior.web",
+      });
+      expect(env.TASK_IMPACT_PRIOR_KINDS).toEqual(["event.impact_prior.web"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("event.impact_prior.clear, event.impact_prior"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn when no retired kind is configured", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await loadEnv({ TASK_IMPACT_PRIOR_KINDS: "event.impact_prior.web" });
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("TASK_IMPACT_PRIOR_KINDS"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each([
+    ["the bare kind alone", "event.impact_prior"],
+    [".clear alone", "event.impact_prior.clear"],
+    ["only retired kinds", "event.impact_prior, event.impact_prior.clear"],
+  ])("fails when %s is configured — nothing would be requested", async (_name, value) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(loadEnv({ TASK_IMPACT_PRIOR_KINDS: value })).rejects.toThrow(
+        /at least one kind that is not retired/,
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it.each([
