@@ -637,6 +637,10 @@ model signals {
   /// `fatalities` field directly, and parsed from raw text for Dataminr
   /// (regex: "X killed", "X dead", "X fatalities", etc.).
   casualties  Int?
+  /// Glide code the pipeline grouped this signal with (its first disaster
+  /// type). Lets an event recompute reproduce grouping's per-signal stats
+  /// fallback. Null for signals grouped before this column, or never grouped.
+  glideCode   String?  @map("glide_code")
   media       String[]
   isDummy     Boolean  @default(false)
 

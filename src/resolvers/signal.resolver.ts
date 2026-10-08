@@ -596,6 +596,32 @@ export const signalResolvers = {
       });
     },
 
+    setSignalGlideCode: async (
+      _parent: unknown,
+      args: { id: string; glideCode: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+
+      try {
+        return await context.prisma.signals.update({
+          where: { id: args.id },
+          data: { glideCode: args.glideCode },
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          throw new GraphQLError("Signal not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        throw error;
+      }
+    },
+
     updateSignalGeoparsedData: async (
       _parent: unknown,
       args: { id: string; geoparsedData: Record<string, unknown> },

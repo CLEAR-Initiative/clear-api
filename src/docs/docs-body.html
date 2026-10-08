@@ -921,6 +921,12 @@ Persists the signal and sends it to the pipeline for event grouping and auto-esc
     <td><code>updateSignalSeverity</code></td>
     <td><code>Signal!</code></td>
     <td>Update a signal's severity score.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>severity: Int!</code></span></div></td>
+  </tr><tr id="mutation-setsignalglidecode">
+    <td><code>setSignalGlideCode</code></td>
+    <td><code>Signal!</code></td>
+    <td>Record the glide code the pipeline grouped a signal with, so an event
+recompute can reproduce grouping's per-signal stats fallback. Idempotent
+(overwrites). Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>glideCode: String!</code></span></div></td>
   </tr><tr id="mutation-updatesignalgeoparseddata">
     <td><code>updateSignalGeoparsedData</code></td>
     <td><code>Signal!</code></td>
@@ -6012,6 +6018,11 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
 field; for Dataminr, parsed from raw text via regex.</td>
+  </tr><tr>
+    <td><code>glideCode</code></td>
+    <td><code>String</code></td>
+    <td>Glide code the pipeline grouped this signal with. Null for signals
+grouped before it was recorded, or never grouped.</td>
   </tr><tr>
     <td><code>media</code></td>
     <td><code>[String!]!</code></td>

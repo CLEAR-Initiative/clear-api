@@ -52,6 +52,9 @@ export const signalTypeDef = gql`
     """Reported casualties for the signal. Sourced from ACLED's fatalities
     field; for Dataminr, parsed from raw text via regex."""
     casualties: Int
+    """Glide code the pipeline grouped this signal with. Null for signals
+    grouped before it was recorded, or never grouped."""
+    glideCode: String
     """Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals)."""
     media: [String!]!
     """Whether this is seed/demo data."""

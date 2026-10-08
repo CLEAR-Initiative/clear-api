@@ -143,6 +143,11 @@ export const mutationTypeDef = gql`
     """Update a signal's severity score."""
     updateSignalSeverity(id: String!, severity: Int!): Signal!
 
+    """Record the glide code the pipeline grouped a signal with, so an event
+    recompute can reproduce grouping's per-signal stats fallback. Idempotent
+    (overwrites). Admin/pipeline only."""
+    setSignalGlideCode(id: String!, glideCode: String!): Signal!
+
     """Attach the clear-pipeline geoparser's result to an existing signal.
     Used for the manual-signal flow, where the signal is created via
     createManualSignal before the pipeline has a chance to run the geoparser.
