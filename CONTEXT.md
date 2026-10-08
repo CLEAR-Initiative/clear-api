@@ -114,27 +114,35 @@ Crisis enrichment (the narrative and scenarios on a Crisis).
 _Avoid_: investigation, research, verification (as the family name); bare "enrichment" in field names
 
 **Source kind**:
-The kind of **Task** a **Worker** drains, naming where its evidence comes from: `event.impact_prior.clear`
-(the Dagster drain over CLEAR's own Events and knowledge base), `event.impact_prior.web` (the Claude
-routine over the web), any later source. One **Request enrichment** fans out into one Task per enabled
-source kind, so several Workers propose on the same Event side by side; each proposal carries its
-source kind so a person can see who said what. The bare `event.impact_prior` is the pre-fan-out kind.
+The kind of **Task** a **Worker** drains, naming where its evidence comes from. Today there is one:
+`event.impact_prior.web`, shown to people as **Web search** (the Claude routine searching CLEAR's
+Events, its knowledge base, then the web). One **Request enrichment** fans out into one Task per
+enabled source kind, so several Workers could propose on the same Event side by side; each proposal
+carries its source kind so a person can see who said what. The `impact_prior` in the wire name is
+historical: the web Worker proposes signals, not an **ImpactPrior**, and the name stays because
+renaming it would need a coordinated release of every Worker for no visible gain. The bare
+`event.impact_prior` and `event.impact_prior.clear` (the Dagster drain's LLM-proposed prior) are
+retired kinds.
 _Avoid_: worker type, provider, channel, tier (that is a label on a single piece of evidence)
 
 **ImpactPrior**:
-The first kind of **Event enrichment**, named and defined by the CLEAR Domain Ontology: what has
-typically happened before given a hazard type, a context and a population, inferred from
-historical Events similar to the input Event, with its evidence basis and number of cases. It
-informs an Estimate and is not itself one.
-_Avoid_: event prior, precedent, history, related events
+Named and defined by the CLEAR Domain Ontology: what has typically happened before given a hazard
+type, a context and a population, inferred from historical Events similar to the input Event,
+with its evidence basis and number of cases. It informs an Estimate and is not itself one. In
+CLEAR it is only ever computed from history (`Event.computedImpactPriors`, "From CLEAR's
+history"): no **Worker** proposes one and nobody reviews one. The `impact_priors` table holds the
+retired whole-prior proposals of V1–V3, kept as history.
+_Avoid_: event prior, precedent, history, related events; "impact prior" for what the web Worker
+proposes (that is a **CaseProposal**)
 
 **CaseProposal**:
 One historical case a web **Worker** found while enriching an Event: a past incident like it,
 the source that reports it (URL and verbatim quote), when and where it happened, the figures it
-gives, and the CLEAR Event it describes when CLEAR already holds one. The unit an analyst accepts
-or rejects. Accepting writes it into CLEAR as history; it is evidence for an **ImpactPrior**, not
-one itself.
-_Avoid_: web result, search hit, prior case
+gives, and the CLEAR Event it describes when CLEAR already holds one. Shown to people as a
+**proposed signal**: the unit an analyst accepts or rejects. Accepting writes it into CLEAR as a
+Signal with its figures as Estimates; it is evidence an **ImpactPrior** is computed from, not one
+itself.
+_Avoid_: web result, search hit, prior case, impact prior
 
 ## Relationships
 
@@ -176,12 +184,11 @@ _Avoid_: web result, search hit, prior case
 - Only a **Worker** completes a **Task**; what it produces for an enrichment kind is an **Event enrichment**
 - An **Event enrichment** is superseded, never overwritten: a new result is a new record and earlier ones stay (the Domain Ontology's rule for Estimates and ContextObservations). Supersession stays within a **Source kind**: a new proposal from CLEAR data points at the previous one from CLEAR data, never at one from the web, so proposals from different Workers sit side by side
 - **Request enrichment** and escalation are independent actions on an Event
-- An **ImpactPrior** draws on CLEAR's own Events and on external sources, each labelled by tier, as knowledge base results are
-- An **ImpactPrior** case shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
-- A **Task** whose **Worker** finds no case produces no **ImpactPrior**; the Task records "no prior found" and the Event stays unenriched
+- A **CaseProposal** shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
+- A **Task** whose **Worker** finds no case proposes nothing; the Task records the wire outcome `no_prior_found` ("nothing found") and the Event stays unenriched
 - A web **Worker** proposes **CaseProposals**, one per historical case, not a whole **ImpactPrior** (V4). A named person accepts or rejects each case, in the shape of the Domain Ontology's DecisionRecord (rationale required on reject); a rejected case stays, so its source is not proposed again for that Event
 - A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Accepting one writes it into CLEAR as history: a Signal on the matched or a new historical Event, its figures as Estimates
-- An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis Proposed ImpactPriors from the CLEAR-data **Worker** are still decided whole; by default a request no longer asks that Worker (`TASK_IMPACT_PRIOR_KINDS` is the web kind alone)
+- An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis The whole-prior proposals and their review (V1–V3) are retired (ADR-0010, 2026-10-08)
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
 
 ## Example dialogue
