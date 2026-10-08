@@ -94,17 +94,15 @@ jobs:
             const MARKER = '<!-- greptile-automerge -->';
             const LABEL = 'no-automerge';
             const BLOCKING = /^\s*(<a[^>]*>\s*)?<img[^>]*alt="(P[01])"/;
+            const SETTLE_MS = 15000;
+            const MERGE_ATTEMPTS = 3;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
 
             let numbers;
             if (context.eventName === 'check_run' || context.eventName === 'workflow_run') {
               const event = context.payload.check_run ?? context.payload.workflow_run;
               const sha = event.head_sha;
               const branch = event.check_suite?.head_branch ?? event.head_branch;
-              if (context.eventName === 'check_run') {
-                // Greptile posts its comments a few seconds before it completes the check;
-                // give the API a moment so we don't read the comment list mid-write.
-                await new Promise(r => setTimeout(r, 10000));
-              }
               // Also match on branch: runs share a concurrency slot per branch, and a newer
               // event for an older commit can replace a pending run for the current one.
               const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
@@ -140,6 +138,14 @@ jobs:
               if (run.status !== 'completed') return skip(`Greptile's review of \`${short}\` is still running`);
               if (run.conclusion !== 'success') return skip(`Greptile's review of \`${short}\` ended \`${run.conclusion}\``);
 
+              // Greptile posts its comments a few seconds before it completes the check, so
+              // reading the comment list right after completion can miss one. Wait until the
+              // check has been complete for SETTLE_MS, whatever event got us here — a CI
+              // workflow_run can land seconds after Greptile finishes.
+              const age = Date.now() - Date.parse(run.completed_at);
+              const settle = Number.isFinite(age) ? SETTLE_MS - age : SETTLE_MS;
+              if (settle > 0) await sleep(settle);
+
               // Threads past the first 100 aren't in this set, so their findings count as
               // unresolved — the safe direction.
               const { repository: { pullRequest: { reviewThreads } } } = await github.graphql(`
@@ -165,18 +171,34 @@ jobs:
               }
 
               if (dryRun) return report(number, `[dry run] Greptile: no P0/P1 on \`${short}\` — would merge once the required checks pass.`);
-              try {
-                // Pinned to the reviewed commit: GitHub refuses the merge if the head has moved
-                // (409) or a required check hasn't passed (405).
-                await github.rest.pulls.merge({ owner, repo, pull_number: number, sha, merge_method: 'squash' });
-                return report(number, `Greptile: no P0/P1 on \`${short}\` — required checks passed, merged.`);
-              } catch (e) {
-                if (e.status === 405) {
-                  return report(number, `Greptile: no P0/P1 on \`${short}\` — will merge once GitHub allows it. GitHub says: ${e.message}`);
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  // Pinned to the reviewed commit: GitHub refuses the merge if the head has moved
+                  // (409) or a required check hasn't passed (405).
+                  await github.rest.pulls.merge({ owner, repo, pull_number: number, sha, merge_method: 'squash' });
+                  return report(number, `Greptile: no P0/P1 on \`${short}\` — required checks passed, merged.`);
+                } catch (e) {
+                  if (e.status === 409) return core.info(`#${number}: head moved past ${short} while merging; the newer commit gets its own run.`);
+                  if (e.status !== 405) {
+                    await report(number, `Greptile: no P0/P1 on \`${short}\`, but the merge failed: ${e.message}`);
+                    throw e;
+                  }
+                  // A pending required check is retried by the next CI workflow_run.
+                  if (/status check/i.test(e.message)) {
+                    return report(number, `Greptile: no P0/P1 on \`${short}\` — will merge when the required checks pass. GitHub says: ${e.message}`);
+                  }
+                  // Any other 405 (the base moved under a concurrent merge, mergeability still
+                  // being computed) has no later event to retry it, so retry it here.
+                  if (attempt < MERGE_ATTEMPTS) {
+                    core.info(`#${number}: GitHub refused the merge (${e.message}); retrying in ${SETTLE_MS / 1000}s.`);
+                    await sleep(SETTLE_MS);
+                    const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                    if (now.state !== 'open' || now.head.sha !== sha) return core.info(`#${number} changed while waiting to retry; leaving it to its own run.`);
+                    continue;
+                  }
+                  return report(number, `Greptile: no P0/P1 on \`${short}\`, but GitHub refused the merge ${MERGE_ATTEMPTS} times (${e.message}). ` +
+                    `If nothing else changes on the PR, re-run with \`gh workflow run greptile-automerge.yml -f pr=${number}\`.`);
                 }
-                if (e.status === 409) return core.info(`#${number}: head moved past ${short} while merging; the newer commit gets its own run.`);
-                await report(number, `Greptile: no P0/P1 on \`${short}\`, but the merge failed: ${e.message}`);
-                throw e;
               }
             }
 
