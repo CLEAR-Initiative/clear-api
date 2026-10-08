@@ -86,8 +86,8 @@ interface UpdateEventInput {
   locationId?: string;
   types?: string[];
   severity?: number;
-  populationAffected?: string;
-  populationDisplaced?: string;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
   casualties?: number;
   rank?: number;
   signalIds?: string[];
@@ -117,6 +117,14 @@ function bigIntOrKeep(value: string | null | undefined, field: string): bigint |
     });
   }
   return BigInt(value);
+}
+
+/** Lenient variant for createEvent/updateEvent, whose form callers may send
+ *  "", padded or "+"-signed values (all accepted by the old raw BigInt()):
+ *  blank/null = absent, whitespace and a leading "+" ignored. */
+function optionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
+  const trimmed = value?.trim().replace(/^\+/, "");
+  return bigIntOrKeep(trimmed ? trimmed : undefined, field) ?? undefined;
 }
 
 export const eventResolvers = {
@@ -222,6 +230,9 @@ export const eventResolvers = {
       // teamId they're acting on behalf of. See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      // Validated before any write (point location, event row).
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       // Resolve location for the event
       let locationId = input.locationId;
@@ -320,12 +331,8 @@ export const eventResolvers = {
           locationId,
           types: input.types,
           severity: input.severity,
-          populationAffected: input.populationAffected
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced
-            ? BigInt(input.populationDisplaced)
-            : undefined,
+          populationAffected,
+          populationDisplaced,
           casualties: input.casualties,
           rank: input.rank,
         },
@@ -402,6 +409,9 @@ export const eventResolvers = {
     ) => {
       requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
+      // Validated before signal linking. Null/blank = no change, like the other fields here.
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       const existing = await context.prisma.events.findUnique({ where: { id } });
       if (!existing) {
@@ -457,12 +467,8 @@ export const eventResolvers = {
           locationId: input.locationId,
           types: input.types ?? undefined,
           severity: input.severity ?? undefined,
-          populationAffected: input.populationAffected !== undefined
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced !== undefined
-            ? BigInt(input.populationDisplaced)
-            : undefined,
+          populationAffected,
+          populationDisplaced,
           casualties: input.casualties ?? undefined,
           rank: input.rank ?? undefined,
         },
