@@ -39,6 +39,22 @@ describe("exponential trpc client", () => {
     expect(result).toEqual({ ok: false, reason: "unauthorized:Authentication required." });
   });
 
+  it("stringifies a numeric code when the error has no data.code", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { json: { message: "Authentication required.", code: -32001 } } }),
+      }),
+    );
+
+    const result = await findContactByEmail("someone@example.org");
+
+    expect(result).toEqual({ ok: false, reason: "-32001:Authentication required." });
+  });
+
   it("falls back to the HTTP status when the error body has no code", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
