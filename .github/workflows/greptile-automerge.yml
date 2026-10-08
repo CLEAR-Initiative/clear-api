@@ -193,7 +193,9 @@ jobs:
                     core.info(`#${number}: GitHub refused the merge (${e.message}); retrying in ${SETTLE_MS / 1000}s.`);
                     await sleep(SETTLE_MS);
                     const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-                    if (now.state !== 'open' || now.head.sha !== sha) return core.info(`#${number} changed while waiting to retry; leaving it to its own run.`);
+                    if (now.state !== 'open' || now.head.sha !== sha || now.draft || now.labels.some(l => l.name === LABEL)) {
+                      return core.info(`#${number} changed while waiting to retry (closed, new head, draft or \`${LABEL}\`); leaving it to its own run.`);
+                    }
                     continue;
                   }
                   return report(number, `Greptile: no P0/P1 on \`${short}\`, but GitHub refused the merge ${MERGE_ATTEMPTS} times (${e.message}). ` +
