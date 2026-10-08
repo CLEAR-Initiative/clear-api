@@ -771,6 +771,21 @@ describeIfDb("Tasks against the real schema", () => {
     expect(ds.resultSignalId).toBe(df.resultSignalId);
     expect(ds.resultEventId).not.toBe(df.resultEventId);
 
+    // An Event with no resolved onset, first reported two weeks after the
+    // incident: a case for its article borrows it rather than duplicate it.
+    const lateEvent = await makeEvent();
+    const reportedAt = new Date(longAgo.getTime() + 14 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: lateEvent }, data: { startedAt: null, firstSignalCreatedAt: reportedAt, lastSignalCreatedAt: reportedAt } });
+    const lateSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: reportedAt, url: "https://example.test/late-report", status: "PROCESSED",
+        signalEvents: { create: { eventId: lateEvent, collectedAt: new Date() } },
+      },
+    });
+    const late = await proposedCase("https://example.test/late-report");
+    const dl = await decideCaseProposal(null, { id: late.id, decision: "accepted" }, analyst);
+    expect(dl).toMatchObject({ resultSignalId: lateSignal.id, resultEventId: lateEvent });
+
     await prisma.signals.deleteMany({ where: { sourceId: pipelineSource.id } });
     await prisma.dataSources.delete({ where: { id: pipelineSource.id } });
   });

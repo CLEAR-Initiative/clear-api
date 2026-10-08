@@ -24,9 +24,14 @@ export const WEB_ENRICHMENT_SOURCE = "web_enrichment";
  *  window the pipeline gives a new Event. */
 const HISTORICAL_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const TITLE_MAX = 200;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** How close an Event's onset must be to the case's date for a shared
  *  Signal's Event to count as the same incident — the Worker's matching rule. */
-const SAME_INCIDENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+const SAME_INCIDENT_WINDOW_MS = 3 * DAY_MS;
+/** Without a resolved onset, an Event's first Signal is when it was first
+ *  reported, which can trail the incident: allow the incident up to this
+ *  long before it (and the usual three days after). */
+const REPORTING_LAG_MS = 30 * DAY_MS;
 /** The Domain Ontology version whose metric definitions a case's figures use. */
 const DEFINITION_VERSION = "0.3.0";
 
@@ -127,7 +132,9 @@ async function writeCaseSignal(
  * the case: it manifests the case's hazard, lies in the requesting Event's
  * country (the checks `completeTask` puts on an explicit match), and began
  * within three days of the case's date — one article can report several
- * incidents, and each must keep its own Event.
+ * incidents, and each must keep its own Event. An Event with no resolved
+ * onset is dated by its first Signal, a report that can trail the incident
+ * by weeks, so the case may fall up to 30 days before it.
  */
 async function isSameIncident(
   tx: Tx,
@@ -144,8 +151,14 @@ async function isSameIncident(
     },
   });
   if (!event || !event.types.includes(c.hazardType)) return false;
-  const onset = event.startedAt ?? event.firstSignalCreatedAt;
-  if (Math.abs(onset.getTime() - c.occurredAt.getTime()) > SAME_INCIDENT_WINDOW_MS) return false;
+  const at = c.occurredAt.getTime();
+  if (event.startedAt) {
+    if (Math.abs(event.startedAt.getTime() - at) > SAME_INCIDENT_WINDOW_MS) return false;
+  } else {
+    // No onset: the first Signal is a report, so the incident may precede it.
+    const firstReport = event.firstSignalCreatedAt.getTime();
+    if (at < firstReport - REPORTING_LAG_MS || at > firstReport + SAME_INCIDENT_WINDOW_MS) return false;
+  }
   return (await resolveEventCountryId(tx, event)) === countryId;
 }
 
