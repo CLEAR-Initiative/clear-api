@@ -3,7 +3,7 @@ name: Greptile auto-merge
 # Turns on GitHub auto-merge (squash) for a PR into the default branch once Greptile has
 # reviewed the PR's latest commit and left no unresolved P0/P1 finding on it. P2s don't
 # block. Anything else — a P0/P1, no Greptile review on the latest commit, a draft, a fork,
-# the `no-automerge` label — leaves the PR for a human, and turns off any auto-merge this
+# a bot author (Dependabot, Copilot…), the `no-automerge` label — leaves the PR for a human, and turns off any auto-merge this
 # workflow turned on earlier (so a push after the review can't merge unreviewed code).
 #
 # How a finding is counted: a top-level review comment by greptile-apps[bot] whose body
@@ -45,7 +45,7 @@ permissions:
 
 env:
   # Dry run: decide and post the PR comment, but never enable, disable or merge.
-  DRY_RUN: 'true'
+  DRY_RUN: 'false'
 
 jobs:
   evaluate:
@@ -117,6 +117,7 @@ jobs:
 
               if (pr.base.ref !== base) return skip(`the PR targets \`${pr.base.ref}\`; auto-merge only applies to PRs into \`${base}\``);
               if (pr.head.repo?.full_name !== `${owner}/${repo}`) return skip('the PR comes from a fork');
+              if (pr.user?.type === 'Bot') return skip(`the PR was opened by a bot (@${pr.user.login})`);
               if (pr.draft) return skip('the PR is a draft');
               if (pr.labels.some(l => l.name === LABEL)) return skip(`the PR has the \`${LABEL}\` label`);
 
