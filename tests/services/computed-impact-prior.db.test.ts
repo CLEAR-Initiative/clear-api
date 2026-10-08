@@ -33,10 +33,14 @@ async function event(opts: { types?: string[]; at: Date; locationId?: string; is
   return row.id;
 }
 
-async function figure(eventId: string, value: number, extra: { supersedesId?: string; estimatedAt?: Date } = {}) {
+async function figure(
+  eventId: string,
+  value: number,
+  extra: { supersedesId?: string; estimatedAt?: Date; method?: "media_report" | "not_documented" | "model_inference" } = {},
+) {
   return prisma.estimate.create({
     data: {
-      eventId, metric: "people_displaced_new", value, method: "media_report", attribution: "event_caused",
+      eventId, metric: "people_displaced_new", value, method: extra.method ?? "media_report", attribution: "event_caused",
       validFor: new Date(), estimatedAt: extra.estimatedAt ?? new Date(), definitionVersion: "0.3.0",
       supersedesId: extra.supersedesId ?? null,
     },
@@ -70,6 +74,13 @@ describeIfDb("computed ImpactPrior against the real schema", () => {
     const old = await figure(b, 99_999, { estimatedAt: new Date(now - 10 * DAY) });
     await figure(b, 4000, { supersedesId: old.id });
     await figure(c, 2500);
+    // Unobserved figures are not history: a's newer backfilled placeholder
+    // must not mask its observed figure, and d (placeholder and model output
+    // only) contributes nothing.
+    await figure(a, 25_794, { method: "not_documented", estimatedAt: new Date(now + DAY) });
+    const d = await event({ at: new Date(now - 60 * DAY) });
+    await figure(d, 25_794, { method: "not_documented" });
+    await figure(d, 2_000_000, { method: "model_inference" });
     // Not history: later than the input, another hazard, abroad, dummy, beyond the horizon.
     await figure(await event({ at: new Date(now + 5 * DAY) }), 1);
     await figure(await event({ at: new Date(now - 50 * DAY), types: ["EQ"] }), 1);
@@ -90,6 +101,7 @@ describeIfDb("computed ImpactPrior against the real schema", () => {
       upperBound: 4000,
       numberOfCases: 3,
       lowConfidence: false,
+      basisMethods: [{ method: "media_report", count: 3 }],
     });
     expect([...prior.eventIds].sort()).toEqual([a, b, c].sort());
 

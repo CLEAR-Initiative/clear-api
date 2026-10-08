@@ -1,4 +1,7 @@
 import { gql } from "graphql-tag";
+import { OBSERVED_ESTIMATE_METHODS } from "../../../services/computed-impact-prior.js";
+
+const OBSERVED_METHODS_DOC = OBSERVED_ESTIMATE_METHODS.map((m) => "`" + m + "`").join(", ");
 
 /**
  * Tasks and Workers (ADR-0010).
@@ -257,7 +260,13 @@ export const taskTypeDef = gql`
   current figure each for one metric and population group. Computed on
   read from accepted history — nothing to review. Read \`numberOfCases\`
   beside the figure: a prior resting on three Events is not one resting on
-  ninety."""
+  ninety.
+
+  Only observed or reported figures count: Estimates whose method is one of
+  ${OBSERVED_METHODS_DOC}. Figures with method \`not_documented\` (the
+  pipeline's backfilled placeholders), \`model_inference\`,
+  \`exposure_model\` or \`prior_caseload_analogue\` (itself derived from a
+  prior) are not history, so they are never summarised."""
   type ComputedImpactPrior {
     """GLIDE code; one of the Event's \`types\`."""
     hazardType: String!
@@ -285,8 +294,17 @@ export const taskTypeDef = gql`
     eventIds: [String!]!
     """The Estimates it rests on, one per Event."""
     estimateIds: [String!]!
+    """How the Estimates it rests on were arrived at, most common first, so
+    a reader can see what the prior is built from."""
+    basisMethods: [EstimateMethodCount!]!
     """Version of the method that computed it."""
     methodVersion: String!
+  }
+
+  """How many of a prior's figures were arrived at by one method."""
+  type EstimateMethodCount {
+    method: EstimateMethod!
+    count: Int!
   }
 
   """The decision a named admin or analyst records on a proposed case."""

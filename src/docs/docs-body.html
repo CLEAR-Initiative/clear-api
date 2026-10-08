@@ -4451,7 +4451,13 @@ manifest the same hazard in the same country within the horizon, one
 current figure each for one metric and population group. Computed on
 read from accepted history — nothing to review. Read `numberOfCases`
 beside the figure: a prior resting on three Events is not one resting on
-ninety.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+ninety.
+
+Only observed or reported figures count: Estimates whose method is one of
+`media_report`, `government_figure`, `partner_or_cluster_figure`, `rapid_assessment`, `formal_assessment`, `registration`, `field_staff_judgement`. Figures with method `not_documented` (the
+pipeline's backfilled placeholders), `model_inference`,
+`exposure_model` or `prior_caseload_analogue` (itself derived from a
+prior) are not history, so they are never summarised.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>hazardType</code></td>
     <td><code>String!</code></td>
     <td>GLIDE code; one of the Event's `types`.</td>
@@ -4504,6 +4510,11 @@ Figures in different units are never summarised together.</td>
     <td><code>estimateIds</code></td>
     <td><code>[String!]!</code></td>
     <td>The Estimates it rests on, one per Event.</td>
+  </tr><tr>
+    <td><code>basisMethods</code></td>
+    <td><code>[EstimateMethodCount!]!</code></td>
+    <td>How the Estimates it rests on were arrived at, most common first, so
+a reader can see what the prior is built from.</td>
   </tr><tr>
     <td><code>methodVersion</code></td>
     <td><code>String!</code></td>
@@ -4950,6 +4961,14 @@ under, e.g. `0.3.0`.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-estimatemethodcount"><code>EstimateMethodCount</code> <span class="type-badge">object</span></h3><p>How many of a prior's figures were arrived at by one method.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>method</code></td>
+    <td><code>EstimateMethod!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-event"><code>Event</code> <span class="type-badge">object</span></h3><p>An event grouping related signals into a coherent narrative.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>

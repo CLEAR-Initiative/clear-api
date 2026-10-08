@@ -181,7 +181,7 @@ _Avoid_: web result, search hit, prior case
 - A **Task** whose **Worker** finds no case produces no **ImpactPrior**; the Task records "no prior found" and the Event stays unenriched
 - A web **Worker** proposes **CaseProposals**, one per historical case, not a whole **ImpactPrior** (V4). A named person accepts or rejects each case, in the shape of the Domain Ontology's DecisionRecord (rationale required on reject); a rejected case stays, so its source is not proposed again for that Event
 - A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Accepting one writes it into CLEAR as history: a Signal on the matched or a new historical Event, its figures as Estimates
-- An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Proposed ImpactPriors from the CLEAR-data **Worker** are still decided whole; by default a request no longer asks that Worker (`TASK_IMPACT_PRIOR_KINDS` is the web kind alone)
+- An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis Proposed ImpactPriors from the CLEAR-data **Worker** are still decided whole; by default a request no longer asks that Worker (`TASK_IMPACT_PRIOR_KINDS` is the web kind alone)
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
 
 ## Example dialogue
