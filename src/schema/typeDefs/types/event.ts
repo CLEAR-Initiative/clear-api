@@ -9,7 +9,8 @@ export const eventTypeDef = gql`
     """LLM-generated signal descriptions as JSON."""
     descriptionSignals: JSON
     validFrom: DateTime!
-    validTo: DateTime!
+    """Event end / expiry. Null when no real end is known (not invented)."""
+    validTo: DateTime
     firstSignalCreatedAt: DateTime!
     lastSignalCreatedAt: DateTime!
     """When the real-world event actually STARTED (its onset) — parsed from the

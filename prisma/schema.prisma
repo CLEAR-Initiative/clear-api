@@ -721,7 +721,9 @@ model events {
   description_signals Json?
 
   validFrom            DateTime @default(now()) @map("valid_from")
-  validTo              DateTime @map("valid_to")
+  /// Event end / expiry. Null when no real end is known (the pipeline no longer
+  /// invents start + 7 days) — a null validTo means "ongoing / no known end".
+  validTo              DateTime? @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
   /// When the real-world event actually STARTED (its onset) — distinct from
