@@ -27,8 +27,12 @@ name: Greptile auto-merge
 #
 # Merges use the auto-merge GitHub App's token, not GITHUB_TOKEN: a merge made with
 # GITHUB_TOKEN doesn't trigger other workflows (deploys, exponential-promote).
-# check_run and workflow_run workflows only run from the copy of this file on the default
-# branch.
+#
+# Only the default branch's copy of this file ever runs (check_run, workflow_run,
+# workflow_dispatch and pull_request_target all use it), so a branch can't change the code
+# that holds the token. It never checks out or runs PR code. The App's private key lives in
+# the `greptile-automerge` environment, which only the default branch may use, so a
+# workflow on any other branch can't read it either.
 
 on:
   check_run:
@@ -38,7 +42,7 @@ on:
     # repo doesn't have is ignored.
     workflows: [CI, E2E smoke, Unit tests]
     types: [completed]
-  pull_request:
+  pull_request_target:
     types: [synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
   workflow_dispatch:
     inputs:
@@ -66,22 +70,25 @@ jobs:
       (github.event_name == 'check_run' && github.event.check_run.app.slug == 'greptile-apps') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
         github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request_target' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         github.actor != 'dependabot[bot]' &&
         (!contains(fromJSON('["labeled","unlabeled"]'), github.event.action) || github.event.label.name == 'no-automerge')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment:
+      name: greptile-automerge
+      deployment: false
     steps:
       - id: app-token
         if: env.DRY_RUN != 'true'
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
 
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
         with:
@@ -96,6 +103,7 @@ jobs:
             const BLOCKING = /^\s*(<a[^>]*>\s*)?<img[^>]*alt="(P[01])"/;
             const SETTLE_MS = 15000;
             const MERGE_ATTEMPTS = 3;
+            const SUMMARY_ATTEMPTS = 4;
             const sleep = ms => new Promise(r => setTimeout(r, ms));
 
             let numbers;
@@ -110,7 +118,7 @@ jobs:
                 .filter(p => p.head.sha === sha || (branch && p.head.ref === branch && p.head.repo?.full_name === `${owner}/${repo}`))
                 .map(p => p.number);
               if (!numbers.length) core.info(`No open PR has ${sha} as its latest commit; nothing to do.`);
-            } else if (context.eventName === 'pull_request') {
+            } else if (context.eventName === 'pull_request_target') {
               numbers = [context.payload.pull_request.number];
             } else {
               numbers = [Number(context.payload.inputs.pr)];
@@ -145,6 +153,24 @@ jobs:
               const age = Date.now() - Date.parse(run.completed_at);
               const settle = Number.isFinite(age) ? SETTLE_MS - age : SETTLE_MS;
               if (settle > 0) await sleep(settle);
+
+              // The check belongs to the commit, not the PR: if two PRs point at the same
+              // commit, Greptile may have reviewed the other one and left its findings there.
+              // Require this PR's own Greptile summary to name the commit it last reviewed.
+              // Greptile edits the summary a few seconds after completing the check; give a
+              // fresh review up to SUMMARY_ATTEMPTS reads before giving up.
+              let reviewed;
+              for (let attempt = 1; ; attempt++) {
+                const issueComments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: number, per_page: 100,
+                });
+                const summary = issueComments.find(c =>
+                  c.user?.login === 'greptile-apps[bot]' && c.body?.includes('<!-- greptile_summary -->'));
+                reviewed = summary?.body.match(/Last reviewed commit:.*?\/commit\/([0-9a-f]{40})/)?.[1];
+                if (reviewed === sha || attempt >= SUMMARY_ATTEMPTS || Date.now() - Date.parse(run.completed_at) > 120000) break;
+                await sleep(10000);
+              }
+              if (reviewed !== sha) return skip(`Greptile's summary on this PR doesn't show a review of \`${short}\``);
 
               // Threads past the first 100 aren't in this set, so their findings count as
               // unresolved — the safe direction.
