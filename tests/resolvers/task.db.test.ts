@@ -24,10 +24,15 @@ import { prisma } from "../../src/lib/prisma.js";
 import { taskResolvers, IMPACT_PRIOR_KIND } from "../../src/resolvers/task.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
+import { paginationResolvers } from "../../src/resolvers/pagination.resolver.js";
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
-  taskResolvers.Mutation;
-const { eventTasks, eventImpactPriors } = taskResolvers.Query;
+const {
+  requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior,
+  decideCaseProposal,
+} = taskResolvers.Mutation;
+const { eventTasks, eventImpactPriors, eventCaseProposals, caseProposals, rejectedCaseUrls, impactPriors } =
+  taskResolvers.Query;
 
 const RUN = `task-db-${Date.now()}`;
 const ANALYST_ID = `${RUN}-analyst`;
@@ -49,6 +54,7 @@ const asUser = (id: string, role: string): Context =>
 const analyst = asUser(ANALYST_ID, "analyst");
 const analystB = asUser(ANALYST_B_ID, "analyst");
 const viewer = asUser(VIEWER_ID, "viewer");
+const admin = asUser(ADMIN_ID, "admin");
 const workerA = asUser(WORKER_A, "worker");
 const workerB = asUser(WORKER_B, "worker");
 
@@ -124,6 +130,11 @@ describeIfDb("Tasks against the real schema", () => {
   afterAll(async () => {
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
     await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
+    await prisma.caseProposal.deleteMany({ where: { eventId: { in: eventIds } } });
+    // Events and Signals that accepting cases wrote.
+    const written = await prisma.signals.findMany({ where: { submittedById: { in: [ANALYST_ID, ANALYST_B_ID, ADMIN_ID] } }, select: { id: true, signalEvents: { select: { eventId: true } } } });
+    eventIds.push(...written.flatMap((s) => s.signalEvents.map((e) => e.eventId)));
+    await prisma.signals.deleteMany({ where: { id: { in: written.map((s) => s.id) } } });
     await prisma.impactPrior.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
@@ -486,6 +497,297 @@ describeIfDb("Tasks against the real schema", () => {
     }
     expect(log).toHaveLength(1);
     expect(log[0].metadata).toMatchObject({ decision: "rejected", eventId: id });
+  });
+
+  it("a web Worker's cases land one row each; a URL already proposed for the Event is skipped (V4)", async () => {
+    const id = await makeEvent();
+    const pastId = await makeEvent();
+    const { web, clear } = await request(id, analystB);
+    // Only the web Worker matters here; leave nothing for later tests' claims.
+    await cancelTask(null, { id: clear.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const at = new Date(Date.now() - 400 * 24 * 3600_000);
+    const done = await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: { searched: 4 },
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          {
+            sourceUrl: "https://example.test/case-a",
+            quote: "Floods displaced 4,000 people.",
+            occurredAt: at,
+            locationLabel: "Testville",
+            locationId: DISTRICT_ID,
+            hazardType: "FL",
+            geographicScope: "district",
+            figures: [{ metric: "people_displaced_new", value: 4000 }],
+            matchedEventId: pastId,
+          },
+          {
+            sourceUrl: "https://example.test/case-b",
+            quote: "Rivers burst their banks.",
+            occurredAt: at,
+            locationLabel: "Testland",
+            hazardType: "FL",
+            geographicScope: "country",
+          },
+        ],
+      },
+      workerB,
+    );
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
+    expect(await prisma.impactPrior.count({ where: { taskId: held.id } })).toBe(0);
+
+    const seen = await eventCaseProposals(null, { eventId: id }, analystB);
+    expect(seen.map((c) => c.sourceUrl).sort()).toEqual(["https://example.test/case-a", "https://example.test/case-b"]);
+    const a = seen.find((c) => c.sourceUrl.endsWith("case-a"))!;
+    expect(a).toMatchObject({ state: "proposed", matchedEventId: pastId, locationId: DISTRICT_ID, taskId: held.id });
+    expect(a.figures).toEqual([{ metric: "people_displaced_new", value: 4000 }]);
+    // A viewer sees no proposed case; the Inbox lists them for a decider.
+    expect(await eventCaseProposals(null, { eventId: id }, viewer)).toEqual([]);
+    const inbox = await caseProposals(null, { limit: 200 }, analyst);
+    expect(inbox.filter((c) => c.eventId === id)).toHaveLength(2);
+
+    // A rejected URL is what the Worker asks for before searching again.
+    await prisma.caseProposal.update({ where: { id: a.id }, data: { state: "rejected" } });
+    expect(await rejectedCaseUrls(null, { eventId: id }, workerA)).toEqual(["https://example.test/case-a"]);
+
+    // A later request re-proposing it is skipped, not an error, and the
+    // rejection stands.
+    const { web: again, clear: clearAgain } = await request(id, analystB);
+    await cancelTask(null, { id: clearAgain.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, again.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: held2.id,
+        leaseToken: held2.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { sourceUrl: "https://example.test/case-a", quote: "again", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+          { sourceUrl: "https://example.test/case-c", quote: "new", occurredAt: at, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" },
+        ],
+      },
+      workerB,
+    );
+    const after = await prisma.caseProposal.findMany({ where: { eventId: id }, orderBy: { sourceUrl: "asc" } });
+    expect(after.map((c) => [c.sourceUrl, c.state])).toEqual([
+      ["https://example.test/case-a", "rejected"],
+      ["https://example.test/case-b", "proposed"],
+      ["https://example.test/case-c", "proposed"],
+    ]);
+    // Web proposals whose cases reached the per-case Inbox leave the whole-prior one.
+    const withCases = new Set((await prisma.caseProposal.findMany({ select: { taskId: true } })).map((c) => c.taskId));
+    const wholeInbox = await impactPriors(null, { limit: 200 }, analyst);
+    expect(wholeInbox.filter((p) => p.sourceKind !== CLEAR_KIND && withCases.has(p.taskId))).toEqual([]);
+  });
+
+  it("accepting a case writes it into CLEAR as history; rejecting needs a reason; each case is decided once (V4)", async () => {
+    const id = await makeEvent();
+    // A past flood CLEAR already holds, last heard of 30 days ago.
+    const pastId = await makeEvent();
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: pastId }, data: { firstSignalCreatedAt: monthAgo, lastSignalCreatedAt: monthAgo } });
+    const { web, clear } = await request(id, analystB);
+    await cancelTask(null, { id: clear.id }, analystB);
+    const held = await claimOwn(WEB_KIND, web.id, workerB);
+    const longAgo = new Date(Date.now() - 400 * 24 * 3600_000);
+    const base = { quote: "Floods displaced thousands.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    await completeTask(
+      null,
+      {
+        id: held.id,
+        leaseToken: held.leaseToken!,
+        result: {},
+        methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [
+          { ...base, sourceUrl: "https://example.test/accept-matched", matchedEventId: pastId },
+          {
+            ...base,
+            sourceUrl: "https://example.test/accept-new",
+            locationId: DISTRICT_ID,
+            figures: [{ metric: "people_displaced_new", value: 4000, lowerBound: 3500, upperBound: 4500, populationGroup: "IDP" }],
+          },
+          { ...base, sourceUrl: "https://example.test/reject-me" },
+        ],
+      },
+      workerB,
+    );
+    const byUrl = new Map((await prisma.caseProposal.findMany({ where: { eventId: id } })).map((c) => [c.sourceUrl, c]));
+    const matched = byUrl.get("https://example.test/accept-matched")!;
+    const fresh = byUrl.get("https://example.test/accept-new")!;
+    const rejectMe = byUrl.get("https://example.test/reject-me")!;
+
+    // Only deciders decide; a reason is required to reject.
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "accepted" }, viewer)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "  " }, analyst)).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+
+    // Matched: a Signal on the past Event, which widens back to the incident
+    // but keeps its newest-Signal time (a backdated Signal never makes it look stale).
+    const a = await decideCaseProposal(null, { id: matched.id, decision: "accepted" }, analyst);
+    expect(a).toMatchObject({ state: "accepted", decidedById: ANALYST_ID, resultEventId: pastId, decisionRationale: null });
+    const signal = await prisma.signals.findUniqueOrThrow({ where: { id: a.resultSignalId! }, include: { source: true, signalEvents: true } });
+    expect(signal).toMatchObject({ url: "https://example.test/accept-matched", status: "PROCESSED", submittedById: ANALYST_ID, publishedAt: longAgo });
+    expect(signal.source.name).toBe("web_enrichment");
+    expect(signal.signalEvents.map((e) => e.eventId)).toEqual([pastId]);
+    const past = await prisma.events.findUniqueOrThrow({ where: { id: pastId } });
+    expect(past.firstSignalCreatedAt).toEqual(longAgo);
+    expect(past.lastSignalCreatedAt).toEqual(monthAgo);
+
+    // Unmatched: a new historical Event dated to the incident.
+    const b = await decideCaseProposal(null, { id: fresh.id, decision: "accepted", rationale: "Same district, same season." }, analyst);
+    expect(b.resultEventId).not.toBe(pastId);
+    const historical = await prisma.events.findUniqueOrThrow({ where: { id: b.resultEventId! } });
+    eventIds.push(historical.id);
+    expect(historical).toMatchObject({ types: ["FL"], locationId: DISTRICT_ID, startedAt: longAgo, firstSignalCreatedAt: longAgo, lastSignalCreatedAt: longAgo });
+    // Its figures are Estimates on that Event, sourced to the case's Signal.
+    const estimates = await prisma.estimate.findMany({ where: { eventId: historical.id } });
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]).toMatchObject({
+      metric: "people_displaced_new", value: 4000, lowerBound: 3500, upperBound: 4500, populationGroup: "IDP",
+      method: "media_report", attribution: "event_caused", validFor: longAgo,
+      sourceSignalId: b.resultSignalId, sourceUrl: "https://example.test/accept-new", definitionVersion: "0.3.0", createdById: ANALYST_ID,
+    });
+    // Never alerts, even at top severity, and stays out of a recent feed.
+    await prisma.events.update({ where: { id: historical.id }, data: { severity: 5 } });
+    const pending = await eventResolvers.Query.eventsPendingAlert(null, { first: 500, minSeverity: 1 }, asUser(ADMIN_ID, "admin"));
+    expect(pending.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+    const recent = await paginationResolvers.Query.eventsPage(
+      null,
+      { input: { from: new Date(Date.now() - 7 * 24 * 3600_000).toISOString(), limit: 200 } },
+      analyst,
+    );
+    expect(recent.items.map((e: { id: string }) => e.id)).not.toContain(historical.id);
+
+    // The same article accepted for another Event reuses its Signal and Event.
+    const other = await makeEvent();
+    const { web: web2, clear: clear2 } = await request(other, analystB);
+    await cancelTask(null, { id: clear2.id }, analystB);
+    const held2 = await claimOwn(WEB_KIND, web2.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: held2.id, leaseToken: held2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{ ...base, sourceUrl: "https://example.test/accept-new", figures: [{ metric: "people_displaced_new", value: 4000, populationGroup: "IDP" }] }],
+      },
+      workerB,
+    );
+    const again = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: other } });
+    const c = await decideCaseProposal(null, { id: again.id, decision: "accepted" }, admin);
+    expect(c).toMatchObject({ resultSignalId: b.resultSignalId, resultEventId: b.resultEventId });
+    expect(await prisma.signals.count({ where: { url: "https://example.test/accept-new" } })).toBe(1);
+    // …and does not record the same source's figure on that Event twice.
+    expect(await prisma.estimate.count({ where: { eventId: b.resultEventId! } })).toBe(1);
+
+    // Reject keeps the reason; a second decision is CONFLICT.
+    const r = await decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "Not a flood." }, analyst);
+    expect(r).toMatchObject({ state: "rejected", decisionRationale: "Not a flood.", resultSignalId: null });
+    await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "accepted" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+    await expect(decideCaseProposal(null, { id: matched.id, decision: "rejected", rationale: "x" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+  });
+
+  it("accepting is safe under concurrency and only borrows an Event that is the same incident (V4)", async () => {
+    const longAgo = new Date(Date.now() - 300 * 24 * 3600_000);
+    const base = { quote: "Floods.", occurredAt: longAgo, locationLabel: "Testville", hazardType: "FL", geographicScope: "district" };
+    /** A fresh requesting Event with one proposed case for `url`. */
+    async function proposedCase(url: string) {
+      const id = await makeEvent();
+      const { web, clear } = await request(id, analystB);
+      await cancelTask(null, { id: clear.id }, analystB);
+      const held = await claimOwn(WEB_KIND, web.id, workerB);
+      await completeTask(
+        null,
+        { id: held.id, leaseToken: held.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0", cases: [{ ...base, sourceUrl: url }] },
+        workerB,
+      );
+      return prisma.caseProposal.findFirstOrThrow({ where: { eventId: id } });
+    }
+
+    // Two deciders accept cases with the same URL at once: both succeed, one Signal.
+    const [x, y] = [await proposedCase("https://example.test/race"), await proposedCase("https://example.test/race")];
+    const [dx, dy] = await Promise.all([
+      decideCaseProposal(null, { id: x.id, decision: "accepted" }, analyst),
+      decideCaseProposal(null, { id: y.id, decision: "accepted" }, admin),
+    ]);
+    expect(dx.state).toBe("accepted");
+    expect(dy.state).toBe("accepted");
+    expect(dx.resultSignalId).toBe(dy.resultSignalId);
+    // …and one historical Event: the second borrows the first's.
+    expect(dx.resultEventId).toBe(dy.resultEventId);
+    expect(await prisma.signals.count({ where: { url: "https://example.test/race" } })).toBe(1);
+    eventIds.push(dx.resultEventId!, dy.resultEventId!);
+
+    // A pipeline Signal the drain has not processed yet is not borrowed.
+    const pipelineSource = await prisma.dataSources.create({ data: { name: `${RUN}-pipe`, type: "test" } });
+    const pending = await prisma.signals.create({
+      data: { sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/still-new" },
+    });
+    const n = await proposedCase("https://example.test/still-new");
+    const dn = await decideCaseProposal(null, { id: n.id, decision: "accepted" }, analyst);
+    expect(dn.resultSignalId).not.toBe(pending.id);
+    eventIds.push(dn.resultEventId!);
+
+    // A processed Signal on an Event of another hazard: the Signal is reused,
+    // its Event is not; the case gets its own historical Event.
+    const quake = await makeEvent();
+    await prisma.events.update({ where: { id: quake }, data: { types: ["EQ"] } });
+    const quakeSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: longAgo, url: "https://example.test/quake-article", status: "PROCESSED",
+        signalEvents: { create: { eventId: quake, collectedAt: new Date() } },
+      },
+    });
+    const q = await proposedCase("https://example.test/quake-article");
+    const dq = await decideCaseProposal(null, { id: q.id, decision: "accepted" }, analyst);
+    expect(dq.resultSignalId).toBe(quakeSignal.id);
+    expect(dq.resultEventId).not.toBe(quake);
+    eventIds.push(dq.resultEventId!);
+    const quakeAfter = await prisma.events.findUniqueOrThrow({ where: { id: quake } });
+    expect(quakeAfter.firstSignalCreatedAt).not.toEqual(longAgo);
+
+    // One article, two incidents months apart: the second keeps its own Event.
+    const first = await proposedCase("https://example.test/two-floods");
+    const df = await decideCaseProposal(null, { id: first.id, decision: "accepted" }, analyst);
+    eventIds.push(df.resultEventId!);
+    const id2 = await makeEvent();
+    const { web: w2, clear: c2 } = await request(id2, analystB);
+    await cancelTask(null, { id: c2.id }, analystB);
+    const h2 = await claimOwn(WEB_KIND, w2.id, workerB);
+    await completeTask(
+      null,
+      {
+        id: h2.id, leaseToken: h2.leaseToken!, result: {}, methodVersion: "clear-impact-prior-web@0.4.0",
+        cases: [{ ...base, occurredAt: new Date(longAgo.getTime() + 90 * 24 * 3600_000), sourceUrl: "https://example.test/two-floods" }],
+      },
+      workerB,
+    );
+    const second = await prisma.caseProposal.findFirstOrThrow({ where: { eventId: id2 } });
+    const ds = await decideCaseProposal(null, { id: second.id, decision: "accepted" }, analyst);
+    eventIds.push(ds.resultEventId!);
+    expect(ds.resultSignalId).toBe(df.resultSignalId);
+    expect(ds.resultEventId).not.toBe(df.resultEventId);
+
+    // An Event with no resolved onset, first reported two weeks after the
+    // incident: a case for its article borrows it rather than duplicate it.
+    const lateEvent = await makeEvent();
+    const reportedAt = new Date(longAgo.getTime() + 14 * 24 * 3600_000);
+    await prisma.events.update({ where: { id: lateEvent }, data: { startedAt: null, firstSignalCreatedAt: reportedAt, lastSignalCreatedAt: reportedAt } });
+    const lateSignal = await prisma.signals.create({
+      data: {
+        sourceId: pipelineSource.id, rawData: {}, publishedAt: reportedAt, url: "https://example.test/late-report", status: "PROCESSED",
+        signalEvents: { create: { eventId: lateEvent, collectedAt: new Date() } },
+      },
+    });
+    const late = await proposedCase("https://example.test/late-report");
+    const dl = await decideCaseProposal(null, { id: late.id, decision: "accepted" }, analyst);
+    expect(dl).toMatchObject({ resultSignalId: lateSignal.id, resultEventId: lateEvent });
+
+    await prisma.signals.deleteMany({ where: { sourceId: pipelineSource.id } });
+    await prisma.dataSources.delete({ where: { id: pipelineSource.id } });
   });
 
   it("the partial unique index allows one open Task per Event and kind, and history rows beside it", async () => {

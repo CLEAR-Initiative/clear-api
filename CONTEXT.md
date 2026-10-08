@@ -124,6 +124,14 @@ historical Events similar to the input Event, with its evidence basis and number
 informs an Estimate and is not itself one.
 _Avoid_: event prior, precedent, history, related events
 
+**CaseProposal**:
+One historical case a web **Worker** found while enriching an Event: a past incident like it,
+the source that reports it (URL and verbatim quote), when and where it happened, the figures it
+gives, and the CLEAR Event it describes when CLEAR already holds one. The unit an analyst accepts
+or rejects. Accepting writes it into CLEAR as history; it is evidence for an **ImpactPrior**, not
+one itself.
+_Avoid_: web result, search hit, prior case
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**
@@ -167,8 +175,8 @@ _Avoid_: event prior, precedent, history, related events
 - An **ImpactPrior** draws on CLEAR's own Events and on external sources, each labelled by tier, as knowledge base results are
 - An **ImpactPrior** case shares the input Event's hazard type and country and is labelled with its own geographic scope; a case from another context enters only by an analyst's explicit decision, never by a **Worker**
 - A **Task** whose **Worker** finds no case produces no **ImpactPrior**; the Task records "no prior found" and the Event stays unenriched
-- An **ImpactPrior** is proposed, accepted or rejected. A **Worker** can only write a proposed one; a named person accepts or rejects it with a rationale, in the shape of the Domain Ontology's DecisionRecord. Only an accepted ImpactPrior counts downstream; a rejected one stays, superseded, with its reason
-- A proposed **ImpactPrior** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page
+- A web **Worker** proposes **CaseProposals**, one per historical case, not a whole **ImpactPrior** (V4). A named person accepts or rejects each case, in the shape of the Domain Ontology's DecisionRecord (rationale required on reject); a rejected case stays, so its source is not proposed again for that Event
+- A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Proposed ImpactPriors from the CLEAR-data **Worker** are still decided whole until the ImpactPrior is computed from accepted history
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
 
 ## Example dialogue

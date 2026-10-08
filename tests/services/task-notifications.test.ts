@@ -82,6 +82,13 @@ describe("taskOutcomeMessage", () => {
     expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web", outcome: "no_prior_found" }, "completed")).toBe(
       "Impact prior from the web: no prior found",
     );
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web", outcome: "no_new_cases" }, "completed")).toBe(
+      "Impact prior from the web: no new cases",
+    );
+    // The web kind proposes cases, each decided on its own (V4).
+    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web" }, "completed")).toBe(
+      "Impact prior from the web: cases proposed — review them",
+    );
     expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.satellite", lastError: "x" }, "failed")).toBe(
       "Impact prior from satellite enrichment failed",
     );

@@ -1113,6 +1113,26 @@ export const mutationTypeDef = gql`
     superseded, with its reason."""
     decideImpactPrior(id: String!, decision: ImpactPriorDecision!, rationale: String!): ImpactPrior!
 
+    """Decide one web case (V4): a platform admin or analyst accepts or
+    rejects it, recorded as who, when and why (the Domain Ontology's
+    DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
+    \`rationale\` is required to reject and optional to accept.
+
+    Accepting writes the case into CLEAR as history, in one transaction:
+    a Signal (source \`web_enrichment\`, \`url\` the case's source,
+    \`publishedAt\` the date the incident happened, submitted by the decider)
+    on the CLEAR Event it describes — the Worker's matched Event, else the
+    Event that already carries the same URL, else a new historical Event
+    dated to the incident. A Signal with the same URL already in CLEAR is
+    reused, not duplicated. Historical Events never alert: their newest
+    Signal is the incident's date. The case's figures become Estimates on
+    that Event (\`media_report\`, \`event_caused\`). The returned case carries
+    \`resultSignalId\` and \`resultEventId\`.
+
+    Rejecting keeps the case, so its URL is never proposed again for that
+    Event."""
+    decideCaseProposal(id: String!, decision: CaseProposalDecision!, rationale: String): CaseProposal!
+
     """Cancel a Task. The requester or a platform admin only. A PENDING
     Task is CANCELLED at once; a LEASED one is flagged and becomes
     CANCELLED at the Worker's next heartbeat, completion or failure (its
@@ -1148,7 +1168,12 @@ export const mutationTypeDef = gql`
     (audit only). For an \`event.impact_prior.*\` Task, pass \`impactPrior\`
     to record a proposal (outcome \`produced\`; its \`sourceKind\` is the
     Task's kind, and it supersedes only the newest proposal of that same
-    kind) or omit it to record \`no_prior_found\`. Only the lease owner,
+    kind) or omit it to record \`no_prior_found\`. For an
+    \`event.impact_prior.web\` Task, pass \`cases\` and \`methodVersion\`
+    instead (V4): one CaseProposal per case, each decided on its own; a URL
+    already proposed for the Event is skipped; an empty list records
+    \`no_prior_found\`. The web cases inside an \`impactPrior\`'s
+    \`basis\` become CaseProposals too. Only the lease owner,
     only while LEASED (CONFLICT
     \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
     requested meanwhile the Task becomes CANCELLED and the result is
@@ -1159,6 +1184,9 @@ export const mutationTypeDef = gql`
       result: JSON!
       usage: TaskUsageInput
       impactPrior: ImpactPriorInput
+      cases: [CaseProposalInput!]
+      """Skill or handler version that produced \`cases\`; required with them."""
+      methodVersion: String
     ): Task!
   }
 `;

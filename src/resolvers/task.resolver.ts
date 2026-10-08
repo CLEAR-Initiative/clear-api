@@ -39,7 +39,15 @@ import {
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
-import { IMPACT_PRIOR_KIND, isImpactPriorKind } from "../utils/task-kinds.js";
+import { acceptCase } from "../services/case-acceptance.js";
+import { resolveEventCountryId } from "../utils/event-country.js";
+import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind } from "../utils/task-kinds.js";
+import {
+  casesFromBasis,
+  validateCases,
+  type CaseProposalInput,
+  type ValidCase,
+} from "../utils/case-proposals.js";
 
 export { IMPACT_PRIOR_KIND };
 const EVENT_SUBJECT = "event";
@@ -51,6 +59,12 @@ const MAX_ERROR_LENGTH = 2000;
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
 type ImpactPriorRow = Prisma.impactPriorGetPayload<Record<string, never>>;
+type CaseProposalRow = Prisma.caseProposalGetPayload<Record<string, never>>;
+
+/** Whole-prior proposals the Inbox no longer lists (V4): the web kind's
+ *  evidence is decided case by case, and the bare pre-fan-out kind carried
+ *  web cases too — both now reach the Inbox as CaseProposals. */
+const CASE_REVIEWED_PRIOR_KINDS = [IMPACT_PRIOR_KIND, `${IMPACT_PRIOR_KIND}.web`];
 
 interface TaskUsageInput {
   model: string;
@@ -82,32 +96,6 @@ function utcMidnight(now: Date): Date {
 }
 
 const GEOGRAPHIC_SCOPES: ReadonlySet<string> = new Set(["district", "country"]);
-
-/**
- * The level-0 (country) ancestor of an Event's primary location — the
- * location → origin → destination preference `escalateEvent` uses — walking
- * `ancestorIds` the way `resolveEmailLocation` does. Events have no country
- * column. Null when the Event has no location or the walk finds no level 0.
- */
-async function resolveEventCountryId(
-  prisma: Prisma.TransactionClient | Context["prisma"],
-  event: { locationId: string | null; originId: string | null; destinationId: string | null },
-): Promise<string | null> {
-  const primaryId = event.locationId ?? event.originId ?? event.destinationId;
-  if (!primaryId) return null;
-  const primary = await prisma.locations.findUnique({
-    where: { id: primaryId },
-    select: { id: true, level: true, ancestorIds: true },
-  });
-  if (!primary) return null;
-  if (primary.level === 0) return primary.id;
-  if (primary.ancestorIds.length === 0) return null;
-  const country = await prisma.locations.findFirst({
-    where: { id: { in: primary.ancestorIds }, level: 0 },
-    select: { id: true },
-  });
-  return country?.id ?? null;
-}
 
 /** Usage as a Worker reports it, validated like recordConversationTurnUsage:
  *  non-negative integer token counts, a finite non-negative cost. */
@@ -325,6 +313,126 @@ function visibleImpactPriors<T extends ImpactPriorRow & { task: { requesterId: s
     .map(({ task: _task, ...rest }) => rest);
 }
 
+/**
+ * Visibility of CaseProposals: the ImpactPrior rule, case by case. An
+ * `accepted` case follows the Event's visibility (it is CLEAR history now);
+ * a `proposed` one is visible to the requester of the Task that found it
+ * and to those who may decide it; a `rejected` one to deciders only.
+ */
+function visibleCaseProposals<T extends CaseProposalRow & { task: { requesterId: string | null } }>(
+  rows: T[],
+  user: { id: string; role?: string | null },
+): CaseProposalRow[] {
+  const decider = isDecider(user);
+  return rows
+    .filter(
+      (r) =>
+        decider ||
+        r.state === "accepted" ||
+        (r.state === "proposed" && r.task.requesterId === user.id),
+    )
+    .map(({ task: _task, ...rest }) => rest);
+}
+
+/** Whether `locationId` is the country `countryId` or lies within it. */
+async function locationInCountry(
+  prisma: Prisma.TransactionClient | Context["prisma"],
+  locationId: string,
+  countryId: string,
+): Promise<boolean> {
+  const loc = await prisma.locations.findUnique({
+    where: { id: locationId },
+    select: { id: true, ancestorIds: true },
+  });
+  return !!loc && (loc.id === countryId || loc.ancestorIds.includes(countryId));
+}
+
+/**
+ * The checks on a completion's cases that need the database: each hazard is
+ * one of the requesting Event's types; a resolved location lies in the
+ * Event's country; a matched Event exists, is not the requesting Event
+ * itself (a case is a PAST incident), manifests the case's hazard and sits
+ * in the same country.
+ */
+async function validateCasesAgainstEvent(
+  prisma: Context["prisma"],
+  eventId: string,
+  cases: ValidCase[],
+): Promise<void> {
+  if (cases.length === 0) return;
+  const event = await prisma.events.findUnique({
+    where: { id: eventId },
+    select: { id: true, types: true, locationId: true, originId: true, destinationId: true },
+  });
+  if (!event) throw notFound("Event");
+  const countryId = await resolveEventCountryId(prisma, event);
+  if (!countryId) throw badInput("The Event's country cannot be resolved; cases cannot be attached to it");
+  for (const [i, c] of cases.entries()) {
+    const at = `cases[${i}]`;
+    if (!event.types.includes(c.hazardType)) {
+      throw badInput(
+        `${at}.hazardType "${c.hazardType}" is not one of the Event's types (${event.types.join(", ") || "none"})`,
+      );
+    }
+    if (c.locationId && !(await locationInCountry(prisma, c.locationId, countryId))) {
+      throw badInput(`${at}.locationId "${c.locationId}" is not a location in the Event's country`);
+    }
+    if (c.matchedEventId) {
+      if (c.matchedEventId === event.id) {
+        throw badInput(`${at}.matchedEventId is the Event being enriched; a case is a past incident`);
+      }
+      const matched = await prisma.events.findUnique({
+        where: { id: c.matchedEventId },
+        select: { id: true, types: true, locationId: true, originId: true, destinationId: true },
+      });
+      if (!matched) throw badInput(`${at}.matchedEventId "${c.matchedEventId}" is not an Event`);
+      if (!matched.types.includes(c.hazardType)) {
+        throw badInput(`${at}.matchedEventId names an Event that does not manifest hazard "${c.hazardType}"`);
+      }
+      if ((await resolveEventCountryId(prisma, matched)) !== countryId) {
+        throw badInput(`${at}.matchedEventId names an Event outside the Event's country`);
+      }
+    }
+  }
+}
+
+/** Write a completion's cases beside the Task. A URL already proposed for
+ *  the Event — in any state, by any earlier request — is skipped, so a
+ *  rejected source is never put back in front of an analyst. */
+async function writeCases(
+  tx: Prisma.TransactionClient,
+  task: TaskRow,
+  cases: ValidCase[],
+  methodVersion: string,
+): Promise<number> {
+  if (cases.length === 0) return 0;
+  const { count } = await tx.caseProposal.createMany({
+    data: cases.map((c) => ({
+      eventId: task.subjectId,
+      taskId: task.id,
+      sourceUrl: c.sourceUrl,
+      quote: c.quote,
+      occurredAt: c.occurredAt,
+      locationLabel: c.locationLabel,
+      locationId: c.locationId,
+      hazardType: c.hazardType,
+      geographicScope: c.geographicScope,
+      figures: c.figures,
+      matchedEventId: c.matchedEventId,
+      methodVersion,
+    })),
+    skipDuplicates: true,
+  });
+  return count;
+}
+
+/** The horizon a Task was requested with (payload `horizonYears`). */
+function taskHorizonYears(task: TaskRow): number {
+  const payload = task.payload as { horizonYears?: unknown } | null;
+  const years = payload?.horizonYears;
+  return typeof years === "number" && Number.isInteger(years) && years > 0 ? years : DEFAULT_HORIZON_YEARS;
+}
+
 export const taskResolvers = {
   Task: {
     // The token is the lease owner's secret: null for everyone else, so a
@@ -366,17 +474,38 @@ export const taskResolvers = {
         : null,
   },
 
+  CaseProposal: {
+    event: (parent: CaseProposalRow, _args: unknown, context: Context) =>
+      context.prisma.events.findUniqueOrThrow({ where: { id: parent.eventId } }),
+    matchedEvent: (parent: CaseProposalRow, _args: unknown, context: Context) =>
+      parent.matchedEventId ? context.prisma.events.findUnique({ where: { id: parent.matchedEventId } }) : null,
+    task: async (parent: CaseProposalRow, _args: unknown, context: Context) =>
+      redactForViewer(
+        await context.prisma.task.findUniqueOrThrow({ where: { id: parent.taskId } }),
+        viewerOf(context),
+      ),
+    decidedBy: (parent: CaseProposalRow, _args: unknown, context: Context) =>
+      parent.decidedById
+        ? context.prisma.user.findUnique({ where: { id: parent.decidedById } })
+        : null,
+  },
+
   Event: {
     enrichmentTasks: async (parent: { id: string }, _args: unknown, context: Context) =>
       taskResolvers.Query.eventTasks(null, { eventId: parent.id }, context),
     impactPriors: async (parent: { id: string }, _args: unknown, context: Context) =>
       taskResolvers.Query.eventImpactPriors(null, { eventId: parent.id }, context),
+    caseProposals: async (parent: { id: string }, _args: unknown, context: Context) =>
+      taskResolvers.Query.eventCaseProposals(null, { eventId: parent.id }, context),
   },
 
   Query: {
     // The Inbox's list (V2): ImpactPriors in one state across every Event,
     // newest first. Deciders only — it lists exactly what the caller may
     // decide, so clear-mvp needs no rule of its own. `proposed` by default.
+    // Web proposals are decided case by case (V4, `caseProposals`), so a
+    // proposal of the kinds whose evidence became CaseProposals is left out
+    // once its cases are there.
     impactPriors: async (
       _parent: unknown,
       args: { state?: "proposed" | "accepted" | "rejected" | null; limit?: number | null; offset?: number | null },
@@ -384,11 +513,61 @@ export const taskResolvers = {
     ) => {
       requireRole(context, DECIDER_ROLES);
       return context.prisma.impactPrior.findMany({
-        where: { state: args.state ?? "proposed" },
+        // A web or bare-kind proposal leaves only once its cases reached the
+        // per-case Inbox; one whose cases could not be converted (no URL or
+        // no parseable date) stays here, decidable whole, rather than vanish.
+        where: {
+          state: args.state ?? "proposed",
+          OR: [
+            { sourceKind: { notIn: CASE_REVIEWED_PRIOR_KINDS } },
+            { task: { caseProposals: { none: {} } } },
+          ],
+        },
         orderBy: { createdAt: "desc" },
         take: Math.min(Math.max(args.limit ?? 50, 1), 200),
         skip: Math.max(args.offset ?? 0, 0),
       });
+    },
+
+    // The Inbox's per-case list (V4): CaseProposals in one state across
+    // every Event, newest first, `proposed` by default. Deciders only, like
+    // `impactPriors`: it lists exactly what the caller may decide.
+    caseProposals: async (
+      _parent: unknown,
+      args: { state?: CaseProposalRow["state"] | null; limit?: number | null; offset?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, DECIDER_ROLES);
+      return context.prisma.caseProposal.findMany({
+        where: { state: args.state ?? "proposed" },
+        // `id` breaks createdAt ties: one completion writes its cases at once.
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: Math.min(Math.max(args.limit ?? 50, 1), 200),
+        skip: Math.max(args.offset ?? 0, 0),
+      });
+    },
+
+    eventCaseProposals: async (_parent: unknown, args: { eventId: string }, context: Context) => {
+      const user = requireContentReader(context);
+      const rows = await context.prisma.caseProposal.findMany({
+        where: { eventId: args.eventId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: { task: { select: { requesterId: true } } },
+      });
+      return visibleCaseProposals(rows, user);
+    },
+
+    // What a web Worker must not propose again for this Event. The Worker
+    // needs it before it searches; deciders may read it too. Only the URLs:
+    // the reasons are deciders' business.
+    rejectedCaseUrls: async (_parent: unknown, args: { eventId: string }, context: Context) => {
+      requireRole(context, [WORKER_ROLE, ...DECIDER_ROLES]);
+      const rows = await context.prisma.caseProposal.findMany({
+        where: { eventId: args.eventId, state: "rejected" },
+        select: { sourceUrl: true },
+        orderBy: { createdAt: "asc" },
+      });
+      return rows.map((r) => r.sourceUrl);
     },
 
     // Task status follows the Event's visibility: the same reader gate as
@@ -623,6 +802,85 @@ export const taskResolvers = {
       return context.prisma.impactPrior.findUniqueOrThrow({ where: { id: args.id } });
     },
 
+    // The per-case decision (V4). A named admin or analyst accepts or
+    // rejects one case, exactly once. Rejecting keeps the row (and its URL,
+    // so the Worker never proposes it again) with the reason, which is
+    // required. Accepting writes the case into CLEAR as history in the same
+    // transaction that claims the decision, so a failed write leaves the case
+    // `proposed` rather than accepted with nothing behind it.
+    decideCaseProposal: async (
+      _parent: unknown,
+      args: { id: string; decision: "accepted" | "rejected"; rationale?: string | null },
+      context: Context,
+    ) => {
+      const user = requireRole(context, DECIDER_ROLES);
+      if (args.decision !== "accepted" && args.decision !== "rejected") {
+        throw badInput('decision must be "accepted" or "rejected"');
+      }
+      const rationale = args.rationale?.trim() || null;
+      if (args.decision === "rejected" && !rationale) {
+        throw badInput("rationale is required to reject a case");
+      }
+      if (rationale && rationale.length > MAX_RATIONALE_LENGTH) {
+        throw badInput(`rationale must be at most ${MAX_RATIONALE_LENGTH} characters`);
+      }
+      const existing = await context.prisma.caseProposal.findUnique({ where: { id: args.id } });
+      if (!existing) throw notFound("CaseProposal");
+      if (existing.state !== "proposed") throw conflict(`CaseProposal is already ${existing.state}`);
+
+      const now = new Date();
+      const decision = { state: args.decision, decidedById: user.id, decidedAt: now, decisionRationale: rationale };
+      let createdEvent = false;
+      if (args.decision === "rejected") {
+        const { count } = await context.prisma.caseProposal.updateMany({
+          where: { id: existing.id, state: "proposed" },
+          data: decision,
+        });
+        if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+      } else {
+        // The requesting Event's country: where a historical Event without a
+        // resolved place sits, and the context a reused Signal's Event must share.
+        const requesting = await context.prisma.events.findUnique({
+          where: { id: existing.eventId },
+          select: { locationId: true, originId: true, destinationId: true },
+        });
+        const countryId = requesting ? await resolveEventCountryId(context.prisma, requesting) : null;
+        createdEvent = await context.prisma.$transaction(async (tx) => {
+          // Claim the decision first: the conditional write is what stops two
+          // deciders accepting the same case (and writing it twice).
+          const { count } = await tx.caseProposal.updateMany({
+            where: { id: existing.id, state: "proposed" },
+            data: decision,
+          });
+          if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+          const result = await acceptCase(tx, existing, { userId: user.id, countryId, now });
+          await tx.caseProposal.update({
+            where: { id: existing.id },
+            data: { resultSignalId: result.signalId, resultEventId: result.eventId },
+          });
+          return result.createdEvent;
+        });
+      }
+
+      const decided = await context.prisma.caseProposal.findUniqueOrThrow({ where: { id: existing.id } });
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "case_proposal.decided",
+        resourceType: "case_proposal",
+        resourceId: decided.id,
+        metadata: {
+          eventId: decided.eventId,
+          taskId: decided.taskId,
+          decision: args.decision,
+          sourceUrl: decided.sourceUrl,
+          resultSignalId: decided.resultSignalId,
+          resultEventId: decided.resultEventId,
+          createdEvent,
+        },
+      });
+      return decided;
+    },
+
     // Cancellation, by the requester or a platform admin. PENDING ends now;
     // LEASED is flagged and the Worker finishes it at its next heartbeat,
     // completion or failure (a claim never hands out a flagged Task).
@@ -810,9 +1068,9 @@ export const taskResolvers = {
     },
 
     // Completion: the Task's raw output, optional usage, and for an
-    // `event.impact_prior.*` Task an optional ImpactPrior proposal. With a proposal
-    // the typed row is inserted (state `proposed`) in the same transaction
-    // and the outcome is `produced`.
+    // `event.impact_prior.*` Task an optional proposal — an ImpactPrior, or
+    // for the web kind its cases (V4). The typed rows are inserted (state
+    // `proposed`) in the same transaction and the outcome is `produced`.
     completeTask: async (
       _parent: unknown,
       args: {
@@ -821,6 +1079,8 @@ export const taskResolvers = {
         result: Prisma.InputJsonValue;
         usage?: TaskUsageInput | null;
         impactPrior?: ImpactPriorInput | null;
+        cases?: CaseProposalInput[] | null;
+        methodVersion?: string | null;
       },
       context: Context,
     ) => {
@@ -836,8 +1096,21 @@ export const taskResolvers = {
       if (args.impactPrior && !isImpactPriorTask) {
         throw badInput(`An ImpactPrior can only complete an "${IMPACT_PRIOR_KIND}" Task, not "${task.kind}"`);
       }
+      const isWebCaseTask = isImpactPriorTask && impactPriorSource(task.kind) === "web";
+      if (args.cases && !isWebCaseTask) {
+        throw badInput(`Cases can only complete an "${IMPACT_PRIOR_KIND}.web" Task, not "${task.kind}"`);
+      }
+      if (args.cases && args.impactPrior) {
+        throw badInput("Give either cases or an impactPrior, not both");
+      }
+      const caseMethodVersion = args.methodVersion?.trim() ?? "";
+      if (args.cases && args.cases.length > 0 && !caseMethodVersion) {
+        throw badInput("methodVersion is required with cases");
+      }
       const usage = args.usage ? validateUsage(args.usage) : null;
       const validity = args.impactPrior ? validateImpactPriorShape(args.impactPrior) : null;
+      const cases = args.cases ? validateCases(args.cases, { horizonYears: taskHorizonYears(task), now }) : [];
+      await validateCasesAgainstEvent(context.prisma, task.subjectId, cases);
 
       // The proposal must describe THIS Event: its hazard is one of the
       // Event's types and its country is the Event's. A Worker that found
@@ -867,7 +1140,9 @@ export const taskResolvers = {
       // For an `event.impact_prior.*` Task, completing without a proposal
       // means the Worker looked and found no case: the Task records it, no
       // row is written, and the Event stays without this source's proposal.
-      const outcome = !isImpactPriorTask ? null : args.impactPrior ? "produced" : "no_prior_found";
+      // An empty `cases` list is the same "looked and found nothing".
+      const produced = !!args.impactPrior || cases.length > 0;
+      const outcome = !isImpactPriorTask ? null : produced ? "produced" : "no_prior_found";
 
       const completed = await context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
@@ -915,6 +1190,21 @@ export const taskResolvers = {
               methodVersion: args.impactPrior.methodVersion,
             },
           });
+          // A Worker still on the whole-prior contract: its web cases reach
+          // the per-case Inbox too (V4). The ImpactPrior row stays as history.
+          await writeCases(
+            tx,
+            task,
+            casesFromBasis(args.impactPrior.basis, args.impactPrior),
+            args.impactPrior.methodVersion,
+          );
+        }
+        const inserted = await writeCases(tx, task, cases, caseMethodVersion);
+        // Every case was a URL already proposed for this Event: the Worker
+        // found something, but nothing new for anyone to review, so the Task
+        // must not announce cases waiting in the Inbox.
+        if (cases.length > 0 && inserted === 0) {
+          return tx.task.update({ where: { id: task.id }, data: { outcome: "no_new_cases" } });
         }
         return completed;
       });

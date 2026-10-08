@@ -152,3 +152,41 @@ queue without taking each other's work.
   (the Domain Ontology's rule is supersede-never-overwrite, and the sources' evidence tiers
   differ); counting the cap in Task rows (a two-source fan-out would halve every requester's
   allowance overnight).
+
+## Amendment (V4, 2026-10-07): the analyst decides cases, not priors
+
+Reviewed against the CLEAR Domain Ontology v0.3.0. An ImpactPrior is a lookup — "what has
+typically happened before, given a hazard type, a context and a population", with a central
+value and bounds — inferred from historical Events. V1–V3 instead had a Worker propose a whole
+ImpactPrior per Event and an analyst accept or reject it whole: the cases sat in a JSON
+`basis` that could not be decided one by one, accepting changed nothing but the row's state,
+and web cases were never checked against the Events CLEAR already holds.
+
+- **CaseProposal** (`case_proposals`): one row per historical case a web Worker found — source
+  URL, verbatim quote, when it happened, where, hazard, figures on the ontology's seven metric
+  types, and the CLEAR Event it describes when CLEAR already holds one (`matchedEventId`). It is
+  the unit an analyst accepts or rejects. Unique on (Event, URL): a later request never
+  re-proposes a URL already proposed, accepted or rejected for the same Event.
+- `completeTask(cases, methodVersion)` on an `event.impact_prior.web` Task writes CaseProposals
+  instead of an ImpactPrior. A Worker still on the whole-prior contract keeps working: the web
+  cases inside its `basis` become CaseProposals too, and its ImpactPrior row stays as history.
+  Migration `20261007162436_add_case_proposals` backfills the web cases of every still-proposed
+  ImpactPrior the same way.
+- Reads: `caseProposals(state)` (the Inbox, deciders only), `eventCaseProposals` /
+  `Event.caseProposals` under the ImpactPrior visibility rule, and `rejectedCaseUrls(eventId)`
+  for the Worker. The whole-prior Inbox (`impactPriors`) no longer lists the web and bare kinds.
+- `decideCaseProposal(id, decision, rationale)`: a platform admin or analyst decides one case,
+  once (rationale required to reject). Accepting writes the case into CLEAR in the same
+  transaction: a Signal (source `web_enrichment`, `publishedAt` = when the incident happened,
+  `submittedById` = the decider, written `PROCESSED` so the Dagster drain never regroups it) on
+  the matched Event, else the Event already carrying that URL, else a new historical Event dated
+  to the incident. A Signal with the same URL is reused, never duplicated. Linking widens an
+  Event's first/last Signal times but never moves them inward. Historical Events stay out of
+  alerting because `eventsPendingAlert` only returns Events whose newest Signal is under 48 hours
+  old; no separate "historical" flag. Rejected: routing accepted cases through the Dagster drain
+  (its grouping only matches Events active in the last 7 days of wall-clock time, so every
+  backdated Signal would open a new Event).
+- The case's figures become Estimates on that Event (method `media_report`, attribution
+  `event_caused`, valid for the incident's date, `sourceSignalId` the case's Signal), insert-only;
+  the same source's figure for the same metric and population group is not written twice.
+- Still to land in V4: the ImpactPrior computed from accepted history rather than reviewed.

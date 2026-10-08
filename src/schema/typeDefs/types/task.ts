@@ -44,6 +44,15 @@ export const taskTypeDef = gql`
     rejected
   }
 
+  """A web Worker writes \`proposed\` only (V4). A named admin or analyst
+  accepts or rejects each case; a rejected one stays, so its URL is never
+  proposed again for the same Event."""
+  enum CaseProposalState {
+    proposed
+    accepted
+    rejected
+  }
+
   """One unit of Worker-performed work (ADR-0010)."""
   type Task {
     id: String!
@@ -94,7 +103,8 @@ export const taskTypeDef = gql`
     cancelRequestedAt: DateTime
     cancelledById: String
     """Kind-specific result vocabulary. For \`event.impact_prior.*\`:
-    \`produced\` or \`no_prior_found\`."""
+    \`produced\` or \`no_prior_found\`; for the web kind also
+    \`no_new_cases\` (every case found was already proposed for the Event)."""
     outcome: String
     """Raw Worker output, kept for audit. The typed result lives beside the
     subject (see \`Event.impactPriors\`)."""
@@ -159,6 +169,94 @@ export const taskTypeDef = gql`
     createdAt: DateTime!
   }
 
+  """One historical case a web Worker found while enriching an Event (V4):
+  a past incident like it, the source that reports it, the figures it gives,
+  and the CLEAR Event it describes when CLEAR already holds one. The unit an
+  analyst accepts or rejects, one by one, in the Inbox and on the Event page."""
+  type CaseProposal {
+    id: String!
+    """The Event whose enrichment request produced the case."""
+    eventId: String!
+    event: Event!
+    taskId: String!
+    task: Task!
+    state: CaseProposalState!
+    sourceUrl: String!
+    """The source's own words, verbatim."""
+    quote: String!
+    """When the incident happened (valid time), not when it was reported."""
+    occurredAt: DateTime!
+    locationLabel: String!
+    """A CLEAR location for the place, when the Worker resolved one."""
+    locationId: String
+    """GLIDE code; one of the requesting Event's \`types\`."""
+    hazardType: String!
+    """\`district\` or \`country\`: the scope the case was matched at."""
+    geographicScope: String!
+    """The figures the source gives, each on one of the Domain Ontology's
+    seven metric types —
+    \`[{ metric, value, lowerBound?, upperBound?, unit?, populationGroup? }]\`.
+    Empty when the source states none."""
+    figures: JSON!
+    """The CLEAR Event this case describes, when CLEAR already holds it."""
+    matchedEventId: String
+    matchedEvent: Event
+    """Version string of the skill or handler that produced the case."""
+    methodVersion: String!
+    """Who decided it, when and why (null while \`proposed\`)."""
+    decidedById: String
+    decidedBy: User
+    decidedAt: DateTime
+    decisionRationale: String
+    """What accepting wrote into CLEAR: the Signal, and the Event it sits on."""
+    resultSignalId: String
+    resultEventId: String
+    createdAt: DateTime!
+  }
+
+  """One figure a case's source gives."""
+  input CaseFigureInput {
+    """One of \`people_affected\`, \`people_displaced_new\`,
+    \`people_displaced_cumulative\`, \`people_in_need\`, \`people_targeted\`,
+    \`people_reached\`, \`households_affected\`."""
+    metric: String!
+    """Non-negative. With bounds, \`lowerBound ≤ value ≤ upperBound\`."""
+    value: Float!
+    lowerBound: Float
+    upperBound: Float
+    unit: String
+    populationGroup: String
+  }
+
+  """One case a web Worker proposes on completing an
+  \`event.impact_prior.web\` Task (V4)."""
+  input CaseProposalInput {
+    """Absolute http(s) URL; one case per URL per Event."""
+    sourceUrl: String!
+    """The source's own words, verbatim."""
+    quote: String!
+    """When the incident happened: within the request's horizon, not in the future."""
+    occurredAt: DateTime!
+    locationLabel: String!
+    """A CLEAR location in the Event's country, if resolved."""
+    locationId: String
+    """Must be one of the Event's \`types\`."""
+    hazardType: String!
+    """\`district\` or \`country\`."""
+    geographicScope: String!
+    figures: [CaseFigureInput!]
+    """The CLEAR Event this case describes, if the Worker found one: it must
+    exist, not be the Event being enriched, manifest the case's hazard and
+    sit in the same country."""
+    matchedEventId: String
+  }
+
+  """The decision a named admin or analyst records on a proposed case."""
+  enum CaseProposalDecision {
+    accepted
+    rejected
+  }
+
   """The decision a named admin or analyst records on a proposed ImpactPrior."""
   enum ImpactPriorDecision {
     accepted
@@ -208,5 +306,10 @@ export const taskTypeDef = gql`
     Event's visibility; \`proposed\` is visible to its requester and to
     deciders; \`rejected\` to deciders only."""
     impactPriors: [ImpactPrior!]!
+    """Web cases proposed while enriching this Event (V4), newest first,
+    under the ImpactPrior visibility rule: \`accepted\` follows the Event,
+    \`proposed\` is visible to the requester and deciders, \`rejected\` to
+    deciders only."""
+    caseProposals: [CaseProposal!]!
   }
 `;

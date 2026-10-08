@@ -616,7 +616,24 @@ export const queryTypeDef = gql`
     """The Inbox's Review items: ImpactPriors in one state across every
     Event, newest first — \`proposed\` by default, i.e. what is waiting
     for a decision. Platform admins and analysts only, so the list is
-    exactly what the caller may decide."""
+    exactly what the caller may decide. Web proposals (and the bare
+    pre-fan-out kind) are left out: their cases are decided one by one
+    through \`caseProposals\` (V4)."""
     impactPriors(state: ImpactPriorState = proposed, limit: Int = 50, offset: Int = 0): [ImpactPrior!]!
+
+    """The Inbox's per-case Review items (V4): CaseProposals in one state
+    across every Event, newest first — \`proposed\` by default. Platform
+    admins and analysts only, so the list is exactly what the caller may
+    decide."""
+    caseProposals(state: CaseProposalState = proposed, limit: Int = 50, offset: Int = 0): [CaseProposal!]!
+
+    """Web cases proposed for an Event, newest first. Same visibility as
+    \`Event.caseProposals\`."""
+    eventCaseProposals(eventId: String!): [CaseProposal!]!
+
+    """Source URLs already rejected for an Event: a web Worker reads this
+    before searching and never proposes one again. The worker role,
+    platform admins and analysts."""
+    rejectedCaseUrls(eventId: String!): [String!]!
   }
 `;
