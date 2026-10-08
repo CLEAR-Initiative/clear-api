@@ -79,16 +79,20 @@ describe("taskOutcomeMessage", () => {
     expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.clear" }, "completed")).toBe(
       "Impact prior from CLEAR data proposed — review it",
     );
-    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web", outcome: "no_prior_found" }, "completed")).toBe(
-      "Impact prior from the web: no prior found",
-    );
-    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web", outcome: "no_new_cases" }, "completed")).toBe(
-      "Impact prior from the web: no new cases",
-    );
-    // The web kind proposes cases, each decided on its own (V4).
-    expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.web" }, "completed")).toBe(
-      "Impact prior from the web: cases proposed — review them",
-    );
+  });
+
+  it("calls the web kind Web search and counts the proposed signals it wrote", () => {
+    const web = { ...TASK, kind: "event.impact_prior.web" };
+    expect(taskOutcomeMessage({ ...web, proposedSignals: 3 }, "completed")).toBe("Web search: 3 proposed signals to review");
+    expect(taskOutcomeMessage({ ...web, proposedSignals: 1 }, "completed")).toBe("Web search: 1 proposed signal to review");
+    expect(taskOutcomeMessage(web, "completed")).toBe("Web search: proposed signals to review");
+    expect(taskOutcomeMessage({ ...web, outcome: "no_prior_found" }, "completed")).toBe("Web search: nothing found");
+    expect(taskOutcomeMessage({ ...web, outcome: "no_new_cases" }, "completed")).toBe("Web search: nothing new to review");
+    expect(taskOutcomeMessage({ ...web, outcome: null, lastError: "x" }, "failed")).toBe("Web search failed");
+    expect(taskOutcomeMessage({ ...web, outcome: "produced", proposedSignals: 2 }, "failed")).toBe("Web search failed");
+  });
+
+  it("names other sources and kinds as before", () => {
     expect(taskOutcomeMessage({ ...TASK, kind: "event.impact_prior.satellite", lastError: "x" }, "failed")).toBe(
       "Impact prior from satellite enrichment failed",
     );

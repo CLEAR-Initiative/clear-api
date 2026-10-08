@@ -416,7 +416,7 @@ export interface TaskOutcomeExtras {
 /**
  * Task outcome (ADR-0010, V2): an Event enrichment the recipient asked for,
  * or may decide, completed or failed. One line of what happened and a link
- * to the Event page, where a proposed ImpactPrior is accepted or rejected.
+ * to the Event page, where what it proposed is reviewed.
  */
 export function taskOutcome(
   recipientName: string,

@@ -224,3 +224,44 @@ masks an observed one. `not_documented`, `model_inference`, `exposure_model` and
 themselves) are excluded. Each prior reports `basisMethods`; method version
 `clear-impact-prior@0.3.0`. Most Events have no prior until analysts accept web cases with
 figures; that is the honest state. The backfilled Estimates stay as `not_documented` history.
+
+## Amendment (V4, 2026-10-08): the whole-prior review is retired; ImpactPrior means the computed one
+
+Since V4 nothing creates a whole ImpactPrior proposal: the web Worker sends cases, and the
+`.clear` kind is no longer requested. ImpactPrior now means only the ontology's lookup computed
+from history (`Event.computedImpactPriors`), which nobody reviews. What analysts review is the
+**CaseProposal**, shown to people as a **proposed signal**. The rest of the V1–V3 whole-prior
+path is retired.
+
+**What people see changes; wire names stay.** The web kind reads as "Web search", and its
+notifications count what there is to review ("Web search: 3 proposed signals to review",
+"Web search: nothing new to review", "Web search: nothing found", "Web search failed"). These
+names stay: the kind `event.impact_prior.web`, the `requestEventEnrichment` default kind
+`event.impact_prior`, the `Task.outcome` values `produced` / `no_prior_found` / `no_new_cases`,
+the `impact_priors` table and the clear-mcp skill name `clear-impact-prior`.
+
+Rejected: renaming the wire names. The Task kind is matched by exact string in clear-mcp, the
+routine prompt in clear-worker-routine and clear-mvp, and lives in rows. Renaming it needs a
+migration, a dual-name transition and a coordinated release of four repos, and nobody would see
+the difference.
+
+**Retirement, in release order.** GraphQL rejects a document that declares a variable of an
+unknown type, even when the variable is never sent. Both Worker clients (clear-mcp's
+`clear_complete_task` and clear-pipeline's drain) declare `$impactPrior: ImpactPriorInput` in
+their only `completeTask` document, so removing the type before they stop declaring it would
+fail every completion, including the live web routine's. clear-mvp's end-to-end suite builds
+clear-api `dev`, so clear-mvp must stop calling the removed fields first.
+
+1. clear-pipeline removes the `.clear` ImpactPrior handler and `$impactPrior` from its
+   `completeTask` document. The generic Task drain stays for later kinds.
+2. clear-mcp drops `impactPrior` from `clear_complete_task` and is released. clear-worker-routine
+   pins that release.
+3. clear-mvp removes the whole-prior Inbox review (`impactPriors`, `decideImpactPrior`) and the
+   whole-prior history cards (`eventImpactPriors`). Its end-to-end seed stops completing `.clear`
+   Tasks.
+4. clear-api removes `decideImpactPrior`, `Query.impactPriors`, `completeTask(impactPrior:)`,
+   `ImpactPriorInput` and `casesFromBasis`. It stops the bare kind being claimable, and cancels
+   open bare and `.clear` Tasks.
+5. clear-mcp refreshes its `schema.graphql` snapshot once that reaches staging.
+6. Later, and only on an explicit decision since it deletes who-decided-what history: drop
+   `impact_priors` with `Event.impactPriors` and `eventImpactPriors`.

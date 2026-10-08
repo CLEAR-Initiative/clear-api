@@ -1157,6 +1157,8 @@ export const taskResolvers = {
       const produced = !!args.impactPrior || cases.length > 0;
       const outcome = !isImpactPriorTask ? null : produced ? "produced" : "no_prior_found";
 
+      // How many proposed signals this completion wrote, for the notification.
+      let proposedSignals = 0;
       const completed = await context.prisma.$transaction(async (tx) => {
         // The Task first, conditionally on still holding the lease, so a
         // reclaimed Task's new owner never finds a stranger's result on it.
@@ -1205,7 +1207,7 @@ export const taskResolvers = {
           });
           // A Worker still on the whole-prior contract: its web cases reach
           // the per-case Inbox too (V4). The ImpactPrior row stays as history.
-          await writeCases(
+          proposedSignals += await writeCases(
             tx,
             task,
             casesFromBasis(args.impactPrior.basis, args.impactPrior),
@@ -1213,6 +1215,7 @@ export const taskResolvers = {
           );
         }
         const inserted = await writeCases(tx, task, cases, caseMethodVersion);
+        proposedSignals += inserted;
         // Every case was a URL already proposed for this Event: the Worker
         // found something, but nothing new for anyone to review, so the Task
         // must not announce cases waiting in the Inbox.
@@ -1223,7 +1226,9 @@ export const taskResolvers = {
       });
       // The fan-out (V2): requester, team analysts and platform admins hear
       // the outcome once the row is committed, never inside the transaction.
-      if (completed.status === "COMPLETED") void notifyTaskOutcome(context.prisma, completed, "completed");
+      if (completed.status === "COMPLETED") {
+        void notifyTaskOutcome(context.prisma, { ...completed, proposedSignals }, "completed");
+      }
       return completed;
     },
   },

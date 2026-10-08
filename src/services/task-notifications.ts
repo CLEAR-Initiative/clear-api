@@ -25,6 +25,9 @@ export interface TaskForNotification {
   teamId: string | null;
   outcome: string | null;
   lastError: string | null;
+  /** How many proposed signals (CaseProposals) the completion wrote, when
+   *  known; the web kind's message counts them. */
+  proposedSignals?: number | null;
 }
 
 export interface TaskRecipient {
@@ -67,12 +70,22 @@ export async function taskRecipients(prisma: PrismaClient, task: TaskForNotifica
  *  hears from each) and how it ended. */
 export function taskOutcomeMessage(task: TaskForNotification, outcomeKind: TaskOutcomeKind): string {
   const what = taskKindLabel(task.kind);
+  // The web kind proposes signals, reviewed one by one (V4); its outcome
+  // values (`no_prior_found`, `no_new_cases`) are wire names, not wording.
+  if (impactPriorSource(task.kind) === "web") return webSearchMessage(task, outcomeKind);
   if (outcomeKind === "failed") return `${what} enrichment failed`;
   if (task.outcome === "no_prior_found") return `${what}: no prior found`;
   if (task.outcome === "no_new_cases") return `${what}: no new cases`;
-  // The web kind proposes cases, decided one by one (V4).
-  if (impactPriorSource(task.kind) === "web") return `${what}: cases proposed — review them`;
   return `${what} proposed — review it`;
+}
+
+function webSearchMessage(task: TaskForNotification, outcomeKind: TaskOutcomeKind): string {
+  if (outcomeKind === "failed") return "Web search failed";
+  if (task.outcome === "no_prior_found") return "Web search: nothing found";
+  if (task.outcome === "no_new_cases") return "Web search: nothing new to review";
+  const n = task.proposedSignals;
+  if (!n) return "Web search: proposed signals to review";
+  return `Web search: ${n} proposed signal${n === 1 ? "" : "s"} to review`;
 }
 
 /**
