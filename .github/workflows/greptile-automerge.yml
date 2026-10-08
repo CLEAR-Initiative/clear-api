@@ -28,11 +28,11 @@ name: Greptile auto-merge
 # Merges use the auto-merge GitHub App's token, not GITHUB_TOKEN: a merge made with
 # GITHUB_TOKEN doesn't trigger other workflows (deploys, exponential-promote).
 #
-# Only the default branch's copy of this file ever runs (check_run, workflow_run,
-# workflow_dispatch and pull_request_target all use it), so a branch can't change the code
-# that holds the token. It never checks out or runs PR code. The App's private key lives in
-# the `greptile-automerge` environment, which only the default branch may use, so a
-# workflow on any other branch can't read it either.
+# check_run and workflow_run use the default branch's copy of this file.
+# pull_request_target uses the PR's base branch; workflow_dispatch uses the selected ref.
+# This workflow never checks out or runs PR code. The App's private key lives in the
+# `greptile-automerge` environment, which must be restricted to the default branch.
+# That environment restriction keeps workflows on other branches from reading the key.
 
 on:
   check_run:
