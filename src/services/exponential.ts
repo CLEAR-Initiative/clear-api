@@ -100,12 +100,15 @@ async function trpcCall<T>(
   }
 
   if (!response.ok) {
-    const errMsg =
-      (parsed as { error?: { json?: { message?: string; code?: string } } })?.error?.json?.message ??
-      `http_${response.status}`;
-    const errCode =
-      (parsed as { error?: { json?: { message?: string; code?: string } } })?.error?.json?.code ??
-      "unknown";
+    // tRPC error envelope: `code` is the numeric JSON-RPC code (e.g.
+    // -32001); the string code ("UNAUTHORIZED") lives in `data.code`.
+    const errJson = (
+      parsed as {
+        error?: { json?: { message?: string; code?: unknown; data?: { code?: unknown } } };
+      }
+    )?.error?.json;
+    const errMsg = errJson?.message ?? `http_${response.status}`;
+    const errCode = String(errJson?.data?.code ?? errJson?.code ?? "unknown");
     console.error(`[exponential] ${procedure} failed (${response.status} ${errCode}): ${errMsg}`);
     return { ok: false, reason: `${errCode.toLowerCase()}:${errMsg}` };
   }
