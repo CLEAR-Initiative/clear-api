@@ -1,14 +1,26 @@
 /**
  * The arithmetic of the computed ImpactPrior (V4), DB-free: one prior per
  * (metric, population group), median as the central value, the range as
- * the bounds, and the case count beside it.
+ * the bounds, and the case count beside it — from observed figures only.
  */
 import { describe, expect, it } from "vitest";
-import { MIN_CONFIDENT_CASES, summarisePriors } from "../../src/services/computed-impact-prior.js";
+import { EstimateMethod } from "../../src/generated/prisma/enums.js";
+import {
+  MIN_CONFIDENT_CASES,
+  OBSERVED_ESTIMATE_METHODS,
+  summarisePriors,
+} from "../../src/services/computed-impact-prior.js";
 
 const ctx = { hazardType: "FL", countryLocationId: "c-1", horizonYears: 10 };
-const row = (event_id: string, metric: string, value: number, population_group: string | null = null, unit: string | null = null) => ({
-  event_id, estimate_id: `es-${event_id}-${metric}`, metric, population_group, unit, value,
+const row = (
+  event_id: string,
+  metric: string,
+  value: number,
+  population_group: string | null = null,
+  unit: string | null = null,
+  method = "media_report",
+) => ({
+  event_id, estimate_id: `es-${event_id}-${metric}`, metric, population_group, unit, method, value,
 });
 
 describe("summarisePriors", () => {
@@ -35,7 +47,8 @@ describe("summarisePriors", () => {
       upperBound: 4000,
       lowConfidence: false,
       eventIds: ["e1", "e2", "e3"],
-      methodVersion: "clear-impact-prior@0.2.0",
+      basisMethods: [{ method: "media_report", count: 3 }],
+      methodVersion: "clear-impact-prior@0.3.0",
     });
   });
 
@@ -60,7 +73,66 @@ describe("summarisePriors", () => {
     ]);
   });
 
+  it("ignores figures nobody observed: backfilled placeholders, model output, prior-derived", () => {
+    const priors = summarisePriors(
+      [
+        row("a", "people_affected", 1000),
+        row("b", "people_affected", 3000, null, null, "government_figure"),
+        row("c", "people_affected", 25_794, null, null, "not_documented"),
+        row("d", "people_affected", 2_000_000, null, null, "model_inference"),
+        row("e", "people_affected", 50_000, null, null, "exposure_model"),
+        row("f", "people_affected", 4000, null, null, "prior_caseload_analogue"),
+      ],
+      ctx,
+    );
+    expect(priors).toHaveLength(1);
+    expect(priors[0]).toMatchObject({ centralValue: 2000, lowerBound: 1000, upperBound: 3000, numberOfCases: 2 });
+    expect(priors[0].eventIds).toEqual(["a", "b"]);
+  });
+
+  it("returns no prior when every figure is unobserved", () => {
+    expect(summarisePriors([row("a", "people_affected", 25_794, null, null, "not_documented")], ctx)).toEqual([]);
+  });
+
+  it("counts the methods a prior rests on, most common first", () => {
+    const [p] = summarisePriors(
+      [
+        row("a", "people_affected", 1),
+        row("b", "people_affected", 2, null, null, "government_figure"),
+        row("c", "people_affected", 3, null, null, "government_figure"),
+      ],
+      ctx,
+    );
+    expect(p.basisMethods).toEqual([
+      { method: "government_figure", count: 2 },
+      { method: "media_report", count: 1 },
+    ]);
+  });
+
   it("returns nothing without history", () => {
     expect(summarisePriors([], ctx)).toEqual([]);
+  });
+});
+
+describe("OBSERVED_ESTIMATE_METHODS", () => {
+  it("is exactly the observed or reported methods", () => {
+    expect([...OBSERVED_ESTIMATE_METHODS].sort()).toEqual(
+      [
+        "field_staff_judgement",
+        "formal_assessment",
+        "government_figure",
+        "media_report",
+        "partner_or_cluster_figure",
+        "rapid_assessment",
+        "registration",
+      ],
+    );
+  });
+
+  it("leaves out exactly the unobserved methods, so a new method needs a decision here", () => {
+    const excluded = Object.values(EstimateMethod).filter(
+      (m) => !(OBSERVED_ESTIMATE_METHODS as readonly string[]).includes(m),
+    );
+    expect(excluded.sort()).toEqual(["exposure_model", "model_inference", "not_documented", "prior_caseload_analogue"]);
   });
 });
