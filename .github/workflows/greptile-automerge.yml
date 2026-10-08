@@ -198,6 +198,16 @@ jobs:
 
               if (dryRun) return report(number, `[dry run] Greptile: no P0/P1 on \`${short}\` — would merge once the required checks pass.`);
               for (let attempt = 1; ; attempt++) {
+                // The waits above and between attempts give people time to opt out (label,
+                // draft, close, retarget), and the run that event starts queues behind this
+                // one. So re-read the PR and recheck right before every merge attempt.
+                const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (now.state !== 'open' || now.head.sha !== sha) {
+                  return core.info(`#${number} changed before merging (closed or new head); leaving it to its own run.`);
+                }
+                if (now.base.ref !== base) return skip(`the PR now targets \`${now.base.ref}\``);
+                if (now.draft) return skip('the PR is a draft');
+                if (now.labels.some(l => l.name === LABEL)) return skip(`the PR has the \`${LABEL}\` label`);
                 try {
                   // Pinned to the reviewed commit: GitHub refuses the merge if the head has moved
                   // (409) or a required check hasn't passed (405).
@@ -218,10 +228,6 @@ jobs:
                   if (attempt < MERGE_ATTEMPTS) {
                     core.info(`#${number}: GitHub refused the merge (${e.message}); retrying in ${SETTLE_MS / 1000}s.`);
                     await sleep(SETTLE_MS);
-                    const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-                    if (now.state !== 'open' || now.head.sha !== sha || now.draft || now.labels.some(l => l.name === LABEL)) {
-                      return core.info(`#${number} changed while waiting to retry (closed, new head, draft or \`${LABEL}\`); leaving it to its own run.`);
-                    }
                     continue;
                   }
                   return report(number, `Greptile: no P0/P1 on \`${short}\`, but GitHub refused the merge ${MERGE_ATTEMPTS} times (${e.message}). ` +
