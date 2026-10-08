@@ -78,7 +78,8 @@ interface UpdateEventInput {
   description?: string;
   descriptionSignals?: Record<string, unknown>;
   validFrom?: string;
-  validTo?: string;
+  /** Explicit null clears a known end back to "ongoing / no known end". */
+  validTo?: string | null;
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
   startedAt?: string;
@@ -412,7 +413,9 @@ export const eventResolvers = {
               ? (input.descriptionSignals as InputJsonValue)
               : undefined,
             validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
-            validTo: input.validTo ? new Date(input.validTo) : undefined,
+            // null clears the end date; omitted leaves it untouched.
+            validTo:
+              input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
             startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
             originId: input.originId,
             destinationId: input.destinationId,

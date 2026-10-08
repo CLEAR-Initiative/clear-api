@@ -917,6 +917,8 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String
+    """ISO-8601 event end. Pass \`null\` to clear it ("ongoing / no known end");
+    omit it to leave the stored value unchanged."""
     validTo: String
     """ISO-8601. Only ever moves earlier: a value later than the stored one is
     ignored."""

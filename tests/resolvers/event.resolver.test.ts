@@ -410,6 +410,18 @@ describe("Mutation.updateEvent", () => {
     expect(data.casualties).toBeUndefined();
   });
 
+  it("clears validTo on explicit null and leaves it untouched when omitted", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "e1" });
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }), update },
+      signalEvents: { findMany: vi.fn(), createMany: vi.fn() },
+    });
+    await updateEvent(null, { id: "e1", input: { validTo: null } }, ctx);
+    expect(update.mock.calls[0][0].data.validTo).toBeNull();
+    await updateEvent(null, { id: "e1", input: { title: "T" } }, ctx);
+    expect(update.mock.calls[1][0].data.validTo).toBeUndefined();
+  });
+
   it("widens the signal-time bounds with conditional updateMany, never in the main update", async () => {
     const update = vi.fn().mockResolvedValue({ id: "e1" });
     const updateMany = vi.fn().mockResolvedValue({ count: 0 });
