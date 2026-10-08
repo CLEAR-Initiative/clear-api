@@ -2,6 +2,7 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { Channel, Frequency } from "../generated/prisma/client.js";
 import { isPlatformAdmin, requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
+import { ALL_SEVERITIES_FLOOR } from "../utils/alert-severity.js";
 
 interface SubscribeToAlertsInput {
   locationId: string;
@@ -100,7 +101,7 @@ export const subscriptionResolvers = {
           alertType: input.alertType,
           channel: input.channel,
           frequency: input.frequency,
-          minSeverity: validateSeverity(input.minSeverity) ?? 1,
+          minSeverity: validateSeverity(input.minSeverity) ?? ALL_SEVERITIES_FLOOR,
         },
       });
     },
@@ -119,7 +120,7 @@ export const subscriptionResolvers = {
         });
       }
 
-      const minSeverity = validateSeverity(input.minSeverity) ?? 1;
+      const minSeverity = validateSeverity(input.minSeverity) ?? ALL_SEVERITIES_FLOOR;
 
       // De-dupe incoming pairs in case the caller sent the same value twice
       const uniqueLocationIds = [...new Set(input.locationIds)];

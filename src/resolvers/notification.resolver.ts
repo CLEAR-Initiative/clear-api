@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { NotificationStatus, PrismaClient } from "../generated/prisma/client.js";
 import { requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
+import { minSeverityFilterFor, severityClearsFloor } from "../utils/alert-severity.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification, alertDigest } from "../services/messaging/templates.js";
 import {
@@ -68,17 +69,14 @@ async function findSubscribers(
     }
   }
 
-  // An event with unknown (null) severity does not fan out to severity-gated
-  // subscriptions — we don't invent a severity to force a match.
-  if (eventSeverity == null) return [];
-
   const subscriptions = await prisma.userAlertSubscriptions.findMany({
     where: {
       active: true,
       frequency,
       alertType: { in: eventTypes },
       locationId: { in: [...allLocationIds] },
-      minSeverity: { lte: eventSeverity },
+      // Unknown (null) severity reaches only "all severities" subscribers.
+      minSeverity: minSeverityFilterFor(eventSeverity),
     },
     select: { userId: true },
   });
@@ -395,9 +393,7 @@ export const notificationResolvers = {
           const typesMatch = alert.event.types.includes(sub.alertType);
           const locationSet = alertLocationSets.get(alert.id);
           const locationMatch = locationSet?.has(sub.locationId) ?? false;
-          // Null severity never matches a severity-gated subscription (no invented default).
-          const severityMatch =
-            alert.event.severity != null && alert.event.severity >= sub.minSeverity;
+          const severityMatch = severityClearsFloor(alert.event.severity, sub.minSeverity);
 
           if (typesMatch && locationMatch && severityMatch) {
             let set = userAlertMap.get(sub.userId);

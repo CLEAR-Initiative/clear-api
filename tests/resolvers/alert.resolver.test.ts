@@ -282,9 +282,9 @@ describe("Mutation.createAlert", () => {
     expect(subFindMany).toHaveBeenCalled(); // fan-out reached the subscriber lookup
   });
 
-  it("does NOT fan out when event severity is null (no invented severity)", async () => {
-    // A null-severity event must not notify anyone — we don't default severity to
-    // 1 to force a match against every subscriber.
+  it("fans a null-severity event out only to all-severities (minSeverity 1) subscribers", async () => {
+    // Unknown severity is unranked: it can't clear a raised floor, but people
+    // who subscribed to every severity still get it.
     const event = { id: "e1", types: ["displacement"], severity: null, originId: "l1", destinationId: null, locationId: null };
     const subFindMany = vi.fn().mockResolvedValue([]);
     const ctx = buildContext(ADMIN, {
@@ -294,7 +294,7 @@ describe("Mutation.createAlert", () => {
       userAlertSubscriptions: { findMany: subFindMany },
     });
     await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
-    expect(subFindMany).not.toHaveBeenCalled(); // null severity → no subscriber lookup, no alerts
+    expect(subFindMany.mock.calls[0][0].where.minSeverity).toEqual({ lte: 1 });
   });
 
   it("is idempotent: returns the existing alert and skips fan-out + activity log when status matches", async () => {
