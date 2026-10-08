@@ -209,3 +209,18 @@ drain's LLM-proposed `.clear` ImpactPrior is no longer requested. The fan-out, t
 handler and the drain stay: adding `event.impact_prior.clear` back to the env restores it, and
 the drain remains the generic Task Worker for future kinds. Open `.clear` Tasks stay claimable
 and are drained as before.
+
+## Amendment (V4, 2026-10-08): the computed prior rests on observed figures only
+
+`Event.computedImpactPriors` summarised every current Estimate, so it echoed clear-pipeline's
+placeholders: the #734 backfill turned `events.population_affected` / `population_displaced`
+into `not_documented` Estimates, and the pipeline fills those columns with an ACLED event-type
+median or an LLM guess when it knows nothing better. The prior now counts only
+`OBSERVED_ESTIMATE_METHODS` (`media_report`, `government_figure`, `partner_or_cluster_figure`,
+`rapid_assessment`, `formal_assessment`, `registration`, `field_staff_judgement`), and the filter
+is applied before each Event's current figure is chosen, so a newer unobserved figure never
+masks an observed one. `not_documented`, `model_inference`, `exposure_model` and
+`prior_caseload_analogue` (a figure derived from a prior, which would feed priors back into
+themselves) are excluded. Each prior reports `basisMethods`; method version
+`clear-impact-prior@0.3.0`. Most Events have no prior until analysts accept web cases with
+figures; that is the honest state. The backfilled Estimates stay as `not_documented` history.
