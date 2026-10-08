@@ -24,17 +24,20 @@ import type { Context } from "../../src/context.js";
 
 type Row = Record<string, unknown>;
 
-/** The default fan-out (TASK_IMPACT_PRIOR_KINDS): one Task per source kind. */
-const CLEAR_KIND = "event.impact_prior.clear";
+/** The suites' fan-out (TASK_IMPACT_PRIOR_KINDS, tests/setup.ts): one Task
+ *  per source kind. `satellite` is fictional — any later source beside web. */
+const OTHER_KIND = "event.impact_prior.satellite";
 const WEB_KIND = "event.impact_prior.web";
-const KINDS = [CLEAR_KIND, WEB_KIND];
+const KINDS = [OTHER_KIND, WEB_KIND];
+/** The whole-prior kinds, retired 2026-10-08: never claimable. */
+const RETIRED = ["event.impact_prior", "event.impact_prior.clear"];
 /** What `task.groupBy({ by: ["requestId"] })` returns for n requests today. */
 const requests = (n: number) => Array.from({ length: n }, (_, i) => ({ requestId: `r-${i}` }));
 
 function makeTask(overrides: Row = {}): Row {
   return {
     id: "t-1",
-    kind: CLEAR_KIND,
+    kind: OTHER_KIND,
     subjectType: "event",
     subjectId: "ev-1",
     payload: { horizonYears: 10 },
@@ -113,28 +116,13 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
       return { count };
     }),
   };
+  // Whole ImpactPriors are history (retired 2026-10-08): read-only, so the
+  // mock has no write delegates — a resolver that tried one would throw.
   const priors = new Map<string, Row>();
   const impactPrior = {
     store: priors,
-    findFirst: vi.fn(async (): Promise<Row | null> => null),
     findMany: vi.fn(async (): Promise<Row[]> => []),
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => priors.get(where.id) ?? null),
-    findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => {
-      const row = priors.get(where.id);
-      if (!row) throw new Error("not found");
-      return row;
-    }),
-    updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      let count = 0;
-      for (const [id, row] of priors) {
-        if (matches(row, where)) {
-          priors.set(id, { ...row, ...data });
-          count++;
-        }
-      }
-      return { count };
-    }),
-    create: vi.fn(async ({ data }: { data: Row }) => ({ id: "ip-1", state: "proposed", ...data })),
   };
   const cases = new Map<string, Row>();
   const caseProposal = {
@@ -234,11 +222,11 @@ const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideImpactPrior } =
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } =
   taskResolvers.Mutation;
 const { leaseToken: leaseTokenField } = taskResolvers.Task;
 const {
-  task: taskQuery, eventTasks, eventImpactPriors, impactPriors: impactPriorsQuery, myTasks,
+  task: taskQuery, eventTasks, eventImpactPriors, myTasks,
   caseProposals: caseProposalsQuery, eventCaseProposals, rejectedCaseUrls,
 } = taskResolvers.Query;
 
@@ -265,7 +253,7 @@ describe("notification fan-out (V2)", () => {
   it("fires on completion with the committed Task", async () => {
     const prisma = seeded(leased());
     await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {} }, ctx(worker, prisma));
-    expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "t-1", status: "COMPLETED", outcome: "no_prior_found" }), "completed");
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "t-1", status: "COMPLETED", outcome: "no_prior_found", proposedSignals: 0 }), "completed");
   });
 
   it("fires on a terminal failure but not on a retry", async () => {
@@ -287,7 +275,7 @@ describe("notification fan-out (V2)", () => {
     const prisma = seeded(makeTask({ id: "t-old", status: "FAILED", lastError: "lease expired after max attempts" }));
     prisma.$queryRaw.mockResolvedValueOnce([{ id: "t-old" }]).mockResolvedValueOnce([]);
     prisma.task.findMany.mockResolvedValueOnce([prisma.task.store.get("t-old")!]);
-    await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, ctx(worker, prisma));
+    await claimTasks(null, { kind: WEB_KIND }, ctx(worker, prisma));
     expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ id: "t-old" }), "failed");
   });
 });
@@ -323,7 +311,7 @@ describe("requestEventEnrichment", () => {
     });
   });
 
-  describe("fan-out — one Task per enabled source kind (TASK_IMPACT_PRIOR_KINDS, default .clear and .web)", () => {
+  describe("fan-out — one Task per enabled source kind (TASK_IMPACT_PRIOR_KINDS; here .satellite and .web)", () => {
     it("creates one Task per kind, in configured order, all sharing one requestId", async () => {
       const prisma = makePrisma();
       const result = await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma));
@@ -373,15 +361,15 @@ describe("requestEventEnrichment", () => {
 
     it.each(["PENDING", "LEASED"])("returns the existing %s Task of a kind unchanged and creates only the kinds with none", async (status) => {
       const prisma = makePrisma();
-      const open = makeTask({ id: "t-open", kind: CLEAR_KIND, status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
-      prisma.task.findFirst.mockImplementation(openFor(CLEAR_KIND, open));
+      const open = makeTask({ id: "t-open", kind: OTHER_KIND, status, requesterId: "u-someone-else", payload: { horizonYears: 3 } });
+      prisma.task.findFirst.mockImplementation(openFor(OTHER_KIND, open));
       const result = await requestEventEnrichment(null, { eventId: "ev-1", horizonYears: 10 }, ctx(analyst, prisma));
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual(open);
       expect(result[1]).toMatchObject({ kind: WEB_KIND, status: "PENDING", payload: { horizonYears: 10 } });
       expect(prisma.task.findFirst).toHaveBeenCalledWith({
         where: expect.objectContaining({
-          kind: CLEAR_KIND, subjectType: "event", subjectId: "ev-1",
+          kind: OTHER_KIND, subjectType: "event", subjectId: "ev-1",
           status: { in: ["PENDING", "LEASED"] },
         }),
       });
@@ -401,8 +389,8 @@ describe("requestEventEnrichment", () => {
 
     it("returns the winner when the partial unique index rejects a concurrent create, and still creates the other kinds", async () => {
       const prisma = makePrisma();
-      const winner = makeTask({ id: "t-winner", kind: CLEAR_KIND });
-      // The dedupe pass finds nothing for either kind; the re-read after P2002 on .clear finds the winner.
+      const winner = makeTask({ id: "t-winner", kind: OTHER_KIND });
+      // The dedupe pass finds nothing for either kind; the re-read after P2002 on .satellite finds the winner.
       prisma.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
       prisma.task.create.mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
@@ -414,9 +402,9 @@ describe("requestEventEnrichment", () => {
     });
 
     it("redacts the open Task's lastError for a different requester, on both dedupe paths", async () => {
-      const open = makeTask({ id: "t-open", kind: CLEAR_KIND, requesterId: "u-someone-else", lastError: "attempt 1 failed" });
+      const open = makeTask({ id: "t-open", kind: OTHER_KIND, requesterId: "u-someone-else", lastError: "attempt 1 failed" });
       const prisma = makePrisma();
-      prisma.task.findFirst.mockImplementation(openFor(CLEAR_KIND, open));
+      prisma.task.findFirst.mockImplementation(openFor(OTHER_KIND, open));
       expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)))[0].lastError).toBeNull();
       expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma)))[0].lastError).toBe("attempt 1 failed");
       expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx({ id: "u-someone-else", role: "analyst" }, prisma)))[0].lastError).toBe("attempt 1 failed");
@@ -506,7 +494,7 @@ describe("requestEventEnrichment", () => {
 
     it("applies when only some kinds need a Task — a request that creates anything is a request", async () => {
       const prisma = makePrisma();
-      prisma.task.findFirst.mockImplementation(async ({ where }) => (where.kind === CLEAR_KIND ? makeTask({ id: "t-open" }) : null));
+      prisma.task.findFirst.mockImplementation(async ({ where }) => (where.kind === OTHER_KIND ? makeTask({ id: "t-open" }) : null));
       prisma.task.groupBy.mockResolvedValue(requests(20));
       const err = await errorOf(requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)));
       expect(err.extensions.subCode).toBe("DAILY_CAP");
@@ -566,9 +554,27 @@ describe("claimTasks", () => {
     ["viewer", viewer],
   ])("is FORBIDDEN for a %s — only the worker role claims", async (_name, user) => {
     const prisma = makePrisma();
-    const err = await errorOf(claimTasks(null, { kind: IMPACT_PRIOR_KIND }, ctx(user, prisma)));
+    const err = await errorOf(claimTasks(null, { kind: WEB_KIND }, ctx(user, prisma)));
     expect(err.extensions.code).toBe("FORBIDDEN");
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it.each(RETIRED)("refuses the retired whole-prior kind %s with BAD_USER_INPUT, sweeping and claiming nothing", async (kind) => {
+    const prisma = makePrisma();
+    const err = await errorOf(claimTasks(null, { kind }, ctx(worker, prisma)));
+    expect(err.extensions.code).toBe("BAD_USER_INPUT");
+    expect(err.message).toContain(`"${kind}" is a retired kind`);
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it("still claims a per-source kind under the family other than the retired ones", async () => {
+    const prisma = makePrisma();
+    prisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "t-1" }]);
+    prisma.task.findMany.mockResolvedValueOnce([makeTask({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker" })]);
+    const rows = await claimTasks(null, { kind: OTHER_KIND }, ctx(worker, prisma));
+    expect(rows.map((r) => r.id)).toEqual(["t-1"]);
   });
 
   it("returns the leased rows in claim order", async () => {
@@ -578,14 +584,14 @@ describe("claimTasks", () => {
       makeTask({ id: "t-1", status: "LEASED", leaseOwnerId: "u-worker" }),
       makeTask({ id: "t-2", status: "LEASED", leaseOwnerId: "u-worker" }),
     ]);
-    const rows = await claimTasks(null, { kind: IMPACT_PRIOR_KIND, limit: 2 }, ctx(worker, prisma));
+    const rows = await claimTasks(null, { kind: WEB_KIND, limit: 2 }, ctx(worker, prisma));
     expect(rows.map((r) => r.id)).toEqual(["t-2", "t-1"]);
     expect(rows.every((r) => r.status === "LEASED" && r.leaseOwnerId === "u-worker")).toBe(true);
   });
 
   it("returns an empty list when nothing is claimable, without a second read", async () => {
     const prisma = makePrisma();
-    const rows = await claimTasks(null, { kind: IMPACT_PRIOR_KIND }, ctx(worker, prisma));
+    const rows = await claimTasks(null, { kind: WEB_KIND }, ctx(worker, prisma));
     expect(rows).toEqual([]);
     expect(prisma.task.findMany).not.toHaveBeenCalled();
   });
@@ -670,46 +676,13 @@ describe("completeTask", () => {
     expect(done.completedAt).toBeInstanceOf(Date);
   });
 
-  it("with an impactPrior inserts a proposed row linked to the Event and Task, outcome produced", async () => {
-    const prisma = seeded(leased());
-    const done = await completeTask(
-      null,
-      {
-        id: "t-1",
-        leaseToken: TOKEN,
-        result: { raw: true },
-        impactPrior: {
-          hazardType: "FL",
-          countryLocationId: "loc-country",
-          geographicScope: "country",
-          horizonYears: 10,
-          numberOfCases: 1,
-          basis: [{ tier: "clear", eventId: "ev-old", scope: "country" }],
-          methodVersion: "impact-prior@0.1.0",
-        },
-      },
-      ctx(worker, prisma),
-    );
-    expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
-    expect(prisma.impactPrior.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        eventId: "ev-1",
-        taskId: "t-1",
-        // The source is the Task's kind, never anything the Worker sends.
-        sourceKind: CLEAR_KIND,
-        hazardType: "FL",
-        numberOfCases: 1,
-      }),
-    });
-    // State is the column default (`proposed`): the Worker never sets it.
-    expect(prisma.impactPrior.create.mock.calls[0][0].data).not.toHaveProperty("state");
-  });
-
-  it("without an impactPrior on an event.impact_prior.* Task records no_prior_found and writes no row", async () => {
-    const prisma = seeded(leased());
+  it("on a non-web event.impact_prior.* Task (no cases) records no_prior_found and writes nothing else", async () => {
+    const prisma = seeded(leased({ kind: OTHER_KIND }));
     const done = await completeTask(null, { id: "t-1", leaseToken: TOKEN, result: { searched: 3, cases: 0 } }, ctx(worker, prisma));
-    expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found" });
-    expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+    expect(done).toMatchObject({ status: "COMPLETED", outcome: "no_prior_found", result: { searched: 3, cases: 0 } });
+    expect(prisma.caseProposal.createMany).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+    expect(prisma.events.findUnique).not.toHaveBeenCalled();
   });
 
   it("leaves outcome null for a Task of another kind", async () => {
@@ -745,112 +718,6 @@ describe("completeTask", () => {
       expect(err.extensions.code).toBe("BAD_USER_INPUT");
       expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
     });
-  });
-
-  describe("ImpactPrior validation against the Event", () => {
-    const proposal = () => ({
-      hazardType: "FL",
-      countryLocationId: "loc-country",
-      geographicScope: "district",
-      horizonYears: 10,
-      numberOfCases: 2,
-      basis: [{ tier: "clear", eventId: "ev-a", scope: "district" }, { tier: "web", sourceUrl: "https://x", scope: "country" }],
-      methodVersion: "clear-impact-prior@0.1.0",
-    });
-    const complete = (prisma: ReturnType<typeof makePrisma>, impactPrior: Row) =>
-      completeTask(null, { id: "t-1", leaseToken: TOKEN, result: {}, impactPrior: impactPrior as never }, ctx(worker, prisma));
-
-    it("accepts a hazard among the Event's types and the Event's level-0 ancestor as country", async () => {
-      const prisma = seeded(leased());
-      const done = await complete(prisma, { ...proposal(), hazardType: "FF" });
-      expect(done.outcome).toBe("produced");
-    });
-
-    it.each([
-      ["a hazard not among the Event's types", { hazardType: "EQ" }, /hazardType/],
-      ["a country that is not the Event's", { countryLocationId: "loc-state" }, /countryLocationId/],
-      ["an unknown geographic scope", { geographicScope: "continent" }, /geographicScope/],
-      ["zero cases (omit impactPrior for no_prior_found)", { numberOfCases: 0, basis: [] }, /numberOfCases/],
-      ["a basis that does not list one entry per case", { numberOfCases: 1 }, /basis/],
-      ["a zero horizon", { horizonYears: 0 }, /horizonYears/],
-      ["an empty methodVersion", { methodVersion: "" }, /methodVersion/],
-      ["validTo before validFrom", { validFrom: new Date("2026-02-01"), validTo: new Date("2026-01-01") }, /validTo/],
-      ["validTo before validFrom as strings", { validFrom: "2026-02-01T00:00:00Z", validTo: "2026-01-01T00:00:00Z" }, /validTo must not precede/],
-      ["an unparseable validFrom", { validFrom: new Date("not a date") }, /validFrom must be a valid date-time/],
-      ["an unparseable validTo", { validFrom: new Date("2026-01-01"), validTo: new Date("2026-13-45") }, /validTo must be a valid date-time/],
-    ])("rejects %s with BAD_USER_INPUT and writes nothing", async (_name, bad, message) => {
-      const prisma = seeded(leased());
-      const err = await errorOf(complete(prisma, { ...proposal(), ...bad }));
-      expect(err.extensions.code).toBe("BAD_USER_INPUT");
-      expect(err.message).toMatch(message);
-      expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
-      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
-    });
-
-    it("rejects a proposal when the Event's country cannot be resolved", async () => {
-      const prisma = seeded(leased());
-      prisma.events.findUnique.mockResolvedValueOnce({
-        id: "ev-1", types: ["FL"], locationId: null, originId: null, destinationId: null,
-      });
-      const err = await errorOf(complete(prisma, proposal()));
-      expect(err.extensions.code).toBe("BAD_USER_INPUT");
-      expect(err.message).toMatch(/country cannot be resolved/);
-    });
-
-    it("supersedes the newest existing ImpactPrior of the same source kind for the Event, never overwriting it", async () => {
-      const prisma = seeded(leased());
-      prisma.impactPrior.findFirst.mockResolvedValueOnce({ id: "ip-old" });
-      await complete(prisma, proposal());
-      expect(prisma.impactPrior.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { eventId: "ev-1", sourceKind: CLEAR_KIND }, orderBy: { createdAt: "desc" } }),
-      );
-      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ supersedesId: "ip-old" }),
-      });
-      // Nothing touched the earlier row: there is no update delegate call to make.
-      expect(prisma.impactPrior).not.toHaveProperty("update");
-    });
-
-    it("a .web proposal looks for its predecessor among .web proposals only — another source's is a sibling", async () => {
-      const prisma = seeded(leased({ kind: WEB_KIND }));
-      await complete(prisma, proposal());
-      expect(prisma.impactPrior.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { eventId: "ev-1", sourceKind: WEB_KIND } }),
-      );
-      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ sourceKind: WEB_KIND, supersedesId: null }),
-      });
-    });
-
-    it("the bare event.impact_prior kind (claimable for one release) still takes a proposal, as its own source", async () => {
-      const prisma = seeded(leased({ kind: IMPACT_PRIOR_KIND }));
-      const done = await complete(prisma, proposal());
-      expect(done.outcome).toBe("produced");
-      expect(prisma.impactPrior.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ sourceKind: IMPACT_PRIOR_KIND }),
-      });
-    });
-  });
-
-  it("rejects an impactPrior on a Task of another kind with BAD_USER_INPUT, before any write", async () => {
-    const prisma = seeded(leased({ kind: "event.other" }));
-    const err = await errorOf(
-      completeTask(
-        null,
-        {
-          id: "t-1",
-          leaseToken: TOKEN,
-          result: {},
-          impactPrior: {
-            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
-            horizonYears: 10, numberOfCases: 1, basis: [], methodVersion: "x",
-          },
-        },
-        ctx(worker, prisma),
-      ),
-    );
-    expect(err.extensions.code).toBe("BAD_USER_INPUT");
-    expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
   });
 });
 
@@ -968,7 +835,16 @@ describe("cancelTask", () => {
   });
 
   describe("the Worker finishes a requested cancel", () => {
-    const flagged = () => leased({ cancelRequestedAt: new Date("2026-10-06T10:05:00Z"), cancelledById: "u-analyst" });
+    const flagged = (overrides: Row = {}) =>
+      leased({ cancelRequestedAt: new Date("2026-10-06T10:05:00Z"), cancelledById: "u-analyst", ...overrides });
+    const webCase = {
+      sourceUrl: "https://example.test/late",
+      quote: "Late.",
+      occurredAt: new Date("2021-08-01T00:00:00Z"),
+      locationLabel: "Testville",
+      hazardType: "FL",
+      geographicScope: "district",
+    };
 
     it("at its next heartbeat: the Task becomes CANCELLED and the lease is released", async () => {
       const prisma = seeded(flagged());
@@ -976,23 +852,16 @@ describe("cancelTask", () => {
       expect(row).toMatchObject({ status: "CANCELLED", leaseExpiresAt: null, cancelledById: "u-analyst" });
     });
 
-    it("at completion: the result and any ImpactPrior are discarded", async () => {
-      const prisma = seeded(flagged());
+    it("at completion: the result and any cases are discarded", async () => {
+      const prisma = seeded(flagged({ kind: WEB_KIND }));
       const row = await completeTask(
         null,
-        {
-          id: "t-1",
-          leaseToken: TOKEN,
-          result: { late: true },
-          impactPrior: {
-            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
-            horizonYears: 10, numberOfCases: 1, basis: [{ tier: "web", scope: "country" }], methodVersion: "x",
-          },
-        },
+        { id: "t-1", leaseToken: TOKEN, result: { late: true }, cases: [webCase], methodVersion: "x" } as never,
         ctx(worker, prisma),
       );
       expect(row).toMatchObject({ status: "CANCELLED", result: null, outcome: null });
-      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+      expect(prisma.caseProposal.createMany).not.toHaveBeenCalled();
+      expect(notifyTaskOutcome).not.toHaveBeenCalled();
     });
 
     it("at failure: CANCELLED rather than PENDING, so it is never retried", async () => {
@@ -1001,24 +870,15 @@ describe("cancelTask", () => {
       expect(row.status).toBe("CANCELLED");
     });
 
-    it("at completion with a malformed proposal: the cancel wins over BAD_USER_INPUT", async () => {
-      const prisma = seeded(flagged());
+    it("at completion with malformed cases: the cancel wins over BAD_USER_INPUT", async () => {
+      const prisma = seeded(flagged({ kind: WEB_KIND }));
       const row = await completeTask(
         null,
-        {
-          id: "t-1",
-          leaseToken: TOKEN,
-          result: {},
-          impactPrior: {
-            hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country",
-            horizonYears: 10, numberOfCases: 1, basis: [{ tier: "web", scope: "country" }], methodVersion: "x",
-            validFrom: new Date("not a date"),
-          } as never,
-        },
+        { id: "t-1", leaseToken: TOKEN, result: {}, cases: [{ ...webCase, hazardType: "EQ" }], methodVersion: " " } as never,
         ctx(worker, prisma),
       );
       expect(row).toMatchObject({ status: "CANCELLED", result: null, outcome: null });
-      expect(prisma.impactPrior.create).not.toHaveBeenCalled();
+      expect(prisma.caseProposal.createMany).not.toHaveBeenCalled();
     });
 
     it("at failure with an empty error: the cancel wins over BAD_USER_INPUT", async () => {
@@ -1056,13 +916,12 @@ describe("completeTask with cases (V4)", () => {
       ctx(worker, prisma),
     );
 
-  it("writes one proposed CaseProposal per case, no ImpactPrior, outcome produced", async () => {
+  it("writes one proposed CaseProposal per case, outcome produced", async () => {
     const prisma = seeded(webLeased());
     const done = await complete(prisma, {
       cases: [aCase(), aCase({ sourceUrl: "https://example.test/flood-2019", matchedEventId: "ev-old", locationId: "loc-district" })],
     });
     expect(done).toMatchObject({ status: "COMPLETED", outcome: "produced" });
-    expect(prisma.impactPrior.create).not.toHaveBeenCalled();
     const rows = [...prisma.caseProposal.store.values()];
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -1105,25 +964,30 @@ describe("completeTask with cases (V4)", () => {
     expect(notifyTaskOutcome).toHaveBeenCalledWith(prisma, expect.objectContaining({ outcome: "no_new_cases" }), "completed");
   });
 
-  it("caps the cases a whole-prior basis turns into, like a direct submission", async () => {
+  it("tells the notification how many proposed signals it wrote, not how many were sent", async () => {
     const prisma = seeded(webLeased());
-    const basis = Array.from({ length: 60 }, (_, i) => ({ tier: "web", sourceUrl: `https://example.test/${i}`, occurredAt: "2026-01-11" }));
-    await complete(prisma, {
-      methodVersion: undefined,
-      impactPrior: {
-        hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country", horizonYears: 10,
-        numberOfCases: 60, basis, methodVersion: "clear-impact-prior-web@0.3.0",
-      },
-    });
-    expect(prisma.caseProposal.store.size).toBe(50);
+    prisma.caseProposal.store.set("ev-1|https://example.test/flood-2021", { state: "proposed" });
+    await complete(prisma, { cases: [aCase(), aCase({ sourceUrl: "https://example.test/new" })] });
+    expect(notifyTaskOutcome).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ status: "COMPLETED", outcome: "produced", proposedSignals: 1 }),
+      "completed",
+    );
+  });
+
+  it("rejects more than 50 cases in one completion before any write — one completion never floods the Inbox", async () => {
+    const prisma = seeded(webLeased());
+    const cases = Array.from({ length: 51 }, (_, i) => aCase({ sourceUrl: `https://example.test/${i}` }));
+    const err = await errorOf(complete(prisma, { cases }));
+    expect(err.extensions.code).toBe("BAD_USER_INPUT");
+    expect(err.message).toContain("At most 50 cases");
+    expect(prisma.caseProposal.createMany).not.toHaveBeenCalled();
+    expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
   });
 
   it.each([
-    ["a non-web kind", { kind: CLEAR_KIND }, { cases: [] }, 'Cases can only complete an "event.impact_prior.web" Task'],
-    ["both cases and an impactPrior", {}, {
-      cases: [],
-      impactPrior: { hazardType: "FL", countryLocationId: "loc-country", geographicScope: "country", horizonYears: 10, numberOfCases: 1, basis: [{}], methodVersion: "x" },
-    }, "either cases or an impactPrior"],
+    ["a non-web kind", { kind: OTHER_KIND }, { cases: [] }, 'Cases can only complete an "event.impact_prior.web" Task'],
+    ["cases on a Task outside the family", { kind: "event.other" }, { cases: [aCase()] }, 'Cases can only complete an "event.impact_prior.web" Task'],
     ["cases without a methodVersion", {}, { cases: [aCase()], methodVersion: " " }, "methodVersion is required with cases"],
   ])("rejects %s", async (_name, task, args, message) => {
     const prisma = seeded(webLeased(task));
@@ -1148,37 +1012,6 @@ describe("completeTask with cases (V4)", () => {
     expect(err.message).toContain(message);
     expect(prisma.caseProposal.createMany).not.toHaveBeenCalled();
     expect(prisma.task.store.get("t-1")!.status).toBe("LEASED");
-  });
-
-  it("turns the web cases of a whole-prior proposal into CaseProposals too (pre-V4 Workers)", async () => {
-    const prisma = seeded(webLeased());
-    await complete(prisma, {
-      methodVersion: undefined,
-      impactPrior: {
-        hazardType: "FL",
-        countryLocationId: "loc-country",
-        geographicScope: "country",
-        horizonYears: 10,
-        numberOfCases: 3,
-        basis: [
-          { tier: "web", sourceUrl: "https://example.test/a", quote: "a", occurredAt: "2026-01-11", locationLabel: "Yabus", scope: "district" },
-          { tier: "web", sourceUrl: "https://example.test/b", occurredAt: "not a date" },
-          { tier: "clear", eventId: "ev-old" },
-        ],
-        methodVersion: "clear-impact-prior-web@0.3.0",
-      },
-    });
-    expect(prisma.impactPrior.create).toHaveBeenCalled();
-    const rows = [...prisma.caseProposal.store.values()];
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      sourceUrl: "https://example.test/a",
-      quote: "a",
-      locationLabel: "Yabus",
-      geographicScope: "district",
-      hazardType: "FL",
-      methodVersion: "clear-impact-prior-web@0.3.0",
-    });
   });
 });
 
@@ -1234,113 +1067,6 @@ describe("case reads (V4)", () => {
       expect.objectContaining({ where: { eventId: "ev-1", state: "rejected" }, select: { sourceUrl: true } }),
     );
     expect((await errorOf(rejectedCaseUrls(null, { eventId: "ev-1" }, ctx(viewer, prisma)))).extensions.code).toBe("FORBIDDEN");
-  });
-});
-
-describe("decideImpactPrior", () => {
-  const proposed = (overrides: Row = {}): Row => ({
-    id: "ip-1", eventId: "ev-1", taskId: "t-1", state: "proposed", hazardType: "FL",
-    decidedById: null, decidedAt: null, decisionRationale: null, ...overrides,
-  });
-  const seededPrior = (row: Row = proposed()) => {
-    const prisma = makePrisma();
-    prisma.impactPrior.store.set(row.id as string, row);
-    return prisma;
-  };
-
-  it.each([
-    ["admin accepts", admin, "accepted"],
-    ["analyst rejects", analyst, "rejected"],
-  ])("%s a proposed ImpactPrior, recording who, when and why", async (_name, user, decision) => {
-    vi.useFakeTimers({ toFake: ["Date"] }); // keep setImmediate real for the log-settle wait below
-    vi.setSystemTime(new Date("2026-10-07T09:00:00Z"));
-    const prisma = seededPrior();
-    const row = await decideImpactPrior(null, { id: "ip-1", decision: decision as never, rationale: "  Cases check out. " }, ctx(user, prisma));
-    expect(row).toMatchObject({
-      state: decision,
-      decidedById: user.id,
-      decidedAt: new Date("2026-10-07T09:00:00Z"),
-      decisionRationale: "Cases check out.",
-    });
-    await new Promise((r) => setImmediate(r));
-    expect(prisma.activityLogs.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        userId: user.id, action: "impact_prior.decided", resourceType: "impact_prior", resourceId: "ip-1",
-        metadata: expect.objectContaining({ decision, eventId: "ev-1" }),
-      }),
-    });
-  });
-
-  it.each([
-    ["a viewer", viewer],
-    ["a team coordinator", coordinator],
-    ["a worker", worker],
-    ["pipeline", pipeline],
-  ])("is FORBIDDEN for %s — only platform admins and analysts decide", async (_name, user) => {
-    const prisma = seededPrior();
-    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "accepted", rationale: "x" }, ctx(user, prisma)));
-    expect(err.extensions.code).toBe("FORBIDDEN");
-    expect(prisma.impactPrior.store.get("ip-1")!.state).toBe("proposed");
-  });
-
-  it("is NOT_FOUND for an unknown id and BAD_USER_INPUT for an empty rationale", async () => {
-    expect((await errorOf(decideImpactPrior(null, { id: "ip-nope", decision: "accepted", rationale: "x" }, ctx(admin)))).extensions.code).toBe("NOT_FOUND");
-    const prisma = seededPrior();
-    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "accepted", rationale: "   " }, ctx(admin, prisma)));
-    expect(err.extensions.code).toBe("BAD_USER_INPUT");
-    expect(prisma.impactPrior.store.get("ip-1")!.state).toBe("proposed");
-  });
-
-  it.each(["accepted", "rejected"])("is CONFLICT once already %s — a decision is recorded once", async (state) => {
-    const prisma = seededPrior(proposed({ state, decidedById: "u-admin" }));
-    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "rejected", rationale: "x" }, ctx(analyst, prisma)));
-    expect(err.extensions.code).toBe("CONFLICT");
-    expect(prisma.impactPrior.store.get("ip-1")).toMatchObject({ state, decidedById: "u-admin" });
-  });
-
-  it("a decision landing between the read and the write is not overwritten", async () => {
-    const prisma = seededPrior();
-    prisma.impactPrior.findUnique.mockImplementationOnce(async () => proposed());
-    prisma.impactPrior.store.set("ip-1", proposed({ state: "accepted", decidedById: "u-other" }));
-    const err = await errorOf(decideImpactPrior(null, { id: "ip-1", decision: "rejected", rationale: "x" }, ctx(analyst, prisma)));
-    expect(err.extensions.code).toBe("CONFLICT");
-    expect(prisma.impactPrior.store.get("ip-1")!.decidedById).toBe("u-other");
-  });
-});
-
-describe("impactPriors — the Inbox query", () => {
-  it("lists proposed rows newest first for deciders, defaulting state and paging", async () => {
-    const prisma = makePrisma();
-    prisma.impactPrior.findMany.mockResolvedValue([{ id: "ip-1", state: "proposed" }]);
-    const rows = await impactPriorsQuery(null, {}, ctx(analyst, prisma));
-    expect(rows.map((r) => r.id)).toEqual(["ip-1"]);
-    // Web proposals (and the bare kind) are decided case by case (V4).
-    // …once their cases are there; a proposal none of whose cases converted stays.
-    const caseReviewedOut = [
-      { sourceKind: { notIn: ["event.impact_prior", "event.impact_prior.web"] } },
-      { task: { caseProposals: { none: {} } } },
-    ];
-    expect(prisma.impactPrior.findMany).toHaveBeenCalledWith({
-      where: { state: "proposed", OR: caseReviewedOut },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      skip: 0,
-    });
-    await impactPriorsQuery(null, { state: "rejected", limit: 500, offset: -3 }, ctx(admin, prisma));
-    expect(prisma.impactPrior.findMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ where: { state: "rejected", OR: caseReviewedOut }, take: 200, skip: 0 }),
-    );
-  });
-
-  it.each([
-    ["a viewer", viewer],
-    ["a team coordinator", coordinator],
-    ["a worker", worker],
-  ])("is FORBIDDEN for %s — the Inbox lists only what the caller may decide", async (_name, user) => {
-    const prisma = makePrisma();
-    const err = await errorOf(impactPriorsQuery(null, {}, ctx(user, prisma)));
-    expect(err.extensions.code).toBe("FORBIDDEN");
-    expect(prisma.impactPrior.findMany).not.toHaveBeenCalled();
   });
 });
 

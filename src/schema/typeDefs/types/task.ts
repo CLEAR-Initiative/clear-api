@@ -12,11 +12,10 @@ const OBSERVED_METHODS_DOC = OBSERVED_ESTIMATE_METHODS.map((m) => "`" + m + "`")
  * heartbeat, complete, fail — and is the only writer of its database:
  * Postgres is the broker, GraphQL the only door.
  *
- * The first kind of work is the `event.impact_prior` family, whose typed
- * result is an ImpactPrior (the CLEAR Domain Ontology's class) stored beside
- * the Event. One request fans out into one Task per source kind
- * (`event.impact_prior.clear`, `event.impact_prior.web`, …), so several
- * Workers propose on one Event side by side.
+ * The first kind of work is `event.impact_prior.web` ("Web search"), whose
+ * typed result is CaseProposals — proposed signals — stored beside the
+ * Event. The ImpactPrior itself is computed from history
+ * (`ComputedImpactPrior`); the V1–V3 whole-prior proposals are history.
  */
 export const taskTypeDef = gql`
   """Lifecycle of a Task. PENDING → LEASED (claimed) → COMPLETED | FAILED;
@@ -38,9 +37,8 @@ export const taskTypeDef = gql`
     api
   }
 
-  """A Worker writes \`proposed\` only. A named admin or analyst moves it
-  to \`accepted\` or \`rejected\` with a rationale; only \`accepted\` counts
-  downstream, a rejected one stays, superseded, with its reason."""
+  """The state a V1–V3 whole-prior proposal was left in. Retired: none is
+  created or decided any more."""
   enum ImpactPriorState {
     proposed
     accepted
@@ -59,11 +57,11 @@ export const taskTypeDef = gql`
   """One unit of Worker-performed work (ADR-0010)."""
   type Task {
     id: String!
-    """The kind of work, e.g. \`event.impact_prior.clear\` (the Dagster
-    drain over CLEAR data) or \`event.impact_prior.web\` (the web). A Worker
-    claims by exact kind. One request fans out into one Task per enabled
-    source kind. The bare \`event.impact_prior\` is the pre-fan-out kind,
-    still claimable for one release."""
+    """The kind of work, e.g. \`event.impact_prior.web\` (the web search
+    that proposes signals; the name is historical). A Worker claims by exact
+    kind. One request fans out into one Task per enabled source kind. Older
+    Tasks may carry the retired whole-prior kinds \`event.impact_prior\`
+    and \`event.impact_prior.clear\`."""
     kind: String!
     """The subject's type, e.g. \`event\`."""
     subjectType: String!
@@ -110,7 +108,7 @@ export const taskTypeDef = gql`
     \`no_new_cases\` (every case found was already proposed for the Event)."""
     outcome: String
     """Raw Worker output, kept for audit. The typed result lives beside the
-    subject (see \`Event.impactPriors\`)."""
+    subject (see \`Event.caseProposals\`)."""
     result: JSON
     """Spend as the Worker reported it on completion."""
     model: String
@@ -122,13 +120,10 @@ export const taskTypeDef = gql`
     updatedAt: DateTime!
   }
 
-  """What has typically happened before given a hazard type, a context and a
-  population (the CLEAR Domain Ontology's ImpactPrior), inferred from
-  historical Events similar to the input Event. Produced by a Worker from an
-  \`event.impact_prior.*\` Task. Supersede, never overwrite, within a source
-  kind: a later request produces a new ImpactPrior pointing at the previous
-  one of the same \`sourceKind\`; proposals from different sources sit side
-  by side on the Event and are decided one by one."""
+  """History: a whole ImpactPrior a Worker proposed in V1–V3, and the
+  decision recorded on it. Retired (2026-10-08): nothing creates or decides
+  one any more. The ImpactPrior is computed from history instead (see
+  \`ComputedImpactPrior\`); what analysts review is CaseProposals."""
   type ImpactPrior {
     id: String!
     eventId: String!
@@ -313,12 +308,6 @@ export const taskTypeDef = gql`
     rejected
   }
 
-  """The decision a named admin or analyst records on a proposed ImpactPrior."""
-  enum ImpactPriorDecision {
-    accepted
-    rejected
-  }
-
   """Spend a Worker reports when completing a Task. Cost is computed by the
   caller from its own price table."""
   input TaskUsageInput {
@@ -328,39 +317,16 @@ export const taskTypeDef = gql`
     costUsd: Float!
   }
 
-  """An ImpactPrior proposal, given by a Worker on completing an
-  \`event.impact_prior.*\` Task with at least one case. Omit it entirely to
-  record \`no_prior_found\`. The source kind is taken from the Task, never
-  from the input."""
-  input ImpactPriorInput {
-    """Must be one of the Event's \`types\`."""
-    hazardType: String!
-    """Must be the level-0 ancestor of the Event's primary location."""
-    countryLocationId: String!
-    """\`district\` or \`country\`."""
-    geographicScope: String!
-    horizonYears: Int!
-    populationGroup: String
-    metric: String
-    lowerBound: Float
-    upperBound: Float
-    numberOfCases: Int!
-    """One entry per case; see \`ImpactPrior.basis\`."""
-    basis: JSON!
-    validFrom: DateTime
-    validTo: DateTime
-    methodVersion: String!
-  }
-
   extend type Event {
     """Enrichment Tasks about this Event, newest first. Requires any
     authenticated content reader; \`lastError\` is redacted for all but the
     requester and platform admins."""
     enrichmentTasks: [Task!]!
-    """ImpactPriors produced for this Event, newest first, from every
-    source side by side (see \`sourceKind\`). \`accepted\` follows the
-    Event's visibility; \`proposed\` is visible to its requester and to
-    deciders; \`rejected\` to deciders only."""
+    """History: the whole ImpactPriors Workers proposed for this Event in
+    V1–V3, newest first. \`accepted\` follows the Event's visibility;
+    \`proposed\` is visible to its requester and to deciders; \`rejected\`
+    to deciders only. For what history suggests now, read
+    \`computedImpactPriors\`."""
     impactPriors: [ImpactPrior!]!
     """Web cases proposed while enriching this Event (V4), newest first,
     under the ImpactPrior visibility rule: \`accepted\` follows the Event,

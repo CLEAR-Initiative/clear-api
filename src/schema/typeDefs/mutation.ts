@@ -1090,30 +1090,25 @@ export const mutationTypeDef = gql`
   extend type Mutation {
     """Request an Event enrichment. Always fans out: one Task per enabled
     source kind of the \`kind\` family (server-configured; today
-    \`event.impact_prior.clear\` for CLEAR data and \`event.impact_prior.web\`
-    for the web), so every Worker proposes on the Event side by side and
-    nothing marks it done. Returns the open (PENDING / LEASED) Task per
+    \`event.impact_prior.web\`, the web search that proposes signals for
+    analysts to review), so every Worker proposes on the Event side by side
+    and nothing marks it done. Returns the open (PENDING / LEASED) Task per
     kind, in configured order — an already-open one is returned unchanged
     rather than duplicated; only kinds with none get a new Task. Same
     rights as \`escalateEvent\`: a global admin or analyst anywhere; a team
     content writer for the \`teamId\` they act on behalf of. Capped per
     requester per UTC day, counting requests not Tasks (FORBIDDEN with
     subCode \`DAILY_CAP\`); a request that creates nothing does not count.
-    The only family today is \`event.impact_prior\`; \`horizonYears\`
-    (default 10) is how far back each Worker looks for cases."""
+    The only family today is \`event.impact_prior\` (a historical name: the
+    ImpactPrior itself is computed, see \`Event.computedImpactPriors\`);
+    \`horizonYears\` (default 10) is how far back each Worker looks for
+    cases."""
     requestEventEnrichment(
       eventId: String!
       kind: String = "event.impact_prior"
       teamId: String
       horizonYears: Int
     ): [Task!]!
-
-    """Decide a proposed ImpactPrior: a platform admin or analyst accepts or
-    rejects it with a rationale, recorded as who, when and why (the Domain
-    Ontology's DecisionRecord). Only from \`proposed\` (CONFLICT otherwise).
-    Only an accepted ImpactPrior counts downstream; a rejected one stays,
-    superseded, with its reason."""
-    decideImpactPrior(id: String!, decision: ImpactPriorDecision!, rationale: String!): ImpactPrior!
 
     """Decide one web case (V4): a platform admin or analyst accepts or
     rejects it, recorded as who, when and why (the Domain Ontology's
@@ -1145,8 +1140,9 @@ export const mutationTypeDef = gql`
     oldest claimable Tasks of exactly \`kind\` — PENDING, or LEASED past
     their expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two
     Workers hold the same Task. A Worker drains its own source kind
-    (\`event.impact_prior.clear\`, \`event.impact_prior.web\`, …); the bare
-    \`event.impact_prior\` stays claimable for one release. \`limit\` is
+    (\`event.impact_prior.web\`, …). The retired whole-prior kinds — the
+    bare \`event.impact_prior\` and \`event.impact_prior.clear\` — are
+    BAD_USER_INPUT. \`limit\` is
     clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
     heartbeat to keep it."""
     claimTasks(kind: String!, limit: Int = 1): [Task!]!
@@ -1167,15 +1163,13 @@ export const mutationTypeDef = gql`
     failTask(id: String!, leaseToken: String!, error: String!): Task!
 
     """WORKER CONTRACT: report the Task done. \`result\` is the raw output
-    (audit only). For an \`event.impact_prior.*\` Task, pass \`impactPrior\`
-    to record a proposal (outcome \`produced\`; its \`sourceKind\` is the
-    Task's kind, and it supersedes only the newest proposal of that same
-    kind) or omit it to record \`no_prior_found\`. For an
-    \`event.impact_prior.web\` Task, pass \`cases\` and \`methodVersion\`
-    instead (V4): one CaseProposal per case, each decided on its own; a URL
-    already proposed for the Event is skipped; an empty list records
-    \`no_prior_found\`. The web cases inside an \`impactPrior\`'s
-    \`basis\` become CaseProposals too. Only the lease owner,
+    (audit only). For an \`event.impact_prior.web\` Task, pass \`cases\`
+    and \`methodVersion\` (V4): one CaseProposal per case, each decided on
+    its own (outcome \`produced\`); a URL already proposed for the Event is
+    skipped (\`no_new_cases\` when all were); an empty list or none records
+    \`no_prior_found\`. Any other kind completes with \`result\` only. The
+    whole-prior \`impactPrior\` input was removed (2026-10-08): the
+    ImpactPrior is computed from history. Only the lease owner,
     only while LEASED (CONFLICT
     \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
     requested meanwhile the Task becomes CANCELLED and the result is
@@ -1185,7 +1179,6 @@ export const mutationTypeDef = gql`
       leaseToken: String!
       result: JSON!
       usage: TaskUsageInput
-      impactPrior: ImpactPriorInput
       cases: [CaseProposalInput!]
       """Skill or handler version that produced \`cases\`; required with them."""
       methodVersion: String

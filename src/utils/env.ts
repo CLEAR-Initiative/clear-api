@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRetiredKind } from "./task-kinds.js";
 
 /**
  * Optional URL that treats the empty string as "not set". Needed because
@@ -215,31 +216,38 @@ const envSchema = z.object({
   ),
   /** The source kinds one enrichment request fans out into — one Task per
    *  kind, each drained by its own Worker. Comma-separated; each must be
-   *  `event.impact_prior` or `event.impact_prior.<source>`. Dropping a kind
-   *  here stops new Tasks of it; open ones stay claimable.
+   *  `event.impact_prior.<source>`. Dropping a kind here stops new Tasks of
+   *  it; open ones stay claimable.
    *
-   *  Default `.web` only (V4): the Claude routine searches CLEAR's Events and
-   *  knowledge base before the web and proposes cases, and the prior is
-   *  computed from accepted history, so the Dagster drain's LLM-proposed
-   *  `.clear` prior is no longer requested. Add `event.impact_prior.clear`
-   *  back to have it propose again. */
+   *  Default `.web` only: the Claude routine proposes signals, and the
+   *  ImpactPrior is computed from accepted history. The retired whole-prior
+   *  kinds (the bare `event.impact_prior`, `event.impact_prior.clear`) are
+   *  dropped with a warning rather than failing boot, since an env file may
+   *  still name them. */
   TASK_IMPACT_PRIOR_KINDS: z
     .preprocess(
       (v) => (v === "" ? undefined : v),
       z.string().default("event.impact_prior.web"),
     )
-    .transform((s) => [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))])
+    .transform((s) => {
+      const kinds = [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))];
+      const retired = kinds.filter(isRetiredKind);
+      if (retired.length > 0) {
+        console.warn(`[env] TASK_IMPACT_PRIOR_KINDS: ignoring retired kind(s) ${retired.join(", ")}`);
+      }
+      return kinds.filter((k) => !isRetiredKind(k));
+    })
     .pipe(
       z
         .array(
           z
             .string()
             .regex(
-              /^event\.impact_prior(\.[a-z0-9_]+)?$/,
-              "each kind must be event.impact_prior or event.impact_prior.<source> (lowercase letters, digits, _)",
+              /^event\.impact_prior\.[a-z0-9_]+$/,
+              "each kind must be event.impact_prior.<source> (lowercase letters, digits, _)",
             ),
         )
-        .min(1, "TASK_IMPACT_PRIOR_KINDS must name at least one kind"),
+        .min(1, "TASK_IMPACT_PRIOR_KINDS must name at least one kind that is not retired"),
     ),
 });
 

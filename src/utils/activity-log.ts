@@ -37,8 +37,9 @@ export type ActivityAction =
   // CLEAR Agent told their owner, so reading them is itself audited.
   | "conversation.admin_read"
   // Tasks and Workers (ADR-0010): a user asked for an Event enrichment, a
-  // requester/admin cancelled one, and a named person decided a
-  // Worker-produced ImpactPrior.
+  // requester/admin cancelled one, a named person decided a proposed case.
+  // `impact_prior.decided` is retired (no whole prior is decided any more);
+  // it stays so existing log rows keep their type.
   | "task.requested"
   | "task.cancelled"
   | "impact_prior.decided"

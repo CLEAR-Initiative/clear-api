@@ -790,19 +790,12 @@ except the worker role, which requests nothing.<div class="field-args"><span cla
   </tr><tr>
     <td><code>eventImpactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for an Event, newest first. An `accepted`
-one follows the Event's visibility; a `proposed` one is visible to its
-requester and to deciders (admins and analysts); a `rejected` one to
-deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
-  </tr><tr>
-    <td><code>impactPriors</code></td>
-    <td><code>[ImpactPrior!]!</code></td>
-    <td>The Inbox's Review items: ImpactPriors in one state across every
-Event, newest first — `proposed` by default, i.e. what is waiting
-for a decision. Platform admins and analysts only, so the list is
-exactly what the caller may decide. Web proposals (and the bare
-pre-fan-out kind) are left out: their cases are decided one by one
-through `caseProposals` (V4).<div class="field-args"><span class="arg"><code>state: ImpactPriorState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+    <td>History: the whole ImpactPriors Workers proposed for an Event in
+V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
+computed, see `Event.computedImpactPriors`) and none can be decided.
+An `accepted` one follows the Event's visibility; a `proposed` one
+is visible to its requester and to deciders (admins and analysts); a
+`rejected` one to deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr>
     <td><code>caseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
@@ -1607,25 +1600,19 @@ schedules an immediate retry via the poller.<div class="field-args"><span class=
     <td><code>[Task!]!</code></td>
     <td>Request an Event enrichment. Always fans out: one Task per enabled
 source kind of the `kind` family (server-configured; today
-`event.impact_prior.clear` for CLEAR data and `event.impact_prior.web`
-for the web), so every Worker proposes on the Event side by side and
-nothing marks it done. Returns the open (PENDING / LEASED) Task per
+`event.impact_prior.web`, the web search that proposes signals for
+analysts to review), so every Worker proposes on the Event side by side
+and nothing marks it done. Returns the open (PENDING / LEASED) Task per
 kind, in configured order — an already-open one is returned unchanged
 rather than duplicated; only kinds with none get a new Task. Same
 rights as `escalateEvent`: a global admin or analyst anywhere; a team
 content writer for the `teamId` they act on behalf of. Capped per
 requester per UTC day, counting requests not Tasks (FORBIDDEN with
 subCode `DAILY_CAP`); a request that creates nothing does not count.
-The only family today is `event.impact_prior`; `horizonYears`
-(default 10) is how far back each Worker looks for cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
-  </tr><tr id="mutation-decideimpactprior">
-    <td><code>decideImpactPrior</code></td>
-    <td><code>ImpactPrior!</code></td>
-    <td>Decide a proposed ImpactPrior: a platform admin or analyst accepts or
-rejects it with a rationale, recorded as who, when and why (the Domain
-Ontology's DecisionRecord). Only from `proposed` (CONFLICT otherwise).
-Only an accepted ImpactPrior counts downstream; a rejected one stays,
-superseded, with its reason.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: ImpactPriorDecision!</code></span><span class="arg"><code>rationale: String!</code></span></div></td>
+The only family today is `event.impact_prior` (a historical name: the
+ImpactPrior itself is computed, see `Event.computedImpactPriors`);
+`horizonYears` (default 10) is how far back each Worker looks for
+cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
   </tr><tr id="mutation-decidecaseproposal">
     <td><code>decideCaseProposal</code></td>
     <td><code>CaseProposal!</code></td>
@@ -1661,8 +1648,9 @@ result is discarded). Any other status is CONFLICT.<div class="field-args"><span
 oldest claimable Tasks of exactly `kind` — PENDING, or LEASED past
 their expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two
 Workers hold the same Task. A Worker drains its own source kind
-(`event.impact_prior.clear`, `event.impact_prior.web`, …); the bare
-`event.impact_prior` stays claimable for one release. `limit` is
+(`event.impact_prior.web`, …). The retired whole-prior kinds — the
+bare `event.impact_prior` and `event.impact_prior.clear` — are
+BAD_USER_INPUT. `limit` is
 clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
 heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr id="mutation-heartbeattask">
@@ -1685,19 +1673,17 @@ claims have been used. Only the lease owner, only while LEASED.<div class="field
     <td><code>completeTask</code></td>
     <td><code>Task!</code></td>
     <td>WORKER CONTRACT: report the Task done. `result` is the raw output
-(audit only). For an `event.impact_prior.*` Task, pass `impactPrior`
-to record a proposal (outcome `produced`; its `sourceKind` is the
-Task's kind, and it supersedes only the newest proposal of that same
-kind) or omit it to record `no_prior_found`. For an
-`event.impact_prior.web` Task, pass `cases` and `methodVersion`
-instead (V4): one CaseProposal per case, each decided on its own; a URL
-already proposed for the Event is skipped; an empty list records
-`no_prior_found`. The web cases inside an `impactPrior`'s
-`basis` become CaseProposals too. Only the lease owner,
+(audit only). For an `event.impact_prior.web` Task, pass `cases`
+and `methodVersion` (V4): one CaseProposal per case, each decided on
+its own (outcome `produced`); a URL already proposed for the Event is
+skipped (`no_new_cases` when all were); an empty list or none records
+`no_prior_found`. Any other kind completes with `result` only. The
+whole-prior `impactPrior` input was removed (2026-10-08): the
+ImpactPrior is computed from history. Only the lease owner,
 only while LEASED (CONFLICT
 `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
 requested meanwhile the Task becomes CANCELLED and the result is
-discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>impactPrior: ImpactPriorInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
+discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
   </tr></tbody>
     </table>
 
@@ -1714,9 +1700,8 @@ the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</t
 Ontology's Metric types). The sector routinely conflates them; keeping
 them apart is the point.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>people_affected</code></td><td>—</td></tr><tr><td><code>people_displaced_new</code></td><td>—</td></tr><tr><td><code>people_displaced_cumulative</code></td><td>—</td></tr><tr><td><code>people_in_need</code></td><td>—</td></tr><tr><td><code>people_targeted</code></td><td>—</td></tr><tr><td><code>people_reached</code></td><td>—</td></tr><tr><td><code>households_affected</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
-up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriordecision"><code>ImpactPriorDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed ImpactPrior.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>A Worker writes `proposed` only. A named admin or analyst moves it
-to `accepted` or `rejected` with a rationale; only `accepted` counts
-downstream, a rejected one stays, superseded, with its reason.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>The state a V1–V3 whole-prior proposal was left in. Retired: none is
+created or decided any more.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
@@ -2750,61 +2735,6 @@ updated — provided the thread is not yet promoted (reviewState !=
 &quot;approved_public&quot; and no promotedSignalId) and belongs to
 groundSourceId. A promoted/terminal (or unknown/wrong-source) target
 is never mutated: a NEW thread is created instead, with a warning.</td>
-  </tr></tbody></table><h3 id="type-impactpriorinput"><code>ImpactPriorInput</code> <span class="type-badge">input</span></h3><p>An ImpactPrior proposal, given by a Worker on completing an
-`event.impact_prior.*` Task with at least one case. Omit it entirely to
-record `no_prior_found`. The source kind is taken from the Task, never
-from the input.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
-    <td><code>hazardType</code></td>
-    <td><code>String!</code></td>
-    <td>Must be one of the Event's `types`.</td>
-  </tr><tr>
-    <td><code>countryLocationId</code></td>
-    <td><code>String!</code></td>
-    <td>Must be the level-0 ancestor of the Event's primary location.</td>
-  </tr><tr>
-    <td><code>geographicScope</code></td>
-    <td><code>String!</code></td>
-    <td>`district` or `country`.</td>
-  </tr><tr>
-    <td><code>horizonYears</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>populationGroup</code></td>
-    <td><code>String</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>metric</code></td>
-    <td><code>String</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>lowerBound</code></td>
-    <td><code>Float</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>upperBound</code></td>
-    <td><code>Float</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>numberOfCases</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>basis</code></td>
-    <td><code>JSON!</code></td>
-    <td>One entry per case; see `ImpactPrior.basis`.</td>
-  </tr><tr>
-    <td><code>validFrom</code></td>
-    <td><code>DateTime</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>validTo</code></td>
-    <td><code>DateTime</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>methodVersion</code></td>
-    <td><code>String!</code></td>
-    <td>—</td>
   </tr></tbody></table><h3 id="type-inviteuserinput"><code>InviteUserInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>email</code></td>
     <td><code>String!</code></td>
@@ -5093,10 +5023,11 @@ requester and platform admins.</td>
   </tr><tr>
     <td><code>impactPriors</code></td>
     <td><code>[ImpactPrior!]!</code></td>
-    <td>ImpactPriors produced for this Event, newest first, from every
-source side by side (see `sourceKind`). `accepted` follows the
-Event's visibility; `proposed` is visible to its requester and to
-deciders; `rejected` to deciders only.</td>
+    <td>History: the whole ImpactPriors Workers proposed for this Event in
+V1–V3, newest first. `accepted` follows the Event's visibility;
+`proposed` is visible to its requester and to deciders; `rejected`
+to deciders only. For what history suggests now, read
+`computedImpactPriors`.</td>
   </tr><tr>
     <td><code>caseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
@@ -5633,13 +5564,10 @@ it carries no message content and no sender identity.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-impactprior"><code>ImpactPrior</code> <span class="type-badge">object</span></h3><p>What has typically happened before given a hazard type, a context and a
-population (the CLEAR Domain Ontology's ImpactPrior), inferred from
-historical Events similar to the input Event. Produced by a Worker from an
-`event.impact_prior.*` Task. Supersede, never overwrite, within a source
-kind: a later request produces a new ImpactPrior pointing at the previous
-one of the same `sourceKind`; proposals from different sources sit side
-by side on the Event and are decided one by one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-impactprior"><code>ImpactPrior</code> <span class="type-badge">object</span></h3><p>History: a whole ImpactPrior a Worker proposed in V1–V3, and the
+decision recorded on it. Retired (2026-10-08): nothing creates or decides
+one any more. The ImpactPrior is computed from history instead (see
+`ComputedImpactPrior`); what analysts review is CaseProposals.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -6870,11 +6798,11 @@ skipped (an id that no longer resolves to an event).</p><table class="ref-table"
   </tr><tr>
     <td><code>kind</code></td>
     <td><code>String!</code></td>
-    <td>The kind of work, e.g. `event.impact_prior.clear` (the Dagster
-drain over CLEAR data) or `event.impact_prior.web` (the web). A Worker
-claims by exact kind. One request fans out into one Task per enabled
-source kind. The bare `event.impact_prior` is the pre-fan-out kind,
-still claimable for one release.</td>
+    <td>The kind of work, e.g. `event.impact_prior.web` (the web search
+that proposes signals; the name is historical). A Worker claims by exact
+kind. One request fans out into one Task per enabled source kind. Older
+Tasks may carry the retired whole-prior kinds `event.impact_prior`
+and `event.impact_prior.clear`.</td>
   </tr><tr>
     <td><code>subjectType</code></td>
     <td><code>String!</code></td>
@@ -6966,7 +6894,7 @@ heartbeat or completion and stops.</td>
     <td><code>result</code></td>
     <td><code>JSON</code></td>
     <td>Raw Worker output, kept for audit. The typed result lives beside the
-subject (see `Event.impactPriors`).</td>
+subject (see `Event.caseProposals`).</td>
   </tr><tr>
     <td><code>model</code></td>
     <td><code>String</code></td>

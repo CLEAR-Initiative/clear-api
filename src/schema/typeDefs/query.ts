@@ -607,19 +607,13 @@ export const queryTypeDef = gql`
     except the worker role, which requests nothing."""
     myTasks(status: TaskStatus, limit: Int = 50, offset: Int = 0): [Task!]!
 
-    """ImpactPriors produced for an Event, newest first. An \`accepted\`
-    one follows the Event's visibility; a \`proposed\` one is visible to its
-    requester and to deciders (admins and analysts); a \`rejected\` one to
-    deciders only."""
+    """History: the whole ImpactPriors Workers proposed for an Event in
+    V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
+    computed, see \`Event.computedImpactPriors\`) and none can be decided.
+    An \`accepted\` one follows the Event's visibility; a \`proposed\` one
+    is visible to its requester and to deciders (admins and analysts); a
+    \`rejected\` one to deciders only."""
     eventImpactPriors(eventId: String!): [ImpactPrior!]!
-
-    """The Inbox's Review items: ImpactPriors in one state across every
-    Event, newest first — \`proposed\` by default, i.e. what is waiting
-    for a decision. Platform admins and analysts only, so the list is
-    exactly what the caller may decide. Web proposals (and the bare
-    pre-fan-out kind) are left out: their cases are decided one by one
-    through \`caseProposals\` (V4)."""
-    impactPriors(state: ImpactPriorState = proposed, limit: Int = 50, offset: Int = 0): [ImpactPrior!]!
 
     """The Inbox's per-case Review items (V4): CaseProposals in one state
     across every Event, newest first — \`proposed\` by default. Platform

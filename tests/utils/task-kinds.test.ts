@@ -1,9 +1,17 @@
 /**
  * The impact-prior kind family (ADR-0010, V3): the bare kind, the per-source
- * kinds under it, and the labels notifications use for them.
+ * kinds under it, the retired whole-prior kinds, and the labels
+ * notifications use for them.
  */
 import { describe, expect, it } from "vitest";
-import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind, taskKindLabel } from "../../src/utils/task-kinds.js";
+import {
+  IMPACT_PRIOR_KIND,
+  RETIRED_KINDS,
+  impactPriorSource,
+  isImpactPriorKind,
+  isRetiredKind,
+  taskKindLabel,
+} from "../../src/utils/task-kinds.js";
 
 describe("task kinds", () => {
   it("the family is the bare kind and anything dotted under it", () => {
@@ -29,5 +37,15 @@ describe("task kinds", () => {
     expect(taskKindLabel("event.impact_prior.web")).toBe("Web search");
     expect(taskKindLabel("event.impact_prior.satellite")).toBe("Impact prior from satellite");
     expect(taskKindLabel("event.other")).toBe("event.other");
+  });
+
+  it("retires exactly the whole-prior kinds — the bare one and .clear", () => {
+    expect([...RETIRED_KINDS].sort()).toEqual(["event.impact_prior", "event.impact_prior.clear"]);
+    expect(isRetiredKind("event.impact_prior")).toBe(true);
+    expect(isRetiredKind("event.impact_prior.clear")).toBe(true);
+    expect(isRetiredKind("event.impact_prior.web")).toBe(false);
+    expect(isRetiredKind("event.impact_prior.satellite")).toBe(false);
+    expect(isRetiredKind("event.impact_prior.clear_v2")).toBe(false);
+    expect(isRetiredKind("event.other")).toBe(false);
   });
 });
