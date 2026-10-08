@@ -64,6 +64,10 @@ _Avoid_: webhook source (mechanism, not concept), platform source
 A Signal whose raw input is a single X (Twitter) post from a **Push Feed**. Ungraded reliability by design — never treated as verified reporting.
 _Avoid_: tweet signal (in product copy)
 
+**Severity**:
+A 1-5 magnitude on a Signal or Event. **Nullable** — `null` means *unknown* (the source supplied none), which is NOT the scale floor and must never be defaulted to one (no `?? 1`). Treatment of a null severity: severity range filters **include** it (unknown isn't "below the floor"); alert matching treats it as `ALL_SEVERITIES_FLOOR` **for matching only** — reaching subscribers who asked for every severity, not those who raised their minimum (`src/utils/alert-severity.ts`); it sorts **last**. See clear-pipeline ADR-0010 `docs/adr/0010-unknown-values-stay-null.md` (unknown values stay null).
+_Avoid_: defaulting null to 1 or 3, treating unknown as low
+
 ### Agent conversations
 
 **Conversation**:
