@@ -312,6 +312,29 @@ describe("Mutation.createEvent", () => {
     expect(data.validFrom).toBeInstanceOf(Date);
   });
 
+  it.each(["abc", "0x10", "1.5", "1,000"])("rejects invalid population string %j before any write", async (bad) => {
+    const create = vi.fn();
+    const ctx = buildContext(ANALYST, { events: { create } });
+    await expect(
+      createEvent(null, { input: baseCreateInput({ lat: 1, lng: 2, populationAffected: bad }) as never }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(createPointLocation).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("treats blank population as absent and trims padded values", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
+    const ctx = buildContext(ANALYST, { events: { create }, signalEvents: { createMany: vi.fn() } });
+    await createEvent(
+      null,
+      { input: baseCreateInput({ locationId: "L1", populationAffected: "", populationDisplaced: " +5 " }) as never },
+      ctx,
+    );
+    const data = create.mock.calls[0][0].data;
+    expect(data.populationAffected).toBeUndefined();
+    expect(data.populationDisplaced).toBe(5n);
+  });
+
   it("dedupes signalIds before creating signalEvents links", async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
@@ -408,6 +431,42 @@ describe("Mutation.updateEvent", () => {
     expect(data.populationDisplaced).toBe(BigInt(50));
     expect(data.title).toBe("New");
     expect(data.casualties).toBeUndefined();
+  });
+
+  it.each(["abc", "0x10", "1.5", "1,000"])("rejects invalid population string %j before linking or updating", async (bad) => {
+    const createMany = vi.fn();
+    const update = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }), update },
+      signalEvents: { findMany: vi.fn().mockResolvedValue([]), createMany },
+    });
+    await expect(
+      updateEvent(null, { id: "e1", input: { signalIds: ["a"], populationDisplaced: bad } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(createMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("treats blank population as no change (previously wrote 0)", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "e1" });
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }), update },
+      signalEvents: { findMany: vi.fn(), createMany: vi.fn() },
+    });
+    await updateEvent(null, { id: "e1", input: { populationAffected: "", populationDisplaced: "  " } }, ctx);
+    const data = update.mock.calls[0][0].data;
+    expect(data.populationAffected).toBeUndefined();
+    expect(data.populationDisplaced).toBeUndefined();
+  });
+
+  it("treats null population as no change (previously threw TypeError)", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "e1" });
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }), update },
+      signalEvents: { findMany: vi.fn(), createMany: vi.fn() },
+    });
+    await updateEvent(null, { id: "e1", input: { populationAffected: null } }, ctx);
+    expect(update.mock.calls[0][0].data.populationAffected).toBeUndefined();
   });
 
   it("clears validTo on explicit null and leaves it untouched when omitted", async () => {
@@ -600,8 +659,18 @@ describe("Event.signals", () => {
     await eventResolvers.Event.signals({ id: "e1" }, {}, ctx, infoWithSelections(["source"]));
     const include = findMany.mock.calls[0][0].include.signal.include;
     expect(include.generalLocation).toBeUndefined();
-    expect(findMany.mock.calls[0][0].where).toEqual({ eventId: "e1" });
+    expect(findMany.mock.calls[0][0].where).toEqual({ eventId: "e1", signal: { retracted: false } });
     expect(findMany.mock.calls[0][0].take).toBe(50);
+  });
+
+  it("hides retracted signals on the pre-loaded fast path", () => {
+    const ctx = buildContext(VIEWER, {});
+    const parent = {
+      id: "e1",
+      signalEvents: [{ signal: { id: "s1", retracted: false } }, { signal: { id: "s2", retracted: true } }],
+    };
+    const result = eventResolvers.Event.signals(parent, {}, ctx, infoWithSelections([]));
+    expect(result).toEqual([{ id: "s1", retracted: false }]);
   });
 
   it("adds location includes when the selection requests a signal location", async () => {

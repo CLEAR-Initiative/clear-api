@@ -138,6 +138,15 @@ describe("batchResolve", () => {
     expect(out.get("e2")).toEqual({ id: "loc-shared" });
   });
 
+  it("excludes retracted signals from the query", async () => {
+    const { prisma, signalsFindMany } = fakePrisma({
+      events: [{ id: "e1", firstSignalCreatedAt: D1 }],
+      signals: [],
+    });
+    await batchResolve(prisma, "en", ["e1"]);
+    expect(signalsFindMany.mock.calls[0]![0].where).toMatchObject({ retracted: false });
+  });
+
   it("returns an empty map for an empty batch without querying", async () => {
     const { prisma, eventsFindMany, signalsFindMany } = fakePrisma({ events: [], signals: [] });
     const out = await batchResolve(prisma, "en", []);

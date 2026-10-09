@@ -88,11 +88,45 @@ interface UpdateEventInput {
   locationId?: string;
   types?: string[];
   severity?: number;
-  populationAffected?: string;
-  populationDisplaced?: string;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
   casualties?: number;
   rank?: number;
   signalIds?: string[];
+}
+
+/** Absent = leave unchanged; explicit null = clear (`?? undefined` would
+ *  swallow the null, which is why updateEvent can't be used for this). */
+interface EventAggregatesInput {
+  severity?: number | null;
+  casualties?: number | null;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
+  rank: number;
+  title?: string | null;
+  description?: string | null;
+  rewriteMembersHash?: string | null;
+}
+
+/** BigInt column from its decimal-string input, keeping absent (undefined)
+ *  and cleared (null) distinct. */
+function bigIntOrKeep(value: string | null | undefined, field: string): bigint | null | undefined {
+  if (value === undefined || value === null) return value;
+  // BigInt() alone would turn "" into 0n and "0x10" into 16n.
+  if (!/^-?\d+$/.test(value)) {
+    throw new GraphQLError(`${field} must be a decimal integer string`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return BigInt(value);
+}
+
+/** Lenient variant for createEvent/updateEvent, whose form callers may send
+ *  "", padded or "+"-signed values (all accepted by the old raw BigInt()):
+ *  blank/null = absent, whitespace and a leading "+" ignored. */
+function optionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
+  const trimmed = value?.trim().replace(/^\+/, "");
+  return bigIntOrKeep(trimmed ? trimmed : undefined, field) ?? undefined;
 }
 
 export const eventResolvers = {
@@ -198,6 +232,9 @@ export const eventResolvers = {
       // teamId they're acting on behalf of. See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      // Validated before any write (point location, event row).
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       // Resolve location for the event
       let locationId = input.locationId;
@@ -296,12 +333,8 @@ export const eventResolvers = {
           locationId,
           types: input.types,
           severity: input.severity,
-          populationAffected: input.populationAffected
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced
-            ? BigInt(input.populationDisplaced)
-            : undefined,
+          populationAffected,
+          populationDisplaced,
           casualties: input.casualties,
           rank: input.rank,
         },
@@ -339,6 +372,65 @@ export const eventResolvers = {
       return event;
     },
 
+    // Overwrites an event's aggregates with values the pipeline recomputed from
+    // its live members. Absent fields are kept; explicit nulls clear them.
+    setEventAggregates: async (
+      _parent: unknown,
+      args: { id: string; input: EventAggregatesInput; members: { id: string; revision: number }[] },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const { id, input, members } = args;
+      const data = {
+        severity: input.severity,
+        casualties: input.casualties,
+        populationAffected: bigIntOrKeep(input.populationAffected, "populationAffected"),
+        populationDisplaced: bigIntOrKeep(input.populationDisplaced, "populationDisplaced"),
+        rank: input.rank,
+        title: input.title,
+        description: input.description,
+        rewriteMembersHash: input.rewriteMembersHash,
+      };
+      const sent = new Map(members.map((m) => [m.id, m.revision]));
+      // Would otherwise read as stale and be silently dropped.
+      if (sent.size !== members.length) {
+        throw new GraphQLError("members has duplicate ids", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      return context.prisma.$transaction(async (tx) => {
+        // Serialises writers per event: the member check below sees every
+        // write committed by an earlier writer.
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "events" WHERE id = ${id} FOR UPDATE
+        `;
+        if (locked.length === 0) {
+          throw new GraphQLError("Event not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+
+        // Totals computed from a stale member snapshot must not overwrite newer
+        // ones. A change committed after this check leaves its signal pending,
+        // so a later recompute writes after this one.
+        const live = await tx.signals.findMany({
+          where: { retracted: false, signalEvents: { some: { eventId: id } } },
+          select: { id: true, revision: true },
+        });
+        const stale =
+          live.length !== sent.size || live.some((s) => sent.get(s.id) !== s.revision);
+        if (stale) {
+          throw new GraphQLError(
+            "Event members changed since they were read; a newer recompute supersedes this one",
+            { extensions: { code: "STALE_EVENT_MEMBERS" } },
+          );
+        }
+
+        return tx.events.update({ where: { id }, data });
+      });
+    },
+
     updateEvent: async (
       _parent: unknown,
       args: { id: string; input: UpdateEventInput },
@@ -346,6 +438,9 @@ export const eventResolvers = {
     ) => {
       requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
+      // Validated before signal linking. Null/blank = no change, like the other fields here.
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       const existing = await context.prisma.events.findUnique({ where: { id } });
       if (!existing) {
@@ -422,12 +517,8 @@ export const eventResolvers = {
             locationId: input.locationId,
             types: input.types ?? undefined,
             severity: input.severity ?? undefined,
-            populationAffected: input.populationAffected !== undefined
-              ? BigInt(input.populationAffected)
-              : undefined,
-            populationDisplaced: input.populationDisplaced !== undefined
-              ? BigInt(input.populationDisplaced)
-              : undefined,
+            populationAffected,
+            populationDisplaced,
             casualties: input.casualties ?? undefined,
             rank: input.rank ?? undefined,
           },
@@ -776,8 +867,12 @@ export const eventResolvers = {
       info: import("graphql").GraphQLResolveInfo,
     ) => {
       // Fast path: pre-loaded from a deeper include.
+      // Retracted signals keep their link (retraction is reversible) but are hidden,
+      // matching their exclusion from the event's aggregates.
       if (parent.signalEvents) {
-        return parent.signalEvents.map((l) => l.signal);
+        return parent.signalEvents
+          .map((l) => l.signal)
+          .filter((s) => (s as { retracted?: boolean }).retracted !== true);
       }
       // Inspect the GraphQL selection to decide whether to include
       // signal-locations + their translations. /detection's events tab
@@ -815,7 +910,7 @@ export const eventResolvers = {
       };
       return context.prisma.signalEvents
         .findMany({
-          where: { eventId: parent.id },
+          where: { eventId: parent.id, signal: { retracted: false } },
           include: { signal: { include: signalInclude } },
           take: 50,
           // Intentionally no orderBy: ordering by signal.publishedAt

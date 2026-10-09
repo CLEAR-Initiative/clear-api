@@ -234,7 +234,9 @@ export async function fetchEventSignalLocations(
   } as const;
 
   const links = await prisma.signalEvents.findMany({
-    where: { eventId },
+    // Retracted signals were superseded upstream; their locations don't belong
+    // in the alert.
+    where: { eventId, signal: { retracted: false } },
     select: {
       signal: {
         select: {
