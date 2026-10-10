@@ -1,20 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 
-// Test files that open a real database: they use the `describeIfDb` /
-// `describeIfSeededDb` gates from tests/helpers/db.ts. Found by scanning the
-// sources at config time rather than by a naming convention, because only
-// some of them carry the `.db.test.ts` suffix today and a hand-kept list
-// would silently drift.
-function dbBackedTestFiles(dir = "tests"): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return dbBackedTestFiles(path);
-    if (!entry.name.endsWith(".test.ts")) return [];
-    return /\bdescribeIf(Seeded)?Db\(/.test(readFileSync(path, "utf8")) ? [path] : [];
-  });
-}
+import { dbBackedTestFiles } from "./tests/helpers/db-files.js";
 
 // CI's db-tests job (`bun run test:db`, SCRATCH_DB=1) exists to exercise the
 // migrations and the DB-backed suites. The DB-free files already ran under
