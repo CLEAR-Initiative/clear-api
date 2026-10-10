@@ -35,7 +35,10 @@ export default defineConfig({
     // Run files serially so each file's afterAll cleanup completes before the
     // next file starts — parallel workers otherwise see each other's
     // uncommitted-to-cleanup rows and produce flaky cross-file failures.
-    fileParallelism: false,
+    // That constraint only exists for the shared DB: when SKIP_DB_TESTS=1
+    // (CI's `check` job) no file touches a database, so files can run in
+    // parallel across the runner's cores.
+    fileParallelism: process.env.SKIP_DB_TESTS === "1",
     coverage: {
       provider: "v8",
       reportsDirectory: "./coverage",
