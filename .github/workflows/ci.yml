@@ -2,13 +2,26 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, dev, staging]
+    # prod gets PR CI for the periodic dev -> prod sync PRs.
+    branches: [dev, prod]
   push:
-    branches: [main, dev, staging]
+    branches: [dev]
+
+# Cancel a superseded run only for pull_request events (keyed on the PR
+# number). Push-to-dev runs are keyed on the SHA and never cancelled: with
+# branch protection's strict mode off they are the only test of the merged
+# result. Greptile auto-merge ignores the cancelled run (workflow_run
+# conclusion 'cancelled' -> evaluate skips) and acts on the new head's run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Normal runs are ~1.5 min; the default 360-min cap once let a hung run
+    # block the required check for 15 min until cancelled by hand.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -46,6 +59,7 @@ jobs:
   # No coverage gate: the thresholds are calibrated to the DB-free run.
   db-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -54,5 +68,24 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bunx prisma generate
+
+      # Build the scratch Postgres image through the Actions cache and load it
+      # into the daemon; TEST_DB_SKIP_BUILD below tells scripts/test-db.sh to
+      # use that image instead of repeating its own `docker build` (the plain
+      # builder cannot see the buildx builder's cache). Local runs still build.
+      # Measured on PR #219: cold cache 48 s (build + export), warm 18 s.
+      - uses: docker/setup-buildx-action@v3
+      - name: Build scratch Postgres image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/db
+          platforms: linux/amd64
+          load: true
+          tags: clear-api-test-db
+          cache-from: type=gha,scope=test-db
+          cache-to: type=gha,mode=max,scope=test-db
+
       - name: Test against a migrated scratch database
         run: bun run test:db
+        env:
+          TEST_DB_SKIP_BUILD: "1"
