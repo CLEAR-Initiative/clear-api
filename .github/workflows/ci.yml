@@ -73,6 +73,8 @@ jobs:
       # scripts/test-db.sh keeps its own `docker build` (local dev relies on
       # it); here that build finds the layers already loaded by this step
       # instead of running the ~30 s apt install from scratch.
+      # Measured on PR #219: cold cache 48 s (build + export), see the PR for
+      # the warm-cache number.
       - uses: docker/setup-buildx-action@v3
       - name: Build scratch Postgres image (cached)
         uses: docker/build-push-action@v6
