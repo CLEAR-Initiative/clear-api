@@ -18,6 +18,8 @@ Skills (`/start-ticket`, `/ship-ticket`, `/setup-merge-hook`, `/cleanup`) read `
 
 ## Auto-merge (Greptile)
 
+CI (`ci.yml`) cancels a superseded run only for `pull_request` events; a push-to-`dev` run is never cancelled, so every merged commit gets a verdict even when merges land back to back.
+
 `.github/workflows/greptile-automerge.yml` squash-merges a PR into `dev` once Greptile has reviewed the PR's latest commit, left no unresolved P0/P1 finding on it, and the required checks (`check`, `db-tests`) have passed. P2s don't block. The merge is pinned to the reviewed commit, so a push after the review never merges on the old review.
 
 It leaves the PR for a human when Greptile hasn't reviewed the latest commit (it skips some pushes), when a P0/P1 thread is still unresolved, or when the PR is a draft, from a fork, opened by a bot, or labelled `no-automerge`. It keeps one comment on the PR, edited in place, saying what it decided and why.
