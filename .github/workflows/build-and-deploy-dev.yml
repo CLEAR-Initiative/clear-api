@@ -9,13 +9,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tag:
-    name: Create version tag
+  # The version tag used to be its own job: ~6 s of work billed as a full
+  # minute plus a checkout and a scheduling hop on the merge-to-live path.
+  # It now runs at the top of the build job, still strictly before the image
+  # is built so the tag and the image version never disagree.
+  build:
+    name: Build & push image
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -33,20 +36,10 @@ jobs:
           git tag "$VERSION" "$GITHUB_SHA"
           git push origin "refs/tags/$VERSION"
 
-  build:
-    name: Build & push image
-    needs: tag
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: ./.github/actions/build-image
         with:
           environment: ${{ github.ref_name }}
-          version: ${{ needs.tag.outputs.version }}
+          version: ${{ steps.version.outputs.version }}
           registry-token: ${{ secrets.GITHUB_TOKEN }}
 
   deploy:
