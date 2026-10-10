@@ -9,6 +9,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Normal runs are ~1.5 min; the default 360-min cap once let a hung run
+    # block the required check for 15 min until cancelled by hand.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -46,6 +49,7 @@ jobs:
   # No coverage gate: the thresholds are calibrated to the DB-free run.
   db-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
