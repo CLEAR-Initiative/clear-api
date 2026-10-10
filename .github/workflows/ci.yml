@@ -2,9 +2,19 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, dev, staging]
+    # prod gets PR CI for the periodic dev -> prod sync PRs.
+    branches: [dev, prod]
   push:
-    branches: [main, dev, staging]
+    branches: [dev]
+
+# Cancel a superseded run only for pull_request events (keyed on the PR
+# number). Push-to-dev runs are keyed on the SHA and never cancelled: with
+# branch protection's strict mode off they are the only test of the merged
+# result. Greptile auto-merge ignores the cancelled run (workflow_run
+# conclusion 'cancelled' -> evaluate skips) and acts on the new head's run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
