@@ -1,4 +1,25 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
+
+// Test files that open a real database: they use the `describeIfDb` /
+// `describeIfSeededDb` gates from tests/helpers/db.ts. Found by scanning the
+// sources at config time rather than by a naming convention, because only
+// some of them carry the `.db.test.ts` suffix today and a hand-kept list
+// would silently drift.
+function dbBackedTestFiles(dir = "tests"): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return dbBackedTestFiles(path);
+    if (!entry.name.endsWith(".test.ts")) return [];
+    return /\bdescribeIf(Seeded)?Db\(/.test(readFileSync(path, "utf8")) ? [path] : [];
+  });
+}
+
+// CI's db-tests job (`bun run test:db`, SCRATCH_DB=1) exists to exercise the
+// migrations and the DB-backed suites. The DB-free files already ran under
+// coverage in the `check` job, so re-running them here only costs time.
+const scratchDbOnly = process.env.SCRATCH_DB === "1";
 
 // Vitest config for clear-api. Tests live under `tests/` (kept out of `src/`
 // so `tsc -p tsconfig.json` doesn't emit them to `dist/`). `setupFiles` loads
@@ -7,7 +28,7 @@ export default defineConfig({
   test: {
     setupFiles: ["./tests/setup.ts"],
     testTimeout: 20_000, // PostGIS queries on cold connections can be slow
-    include: ["tests/**/*.test.ts"],
+    include: scratchDbOnly ? dbBackedTestFiles() : ["tests/**/*.test.ts"],
     // The DB-backed integration tests all hit ONE real database with fixed,
     // overlapping fixtures (e.g. a Sudan-wide level-0 polygon in
     // location.resolver.test.ts vs. Sudan coordinates in geo-resolve.test.ts).
