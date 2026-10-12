@@ -27,7 +27,9 @@ import { GraphQLError } from "graphql";
 import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
+  isEmergencyResponseManager,
   isPlatformAdmin,
+  requireAuth,
   requireContentReader,
   requireNonWorker,
   requireNonWorkerContentReader,
@@ -226,6 +228,28 @@ function redactForViewer<T extends { requesterId: string | null; lastError: stri
 /** Who may decide a proposed ImpactPrior: platform admins and analysts. */
 function isDecider(user: { role?: string | null }): boolean {
   return isPlatformAdmin(user) || user.role === "analyst";
+}
+
+/**
+ * Inbox gate for the CaseProposal list and decision: admits a global
+ * admin/analyst (an `isDecider`) OR an `emergency_response_manager` (global
+ * `viewer` + ERM team membership). In Phase 1 the ERM sees the whole inbox —
+ * ground threads AND proposed signals — because number-scoping doesn't exist
+ * yet. Only a `viewer` triggers the team-membership lookup; service roles
+ * (worker/pipeline/agent) and pending users are rejected without a DB touch.
+ * Pairs with `requireGroundInboxAccess` on the ground side.
+ */
+async function requireCaseProposalDecider(
+  context: Context,
+): Promise<NonNullable<Context["user"]>> {
+  const user = requireAuth(context);
+  if (isDecider(user)) return user;
+  if (user.role === "viewer" && (await isEmergencyResponseManager(context.prisma, user.id))) {
+    return user;
+  }
+  throw new GraphQLError("Insufficient permissions", {
+    extensions: { code: "FORBIDDEN" },
+  });
 }
 
 /**
@@ -449,14 +473,14 @@ export const taskResolvers = {
 
   Query: {
     // The Inbox's per-case list (V4): CaseProposals in one state across
-    // every Event, newest first, `proposed` by default. Deciders only: it
-    // lists exactly what the caller may decide.
+    // every Event, newest first, `proposed` by default. Deciders and ERMs:
+    // it lists exactly what the caller may decide from the inbox.
     caseProposals: async (
       _parent: unknown,
       args: { state?: CaseProposalRow["state"] | null; limit?: number | null; offset?: number | null },
       context: Context,
     ) => {
-      requireRole(context, DECIDER_ROLES);
+      await requireCaseProposalDecider(context);
       return context.prisma.caseProposal.findMany({
         where: { state: args.state ?? "proposed" },
         // `id` breaks createdAt ties: one completion writes its cases at once.
@@ -694,7 +718,7 @@ export const taskResolvers = {
       args: { id: string; decision: "accepted" | "rejected"; rationale?: string | null },
       context: Context,
     ) => {
-      const user = requireRole(context, DECIDER_ROLES);
+      const user = await requireCaseProposalDecider(context);
       if (args.decision !== "accepted" && args.decision !== "rejected") {
         throw badInput('decision must be "accepted" or "rejected"');
       }
