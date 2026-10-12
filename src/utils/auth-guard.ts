@@ -190,6 +190,48 @@ export async function resolveTeamMembership(
   return membership;
 }
 
+/** Team role that triages the hotline ("ground intel") inbox. A TEAM role
+ *  (a value of `teamMembers.role`), distinct from the global admin/analyst roles. */
+export const EMERGENCY_RESPONSE_MANAGER = "emergency_response_manager";
+
+/** True when the user is an active `emergency_response_manager` on any team. */
+export async function isEmergencyResponseManager(
+  prisma: PrismaClient,
+  userId: string,
+): Promise<boolean> {
+  const membership = await prisma.teamMembers.findFirst({
+    where: { userId, role: EMERGENCY_RESPONSE_MANAGER },
+    select: { id: true },
+  });
+  return membership !== null;
+}
+
+/**
+ * Ground-intel inbox access gate. Admits a global `admin`/`analyst` (who see
+ * everything) OR an `emergency_response_manager` on any team. Returns the user
+ * plus `isErm` so callers can branch review rights — admins/analysts keep the
+ * per-source `reviewerRoles` policy; an ERM may triage. (Phase 2 will scope an
+ * ERM to the hotline numbers their team subscribes to.)
+ */
+export async function requireGroundInboxAccess(
+  context: Context,
+): Promise<{ user: ReturnType<typeof requireAuth>; isErm: boolean }> {
+  const user = requireAuth(context);
+  if (isPlatformAdmin(user) || user.role === "analyst") {
+    return { user, isErm: false };
+  }
+  // An ERM carries the global `viewer` role plus the emergency_response_manager
+  // TEAM role. Only check team membership for viewers — service roles
+  // (worker/pipeline/agent) and pending users can't be ERMs and are rejected
+  // without a DB lookup (keeps a service-role rejection free of DB touches).
+  if (user.role === "viewer" && (await isEmergencyResponseManager(context.prisma, user.id))) {
+    return { user, isErm: true };
+  }
+  throw new GraphQLError("Insufficient permissions", {
+    extensions: { code: "FORBIDDEN" },
+  });
+}
+
 /**
  * Whether the caller is allowed to see another user's PII (email,
  * phoneNumber, role, isActive) and private relations

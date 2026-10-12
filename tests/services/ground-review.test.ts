@@ -130,6 +130,8 @@ function buildContext(
         return { ...thread, ...args.data };
       },
     },
+    // Inbox gate checks for an ERM team membership when the caller is a viewer.
+    teamMembers: { findFirst: async () => null },
   };
   const context = {
     prisma,

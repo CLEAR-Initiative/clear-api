@@ -30,7 +30,10 @@ type User = { id: string; role: string } | null;
 
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    // requireGroundInboxAccess consults teamMembers for the emergency_response_manager
+    // role when the caller isn't a global admin/analyst — default it to "no ERM
+    // membership"; a test can override by passing its own teamMembers stub.
+    prisma: { teamMembers: { findFirst: async () => null }, ...prisma } as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -848,6 +851,19 @@ describe("retryGroundMessage", () => {
     await expect(
       retryGroundMessage(null, { messageId: "m1", stage: "ENRICH" }, buildContext(user, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("admits an emergency_response_manager (viewer global role + ERM team membership)", async () => {
+    const { prisma, update } = retryPrisma();
+    // Global role is viewer, but an active ERM team membership grants inbox access.
+    const ermPrisma = { ...prisma, teamMembers: { findFirst: async () => ({ id: "tm1" }) } };
+    const result = await retryGroundMessage(
+      null,
+      { messageId: "m1", stage: "ENRICH" },
+      buildContext({ id: "erm1", role: "viewer" }, ermPrisma),
+    );
+    expect(result).toEqual({ id: "m1" });
+    expect(update).toHaveBeenCalled();
   });
 });
 

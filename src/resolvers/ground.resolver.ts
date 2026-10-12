@@ -1,16 +1,18 @@
 /**
  * Resolvers for the ground intel staging tier.
  *
- * The whole tier is PRIVATE: every query and mutation requires the global
- * admin or analyst role (`requireGroundReviewer` additionally consults the
- * source's own reviewerRoles for review actions). Viewers — who can read
+ * The whole tier is PRIVATE: the inbox queries + triage mutations require
+ * `requireGroundInboxAccess` — a global admin/analyst, OR an
+ * `emergency_response_manager` on any team (review actions for admins/analysts
+ * additionally consult the source's own reviewerRoles). Viewers — who can read
  * signals/events — deliberately cannot see staged ground content: sender
- * names, unredacted-adjacent context, and unvetted claims live here.
+ * names, unredacted-adjacent context, and unvetted claims live here. The
+ * pipeline-facing contract surface stays gated on PIPELINE_ROLES.
  */
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireGroundInboxAccess, requireRole } from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
 import {
   canReviewSource,
@@ -221,7 +223,7 @@ async function promoteThread(
 export const groundResolvers = {
   Query: {
     groundSources: async (_parent: unknown, _args: unknown, context: Context) => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
       return context.prisma.groundSources.findMany({ orderBy: { createdAt: "desc" } });
     },
 
@@ -235,7 +237,7 @@ export const groundResolvers = {
       },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
       return context.prisma.groundThreads.findMany({
         where: {
           ...(args.groundSourceId ? { groundSourceId: args.groundSourceId } : {}),
@@ -248,7 +250,7 @@ export const groundResolvers = {
     },
 
     groundThread: async (_parent: unknown, args: { id: string }, context: Context) => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
       return context.prisma.groundThreads.findUnique({ where: { id: args.id } });
     },
 
@@ -262,7 +264,7 @@ export const groundResolvers = {
       },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
       return context.prisma.groundMessages.findMany({
         where: {
           ...(args.groundSourceId ? { groundSourceId: args.groundSourceId } : {}),
@@ -613,7 +615,7 @@ export const groundResolvers = {
     ) => {
       // Coarse gate first (viewers/pending never reach the queue), then
       // the per-source reviewerRoles policy record decides.
-      const user = requireRole(context, ["admin", "analyst"]);
+      const { user, isErm } = await requireGroundInboxAccess(context);
 
       const thread = await context.prisma.groundThreads.findUnique({
         where: { id: args.id },
@@ -625,7 +627,10 @@ export const groundResolvers = {
         });
       }
 
-      if (!canReviewSource(user, thread.source.reviewerRoles)) {
+      // An emergency_response_manager may triage any source they can see
+      // (Phase 1 — Phase 2 scopes them to their team's subscribed numbers).
+      // Admins/analysts still answer to the source's own reviewerRoles policy.
+      if (!isErm && !canReviewSource(user, thread.source.reviewerRoles)) {
         throw new GraphQLError(
           `Reviewing this source requires one of: ${thread.source.reviewerRoles.join(", ")}`,
           { extensions: { code: "FORBIDDEN" } },
@@ -1133,7 +1138,7 @@ export const groundResolvers = {
       args: { messageId: string; locale: string },
       context: Context,
     ): Promise<GroundTranslationState> => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
       const locale = groundTranslationLocale(args.locale);
 
       const message = await context.prisma.groundMessages.findUnique({
@@ -1164,7 +1169,7 @@ export const groundResolvers = {
       args: { messageId: string; stage: GroundPipelineStage },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      await requireGroundInboxAccess(context);
 
       const existing = await context.prisma.groundMessages.findUnique({
         where: { id: args.messageId },
