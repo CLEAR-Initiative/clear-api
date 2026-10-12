@@ -67,6 +67,8 @@ function buildContext(role: string | null): Context {
     prisma: {
       groundMessages: { findMany },
       groundThreads: { findUnique: vi.fn(async () => ({ id: "t1", groundSourceId: "gs_1" })) },
+      // Inbox gate checks for an ERM team membership when the caller is a viewer.
+      teamMembers: { findFirst: vi.fn(async () => null) },
     },
     user: role ? { id: "u1", role } : null,
     session: null,

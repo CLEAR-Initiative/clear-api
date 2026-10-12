@@ -58,6 +58,8 @@ function buildContext(role: string | null, translated: string | null): Context {
       translations: {
         findUnique: vi.fn(async () => (translated ? { data: { text: translated } } : null)),
       },
+      // Inbox gate checks for an ERM team membership when the caller is a viewer.
+      teamMembers: { findFirst: vi.fn(async () => null) },
     },
     user: role ? { id: "u1", role } : null,
     session: null,
