@@ -166,9 +166,11 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     findMany: vi.fn(async () => []),
   };
   const activityLogs = { create: vi.fn(async () => ({})) };
-  // Membership fixture: the coordinator belongs to team-a only.
+  // Membership fixture: the coordinator belongs to team-a only; the ERM
+  // carries the emergency_response_manager role on team-a.
   const MEMBERSHIPS: Record<string, Record<string, string>> = {
     "u-coord": { "team-a": "field_coordinator" },
+    "u-erm": { "team-a": "emergency_response_manager" },
   };
   const teamMembers = {
     findUnique: vi.fn(
@@ -178,6 +180,11 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
         return role ? { teamId, userId, role } : null;
       },
     ),
+    // The inbox gate asks "is this user an ERM on any team?".
+    findFirst: vi.fn(async ({ where }: { where: { userId: string; role: string } }) => {
+      const has = Object.values(MEMBERSHIPS[where.userId] ?? {}).includes(where.role);
+      return has ? { id: `${where.userId}-tm` } : null;
+    }),
   };
   const prisma: Record<string, unknown> = {
     task, impactPrior, caseProposal, events, locations, activityLogs, teamMembers,
@@ -218,6 +225,9 @@ const admin: User = { id: "u-admin", role: "admin" };
 const analyst: User = { id: "u-analyst", role: "analyst" };
 const viewer: User = { id: "u-viewer", role: "viewer" };
 const coordinator: User = { id: "u-coord", role: "viewer" };
+// An emergency_response_manager: global `viewer` plus the ERM team membership
+// in the fixture. Sees the whole inbox (ground + proposed cases) in Phase 1.
+const erm: User = { id: "u-erm", role: "viewer" };
 const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
@@ -1040,6 +1050,14 @@ describe("case reads (V4)", () => {
     const prisma = makePrisma();
     expect((await errorOf(caseProposalsQuery(null, {}, ctx(user, prisma)))).extensions.code).toBe("FORBIDDEN");
     expect(prisma.caseProposal.findMany).not.toHaveBeenCalled();
+  });
+
+  it("caseProposals admits an emergency_response_manager (viewer + ERM team role)", async () => {
+    const prisma = makePrisma();
+    await caseProposalsQuery(null, {}, ctx(erm, prisma));
+    expect(prisma.caseProposal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { state: "proposed" } }),
+    );
   });
 
   it("eventCaseProposals follows the ImpactPrior visibility rule", async () => {
