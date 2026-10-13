@@ -48,6 +48,8 @@ export const PORTAL_SVGS = {
     '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M1 1h12v12H1V1Zm1.5 1.5v9h9v-9h-9Z" clip-rule="evenodd"/></svg>',
   signout:
     '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
+  signin:
+    '<svg class="signin-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g transform="translate(2 2) scale(-1 1) translate(-12 0)"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></g></svg>',
   hamburger:
     '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M2 4h16v2H2V4zm0 5h16v2H2V9zm0 5h16v2H2v-2z"/></svg>',
   close:
@@ -340,7 +342,9 @@ ${renderThemeCustomProperties("portal")}
       transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .portal-shell.sidebar-collapsed .sidebar-footer {
-      padding: 16px 12px 6px;
+      /* 72px rail: 16px margin + 40px control + 16px margin. */
+      padding: 16px;
+      align-items: center;
     }
     .user-card {
       display: flex;
@@ -419,6 +423,20 @@ ${renderThemeCustomProperties("portal")}
       background: var(--color-accent-hover);
       color: var(--on-accent);
       text-decoration: none;
+    }
+    .signin-icon {
+      flex-shrink: 0;
+      display: block;
+    }
+    .portal-shell.sidebar-collapsed a.signin-link {
+      /* Square so the 16px icon keeps padding on every side. */
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      min-height: 40px;
+      padding: 0;
+      gap: 0;
+      flex-shrink: 0;
     }
     .portal-shell.sidebar-collapsed a.signin-link .signin-label {
       opacity: 0;
@@ -625,6 +643,19 @@ ${renderThemeCustomProperties("portal")}
         padding: 8px 12px;
         width: auto;
         justify-content: center;
+      }
+      .portal-shell.sidebar-collapsed a.signin-link {
+        width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
+        padding: 8px 12px;
+        gap: 8px;
+      }
+      .portal-shell.sidebar-collapsed a.signin-link .signin-label {
+        opacity: 1;
+        pointer-events: auto;
+        position: static;
       }
       .portal-shell.sidebar-collapsed .nav-section {
         opacity: 1;
@@ -884,6 +915,7 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     : `
     <div class="sidebar-footer">
       <a href="/portal/login" class="signin-link" title="Sign in">
+        ${PORTAL_SVGS.signin}
         <span class="signin-label">Sign in</span>
       </a>
     </div>
