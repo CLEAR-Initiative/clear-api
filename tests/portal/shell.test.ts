@@ -51,6 +51,7 @@ describe("Portal Shell", () => {
       expect(html).toContain("admin@example.com");
       expect(html).toContain("Admin Account");
       expect(html).toContain("Sign Out");
+      expect(html).toContain("signout-icon");
       expect(html).toContain("/portal/icons/clearapi_logo.png");
       expect(html).not.toContain("/portal/icons/logo.png");
     });

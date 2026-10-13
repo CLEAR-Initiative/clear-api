@@ -46,8 +46,9 @@ export const PORTAL_SVGS = {
     '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.375 2.188C4.375 1.463 4.963.875 5.688.875h.875C7.287.875 7.875 1.463 7.875 2.188v9.625c0 .725-.588 1.312-1.313 1.312h-.875c-.725 0-1.312-.587-1.312-1.312V2.188ZM0 7.438C0 6.713.588 6.125 1.313 6.125h.875C2.912 6.125 3.5 6.713 3.5 7.438v4.375c0 .725-.588 1.312-1.313 1.312h-.875C.588 13.125 0 12.537 0 11.812V7.438Zm10.063 2.625h.875c.725 0 1.312.588 1.312 1.313v4.375c0 .725-.587 1.312-1.312 1.312h-.875c-.725 0-1.313-.587-1.313-1.312V3.938c0-.725.588-1.313 1.313-1.313Z"/></svg>',
   sandbox:
     '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M1 1h12v12H1V1Zm1.5 1.5v9h9v-9h-9Z" clip-rule="evenodd"/></svg>',
+  // Door on the right. Sign-in points into it; this one points back out.
   signout:
-    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
+    '<svg class="signout-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g transform="translate(2 2)"><g transform="translate(11.35 0) scale(-1 1)"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3Z"/></g><g transform="translate(12 0) scale(-1 1)"><path fill="currentColor" d="M3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></g></g></svg>',
   signin:
     '<svg class="signin-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g transform="translate(2 2)"><g transform="translate(-4.25 0)"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3Z"/></g><g transform="translate(12 0) scale(-1 1)"><path fill="currentColor" d="M3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></g></g></svg>',
   hamburger:
@@ -424,7 +425,8 @@ ${renderThemeCustomProperties("portal")}
       color: var(--on-accent);
       text-decoration: none;
     }
-    .signin-icon {
+    .signin-icon,
+    .signout-icon {
       flex-shrink: 0;
       display: block;
     }
@@ -444,8 +446,12 @@ ${renderThemeCustomProperties("portal")}
       pointer-events: none;
     }
     .portal-shell.sidebar-collapsed .signout-btn {
-      padding: 8px;
       width: 40px;
+      height: 40px;
+      min-width: 40px;
+      min-height: 40px;
+      padding: 0;
+      flex-shrink: 0;
     }
     .signout-label {
       white-space: nowrap;
@@ -642,6 +648,9 @@ ${renderThemeCustomProperties("portal")}
       .portal-shell.sidebar-collapsed .signout-btn {
         padding: 8px 12px;
         width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
         justify-content: center;
       }
       .portal-shell.sidebar-collapsed a.signin-link {
