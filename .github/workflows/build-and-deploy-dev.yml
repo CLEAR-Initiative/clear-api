@@ -38,7 +38,10 @@ jobs:
           fi
           LATEST=$(echo "$TAGS" | sed 's#.*refs/tags/##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
           IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST:-0.0.0}"
-          echo "version=${MAJOR}.${MINOR}.$((PATCH + 1))" >> "$GITHUB_OUTPUT"
+          # dev deploys bump the MINOR within the current prod MAJOR; a prod
+          # deploy bumps the MAJOR (build-and-deploy-prod.yml). The two never
+          # pick the same next version, so they can't contend for a tag.
+          echo "version=${MAJOR}.$((MINOR + 1)).0" >> "$GITHUB_OUTPUT"
           echo "existing=false" >> "$GITHUB_OUTPUT"
 
       - name: Create git tag
