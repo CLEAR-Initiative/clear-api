@@ -63,6 +63,8 @@ describe("Portal Shell", () => {
 
       expect(html).toContain("sidebar-footer");
       expect(html).toContain('href="/portal/login"');
+      expect(html).toContain("signin-icon");
+      expect(html).toContain("signin-label");
       expect(html).toContain("Sign in");
       expect(html).not.toContain("Sign Out");
     });
@@ -213,6 +215,35 @@ describe("Portal Shell", () => {
       );
       expect(css).toMatch(
         /\.portal-shell\.sidebar-collapsed \.sidebar-top \{[\s\S]*?overflow:\s*visible/,
+      );
+    });
+
+    it("gives the collapsed sign-in control a square icon button with margin", () => {
+      const css = renderPortalShellStyles();
+
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-footer \{[^}]*padding:\s*16px;/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed \.sidebar-footer \{[^}]*align-items:\s*center/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed a\.signin-link \{[^}]*width:\s*40px;/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed a\.signin-link \{[^}]*height:\s*40px;/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed a\.signin-link \{[^}]*min-height:\s*40px;/,
+      );
+      expect(css).toMatch(
+        /\.portal-shell\.sidebar-collapsed a\.signin-link \.signin-label \{[^}]*opacity:\s*0/,
+      );
+      expect(css).toMatch(
+        /@media \(max-width: 768px\) \{[\s\S]*?\.portal-shell\.sidebar-collapsed a\.signin-link \.signin-label \{[^}]*opacity:\s*1/,
+      );
+      expect(css).toMatch(
+        /@media \(max-width: 768px\) \{[\s\S]*?\.portal-shell\.sidebar-collapsed a\.signin-link \{[^}]*width:\s*auto/,
       );
     });
 
