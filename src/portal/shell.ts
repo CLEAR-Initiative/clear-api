@@ -49,7 +49,7 @@ export const PORTAL_SVGS = {
   signout:
     '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></svg>',
   signin:
-    '<svg class="signin-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g transform="translate(2 2) scale(-1 1) translate(-12 0)"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3ZM3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></g></svg>',
+    '<svg class="signin-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g transform="translate(2 2)"><g transform="translate(-4.25 0)"><path fill="currentColor" d="M11.78 6.53a.75.75 0 0 0 0-1.06L8.78 2.47a.75.75 0 1 0-1.06 1.06L9.44 5.25H4.5a.75.75 0 0 0 0 1.5h4.94l-1.72 1.72a.75.75 0 1 0 1.06 1.06l3-3Z"/></g><g transform="translate(12 0) scale(-1 1)"><path fill="currentColor" d="M3.75 2.25a.75.75 0 0 0 0-1.5H2.25A2.25 2.25 0 0 0 0 3v6a2.25 2.25 0 0 0 2.25 2.25H3.75a.75.75 0 0 0 0-1.5H2.25a.75.75 0 0 1-.75-.75V3a.75.75 0 0 1 .75-.75H3.75Z"/></g></g></svg>',
   hamburger:
     '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M2 4h16v2H2V4zm0 5h16v2H2V9zm0 5h16v2H2v-2z"/></svg>',
   close:
