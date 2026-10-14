@@ -4914,7 +4914,7 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
   </tr><tr>
     <td><code>weekly</code></td>
     <td><code>[DetectionWeek!]!</code></td>
-    <td>Counted Events per ISO week of their first ingested Signal, ascending, one row per week the range touches (zero-filled).</td>
+    <td>Counted Events per ISO week of their first ingested Signal, with each week's Events in range, ascending, one row per week the range touches (zero-filled).</td>
   </tr><tr>
     <td><code>exclusions</code></td>
     <td><code>[DetectionExclusion!]!</code></td>
@@ -4927,6 +4927,10 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
     <td><code>weekStart</code></td>
     <td><code>DateTime!</code></td>
     <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range this week, counted plus excluded, bucketed by the same instant that puts them in range (the first ingested Signal, or with none `firstSignalCreatedAt`). `counted / eventsInRange` is the week's measured coverage.</td>
   </tr><tr>
     <td><code>counted</code></td>
     <td><code>Int!</code></td>

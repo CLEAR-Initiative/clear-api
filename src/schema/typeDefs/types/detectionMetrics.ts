@@ -54,7 +54,7 @@ export const detectionMetricsTypeDef = gql`
     byNextDay: Int!
     """Counted Events by whole days from onset: exactly 9 rows, 0 to 7, then 8 and more (\`isOpenEnded\`)."""
     histogram: [DetectionHistogramBucket!]!
-    """Counted Events per ISO week of their first ingested Signal, ascending, one row per week the range touches (zero-filled)."""
+    """Counted Events per ISO week of their first ingested Signal, with each week's Events in range, ascending, one row per week the range touches (zero-filled)."""
     weekly: [DetectionWeek!]!
     """Events in range not measured, by reason: exactly 4 rows, one per reason."""
     exclusions: [DetectionExclusion!]!
@@ -76,6 +76,8 @@ export const detectionMetricsTypeDef = gql`
     isoWeek: String!
     """Monday 00:00 UTC of the week."""
     weekStart: DateTime!
+    """Events in range this week, counted plus excluded, bucketed by the same instant that puts them in range (the first ingested Signal, or with none \`firstSignalCreatedAt\`). \`counted / eventsInRange\` is the week's measured coverage."""
+    eventsInRange: Int!
     """Counted Events first signalled this week."""
     counted: Int!
     """Of those, first signalled on their onset day."""
