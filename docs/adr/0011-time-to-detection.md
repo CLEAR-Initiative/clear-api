@@ -52,7 +52,11 @@ The terms, as the code reads them:
 - **In range**: an Event is in range when its first ingested Signal's
   `publishedAt` is in `[from, to]`, or, with none, its `firstSignalCreatedAt`
   is. The weekly trend buckets counted Events by the ISO week of their first
-  ingested Signal: the week CLEAR detected them. Dummy Events take no part.
+  ingested Signal: the week CLEAR detected them. Each week also carries its
+  `eventsInRange`, bucketed by that same in-range instant, so
+  `counted / eventsInRange` is the week's measured coverage. A trend in TTD
+  only means something next to its coverage: a week can read better because
+  fewer, easier Events were measured. Dummy Events take no part.
 - **Location**: an Event is in a location when its origin, destination or
   general location is that location or inside it, as `eventsByLocation` reads
   it.

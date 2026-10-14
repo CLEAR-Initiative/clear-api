@@ -138,9 +138,11 @@ describeIfDb("time to detection against the real schema", () => {
       { reason: "DATE_ONLY_FIRST_SIGNAL", count: 1 },
       { reason: "BEFORE_ONSET", count: 1 },
     ]);
-    expect(m.weekly.map((w) => [w.isoWeek, w.counted, w.sameDay, w.byNextDay, w.isPartial])).toEqual([
-      ["2026-W40", 2, 1, 2, false],
-      ["2026-W41", 1, 0, 0, false],
+    // Every excluded Event falls in W40, the two history/manual-only ones by
+    // their `firstSignalCreatedAt`.
+    expect(m.weekly.map((w) => [w.isoWeek, w.eventsInRange, w.counted, w.sameDay, w.byNextDay, w.isPartial])).toEqual([
+      ["2026-W40", 7, 2, 1, 2, false],
+      ["2026-W41", 1, 1, 0, 0, false],
     ]);
 
     // The district alone leaves out the Event filed at the country.

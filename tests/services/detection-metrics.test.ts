@@ -115,7 +115,7 @@ describe("summarise", () => {
         row("2026-09-29T00:00:00Z", "2026-09-30T10:00:00Z"), // W40, next day
         row("2026-10-01T00:00:00Z", "2026-10-06T10:00:00Z"), // W41, +5d
         row("2026-09-01T00:00:00Z", "2026-10-13T10:00:00Z"), // W42, 8d+
-        row("2026-10-01T00:00:00Z", null), // history only
+        { ...row("2026-10-01T00:00:00Z", null), inRangeAt: at("2026-10-07T09:00:00Z") }, // history only, in range in W41
         row(null, "2026-10-02T10:00:00Z"), // no onset
         row("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"), // date only
         row("2026-10-05T00:00:00Z", "2026-10-04T10:00:00Z"), // before onset
@@ -129,11 +129,31 @@ describe("summarise", () => {
     expect(m.histogram[8]!.daysAfterOnset).toBe(8);
     expect(m.exclusions).toEqual(EXCLUSION_REASONS.map((reason) => ({ reason, count: 1 })));
     expect(m.weekly).toEqual([
-      { isoWeek: "2026-W40", weekStart: at("2026-09-28T00:00:00Z"), counted: 2, sameDay: 1, byNextDay: 2, isPartial: false },
-      { isoWeek: "2026-W41", weekStart: at("2026-10-05T00:00:00Z"), counted: 1, sameDay: 0, byNextDay: 0, isPartial: false },
-      { isoWeek: "2026-W42", weekStart: at("2026-10-12T00:00:00Z"), counted: 1, sameDay: 0, byNextDay: 0, isPartial: true },
+      // W40 also holds the no-onset, date-only and before-onset Events.
+      { isoWeek: "2026-W40", weekStart: at("2026-09-28T00:00:00Z"), eventsInRange: 5, counted: 2, sameDay: 1, byNextDay: 2, isPartial: false },
+      { isoWeek: "2026-W41", weekStart: at("2026-10-05T00:00:00Z"), eventsInRange: 2, counted: 1, sameDay: 0, byNextDay: 0, isPartial: false },
+      { isoWeek: "2026-W42", weekStart: at("2026-10-12T00:00:00Z"), eventsInRange: 1, counted: 1, sameDay: 0, byNextDay: 0, isPartial: true },
     ]);
+    expect(m.weekly.reduce((n, w) => n + w.eventsInRange, 0)).toBe(m.eventsInRange);
     expect(m.counted + m.exclusions.reduce((n, e) => n + e.count, 0)).toBe(m.eventsInRange);
+  });
+
+  it("buckets a week's Events in range by the first ingested Signal before `inRangeAt`", () => {
+    const m = summarise(
+      [
+        // First ingested Signal in W41 wins over an earlier `inRangeAt`.
+        { ...row("2026-10-05T00:00:00Z", "2026-10-06T10:00:00Z"), inRangeAt: at("2026-09-29T10:00:00Z") },
+        // Neither instant: in the totals, in no week.
+        row(null, null),
+      ],
+      range,
+    );
+    expect(m.eventsInRange).toBe(2);
+    expect(m.weekly.map((w) => [w.isoWeek, w.eventsInRange])).toEqual([
+      ["2026-W40", 0],
+      ["2026-W41", 1],
+      ["2026-W42", 0],
+    ]);
   });
 
   it("zero-fills an empty range, marking a week the range starts inside as partial", () => {
@@ -141,9 +161,9 @@ describe("summarise", () => {
     expect(m).toMatchObject({ eventsInRange: 0, withOnset: 0, counted: 0, sameDay: 0, byNextDay: 0 });
     expect(m.histogram.every((b) => b.count === 0)).toBe(true);
     expect(m.exclusions.map((e) => e.count)).toEqual([0, 0, 0, 0]);
-    expect(m.weekly.map((w) => [w.isoWeek, w.isPartial, w.counted])).toEqual([
-      ["2026-W40", true, 0],
-      ["2026-W41", false, 0],
+    expect(m.weekly.map((w) => [w.isoWeek, w.isPartial, w.counted, w.eventsInRange])).toEqual([
+      ["2026-W40", true, 0, 0],
+      ["2026-W41", false, 0, 0],
     ]);
   });
 });

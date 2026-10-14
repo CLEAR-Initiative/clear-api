@@ -53,6 +53,12 @@ export interface DetectionEventRow {
   startedAt: Date | null;
   /** `publishedAt` of its earliest live ingested Signal; null when it has none. */
   firstIngestedAt: Date | null;
+  /**
+   * The instant that put it in range: `firstIngestedAt`, or, with none, its
+   * `firstSignalCreatedAt`. Buckets `weekly[].eventsInRange`; when absent,
+   * `firstIngestedAt` is used and an Event with neither joins no week.
+   */
+  inRangeAt?: Date | null;
 }
 
 export type Classification =
@@ -71,6 +77,8 @@ export interface DetectionMetrics {
   weekly: Array<{
     isoWeek: string;
     weekStart: Date;
+    /** Events in range whose in-range instant falls in this week: counted plus excluded. */
+    eventsInRange: number;
     counted: number;
     sameDay: number;
     byNextDay: number;
@@ -163,6 +171,7 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
     weekly.push({
       isoWeek: isoWeekLabel(new Date(start)),
       weekStart: new Date(start),
+      eventsInRange: 0,
       counted: 0,
       sameDay: 0,
       byNextDay: 0,
@@ -178,6 +187,9 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
   let byNextDay = 0;
   for (const row of rows) {
     if (row.startedAt) withOnset++;
+    const inRangeAt = row.firstIngestedAt ?? row.inRangeAt ?? null;
+    const weekOf = inRangeAt ? weekIndex.get(startOfIsoWeek(inRangeAt).getTime()) : undefined;
+    if (weekOf !== undefined) weekly[weekOf]!.eventsInRange++;
     const c = classify(row);
     if (!c.counted) {
       exclusions.set(c.reason, exclusions.get(c.reason)! + 1);
@@ -241,7 +253,8 @@ export async function fetchDetectionEvents(
         AND NOT s."isDummy"
       GROUP BY se."event_id"
     )
-    SELECT e."started_at" AS "startedAt", fi."at" AS "firstIngestedAt"
+    SELECT e."started_at" AS "startedAt", fi."at" AS "firstIngestedAt",
+      COALESCE(fi."at", e."first_signal_created_at") AS "inRangeAt"
     FROM "events" e
     LEFT JOIN first_ingested fi ON fi."event_id" = e."id"
     WHERE NOT e."isDummy"
