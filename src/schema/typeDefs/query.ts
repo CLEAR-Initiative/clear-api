@@ -266,6 +266,13 @@ export const queryTypeDef = gql`
     """Monthly Active Users time series - one point per UTC calendar
     month in the window. Admin only."""
     mauSeries(from: DateTime!, to: DateTime!): [MauPoint!]!
+
+    """Time to detection: how soon after an Event's onset CLEAR received its
+    first ingested Signal, in whole days, over a range (default: the last 12
+    ISO weeks) and optionally one location. Counts only. Admin only. Refuses
+    an inverted range or one over 364 days with BAD_USER_INPUT. See
+    \`DetectionMetrics\` and ADR-0011."""
+    detectionMetrics(input: DetectionMetricsInput): DetectionMetrics!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which

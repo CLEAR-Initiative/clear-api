@@ -495,6 +495,14 @@ can backfill them client-side when plotting.<div class="field-args"><span class=
     <td>Monthly Active Users time series - one point per UTC calendar
 month in the window. Admin only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
   </tr><tr>
+    <td><code>detectionMetrics</code></td>
+    <td><code>DetectionMetrics!</code></td>
+    <td>Time to detection: how soon after an Event's onset CLEAR received its
+first ingested Signal, in whole days, over a range (default: the last 12
+ISO weeks) and optionally one location. Counts only. Admin only. Refuses
+an inverted range or one over 364 days with BAD_USER_INPUT. See
+`DetectionMetrics` and ADR-0011.<div class="field-args"><span class="arg"><code>input: DetectionMetricsInput</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -1723,7 +1731,8 @@ discarded.<div class="field-args"><span class="arg"><code>id: String!</code></sp
 accepts or rejects each case; a rejected one stays, so its URL is never
 proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
-ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
+Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>Only history: no Signal a pipeline ingested (accepted web cases are history).</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
 beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>event_caused</code></td><td>—</td></tr><tr><td><code>pre_existing</code></td><td>—</td></tr><tr><td><code>combined</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemethod"><code>EstimateMethod</code> <span class="type-badge">enum</span></h3><p>How a figure was arrived at (the Domain Ontology's Estimate methods).
 `not_documented` when the method is unknown, e.g. figures backfilled from
 the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
@@ -2549,6 +2558,19 @@ window. Chunks whose time_range overlaps the window match.</p><table class="ref-
     <td><code>to</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-detectionmetricsinput"><code>DetectionMetricsInput</code> <span class="type-badge">input</span></h3><p>The range and place to measure time to detection over. Every field is
+optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Events whose origin, destination or general location is this location or inside it.</td>
   </tr></tbody></table><h3 id="type-entitystatsinput"><code>EntityStatsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entity</code></td>
     <td><code>EntityKind!</code></td>
@@ -4832,6 +4854,95 @@ Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline A
     <td><code>uniqueUsers</code></td>
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in on this date.</td>
+  </tr></tbody></table><h3 id="type-detectionexclusion"><code>DetectionExclusion</code> <span class="type-badge">object</span></h3><p>Events in range left out of time to detection for one reason.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reason</code></td>
+    <td><code>DetectionExclusionReason!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Events left out for this reason.</td>
+  </tr></tbody></table><h3 id="type-detectionhistogrambucket"><code>DetectionHistogramBucket</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal came this many days after onset.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>daysAfterOnset</code></td>
+    <td><code>Int!</code></td>
+    <td>Whole UTC days from onset to first ingested Signal; the open-ended row's lower bound.</td>
+  </tr><tr>
+    <td><code>isOpenEnded</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True for the last row, which counts `daysAfterOnset` days and more.</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events in this bucket.</td>
+  </tr></tbody></table><h3 id="type-detectionmetrics"><code>DetectionMetrics</code> <span class="type-badge">object</span></h3><p>Time to detection: how soon after an Event's real-world onset CLEAR
+received its first ingested Signal, in whole UTC days (same day = 0, next
+day = 1). Counts only; shares are the caller's to compute. See ADR-0011.
+
+An Event is in range when its first ingested Signal's `publishedAt` is,
+or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range: `counted` plus every exclusion.</td>
+  </tr><tr>
+    <td><code>withOnset</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range with an onset date.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Events measured: an onset, a first ingested Signal with a time of day, on or after the onset day.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>histogram</code></td>
+    <td><code>[DetectionHistogramBucket!]!</code></td>
+    <td>Counted Events by whole days from onset: exactly 9 rows, 0 to 7, then 8 and more (`isOpenEnded`).</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[DetectionWeek!]!</code></td>
+    <td>Counted Events per ISO week of their first ingested Signal, ascending, one row per week the range touches (zero-filled).</td>
+  </tr><tr>
+    <td><code>exclusions</code></td>
+    <td><code>[DetectionExclusion!]!</code></td>
+    <td>Events in range not measured, by reason: exactly 4 rows, one per reason.</td>
+  </tr></tbody></table><h3 id="type-detectionweek"><code>DetectionWeek</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W42`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled this week.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
   </tr></tbody></table><h3 id="type-disasterlevel1"><code>DisasterLevel1</code> <span class="type-badge">object</span></h3><p>A level-1 category with its level-2 groups.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>

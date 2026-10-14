@@ -4,6 +4,7 @@ import { mutationTypeDef } from "./typeDefs/mutation.js";
 import { userTypeDef } from "./typeDefs/types/user.js";
 import { alertTypeDef } from "./typeDefs/types/alert.js";
 import { detectionTypeDef } from "./typeDefs/types/detection.js";
+import { detectionMetricsTypeDef } from "./typeDefs/types/detectionMetrics.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
@@ -45,6 +46,7 @@ export const typeDefs = [
   userTypeDef,
   alertTypeDef,
   detectionTypeDef,
+  detectionMetricsTypeDef,
   signalTypeDef,
   signalLocationChallengeTypeDef,
   eventTypeDef,
