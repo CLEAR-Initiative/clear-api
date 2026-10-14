@@ -7,9 +7,10 @@
  * or after the onset day. Every other Event in range is **excluded** under
  * exactly one reason, checked in this order:
  *
- * 1. `NO_INGESTED_SIGNAL` — only history: no live Signal a pipeline ingested
- *    (accepted web cases carry `submittedById`; they are history, not
- *    detection).
+ * 1. `NO_INGESTED_SIGNAL` — no live Signal a pipeline ingested: only history
+ *    (accepted web cases carry `submittedById`) or Signals a person filed by
+ *    hand (`createManualSignal` marks `rawData.manual`). Neither is CLEAR
+ *    detecting the Event.
  * 2. `NO_ONSET` — no onset date to measure from.
  * 3. `DATE_ONLY_FIRST_SIGNAL` — the first ingested Signal's `publishedAt` is
  *    exactly UTC midnight: the source gave a date but no time.
@@ -95,7 +96,8 @@ export function utcDay(at: Date): number {
 export function startOfIsoWeek(at: Date): Date {
   const day = utcDay(at);
   // 1970-01-01 was a Thursday: day 0 is weekday 3 counting from Monday.
-  const weekday = (day + 3) % 7;
+  // Normalised so days before 1970 (negative) get a weekday in 0..6 too.
+  const weekday = (((day + 3) % 7) + 7) % 7;
   return new Date((day - weekday) * DAY_MS);
 }
 
@@ -212,7 +214,8 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
  * The Events in range with their onset and first ingested Signal. One pass
  * over the Signal links: an Event's first ingested Signal is the earliest
  * `publishedAt` of its live (non-retracted, non-dummy) Signals that no person
- * submitted. `locationId` keeps the Events whose origin, destination or
+ * submitted (an accepted web case) or filed by hand (a manual Signal, whose
+ * `rawData.manual` is true). `locationId` keeps the Events whose origin, destination or
  * general location is that location or inside it, as `eventsByLocation` does.
  */
 export async function fetchDetectionEvents(
@@ -233,6 +236,7 @@ export async function fetchDetectionEvents(
       FROM "signal_to_events" se
       JOIN "signals" s ON s."id" = se."signal_id"
       WHERE s."submitted_by_id" IS NULL
+        AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
         AND NOT s."retracted"
         AND NOT s."isDummy"
       GROUP BY se."event_id"

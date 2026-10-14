@@ -23,7 +23,8 @@ onset day to the day of its first ingested Signal's `publishedAt`. An Event is
 Every other Event in range is **excluded** under exactly one reason, the first
 that applies:
 
-1. `NO_INGESTED_SIGNAL`: only history. No live Signal a pipeline ingested.
+1. `NO_INGESTED_SIGNAL`: no live Signal a pipeline ingested, only history or
+   Signals filed by hand.
 2. `NO_ONSET`: no onset date to measure from.
 3. `DATE_ONLY_FIRST_SIGNAL`: the source gives a date but no time.
 4. `BEFORE_ONSET`: the first Signal is dated before onset, which is a data
@@ -31,10 +32,13 @@ that applies:
 
 The terms, as the code reads them:
 
-- **Ingested Signal**: a Signal no person submitted (`submittedById IS NULL`),
-  not retracted and not dummy. Accepted web cases are written with the
-  analyst as `submittedById` and dated to the incident: they are history CLEAR
-  learnt later, not detection, so they never count as a first Signal.
+- **Ingested Signal**: a Signal a pipeline brought in: no person submitted it
+  (`submittedById IS NULL`) or filed it by hand (`rawData.manual` is not
+  true), and it is not retracted or dummy. Accepted web cases are written with
+  the analyst as `submittedById` and dated to the incident: they are history
+  CLEAR learnt later, not detection. Manual Signals (`createManualSignal`, a
+  field officer's, partner's or government report typed in by a person) are
+  dated to when they were typed in. Neither counts as a first Signal.
 - **First ingested Signal**: the earliest `publishedAt` among an Event's
   ingested Signals. `publishedAt` is the source's own time for the report,
   which is what "dated before onset" and "has no time of day" are about;

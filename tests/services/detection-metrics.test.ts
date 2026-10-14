@@ -38,6 +38,9 @@ describe("ISO weeks", () => {
     expect(startOfIsoWeek(at("2026-10-14T15:30:00Z")).toISOString()).toBe("2026-10-12T00:00:00.000Z");
     expect(startOfIsoWeek(at("2026-10-12T00:00:00Z")).toISOString()).toBe("2026-10-12T00:00:00.000Z");
     expect(startOfIsoWeek(at("2026-10-18T23:59:59.999Z")).toISOString()).toBe("2026-10-12T00:00:00.000Z");
+    // Before 1970 the day count is negative; the week still starts on Monday.
+    expect(startOfIsoWeek(at("1969-12-28T12:00:00Z")).toISOString()).toBe("1969-12-22T00:00:00.000Z");
+    expect(startOfIsoWeek(at("1969-12-29T00:00:00Z")).toISOString()).toBe("1969-12-29T00:00:00.000Z");
   });
 
   it("labels a week by its ISO week-year", () => {

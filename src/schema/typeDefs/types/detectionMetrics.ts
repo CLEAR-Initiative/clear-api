@@ -6,7 +6,7 @@ export const detectionMetricsTypeDef = gql`
   Event has exactly one reason, the first that applies in this order.
   """
   enum DetectionExclusionReason {
-    """Only history: no Signal a pipeline ingested (accepted web cases are history)."""
+    """No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand."""
     NO_INGESTED_SIGNAL
     """The Event has no onset date to measure from."""
     NO_ONSET

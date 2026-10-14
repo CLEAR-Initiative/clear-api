@@ -26,7 +26,7 @@ async function event(opts: {
   firstSignalCreatedAt: string;
   locationId?: string;
   isDummy?: boolean;
-  signals: Array<{ at: string; history?: boolean; retracted?: boolean; isDummy?: boolean }>;
+  signals: Array<{ at: string; history?: boolean; manual?: boolean; retracted?: boolean; isDummy?: boolean }>;
 }) {
   const e = await prisma.events.create({
     data: {
@@ -45,7 +45,8 @@ async function event(opts: {
       data: {
         sourceId,
         externalId: `${RUN}-${n++}`,
-        rawData: {},
+        // As createManualSignal writes a hand-filed Signal.
+        rawData: s.manual ? { manual: true, createdBy: USER } : {},
         publishedAt: at(s.at),
         submittedById: s.history ? USER : null,
         retracted: s.retracted ?? false,
@@ -85,13 +86,15 @@ describeIfDb("time to detection against the real schema", () => {
       firstSignalCreatedAt: "2026-09-29T10:00:00Z",
       signals: [{ at: "2026-09-29T10:00:00Z" }, { at: "2026-10-03T10:00:00Z" }],
     });
-    // Counted, next day (W40): an earlier history case, an earlier retracted
-    // Signal and an earlier dummy Signal are not its first ingested Signal.
+    // Counted, next day (W40): an earlier history case, an earlier manual
+    // Signal, an earlier retracted Signal and an earlier dummy Signal are not
+    // its first ingested Signal.
     await event({
       onset: "2026-09-29T00:00:00Z",
       firstSignalCreatedAt: "2026-09-01T00:00:00Z",
       signals: [
         { at: "2026-09-01T00:00:00Z", history: true },
+        { at: "2026-09-29T00:30:00Z", manual: true },
         { at: "2026-09-29T01:00:00Z", retracted: true },
         { at: "2026-09-29T02:00:00Z", isDummy: true },
         { at: "2026-09-30T08:00:00Z" },
@@ -106,6 +109,8 @@ describeIfDb("time to detection against the real schema", () => {
     });
     // Excluded, one per reason.
     await event({ onset: "2026-10-01T00:00:00Z", firstSignalCreatedAt: "2026-10-01T00:00:00Z", signals: [{ at: "2026-10-01T00:00:00Z", history: true }] });
+    // A manual-only Event was not detected by CLEAR either.
+    await event({ onset: "2026-10-01T00:00:00Z", firstSignalCreatedAt: "2026-10-01T11:00:00Z", signals: [{ at: "2026-10-01T11:00:00Z", manual: true }] });
     await event({ onset: null, firstSignalCreatedAt: "2026-10-02T10:00:00Z", signals: [{ at: "2026-10-02T10:00:00Z" }] });
     await event({ onset: "2026-10-01T00:00:00Z", firstSignalCreatedAt: "2026-10-02T00:00:00Z", signals: [{ at: "2026-10-02T00:00:00Z" }] });
     await event({ onset: "2026-10-05T00:00:00Z", firstSignalCreatedAt: "2026-10-04T10:00:00Z", signals: [{ at: "2026-10-04T10:00:00Z" }] });
@@ -125,10 +130,10 @@ describeIfDb("time to detection against the real schema", () => {
       to: "2026-10-11T23:59:59.999Z",
       locationId: COUNTRY,
     });
-    expect(m).toMatchObject({ eventsInRange: 7, withOnset: 6, counted: 3, sameDay: 1, byNextDay: 2 });
+    expect(m).toMatchObject({ eventsInRange: 8, withOnset: 7, counted: 3, sameDay: 1, byNextDay: 2 });
     expect(m.histogram.map((b) => b.count)).toEqual([1, 1, 0, 0, 0, 0, 0, 0, 1]);
     expect(m.exclusions).toEqual([
-      { reason: "NO_INGESTED_SIGNAL", count: 1 },
+      { reason: "NO_INGESTED_SIGNAL", count: 2 },
       { reason: "NO_ONSET", count: 1 },
       { reason: "DATE_ONLY_FIRST_SIGNAL", count: 1 },
       { reason: "BEFORE_ONSET", count: 1 },
@@ -144,6 +149,6 @@ describeIfDb("time to detection against the real schema", () => {
       to: "2026-10-11T23:59:59.999Z",
       locationId: DISTRICT,
     });
-    expect(district).toMatchObject({ eventsInRange: 6, counted: 2 });
+    expect(district).toMatchObject({ eventsInRange: 7, counted: 2 });
   });
 });

@@ -69,7 +69,7 @@ A 1-5 magnitude on a Signal or Event. **Nullable** — `null` means *unknown* (t
 _Avoid_: defaulting null to 1 or 3, treating unknown as low
 
 **Time to detection** (TTD):
-How soon after an Event's real-world onset CLEAR received its first **ingested Signal** for it, in whole UTC days (same day = 0, next day = 1). Counted only when the Event has an onset, its first ingested Signal has a time of day, and that Signal is on or after the onset day; every other Event in range is excluded as `NO_INGESTED_SIGNAL`, `NO_ONSET`, `DATE_ONLY_FIRST_SIGNAL` or `BEFORE_ONSET`. An ingested Signal is one no person submitted (not an accepted web case), not retracted, not dummy. Served as counts by the admin-only `detectionMetrics` query; clear-mvp's `/metrics` page only formats it. See ADR-0011.
+How soon after an Event's real-world onset CLEAR received its first **ingested Signal** for it, in whole UTC days (same day = 0, next day = 1). Counted only when the Event has an onset, its first ingested Signal has a time of day, and that Signal is on or after the onset day; every other Event in range is excluded as `NO_INGESTED_SIGNAL`, `NO_ONSET`, `DATE_ONLY_FIRST_SIGNAL` or `BEFORE_ONSET`. An ingested Signal is one a pipeline brought in: not an accepted web case (`submittedById`), not filed by hand (`rawData.manual`), not retracted, not dummy. Served as counts by the admin-only `detectionMetrics` query; clear-mvp's `/metrics` page only formats it. See ADR-0011.
 _Avoid_: latency, lag, response time; computing it anywhere but clear-api
 
 ### Agent conversations
