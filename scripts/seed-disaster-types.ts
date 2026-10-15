@@ -90,6 +90,26 @@ const OLD_TO_NEW_CODE: Record<string, string> = {
   // ba, ri, pv still exist in the new list — no remap needed
 };
 
+/**
+ * Codes NOT relevant to NRC analysts (the "Add out-of-interest event types"
+ * doc, "Relevant to NRC" = No). Everything else is relevant. Keep in lockstep
+ * with that doc and the add_nrc_relevant migration.
+ */
+const NRC_IRRELEVANT_CODES = new Set<string>([
+  "pa", // arrests
+  "pg", // change to group or activity
+  "pw", // disrupted weapons use
+  "pf", // excessive force against protesters
+  "rg", // grenade
+  "ph", // headquarters or base established
+  "pt", // non-violent transfer of territory
+  "po", // other (conflict)
+  "pp", // peaceful protest
+  "rd", // violent demonstration
+  "fr", // fire
+  "ot", // other (natural hazard)
+]);
+
 async function main() {
   const replace = process.argv.includes("--replace");
 
@@ -116,6 +136,7 @@ async function main() {
       level1: e.type_level_1,
       level2: e.type_level_2,
       idType: e.id_type,
+      nrcRelevant: !NRC_IRRELEVANT_CODES.has(e.id),
     };
 
     if (existing) {
