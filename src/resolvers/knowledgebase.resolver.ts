@@ -41,6 +41,7 @@ import {
   vectorLiteral,
 } from "../utils/embedding-client.js";
 import { env } from "../utils/env.js";
+import { chunkIsAllNrcIrrelevant, nrcIrrelevantLevel2 } from "../utils/nrc-relevance.js";
 
 // Reciprocal Rank Fusion constant. The k=60 default from the RRF
 // paper (Cormack et al. 2009) tempers early-rank scores so a
@@ -66,6 +67,13 @@ const INCIDENT_SIM_FLOOR = 0.35;
 // so a multiplier shoves an item ~10 ranks; an offset of 2 is the small,
 // interpretable knob). An incident competes as if it were 2 ranks lower.
 const INCIDENT_RANK_OFFSET = 2;
+// A firmer rank OFFSET (same idiom as INCIDENT_RANK_OFFSET) applied to a chunk
+// whose event types are ENTIRELY out-of-interest to NRC (disaster_types where
+// nrc_relevant is false for every one of the chunk's types). It demotes — never
+// excludes — such content, so it still surfaces, just ranked well below relevant
+// hits. Tunable. NB: KB tags are level_2 slugs, so in practice this only catches
+// the fully out-of-interest groups (e.g. "fire", natural-hazard "other").
+const NRC_IRRELEVANT_RANK_OFFSET = 15;
 // FRAME mode: fraction of the result budget reserved for the incident band, so
 // the fresh incident timeline is guaranteed to surface (capped so it can't
 // crowd out the analysis). Rounded up, min 1 when any incidents exist.
@@ -345,6 +353,12 @@ function toHit(row: KnowledgebaseHitRow, score: number): SearchHit {
   return { ...rest, score };
 }
 
+/** Extra rank offset for a chunk whose event types are ALL out-of-interest to
+ *  NRC — demotes it a few ranks without excluding it. 0 otherwise. */
+function nrcDemotion(eventTypes: string[], irrelevantLevel2: Set<string>): number {
+  return chunkIsAllNrcIrrelevant(eventTypes, irrelevantLevel2) ? NRC_IRRELEVANT_RANK_OFFSET : 0;
+}
+
 /** One tier's hybrid retrieval: dense (pgvector `<=>`) + sparse (tsvector),
  *  each capped at CANDIDATES_PER_RETRIEVER, fused with RRF. Each hit carries the
  *  fused `rrf` and `sim` (1 - best dense distance; 0 when it surfaced only via
@@ -435,6 +449,7 @@ async function mergeTopical(
   limit: number,
   wantReport: boolean,
   wantIncident: boolean,
+  irrelevantLevel2: Set<string>,
 ): Promise<SearchHit[]> {
   const [reportHits, incidentHits] = await Promise.all([
     wantReport ? hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vecLiteral, q, filters, true) : Promise.resolve([]),
@@ -442,7 +457,9 @@ async function mergeTopical(
   ]);
 
   const scored: SearchHit[] = [];
-  reportHits.forEach((h, i) => scored.push(toHit(h.row, 1 / (RRF_K + i + 1))));
+  reportHits.forEach((h, i) =>
+    scored.push(toHit(h.row, 1 / (RRF_K + i + 1 + nrcDemotion(h.row.eventTypes, irrelevantLevel2)))),
+  );
   incidentHits
     // Gate only rows that HAVE dense evidence: a null sim means the row surfaced
     // only via BM25 (an exact keyword match outside the dense window) — keep it,
@@ -451,7 +468,7 @@ async function mergeTopical(
     .forEach((h, i) => {
       // Base rank score (with the report rank-offset) + a small recency bonus so
       // fresher incidents shape the order without overriding relevance (E7).
-      const base = 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET);
+      const base = 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET + nrcDemotion(h.row.eventTypes, irrelevantLevel2));
       scored.push(toHit(h.row, base + INCIDENT_RECENCY_BONUS * recencyScore(h.row._startedAt)));
     });
 
@@ -468,6 +485,7 @@ async function mergeFrame(
   limit: number,
   wantReport: boolean,
   wantIncident: boolean,
+  irrelevantLevel2: Set<string>,
 ): Promise<SearchHit[]> {
   // Incident budget: the quota only *caps* incidents when they share the budget
   // with reports (so they can't swamp the analysis). When incidents own the whole
@@ -501,10 +519,21 @@ async function mergeFrame(
 
   // Two bands, reports then incidents; synthetic descending scores keep the
   // flat list ordered while the `tier` field carries the band identity.
+  // Within each band, sink chunks whose event types are entirely out-of-interest
+  // to NRC to the bottom (stable sort preserves the relevant order), then stamp
+  // the synthetic descending scores. FRAME order is band position, not score, so
+  // the demotion has to reorder here rather than ride on the score. Bands stay
+  // report-then-incident (ADR-0006).
+  const demoteLast = (rows: KnowledgebaseHitRow[]) =>
+    [...rows].sort(
+      (a, b) =>
+        nrcDemotion(a.eventTypes, irrelevantLevel2) - nrcDemotion(b.eventTypes, irrelevantLevel2),
+    );
+
   const out: SearchHit[] = [];
   let rank = 0;
-  for (const r of reportRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
-  for (const r of incidentRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  for (const r of demoteLast(reportRows)) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  for (const r of demoteLast(incidentRows)) out.push(toHit(r, 1 / (RRF_K + ++rank)));
   return out.slice(0, limit);
 }
 
@@ -615,11 +644,16 @@ export const knowledgebaseResolvers = {
         );
       }
 
+      // Level_2 groups that are entirely out-of-interest to NRC — chunks tagged
+      // only with these are demoted in the merge below. Computed once per query
+      // from disaster_types (tiny, static table).
+      const irrelevantLevel2 = await nrcIrrelevantLevel2(context.prisma);
+
       if (mode === "FRAME") {
-        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident);
+        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident, irrelevantLevel2);
       }
       const vecLiteral = vectorLiteral(await embedQuery(q));
-      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident);
+      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident, irrelevantLevel2);
     },
 
     knowledgebaseIngestJob: async (
