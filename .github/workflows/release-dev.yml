@@ -1,4 +1,4 @@
-name: Tag, Build & deploy dev
+name: Release / dev
 on:
   push:
     branches: [dev]
@@ -39,7 +39,7 @@ jobs:
           LATEST=$(echo "$TAGS" | sed 's#.*refs/tags/##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
           IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST:-0.0.0}"
           # dev deploys bump the MINOR within the current prod MAJOR; a prod
-          # deploy bumps the MAJOR (build-and-deploy-prod.yml). The two never
+          # deploy bumps the MAJOR (release-prod.yml). The two never
           # pick the same next version, so they can't contend for a tag.
           echo "version=${MAJOR}.$((MINOR + 1)).0" >> "$GITHUB_OUTPUT"
           echo "existing=false" >> "$GITHUB_OUTPUT"
