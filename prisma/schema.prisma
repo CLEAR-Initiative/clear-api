@@ -811,6 +811,13 @@ model disasterTypes {
   /// Identifier system for glideNumber: "glide_number" or "clear_id".
   idType String @default("glide_number") @map("id_type")
 
+  /// Whether this event/disaster type is relevant to NRC analysts. Source of
+  /// truth: the "Add out-of-interest event types" doc ("Relevant to NRC").
+  /// Keyed by glideNumber; populated for existing rows by the add_nrc_relevant
+  /// migration and kept in sync by scripts/seed-disaster-types.ts. Defaults
+  /// false so a newly added type is out-of-interest until explicitly marked.
+  nrcRelevant Boolean @default(false) @map("nrc_relevant")
+
   @@index([level1])
   @@index([level2])
   @@index([glideNumber])
