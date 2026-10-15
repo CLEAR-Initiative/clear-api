@@ -57,20 +57,3 @@ jobs:
           environment: ${{ github.ref_name }}
           version: ${{ steps.version.outputs.version }}
           registry-token: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy:
-    name: Deploy to ${{ github.ref_name }}
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    environment: ${{ github.ref_name }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/deploy
-        with:
-          host: ${{ secrets.APP_VM_HOST }}
-          ssh-key: ${{ secrets.APP_VM_SSH_KEY }}
-          registry-token: ${{ secrets.GITHUB_TOKEN }}
