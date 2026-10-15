@@ -41,7 +41,11 @@ import {
   vectorLiteral,
 } from "../utils/embedding-client.js";
 import { env } from "../utils/env.js";
-import { chunkIsAllNrcIrrelevant, nrcIrrelevantLevel2 } from "../utils/nrc-relevance.js";
+import {
+  chunkIsAllNrcIrrelevant,
+  nrcIrrelevantGlideCodes,
+  nrcIrrelevantLevel2,
+} from "../utils/nrc-relevance.js";
 
 // Reciprocal Rank Fusion constant. The k=60 default from the RRF
 // paper (Cormack et al. 2009) tempers early-rank scores so a
@@ -354,9 +358,11 @@ function toHit(row: KnowledgebaseHitRow, score: number): SearchHit {
 }
 
 /** Extra rank offset for a chunk whose event types are ALL out-of-interest to
- *  NRC — demotes it a few ranks without excluding it. 0 otherwise. */
-function nrcDemotion(eventTypes: string[], irrelevantLevel2: Set<string>): number {
-  return chunkIsAllNrcIrrelevant(eventTypes, irrelevantLevel2) ? NRC_IRRELEVANT_RANK_OFFSET : 0;
+ *  NRC — demotes it a few ranks without excluding it. 0 otherwise. `irrelevant`
+ *  is the set that matches the chunk's event-type vocabulary: level_2 labels for
+ *  report chunks, glide codes for incident cards. */
+function nrcDemotion(eventTypes: string[], irrelevant: Set<string>): number {
+  return chunkIsAllNrcIrrelevant(eventTypes, irrelevant) ? NRC_IRRELEVANT_RANK_OFFSET : 0;
 }
 
 /** One tier's hybrid retrieval: dense (pgvector `<=>`) + sparse (tsvector),
@@ -450,6 +456,7 @@ async function mergeTopical(
   wantReport: boolean,
   wantIncident: boolean,
   irrelevantLevel2: Set<string>,
+  irrelevantGlide: Set<string>,
 ): Promise<SearchHit[]> {
   const [reportHits, incidentHits] = await Promise.all([
     wantReport ? hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vecLiteral, q, filters, true) : Promise.resolve([]),
@@ -457,6 +464,8 @@ async function mergeTopical(
   ]);
 
   const scored: SearchHit[] = [];
+  // Report chunks tag level_2 labels; incident cards tag glide codes — demote
+  // each against the set that matches its vocabulary.
   reportHits.forEach((h, i) =>
     scored.push(toHit(h.row, 1 / (RRF_K + i + 1 + nrcDemotion(h.row.eventTypes, irrelevantLevel2)))),
   );
@@ -468,7 +477,7 @@ async function mergeTopical(
     .forEach((h, i) => {
       // Base rank score (with the report rank-offset) + a small recency bonus so
       // fresher incidents shape the order without overriding relevance (E7).
-      const base = 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET + nrcDemotion(h.row.eventTypes, irrelevantLevel2));
+      const base = 1 / (RRF_K + i + 1 + INCIDENT_RANK_OFFSET + nrcDemotion(h.row.eventTypes, irrelevantGlide));
       scored.push(toHit(h.row, base + INCIDENT_RECENCY_BONUS * recencyScore(h.row._startedAt)));
     });
 
@@ -486,7 +495,20 @@ async function mergeFrame(
   wantReport: boolean,
   wantIncident: boolean,
   irrelevantLevel2: Set<string>,
+  irrelevantGlide: Set<string>,
 ): Promise<SearchHit[]> {
+  // Within a band, sink chunks whose event types are entirely out-of-interest to
+  // NRC (stable sort preserves the in-band order among equally-relevant rows).
+  // FRAME order is band position, not score, AND the demotion must be able to
+  // change *which* rows survive the budget — so we over-fetch each band's
+  // candidates, demote, THEN slice to budget. Slicing before demoting (as an
+  // earlier version did) locks an irrelevant top hit in at small limits and the
+  // demotion becomes a no-op. Reports tag level_2 labels, incidents glide codes.
+  const demoteLast = (rows: KnowledgebaseHitRow[], irrelevant: Set<string>) =>
+    [...rows].sort(
+      (a, b) => nrcDemotion(a.eventTypes, irrelevant) - nrcDemotion(b.eventTypes, irrelevant),
+    );
+
   // Incident budget: the quota only *caps* incidents when they share the budget
   // with reports (so they can't swamp the analysis). When incidents own the whole
   // budget (report tier off) they fill it entirely — else an incident-only frame
@@ -496,11 +518,16 @@ async function mergeFrame(
   const incidentQuota = !wantIncident
     ? 0
     : (wantReport ? Math.round(limit * INCIDENT_QUOTA_FRACTION) : limit);
-  const incidentRows = await recencyRetrieveTier(
-    prisma, "events_index", INCIDENT_SELECT,
-    `"started_at" DESC NULLS LAST, "severity" DESC NULLS LAST`,
-    filters, false, incidentQuota,
-  );
+  // Over-fetch (up to CANDIDATES_PER_RETRIEVER) so demotion has relevant rows to
+  // promote into the quota, then demote and cut.
+  const incidentCandidates = incidentQuota > 0
+    ? await recencyRetrieveTier(
+        prisma, "events_index", INCIDENT_SELECT,
+        `"started_at" DESC NULLS LAST, "severity" DESC NULLS LAST`,
+        filters, false, Math.max(incidentQuota, CANDIDATES_PER_RETRIEVER),
+      )
+    : [];
+  const incidentRows = demoteLast(incidentCandidates, irrelevantGlide).slice(0, incidentQuota);
   const reportBudget = limit - incidentRows.length;
 
   let reportRows: KnowledgebaseHitRow[] = [];
@@ -508,32 +535,24 @@ async function mergeFrame(
     if (q !== "") {
       const vec = vectorLiteral(await embedQuery(q));
       const hits = await hybridRetrieveTier(prisma, "knowledgebase", REPORT_SELECT, vec, q, filters, true);
-      reportRows = hits.slice(0, reportBudget).map((h) => h.row);
+      reportRows = demoteLast(hits.map((h) => h.row), irrelevantLevel2).slice(0, reportBudget);
     } else {
-      reportRows = await recencyRetrieveTier(
+      const candidates = await recencyRetrieveTier(
         prisma, "knowledgebase", REPORT_SELECT,
-        `"published_at" DESC NULLS LAST`, filters, true, reportBudget,
+        `"published_at" DESC NULLS LAST`, filters, true,
+        Math.max(reportBudget, CANDIDATES_PER_RETRIEVER),
       );
+      reportRows = demoteLast(candidates, irrelevantLevel2).slice(0, reportBudget);
     }
   }
 
-  // Two bands, reports then incidents; synthetic descending scores keep the
-  // flat list ordered while the `tier` field carries the band identity.
-  // Within each band, sink chunks whose event types are entirely out-of-interest
-  // to NRC to the bottom (stable sort preserves the relevant order), then stamp
-  // the synthetic descending scores. FRAME order is band position, not score, so
-  // the demotion has to reorder here rather than ride on the score. Bands stay
-  // report-then-incident (ADR-0006).
-  const demoteLast = (rows: KnowledgebaseHitRow[]) =>
-    [...rows].sort(
-      (a, b) =>
-        nrcDemotion(a.eventTypes, irrelevantLevel2) - nrcDemotion(b.eventTypes, irrelevantLevel2),
-    );
-
+  // Two bands, reports then incidents; synthetic descending scores keep the flat
+  // list ordered while the `tier` field carries the band identity. Rows are
+  // already demoted + budget-cut, so just stamp the scores in band order.
   const out: SearchHit[] = [];
   let rank = 0;
-  for (const r of demoteLast(reportRows)) out.push(toHit(r, 1 / (RRF_K + ++rank)));
-  for (const r of demoteLast(incidentRows)) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  for (const r of reportRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
+  for (const r of incidentRows) out.push(toHit(r, 1 / (RRF_K + ++rank)));
   return out.slice(0, limit);
 }
 
@@ -644,16 +663,19 @@ export const knowledgebaseResolvers = {
         );
       }
 
-      // Level_2 groups that are entirely out-of-interest to NRC — chunks tagged
-      // only with these are demoted in the merge below. Computed once per query
-      // from disaster_types (tiny, static table).
-      const irrelevantLevel2 = await nrcIrrelevantLevel2(context.prisma);
+      // Out-of-interest NRC signals for the merge demotion, computed once per
+      // query from disaster_types (tiny, static table). Two vocabularies: report
+      // chunks tag level_2 labels; incident cards tag glide codes.
+      const [irrelevantLevel2, irrelevantGlide] = await Promise.all([
+        nrcIrrelevantLevel2(context.prisma),
+        nrcIrrelevantGlideCodes(context.prisma),
+      ]);
 
       if (mode === "FRAME") {
-        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident, irrelevantLevel2);
+        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide);
       }
       const vecLiteral = vectorLiteral(await embedQuery(q));
-      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident, irrelevantLevel2);
+      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide);
     },
 
     knowledgebaseIngestJob: async (

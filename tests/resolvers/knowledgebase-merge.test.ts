@@ -44,22 +44,31 @@ function makeQueryRawUnsafe(rows: {
   });
 }
 
+type DtRow = { level2: string | null; glideNumber: string | null; nrcRelevant: boolean };
+
 /**
- * `disasterTypes.findMany` feeds the NRC demotion. Default rows make every
- * level_2 group relevant (empty irrelevant set), so demotion is a no-op and
- * the merge/order assertions below are unaffected. Pass custom rows to
- * exercise demotion.
+ * `disasterTypes.findMany` feeds the NRC demotion. Reports demote on level_2
+ * labels, incidents on glide codes, so the stub honours the `where.nrcRelevant`
+ * filter (used by the glide-code query). Default rows make every group relevant
+ * (empty irrelevant sets), so demotion is a no-op and the merge/order assertions
+ * are unaffected. Pass custom rows to exercise demotion.
  */
 function ctx(
   queryRawUnsafe: ReturnType<typeof vi.fn>,
-  disasterTypeRows: { level2: string | null; nrcRelevant: boolean }[] = [
-    { level2: "conflict", nrcRelevant: true },
-  ],
+  disasterTypeRows: DtRow[] = [{ level2: "conflict", glideNumber: "ac", nrcRelevant: true }],
 ): Context {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const findMany = vi.fn().mockImplementation(async ({ where }: any) => {
+    const rows =
+      where?.nrcRelevant === undefined
+        ? disasterTypeRows
+        : disasterTypeRows.filter((r) => r.nrcRelevant === where.nrcRelevant);
+    return rows;
+  });
   return {
     prisma: {
       $queryRawUnsafe: queryRawUnsafe,
-      disasterTypes: { findMany: vi.fn().mockResolvedValue(disasterTypeRows) },
+      disasterTypes: { findMany },
     } as unknown as Context["prisma"],
     user: { id: "u", role: "viewer", isActive: true } as unknown,
     session: {}, authMethod: "session",
@@ -172,10 +181,11 @@ describe("searchKnowledgebase — ADR-0006 review fixes (E1/E2/E7)", () => {
 describe("searchKnowledgebase — NRC relevance demotion", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // "fire" has no relevant member → irrelevant group; "conflict" stays relevant.
+  // "fire"/"fr" is NRC-irrelevant; "conflict"/"ac" is relevant. Report chunks
+  // tag the level_2 label ("fire"); incident cards tag the glide code ("fr").
   const DT_ROWS = [
-    { level2: "conflict", nrcRelevant: true },
-    { level2: "fire", nrcRelevant: false },
+    { level2: "conflict", glideNumber: "ac", nrcRelevant: true },
+    { level2: "fire", glideNumber: "fr", nrcRelevant: false },
   ];
 
   it("TOPICAL: an all-irrelevant report is demoted below an otherwise-weaker relevant one", async () => {
@@ -217,5 +227,33 @@ describe("searchKnowledgebase — NRC relevance demotion", () => {
     // default ctx rows: "fire" absent, "conflict" relevant → nothing irrelevant
     const out = await search(null, { query: "x", filters: FILTERS, limit: 10, mode: "TOPICAL" }, ctx(q));
     expect(out.map((h) => h.id)).toEqual(["r1", "r2"]); // stronger dense rank wins, undemoted
+  });
+
+  it("TOPICAL: an incident is demoted on its GLIDE code, not a level_2 name", async () => {
+    // events_index.event_types carries glide codes (fr/ac), so demotion must
+    // match the glide set — the level_2 set ("fire") would never match "fr".
+    const q = makeQueryRawUnsafe({
+      incidentDense: [
+        row("e_fire", "incident", { _dist: 0.2, eventTypes: ["fr"] }),     // stronger, all-irrelevant
+        row("e_conflict", "incident", { _dist: 0.2, eventTypes: ["ac"] }),
+      ],
+    });
+    const out = await search(null, { query: "fire", filters: FILTERS, limit: 10, tiers: ["incident"], mode: "TOPICAL" }, ctx(q, DT_ROWS));
+    const order = out.map((h) => h.id);
+    expect(order.indexOf("e_conflict")).toBeLessThan(order.indexOf("e_fire"));
+    expect(order).toContain("e_fire"); // demoted, not excluded
+  });
+
+  it("FRAME: a relevant hit displaces an irrelevant one within a tight budget", async () => {
+    // Regression for cut-before-demote: with limit 1 the irrelevant hit is the
+    // stronger candidate, but demotion must let the relevant one survive the cut.
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_fire", "report", { _dist: 0.1, eventTypes: ["fire"] }),      // stronger, all-irrelevant
+        row("r_conflict", "report", { _dist: 0.15, eventTypes: ["conflict"] }),
+      ],
+    });
+    const out = await search(null, { query: "floods", filters: FILTERS, limit: 1, tiers: ["report"], mode: "FRAME" }, ctx(q, DT_ROWS));
+    expect(out.map((h) => h.id)).toEqual(["r_conflict"]); // not r_fire
   });
 });

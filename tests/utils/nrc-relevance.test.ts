@@ -13,15 +13,18 @@ import { describe, it, expect } from "vitest";
 import {
   anyTypeNrcRelevant,
   nrcIrrelevantLevel2,
+  nrcIrrelevantGlideCodes,
   chunkIsAllNrcIrrelevant,
 } from "../../src/utils/nrc-relevance.js";
 
 type DtRow = { level2: string | null; nrcRelevant: boolean; glideNumber?: string };
 
 /**
- * Minimal `disasterTypes` stub with just the two calls the helpers make:
- * `count` (filtered by glideNumber in [...] AND nrcRelevant) and `findMany`
- * (selecting level2 + nrcRelevant).
+ * Minimal `disasterTypes` stub for the three calls the helpers make: `count`
+ * (filtered by glideNumber in [...] AND nrcRelevant) and `findMany` (level2 or
+ * glideNumber, honouring an optional nrcRelevant filter). `count` compares the
+ * `in` codes verbatim — the helper is responsible for lowercasing them first
+ * (the seed stores lowercase glide codes).
  */
 function fakePrisma(rows: DtRow[]) {
   return {
@@ -37,8 +40,13 @@ function fakePrisma(rows: DtRow[]) {
             (wantRelevant === undefined || r.nrcRelevant === wantRelevant),
         ).length;
       },
-      findMany: async () =>
-        rows.map((r) => ({ level2: r.level2, nrcRelevant: r.nrcRelevant })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      findMany: async ({ where }: any = {}) => {
+        const wantRelevant: boolean | undefined = where?.nrcRelevant;
+        return rows
+          .filter((r) => wantRelevant === undefined || r.nrcRelevant === wantRelevant)
+          .map((r) => ({ level2: r.level2, glideNumber: r.glideNumber ?? null, nrcRelevant: r.nrcRelevant }));
+      },
     },
   } as never;
 }
@@ -71,6 +79,33 @@ describe("anyTypeNrcRelevant", () => {
 
   it("is false for unknown codes", async () => {
     expect(await anyTypeNrcRelevant(fakePrisma(ROWS), ["zz"])).toBe(false);
+  });
+
+  it("matches codes case-insensitively (events may store uppercase glide codes)", async () => {
+    // "EQ" must resolve to the seeded lowercase "eq" (relevant), not be rejected.
+    expect(await anyTypeNrcRelevant(fakePrisma(ROWS), ["EQ"])).toBe(true);
+    expect(await anyTypeNrcRelevant(fakePrisma(ROWS), [" Eq "])).toBe(true);
+    expect(await anyTypeNrcRelevant(fakePrisma(ROWS), ["PA", "FR"])).toBe(false);
+  });
+});
+
+describe("nrcIrrelevantGlideCodes", () => {
+  it("returns lowercased glide codes whose type is NOT relevant", async () => {
+    const set = await nrcIrrelevantGlideCodes(fakePrisma(ROWS));
+    expect([...set].sort()).toEqual(["fr", "ot", "pa", "pp"]);
+  });
+
+  it("does not include relevant codes", async () => {
+    const set = await nrcIrrelevantGlideCodes(fakePrisma(ROWS));
+    expect(set.has("eq")).toBe(false);
+    expect(set.has("ac")).toBe(false);
+  });
+
+  it("drives incident demotion via chunkIsAllNrcIrrelevant on glide codes", async () => {
+    const set = await nrcIrrelevantGlideCodes(fakePrisma(ROWS));
+    expect(chunkIsAllNrcIrrelevant(["fr"], set)).toBe(true);          // all-irrelevant incident
+    expect(chunkIsAllNrcIrrelevant(["fr", "eq"], set)).toBe(false);   // one relevant code
+    expect(chunkIsAllNrcIrrelevant(["FR"], set)).toBe(true);          // case-normalized
   });
 });
 
