@@ -11,13 +11,13 @@ This repo's default/integration branch is **`dev`** (`origin/HEAD → dev`).
 ## Legacy — don't target these
 
 - `main-(inactive)` — the old `main`, frozen since 2026-03-18.
-- `staging` — the branch doesn't exist; it has been removed from `ci.yml`'s trigger lists.
+- `staging` — the branch doesn't exist; it has been removed from `check.yml`'s trigger lists.
 
 Skills (`/start-ticket`, `/ship-ticket`, `/setup-merge-hook`, `/cleanup`) read `featureBase` and the deploy trigger from this file.
 
 ## Auto-merge (Greptile)
 
-CI (`ci.yml`) cancels a superseded run only for `pull_request` events; a push-to-`dev` run is never cancelled, so every merged commit gets a verdict even when merges land back to back.
+`Check` (`check.yml`) cancels a superseded run only for `pull_request` events; a push-to-`dev` run is never cancelled, so every merged commit gets a verdict even when merges land back to back.
 
 `.github/workflows/bot-greptile-automerge.yml` squash-merges a PR into `dev` once Greptile has reviewed the PR's latest commit, left no unresolved P0/P1 finding on it, and the required checks (`check`, `db-tests`) have passed. P2s don't block. The merge is pinned to the reviewed commit, so a push after the review never merges on the old review.
 
