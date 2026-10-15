@@ -1,6 +1,6 @@
 name: Tag, Build & deploy prod
 # Mirrors build-and-deploy-dev.yml: a merge to `prod` tags a new MAJOR version,
-# builds the prod image, pushes it to GHCR, and rolls the Infomaniak prod VM.
+# builds the prod image and pushes it to GHCR. Deployment happens outside this repo.
 # A prod deploy is a MAJOR release (X.0.0); dev deploys that follow are MINOR
 # releases within it (X.1.0, X.2.0, …). `prod` merges are human-gated
 # (no-automerge), so the merge itself is the deploy gate.
@@ -19,7 +19,7 @@ jobs:
     # workflow_dispatch's branch filter is NOT restricted by `push.branches`, and
     # this job hardcodes environment=prod — so without this guard a manual run
     # from another branch would publish that branch's code as :prod. Only ever
-    # tag/build/deploy from the prod branch.
+    # tag/build from the prod branch.
     if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
     permissions:
@@ -60,21 +60,4 @@ jobs:
         with:
           environment: prod
           version: ${{ steps.version.outputs.version }}
-          registry-token: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy:
-    name: Deploy to prod
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/deploy
-        with:
-          host: ${{ secrets.APP_VM_HOST }}
-          ssh-key: ${{ secrets.APP_VM_SSH_KEY }}
           registry-token: ${{ secrets.GITHUB_TOKEN }}
