@@ -1,4 +1,4 @@
-name: Promote Exponential Tickets
+name: Bot / Exponential promote
 on:
   pull_request:
     types: [closed]

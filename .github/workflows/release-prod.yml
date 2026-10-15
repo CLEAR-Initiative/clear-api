@@ -1,5 +1,5 @@
-name: Tag, Build & deploy prod
-# Mirrors build-and-deploy-dev.yml: a merge to `prod` tags a new MAJOR version,
+name: Release / prod
+# Mirrors release-dev.yml: a merge to `prod` tags a new MAJOR version,
 # builds the prod image and pushes it to GHCR. Deployment happens outside this repo.
 # A prod deploy is a MAJOR release (X.0.0); dev deploys that follow are MINOR
 # releases within it (X.1.0, X.2.0, …). `prod` merges are human-gated
