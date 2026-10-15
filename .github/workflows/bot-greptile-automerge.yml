@@ -1,4 +1,4 @@
-name: Greptile auto-merge
+name: Bot / Greptile auto-merge
 
 # Squash-merges a PR into the default branch once Greptile has reviewed the PR's latest
 # commit and left no unresolved P0/P1 finding on it, and every required check has passed.
@@ -21,12 +21,12 @@ name: Greptile auto-merge
 # Greptile's own check passes even when it leaves findings, so its conclusion only tells
 # us a review happened. Greptile also skips some pushes; no review on the head = no merge.
 #
-# Kill switch (Greptile trial):  gh workflow disable greptile-automerge.yml
+# Kill switch (Greptile trial):  gh workflow disable bot-greptile-automerge.yml
 # Re-evaluate a PR by hand (e.g. after resolving a Greptile thread — there's no Actions
-# event for that):              gh workflow run greptile-automerge.yml -f pr=<number>
+# event for that):              gh workflow run bot-greptile-automerge.yml -f pr=<number>
 #
 # Merges use the auto-merge GitHub App's token, not GITHUB_TOKEN: a merge made with
-# GITHUB_TOKEN doesn't trigger other workflows (deploys, exponential-promote).
+# GITHUB_TOKEN doesn't trigger other workflows (release, bot-exponential).
 #
 # check_run and workflow_run use the default branch's copy of this file.
 # pull_request_target uses the PR's base branch; workflow_dispatch uses the selected ref.
@@ -40,7 +40,7 @@ on:
   workflow_run:
     # The workflows that produce the required checks, across the CLEAR repos. A name a
     # repo doesn't have is ignored.
-    workflows: [CI, E2E smoke, Unit tests]
+    workflows: [Check, CI, E2E smoke, Unit tests]
     types: [completed]
   pull_request_target:
     types: [synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
@@ -231,7 +231,7 @@ jobs:
                     continue;
                   }
                   return report(number, `Greptile: no P0/P1 on \`${short}\`, but GitHub refused the merge ${MERGE_ATTEMPTS} times (${e.message}). ` +
-                    `If nothing else changes on the PR, re-run with \`gh workflow run greptile-automerge.yml -f pr=${number}\`.`);
+                    `If nothing else changes on the PR, re-run with \`gh workflow run bot-greptile-automerge.yml -f pr=${number}\`.`);
                 }
               }
             }
