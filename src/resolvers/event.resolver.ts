@@ -567,9 +567,13 @@ export const eventResolvers = {
       }
 
       // Escalation auto-publishes an alert, so apply the same NRC gate: refuse
-      // when none of the event's types are relevant to NRC
-      // (disaster_types.nrc_relevant). One relevant type is enough to pass.
-      if (!(await anyTypeNrcRelevant(context.prisma, event.types))) {
+      // when the event's types are ALL out-of-interest
+      // (disaster_types.nrc_relevant = false). One relevant type is enough to
+      // pass; an event with no classified types is not blocked here.
+      if (
+        (event.types?.length ?? 0) > 0 &&
+        !(await anyTypeNrcRelevant(context.prisma, event.types))
+      ) {
         throw new GraphQLError(
           "Cannot escalate: none of this event's types are relevant to NRC",
           { extensions: { code: "NRC_IRRELEVANT" } },

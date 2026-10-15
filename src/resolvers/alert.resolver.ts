@@ -99,10 +99,15 @@ export const alertResolvers = {
         });
       }
 
-      // Don't raise alerts for out-of-interest events: an event none of whose
-      // types are relevant to NRC (disaster_types.nrc_relevant) is rejected. An
-      // event with at least one NRC-relevant glide code may still alert.
-      if (!(await anyTypeNrcRelevant(context.prisma, event.types))) {
+      // Don't raise alerts for out-of-interest events: an event whose types are
+      // ALL out-of-interest (disaster_types.nrc_relevant = false) is rejected.
+      // An event with at least one NRC-relevant glide code may still alert.
+      // An event with no classified types carries no NRC signal, so it is not
+      // blocked here.
+      if (
+        (event.types?.length ?? 0) > 0 &&
+        !(await anyTypeNrcRelevant(context.prisma, event.types))
+      ) {
         throw new GraphQLError(
           "Cannot raise an alert: none of this event's types are relevant to NRC",
           { extensions: { code: "NRC_IRRELEVANT" } },
