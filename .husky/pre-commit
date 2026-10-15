@@ -1,7 +1,7 @@
 # Regenerate the GraphQL docs body HTML when something that could affect the
 # schema is part of the commit, then re-stage the regenerated file.
 #
-# Mirrors the docs-sync check in .github/workflows/ci.yml — without this
+# Mirrors the docs-sync check in .github/workflows/check.yml — without this
 # hook, every schema PR has to remember to run `bun run build:docs` and
 # stage the result by hand, and CI fails noisily when they don't.
 #
