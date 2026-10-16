@@ -44,9 +44,32 @@ function makeQueryRawUnsafe(rows: {
   });
 }
 
-function ctx(queryRawUnsafe: ReturnType<typeof vi.fn>): Context {
+type DtRow = { level2: string | null; glideNumber: string | null; nrcRelevant: boolean };
+
+/**
+ * `disasterTypes.findMany` feeds the NRC demotion. Reports demote on level_2
+ * labels, incidents on glide codes, so the stub honours the `where.nrcRelevant`
+ * filter (used by the glide-code query). Default rows make every group relevant
+ * (empty irrelevant sets), so demotion is a no-op and the merge/order assertions
+ * are unaffected. Pass custom rows to exercise demotion.
+ */
+function ctx(
+  queryRawUnsafe: ReturnType<typeof vi.fn>,
+  disasterTypeRows: DtRow[] = [{ level2: "conflict", glideNumber: "ac", nrcRelevant: true }],
+): Context {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const findMany = vi.fn().mockImplementation(async ({ where }: any) => {
+    const rows =
+      where?.nrcRelevant === undefined
+        ? disasterTypeRows
+        : disasterTypeRows.filter((r) => r.nrcRelevant === where.nrcRelevant);
+    return rows;
+  });
   return {
-    prisma: { $queryRawUnsafe: queryRawUnsafe } as unknown as Context["prisma"],
+    prisma: {
+      $queryRawUnsafe: queryRawUnsafe,
+      disasterTypes: { findMany },
+    } as unknown as Context["prisma"],
     user: { id: "u", role: "viewer", isActive: true } as unknown,
     session: {}, authMethod: "session",
   } as unknown as Context;
@@ -152,5 +175,85 @@ describe("searchKnowledgebase — ADR-0006 review fixes (E1/E2/E7)", () => {
     });
     const out = await search(null, { query: "airstrike", filters: FILTERS, tiers: ["incident"], mode: "TOPICAL" }, ctx(q));
     expect(out[0].id).toBe("e_recent"); // recency bonus overtakes the one-rank gap
+  });
+});
+
+describe("searchKnowledgebase — NRC relevance demotion", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // "fire"/"fr" is NRC-irrelevant; "conflict"/"ac" is relevant. Report chunks
+  // tag the level_2 label ("fire"); incident cards tag the glide code ("fr").
+  const DT_ROWS = [
+    { level2: "conflict", glideNumber: "ac", nrcRelevant: true },
+    { level2: "fire", glideNumber: "fr", nrcRelevant: false },
+  ];
+
+  it("TOPICAL: an all-irrelevant report is demoted below an otherwise-weaker relevant one", async () => {
+    // Without demotion the irrelevant chunk (dense rank 0) would outrank the
+    // relevant one (dense rank 1). The rank offset flips the order.
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_fire", "report", { _dist: 0.1, eventTypes: ["fire"] }),      // stronger, but all-irrelevant
+        row("r_conflict", "report", { _dist: 0.15, eventTypes: ["conflict"] }),
+      ],
+    });
+    const out = await search(null, { query: "wildfire", filters: FILTERS, limit: 10, mode: "TOPICAL" }, ctx(q, DT_ROWS));
+    const order = out.map((h) => h.id);
+    expect(order.indexOf("r_conflict")).toBeLessThan(order.indexOf("r_fire"));
+    // demotion never excludes — the irrelevant chunk is still present
+    expect(order).toContain("r_fire");
+  });
+
+  it("FRAME: an all-irrelevant report sinks to the end of the report band", async () => {
+    const q = makeQueryRawUnsafe({
+      reportRecency: [
+        row("r_fire", "report", { eventTypes: ["fire"] }),  // first by recency, but all-irrelevant
+        row("r_a", "report", { eventTypes: ["conflict"] }),
+        row("r_b", "report", { eventTypes: ["conflict"] }),
+      ],
+    });
+    const out = await search(null, { query: "", filters: FILTERS, limit: 6, tiers: ["report"], mode: "FRAME" }, ctx(q, DT_ROWS));
+    expect(out[out.length - 1].id).toBe("r_fire"); // demoted to the back of the band
+    expect(out.length).toBe(3);                    // still present, not excluded
+  });
+
+  it("leaves order unchanged when no group is irrelevant (empty irrelevant set)", async () => {
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r1", "report", { _dist: 0.1, eventTypes: ["fire"] }),
+        row("r2", "report", { _dist: 0.15, eventTypes: ["conflict"] }),
+      ],
+    });
+    // default ctx rows: "fire" absent, "conflict" relevant → nothing irrelevant
+    const out = await search(null, { query: "x", filters: FILTERS, limit: 10, mode: "TOPICAL" }, ctx(q));
+    expect(out.map((h) => h.id)).toEqual(["r1", "r2"]); // stronger dense rank wins, undemoted
+  });
+
+  it("TOPICAL: an incident is demoted on its GLIDE code, not a level_2 name", async () => {
+    // events_index.event_types carries glide codes (fr/ac), so demotion must
+    // match the glide set — the level_2 set ("fire") would never match "fr".
+    const q = makeQueryRawUnsafe({
+      incidentDense: [
+        row("e_fire", "incident", { _dist: 0.2, eventTypes: ["fr"] }),     // stronger, all-irrelevant
+        row("e_conflict", "incident", { _dist: 0.2, eventTypes: ["ac"] }),
+      ],
+    });
+    const out = await search(null, { query: "fire", filters: FILTERS, limit: 10, tiers: ["incident"], mode: "TOPICAL" }, ctx(q, DT_ROWS));
+    const order = out.map((h) => h.id);
+    expect(order.indexOf("e_conflict")).toBeLessThan(order.indexOf("e_fire"));
+    expect(order).toContain("e_fire"); // demoted, not excluded
+  });
+
+  it("FRAME: a relevant hit displaces an irrelevant one within a tight budget", async () => {
+    // Regression for cut-before-demote: with limit 1 the irrelevant hit is the
+    // stronger candidate, but demotion must let the relevant one survive the cut.
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_fire", "report", { _dist: 0.1, eventTypes: ["fire"] }),      // stronger, all-irrelevant
+        row("r_conflict", "report", { _dist: 0.15, eventTypes: ["conflict"] }),
+      ],
+    });
+    const out = await search(null, { query: "floods", filters: FILTERS, limit: 1, tiers: ["report"], mode: "FRAME" }, ctx(q, DT_ROWS));
+    expect(out.map((h) => h.id)).toEqual(["r_conflict"]); // not r_fire
   });
 });

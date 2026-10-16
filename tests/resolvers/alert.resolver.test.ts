@@ -70,7 +70,13 @@ type User = { id: string; role: string } | null;
  */
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: {
+      // Default: every glide code counts as NRC-relevant, so the NRC alert
+      // gate is a no-op for tests that aren't about it. A test overrides this
+      // to exercise the gate (count → 0 means all-irrelevant).
+      disasterTypes: { count: vi.fn().mockResolvedValue(1) },
+      ...prisma,
+    } as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -211,6 +217,50 @@ describe("Mutation.createAlert", () => {
       createAlert(null, { input: { eventId: "missing" } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("throws NRC_IRRELEVANT when every event type is out-of-interest", async () => {
+    const event = { id: "e1", types: ["pa", "fr"], severity: 2, originId: null, destinationId: null, locationId: null };
+    const create = vi.fn();
+    const ctx = buildContext(ANALYST, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { create },
+      // None of the event's types are relevant → count resolves 0.
+      disasterTypes: { count: vi.fn().mockResolvedValue(0) },
+    });
+    await expect(
+      createAlert(null, { input: { eventId: "e1" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "NRC_IRRELEVANT" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("raises when at least one event type is NRC-relevant (mixed event)", async () => {
+    const event = { id: "e1", types: ["pa", "eq"], severity: 2, originId: null, destinationId: null, locationId: null };
+    const created = { id: 1, status: "draft" };
+    const count = vi.fn().mockResolvedValue(1); // eq is relevant
+    const ctx = buildContext(ANALYST, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue(created) },
+      disasterTypes: { count },
+    });
+    await expect(createAlert(null, { input: { eventId: "e1" } }, ctx)).resolves.toBe(created);
+    // The gate only counts the NRC-relevant subset of the event's own types.
+    expect(count).toHaveBeenCalledWith({
+      where: { glideNumber: { in: ["pa", "eq"] }, nrcRelevant: true },
+    });
+  });
+
+  it("does NOT block an event with no classified types (no NRC signal)", async () => {
+    const event = { id: "e1", types: [], severity: 2, originId: null, destinationId: null, locationId: null };
+    const created = { id: 2, status: "draft" };
+    const count = vi.fn().mockResolvedValue(0);
+    const ctx = buildContext(ANALYST, {
+      events: { findUnique: vi.fn().mockResolvedValue(event) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue(created) },
+      disasterTypes: { count },
+    });
+    await expect(createAlert(null, { input: { eventId: "e1" } }, ctx)).resolves.toBe(created);
+    expect(count).not.toHaveBeenCalled(); // short-circuited before the DB count
   });
 
   it("creates a new alert with default status 'draft' when none exists", async () => {

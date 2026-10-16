@@ -7,6 +7,7 @@ import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithD
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
+import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -563,6 +564,20 @@ export const eventResolvers = {
         throw new GraphQLError("Event not found", {
           extensions: { code: "NOT_FOUND" },
         });
+      }
+
+      // Escalation auto-publishes an alert, so apply the same NRC gate: refuse
+      // when the event's types are ALL out-of-interest
+      // (disaster_types.nrc_relevant = false). One relevant type is enough to
+      // pass; an event with no classified types is not blocked here.
+      if (
+        (event.types?.length ?? 0) > 0 &&
+        !(await anyTypeNrcRelevant(context.prisma, event.types))
+      ) {
+        throw new GraphQLError(
+          "Cannot escalate: none of this event's types are relevant to NRC",
+          { extensions: { code: "NRC_IRRELEVANT" } },
+        );
       }
 
       // Check if an alert already exists for this event

@@ -101,7 +101,13 @@ function buildContext(
   translationLoader: { load: ReturnType<typeof vi.fn> } = { load: vi.fn() },
 ): Context {
   // Interactive transactions run their callback against the same stubs.
-  const prismaWithTx = { $transaction: (fn: (tx: unknown) => unknown) => fn(prismaWithTx), ...prisma };
+  // Default disasterTypes.count → 1 makes the NRC escalate gate a no-op for
+  // tests that aren't about it; a test overrides it with 0 to exercise the gate.
+  const prismaWithTx = {
+    $transaction: (fn: (tx: unknown) => unknown) => fn(prismaWithTx),
+    disasterTypes: { count: vi.fn().mockResolvedValue(1) },
+    ...prisma,
+  };
   return {
     prisma: prismaWithTx as unknown as Context["prisma"],
     user: user as Context["user"],
@@ -597,6 +603,34 @@ describe("Mutation.escalateEvent", () => {
     expect(alertsCreate).toHaveBeenCalledWith({ data: { eventId: "e1", status: "published" } });
     expect(locationsFindMany).not.toHaveBeenCalled(); // no locations → no subscriber search
     expect(upsert).toHaveBeenCalledOnce();
+  });
+
+  it("throws NRC_IRRELEVANT when every event type is out-of-interest", async () => {
+    const alertsCreate = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: ["pa", "fr"], originId: null, destinationId: null, locationId: null }) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
+      disasterTypes: { count: vi.fn().mockResolvedValue(0) }, // none relevant
+    });
+    await expect(
+      escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "NRC_IRRELEVANT" } });
+    expect(alertsCreate).not.toHaveBeenCalled();
+  });
+
+  it("escalates an event with no classified types (no NRC signal to block on)", async () => {
+    const alertsCreate = vi.fn().mockResolvedValue({ id: "a-new" });
+    const upsert = vi.fn().mockResolvedValue({ id: "esc1" });
+    const count = vi.fn().mockResolvedValue(0);
+    const ctx = buildContext(ADMIN, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: [], originId: null, destinationId: null, locationId: null }) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
+      eventEscaladedByUsers: { upsert },
+      disasterTypes: { count },
+    });
+    await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);
+    expect(alertsCreate).toHaveBeenCalledWith({ data: { eventId: "e1", status: "published" } });
+    expect(count).not.toHaveBeenCalled(); // short-circuited before the DB count
   });
 });
 
