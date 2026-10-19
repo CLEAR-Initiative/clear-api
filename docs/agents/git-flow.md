@@ -5,7 +5,7 @@ This repo's default/integration branch is **`dev`** (`origin/HEAD → dev`).
 - **featureBase** — `dev`. Cut every ticket branch off `origin/dev` and open its PR against `dev`.
 - **Promotion chain** — `feature → dev → prod`. `prod` is advanced by periodic "sync prod with dev" PRs (`dev → prod`), not by feature PRs.
 - **deploy trigger** — `dev`. A merge into `dev` runs `.github/workflows/release-dev.yml`, which tags, builds the image and pushes it to GHCR (deployment happens outside this repo), and `.github/workflows/bot-exponential.yml`, which moves the PR's Tickets `QA → DONE`. Merged branches are not deleted automatically (`delete_branch_on_merge` is off); delete them by hand or via `/cleanup`.
-- **Production** — the `prod` branch, deployed by Railway (outside GitHub Actions). Merging to `prod` does not change Ticket status.
+- **Production** — the `prod` branch. A merge into `prod` runs `.github/workflows/release-prod.yml`, which tags a new MAJOR version, builds the image and pushes it to GHCR (deployment happens outside this repo). Merging to `prod` does not change Ticket status.
 - **Hotfixes** — no separate hotfix flow; cut from `dev` like any other ticket branch.
 
 ## Legacy — don't target these
