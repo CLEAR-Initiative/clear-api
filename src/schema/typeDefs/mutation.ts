@@ -111,8 +111,10 @@ export const mutationTypeDef = gql`
     updateProfile(input: UpdateProfileInput!): User!
 
     # ─── Alerts ────────────────────────────────────────────────────────────────
-    """Create an alert from an event, notifying subscribers."""
-    createAlert(input: CreateAlertInput!): Alert!
+    """Create an alert from an event, notifying subscribers. Returns \`null\`
+    (no error) when the event's types are all NRC-irrelevant, so the
+    pipeline can skip it without a thrown error / GlitchTip alert."""
+    createAlert(input: CreateAlertInput!): Alert
 
     """Update an existing alert."""
     updateAlert(id: String!, input: UpdateAlertInput!): Alert!
