@@ -1,14 +1,15 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireNonWorker } from "../utils/auth-guard.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
-// Valid team-member roles. Legacy values (lead/analyst/viewer) were folded
-// into (team_admin/field_coordinator/team_member) by the Phase-3 backfill,
-// so this list is intentionally the closed new set.
+// Valid team-member roles. Legacy values (lead/viewer) fold into
+// (team_admin/team_member); the removed `field_coordinator` folds into
+// `team_member`; legacy team `analyst` stays `analyst` (now a first-class team
+// role). This list is intentionally the closed new set.
 const TEAM_MEMBER_ROLES = [
   "team_admin",
-  "field_coordinator",
+  "analyst",
   "emergency_response_manager",
   "team_member",
 ] as const;
@@ -86,7 +87,7 @@ export const teamResolvers = {
       args: { input: CreateTeamInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       await requireOrgAdminForTeam(
         context.prisma,
         user,
@@ -114,7 +115,7 @@ export const teamResolvers = {
       args: { id: string; input: UpdateTeamInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.id },
       });
@@ -142,7 +143,7 @@ export const teamResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.id },
       });
@@ -163,7 +164,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string; role?: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -218,7 +219,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -261,7 +262,7 @@ export const teamResolvers = {
       args: { teamId: string; userId: string; role: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -306,7 +307,7 @@ export const teamResolvers = {
       args: { teamId: string; locationIds: string[] },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const team = await context.prisma.teams.findUnique({
         where: { id: args.teamId },
       });
@@ -343,7 +344,7 @@ export const teamResolvers = {
       args: { teamId: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       // Verify team exists
       const team = await context.prisma.teams.findUnique({
@@ -434,7 +435,7 @@ async function requireOrgAdminForTeam(
 }
 
 /** Check that user is a team admin (lead/team_admin), org admin, or global admin. */
-async function requireTeamAdminOrOrgAdmin(
+export async function requireTeamAdminOrOrgAdmin(
   prisma: Context["prisma"],
   user: { id: string; role?: string | null },
   teamId: string,

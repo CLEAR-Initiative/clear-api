@@ -228,12 +228,14 @@ export function renderDocsBody(schema: SchemaData): string {
           <tbody>
             <tr><td><a href="#type-signal">Signals</a></td><td>Query verified source observations with location links and metadata. Upstream source payloads are not returned.</td></tr>
             <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent narratives, with location, population, and type data.</td></tr>
+            <tr><td><a href="#type-estimate">Estimates</a></td><td>Read an Event&rsquo;s figures in the CLEAR Domain Ontology&rsquo;s shape &mdash; one of seven metrics, with method, attribution, bounds and both time axes. Corrections supersede; nothing is overwritten.</td></tr>
             <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
             <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; with PostGIS geometry.</td></tr>
             <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
+            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (today a web search, whose Worker proposes signals — <a href="#type-caseproposal">CaseProposals</a> — for analysts to accept or reject; one Task per source kind) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
           </tbody>
         </table>
       </div>

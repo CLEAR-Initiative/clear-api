@@ -2,7 +2,14 @@ import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireAuth, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import {
+  isPlatformAdmin,
+  requireContentReader,
+  requireNonWorkerContentReader,
+  requireRole,
+  requireTeamContentWriter,
+  requireAdminOrTeamAnalystForLocations,
+} from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
@@ -30,8 +37,8 @@ interface CreateCrisisFromEventsInput {
   eventIds: string[];
   /**
    * Team the crisis is being filed under. Used only for authorisation —
-   * a `team_admin` or `field_coordinator` on this team is admitted even
-   * without a global admin/analyst role. Ignored for platform-level
+   * a `team_admin` or `team_member` on this team is admitted even
+   * without a global admin role. Ignored for platform-level
    * callers; the crisis itself has no team column.
    */
   teamId?: string;
@@ -69,6 +76,34 @@ async function sumEventPopulationAffected(
     }
   }
   return any ? total : null;
+}
+
+/**
+ * Collect the location ids of every event linked to a crisis (via eventCrises),
+ * de-duplicated. Used to scope the elevated crisis mutations: a crisis carries
+ * no `teamId`, so its "location footprint" is the union of its events'
+ * origin/destination/location ids, which `requireAdminOrTeamAnalystForLocations`
+ * then matches against a team analyst's scope.
+ */
+async function crisisEventLocationIds(
+  prisma: Context["prisma"],
+  crisisId: string,
+): Promise<string[]> {
+  const links = await prisma.eventCrises.findMany({
+    where: { crisisId },
+    select: {
+      event: {
+        select: { originId: true, destinationId: true, locationId: true },
+      },
+    },
+  });
+  const ids = new Set<string>();
+  for (const { event } of links) {
+    for (const id of [event.originId, event.destinationId, event.locationId]) {
+      if (id) ids.add(id);
+    }
+  }
+  return [...ids];
 }
 
 // Crisis enrichment (populationInArea + narrative/scenarios/needs) is NOT
@@ -124,7 +159,7 @@ export const crisisResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      // Open to any approved caller (admin / analyst / viewer). The
+      // Open to any approved caller (admin / member). The
       // team-based location scope on `crises` (plural) is a UX filter
       // for list views; crisis records themselves are platform-wide
       // content, so deep-link / by-id fetches do not check team
@@ -197,9 +232,9 @@ export const crisisResolvers = {
       args: { input: CreateCrisisFromEventsInput },
       context: Context,
     ) => {
-      // Global admin/analyst may roll up any events into a crisis; a
-      // team_admin / field_coordinator may do so when they supply the
-      // teamId they're acting on behalf of. See `requireTeamContentWriter`.
+      // Global admin may roll up any events into a crisis; any team member
+      // may do so when they supply the teamId they're acting on behalf of.
+      // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
 
@@ -306,7 +341,6 @@ export const crisisResolvers = {
       args: { crisisId: string; eventId: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { crisisId, eventId } = args;
 
       // Validate both exist
@@ -325,6 +359,23 @@ export const crisisResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate — admin passes both checks. A team analyst must have
+      // authority over BOTH the existing crisis AND the event being added,
+      // checked SEPARATELY: a single combined-location check would let an
+      // analyst scoped to A attach an A-event to a crisis entirely in B (the
+      // A-event satisfies the OR), expand the crisis footprint into A, and then
+      // pass later remove/delete gates on that crisis. Checking each in its own
+      // scope closes that escalation.
+      await requireAdminOrTeamAnalystForLocations(
+        context,
+        await crisisEventLocationIds(context.prisma, crisisId),
+      );
+      await requireAdminOrTeamAnalystForLocations(context, [
+        event.originId,
+        event.destinationId,
+        event.locationId,
+      ]);
 
       // Check for existing link (idempotency)
       const existing = await context.prisma.eventCrises.findFirst({
@@ -376,7 +427,6 @@ export const crisisResolvers = {
       args: { crisisId: string; eventId: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { crisisId, eventId } = args;
 
       const crisis = await context.prisma.crises.findUnique({
@@ -387,6 +437,14 @@ export const crisisResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the crisis's location footprint: admin passes,
+      // else the caller must be a team analyst whose scope covers one of the
+      // crisis's linked events.
+      await requireAdminOrTeamAnalystForLocations(
+        context,
+        await crisisEventLocationIds(context.prisma, crisisId),
+      );
 
       const link = await context.prisma.eventCrises.findFirst({
         where: { crisisId, eventId },
@@ -450,7 +508,7 @@ export const crisisResolvers = {
       args: { id: string; keys: string[] },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -540,7 +598,7 @@ export const crisisResolvers = {
       args: { id: string; key: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
 
       const existing = await context.prisma.crises.findUnique({
         where: { id: args.id },
@@ -578,7 +636,7 @@ export const crisisResolvers = {
       args: { id: string; title: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorkerContentReader(context);
       const { id, title } = args;
 
       const existing = await context.prisma.crises.findUnique({
@@ -626,7 +684,7 @@ export const crisisResolvers = {
       args: { id: string; description: string },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorkerContentReader(context);
       const { id, description } = args;
 
       const existing = await context.prisma.crises.findUnique({
@@ -912,19 +970,22 @@ export const crisisResolvers = {
     },
     /**
      * Visibility rules:
-     *   - admin / analyst → every feedback row on this crisis
-     *   - viewer          → only the caller's own feedback (so a dev can
-     *                       see their own engagement history without
-     *                       exposing other users' commentary)
-     *   - otherwise       → empty (defensive — the parent crisis query
-     *                       already enforces `requireContentReader`)
+     *   - admin  → every feedback row on this crisis
+     *   - member → only the caller's own feedback (so a dev can
+     *              see their own engagement history without
+     *              exposing other users' commentary)
+     *   - otherwise → empty (defensive — the parent crisis query
+     *                 already enforces `requireContentReader`)
+     *
+     * `analyst` is no longer a global role, so it no longer grants a
+     * global all-rows view here.
      */
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userFeedbacks.findMany({ where: { crisisId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userFeedbacks.findMany({
           where: { crisisId: parent.id, userId: ctx.user.id },
         });
@@ -933,10 +994,10 @@ export const crisisResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userComments.findMany({ where: { crisisId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userComments.findMany({
           where: { crisisId: parent.id, userId: ctx.user.id },
         });

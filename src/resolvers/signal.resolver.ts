@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireNonWorkerContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -34,9 +34,9 @@ interface CreateManualSignalInput {
   metadata?: Record<string, unknown>;
   /**
    * Team the signal is filed under. Used only for authorisation — when
-   * present, a caller with `team_admin` or `field_coordinator` on this team
-   * is admitted even without a global `admin`/`analyst` role. The signal
-   * itself has no team column; team scope is derived from location.
+   * present, a caller with any team membership on this team is admitted
+   * even without a global `admin` role. The signal itself has no team
+   * column; team scope is derived from location.
    */
   teamId?: string;
 }
@@ -79,12 +79,18 @@ interface CreateSignalInput {
   pointName?: string;
 }
 
-/** In-place content revision for an existing signal (e.g. IDMC IDU
- *  revisions). `contentHash` gates the write — a no-op retry (unchanged
- *  data resent) leaves the row and lastRevisedAt untouched. */
+/** In-place change to an existing signal, identified by `id` or by
+ *  (sourceId, externalId). `contentHash` gates the content write and
+ *  `retracted` the flag write; a no-op re-send leaves the row untouched. */
 interface UpdateSignalContentInput {
-  id: string;
+  id?: string | null;
+  sourceId?: string | null;
+  externalId?: string | null;
   contentHash: string;
+  /** Null or absent leaves the stored flag unchanged. */
+  retracted?: boolean | null;
+  /** Null or absent leaves it unchanged. A change alone is metadata-only. */
+  rawS3Key?: string | null;
   rawData: Record<string, unknown>;
   url?: string;
   title?: string;
@@ -119,6 +125,32 @@ async function resolveLocationId(
     return pointLoc.id;
   }
   return undefined;
+}
+
+type SignalStatusValue = "NEW" | "PROCESSED" | "FAILED" | "NEEDS_RECOMPUTE";
+
+/** Status after an effective change. "Already grouped" is decided by the
+ *  signal_to_events link, not by status: a NEW row the drain linked but has
+ *  not yet marked still needs its events recomputed. FAILED is terminal. */
+export function statusAfterChange(current: SignalStatusValue, linked: boolean): SignalStatusValue {
+  if (current === "FAILED") return "FAILED";
+  // Unlinked = never grouped, or dropped as irrelevant (still PROCESSED): no events to
+  // recompute. NEW sends a revision that makes it relevant back through classification.
+  if (!linked) return "NEW";
+  return "NEEDS_RECOMPUTE";
+}
+
+const CONTENT_UPDATE_MAX_ATTEMPTS = 4;
+
+function signalKeyWhere(input: UpdateSignalContentInput) {
+  if (input.id) return { id: input.id };
+  if (input.sourceId && input.externalId) {
+    return { sourceId_externalId: { sourceId: input.sourceId, externalId: input.externalId } };
+  }
+  throw new GraphQLError(
+    "updateSignalContent needs either id or both sourceId and externalId",
+    { extensions: { code: "BAD_USER_INPUT" } },
+  );
 }
 
 // ─── Signal Location challenge (Location trust v1, clear-mvp #314) ───────────
@@ -248,11 +280,51 @@ export const signalResolvers = {
       return context.prisma.signals.findMany({
         where: {
           status: "NEW",
+          // Retracted or already-linked rows are not first groupings
+          // (linked ones are served by pendingRecomputes).
+          retracted: false,
+          signalEvents: { none: {} },
           isDummy: false,
           ...(args.source ? { source: { name: args.source } } : {}),
         },
         orderBy: { publishedAt: "asc" },
         take,
+      });
+    },
+
+    // Signals whose events must be re-aggregated. A NEW row that is already
+    // linked had a change land mid-grouping. Retracted rows are included:
+    // removing them from event totals is the work.
+    pendingRecomputes: async (
+      _parent: unknown,
+      args: { first?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const take = Math.min(Math.max(args.first ?? 100, 1), 500);
+      return context.prisma.signals.findMany({
+        where: {
+          isDummy: false,
+          OR: [
+            { status: "NEEDS_RECOMPUTE" },
+            { status: "NEW", signalEvents: { some: {} } },
+          ],
+        },
+        orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
+        take,
+      });
+    },
+
+    eventMembers: async (
+      _parent: unknown,
+      args: { eventId: string; first?: number | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      return context.prisma.signals.findMany({
+        where: { retracted: false, signalEvents: { some: { eventId: args.eventId } } },
+        orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+        ...(args.first != null ? { take: Math.max(args.first, 1) } : {}),
       });
     },
   },
@@ -262,11 +334,6 @@ export const signalResolvers = {
       args: { input: CreateSignalInput },
       context: Context,
     ) => {
-      // Admin/analyst only. The pipeline integrations (Dataminr, ACLED,
-      // GDACS) authenticate as a system admin user via API key. Viewers
-      // are read-only in the new role model and pending users are
-      // blocked from every content path.
-      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -277,6 +344,18 @@ export const signalResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the signal's input locations. The pipeline
+      // integrations (Dataminr, ACLED, GDACS) authenticate as a system admin
+      // user via API key and pass unconditionally; a human caller must be a
+      // team analyst whose location scope covers the signal's input locations.
+      // (lat/lng-only signals carry no input location id — those remain
+      // admin/pipeline-only via the empty-scope path.)
+      await requireAdminOrTeamAnalystForLocations(context, [
+        input.originId,
+        input.destinationId,
+        input.locationId,
+      ]);
 
       // Idempotent ingestion: if an externalId is provided and a signal
       // already exists for (sourceId, externalId), return it as-is. This
@@ -356,25 +435,54 @@ export const signalResolvers = {
     // an already-processed signal is a harmless no-op update.
     markSignalsProcessed: async (
       _parent: unknown,
-      args: { ids: string[]; status?: "NEW" | "PROCESSED" | "FAILED" | null },
+      args: {
+        ids?: string[] | null;
+        items?: { id: string; revision: number }[] | null;
+        status?: SignalStatusValue | null;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
-      if (args.ids.length === 0) return 0;
-      // The SDL exposes the full SignalStatus enum, but NEW would produce a
-      // contradictory row (status=NEW alongside a processedAt). Reject it.
-      if (args.status === "NEW") {
+      const hasIds = args.ids != null;
+      const hasItems = args.items != null;
+      if (hasIds === hasItems) {
+        throw new GraphQLError(
+          "markSignalsProcessed needs exactly one of ids or items",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      // NEW / NEEDS_RECOMPUTE would leave pending work alongside a
+      // processedAt, a contradictory row.
+      if (args.status === "NEW" || args.status === "NEEDS_RECOMPUTE") {
         throw new GraphQLError(
           "markSignalsProcessed only accepts PROCESSED or FAILED",
           { extensions: { code: "BAD_USER_INPUT" } },
         );
       }
       const status = args.status ?? "PROCESSED";
-      const result = await context.prisma.signals.updateMany({
-        where: { id: { in: args.ids } },
-        data: { status, processedAt: new Date() },
-      });
-      return result.count;
+      const processedAt = new Date();
+
+      if (hasIds) {
+        if (args.ids!.length === 0) return 0;
+        const result = await context.prisma.signals.updateMany({
+          where: { id: { in: args.ids! } },
+          data: { status, processedAt },
+        });
+        return result.count;
+      }
+
+      // Compare-and-set: a row whose revision moved since the drain fetched
+      // it is skipped and picked up by the next run.
+      if (args.items!.length === 0) return 0;
+      const results = await context.prisma.$transaction(
+        args.items!.map((item) =>
+          context.prisma.signals.updateMany({
+            where: { id: item.id, revision: item.revision },
+            data: { status, processedAt },
+          }),
+        ),
+      );
+      return results.reduce((sum, r) => sum + r.count, 0);
     },
 
     createManualSignal: async (
@@ -383,9 +491,9 @@ export const signalResolvers = {
       context: Context,
     ) => {
       // Authorisation model — see `requireTeamContentWriter`:
-      // global admin/analyst may file for any location; a `team_admin` or
-      // `field_coordinator` may file when they supply the `teamId` they're
-      // acting on behalf of. `team_member` and everyone else are rejected.
+      // global admin may file for any location; any team member may file when
+      // they supply the `teamId` they're acting on behalf of. The worker role
+      // and non-members are rejected.
       // Downstream guards (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4,
       // staleness gate) still keep low-severity / stale manual entries from
       // fanning out as alerts.
@@ -478,8 +586,6 @@ export const signalResolvers = {
       args: { id: string; severity: number },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
-
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.id },
       });
@@ -489,10 +595,44 @@ export const signalResolvers = {
         });
       }
 
+      // Elevated gate, scoped to the signal's locations: admin passes, else
+      // the caller must be a team analyst whose scope covers the signal.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        existing.originId,
+        existing.destinationId,
+        existing.locationId,
+      ]);
+
       return context.prisma.signals.update({
         where: { id: args.id },
         data: { severity: args.severity },
       });
+    },
+
+    setSignalGlideCode: async (
+      _parent: unknown,
+      args: { id: string; glideCode: string },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+
+      try {
+        return await context.prisma.signals.update({
+          where: { id: args.id },
+          data: { glideCode: args.glideCode },
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code: string }).code === "P2025"
+        ) {
+          throw new GraphQLError("Signal not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        throw error;
+      }
     },
 
     updateSignalGeoparsedData: async (
@@ -565,51 +705,91 @@ export const signalResolvers = {
     ) => {
       requireRole(context, ["admin", "pipeline"]);
       const { input } = args;
+      const where = signalKeyWhere(input);
 
-      const existing = await context.prisma.signals.findUnique({
-        where: { id: input.id },
-      });
-      if (!existing) {
-        throw new GraphQLError("Signal not found", {
-          extensions: { code: "NOT_FOUND" },
+      // Resolved at most once: a retry must not create a second point location.
+      let resolvedLocationId: string | undefined;
+      let locationResolved = false;
+
+      for (let attempt = 0; attempt < CONTENT_UPDATE_MAX_ATTEMPTS; attempt++) {
+        const existing = await context.prisma.signals.findUnique({
+          where,
+          include: { _count: { select: { signalEvents: true } } },
         });
+        if (!existing) {
+          throw new GraphQLError("Signal not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+
+        const contentChanged = existing.contentHash !== input.contentHash;
+        const retractChanged = input.retracted != null && existing.retracted !== input.retracted;
+        const keyChanged = input.rawS3Key != null && existing.rawS3Key !== input.rawS3Key;
+
+        // Unchanged re-send: leave the row untouched.
+        if (!contentChanged && !retractChanged && !keyChanged) {
+          return existing;
+        }
+
+        const data: Record<string, unknown> = {};
+        if (contentChanged) {
+          if (!locationResolved) {
+            resolvedLocationId = await resolveLocationId(context, {
+              locationId: input.locationId,
+              lat: input.lat,
+              lng: input.lng,
+              pointName: input.pointName,
+            });
+            locationResolved = true;
+          }
+          Object.assign(data, {
+            rawData: input.rawData as InputJsonValue,
+            url: input.url,
+            title: input.title,
+            description: input.description,
+            severity: input.severity,
+            casualties: input.casualties,
+            originId: input.originId,
+            destinationId: input.destinationId,
+            locationId: resolvedLocationId,
+            geoparsedData: input.geoparsedData as InputJsonValue | undefined,
+            contentHash: input.contentHash,
+          });
+        }
+        if (retractChanged) data.retracted = input.retracted;
+        // Metadata-only: a moved blob pointer is not a revision.
+        if (keyChanged) data.rawS3Key = input.rawS3Key;
+
+        if (contentChanged || retractChanged) {
+          data.revision = { increment: 1 };
+          // Seeding a NULL stored hash is not a revision (no baseline); a
+          // retraction flip is.
+          const isFirstHashSeed = contentChanged && existing.contentHash === null;
+          if (retractChanged || (contentChanged && !isFirstHashSeed)) {
+            data.lastRevisedAt = new Date();
+          }
+          const next = statusAfterChange(
+            existing.status as SignalStatusValue,
+            existing._count.signalEvents > 0,
+          );
+          if (next !== existing.status) data.status = next;
+        }
+
+        // Compare-and-set: if the drain linked or marked the row meanwhile,
+        // the computed status is stale, so loop and re-read.
+        const result = await context.prisma.signals.updateMany({
+          where: { id: existing.id, revision: existing.revision, status: existing.status },
+          data,
+        });
+        if (result.count === 1) {
+          return context.prisma.signals.findUnique({ where: { id: existing.id } });
+        }
       }
 
-      // Not a revision — either an unchanged retry (e.g. the pipeline's Redis
-      // seen-set re-sending after its TTL expired) or the row was never
-      // revised at all. Leave it untouched, including lastRevisedAt.
-      if (existing.contentHash === input.contentHash) {
-        return existing;
-      }
-
-      // existing.contentHash null means no baseline to compare against —
-      // seed it without stamping lastRevisedAt, same as a freshly created signal.
-      const isFirstHashSeed = existing.contentHash === null;
-
-      const locationId = await resolveLocationId(context, {
-        locationId: input.locationId,
-        lat: input.lat,
-        lng: input.lng,
-        pointName: input.pointName,
-      });
-
-      return context.prisma.signals.update({
-        where: { id: input.id },
-        data: {
-          rawData: input.rawData as InputJsonValue,
-          url: input.url,
-          title: input.title,
-          description: input.description,
-          severity: input.severity,
-          casualties: input.casualties,
-          originId: input.originId,
-          destinationId: input.destinationId,
-          locationId,
-          geoparsedData: input.geoparsedData as InputJsonValue | undefined,
-          contentHash: input.contentHash,
-          ...(isFirstHashSeed ? {} : { lastRevisedAt: new Date() }),
-        },
-      });
+      throw new GraphQLError(
+        "Signal changed concurrently; retry the update",
+        { extensions: { code: "CONFLICT" } },
+      );
     },
 
     deleteSignal: async (
@@ -637,7 +817,7 @@ export const signalResolvers = {
       { input }: { input: SubmitLocationChallengeInput },
       context: Context,
     ) => {
-      const user = requireContentReader(context);
+      const user = requireNonWorkerContentReader(context);
 
       // 1. Signal must exist. (Team scope is a view filter, not a hard access
       //    gate here — mirrors the signal(id) / signals queries.)
@@ -756,14 +936,15 @@ export const signalResolvers = {
         take: 25,
       }).then((links) => links.map((l) => l.event));
     },
-    // Same visibility split as Crisis/Event feedbacks/comments: admin/
-    // analyst see all; viewer sees only their own; everyone else empty.
+    // Same visibility split as Crisis/Event feedbacks/comments: admin sees
+    // all; member sees only their own; everyone else empty. (analyst is no
+    // longer a global role, so it no longer grants a global all-rows view.)
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userFeedbacks.findMany({
           where: { signalId: parent.id, userId: ctx.user.id },
         });
@@ -772,10 +953,10 @@ export const signalResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userComments.findMany({ where: { signalId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userComments.findMany({
           where: { signalId: parent.id, userId: ctx.user.id },
         });

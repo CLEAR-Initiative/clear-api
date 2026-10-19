@@ -47,16 +47,20 @@ function buildPrisma(opts: {
   };
 }
 
-const viewer: UserRow = { id: "u1", email: "ok@example.com", role: "viewer" };
-const admin: UserRow = { id: "admin-1", email: "admin@clear.dev", role: "admin" };
+const member: UserRow = { id: "u1", email: "ok@example.com", role: "member" };
+const admin: UserRow = { id: "admin-1", email: "admin@clearinitiative.io", role: "admin" };
 
 beforeEach(() => {
   logActivityMock.mockClear();
 });
 
 describe("isGlobalRole", () => {
-  it("accepts viewer, analyst, and admin only", () => {
+  it("accepts member and admin only", () => {
+    expect(isGlobalRole("member")).toBe(true);
     expect(isGlobalRole("admin")).toBe(true);
+    // `analyst` and `viewer` are no longer global roles.
+    expect(isGlobalRole("analyst")).toBe(false);
+    expect(isGlobalRole("viewer")).toBe(false);
     expect(isGlobalRole("pending")).toBe(false);
     expect(isGlobalRole("org_admin")).toBe(false);
   });
@@ -64,39 +68,39 @@ describe("isGlobalRole", () => {
 
 describe("updateUserGlobalRole", () => {
   it("updates the role and writes an audit row", async () => {
-    const { prisma, update } = buildPrisma({ target: viewer });
+    const { prisma, update } = buildPrisma({ target: member });
     const result = await updateUserGlobalRole(
       prisma as never,
       "admin-1",
       "u1",
-      "analyst",
+      "admin",
     );
 
     expect(update).toHaveBeenCalledWith({
       where: { id: "u1" },
-      data: { role: "analyst" },
+      data: { role: "admin" },
     });
-    expect(result.role).toBe("analyst");
+    expect(result.role).toBe("admin");
     expect(logActivityMock).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({
         userId: "admin-1",
         action: "user.role_updated",
         resourceId: "u1",
-        metadata: { email: "ok@example.com", from: "viewer", to: "analyst" },
+        metadata: { email: "ok@example.com", from: "member", to: "admin" },
       }),
     );
   });
 
   it("is a no-op when the stored role already matches", async () => {
-    const { prisma, update } = buildPrisma({ target: viewer });
-    await updateUserGlobalRole(prisma as never, "admin-1", "u1", "viewer");
+    const { prisma, update } = buildPrisma({ target: member });
+    await updateUserGlobalRole(prisma as never, "admin-1", "u1", "member");
     expect(update).not.toHaveBeenCalled();
     expect(logActivityMock).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid role without touching the DB", async () => {
-    const { prisma, update } = buildPrisma({ target: viewer });
+    const { prisma, update } = buildPrisma({ target: member });
     await expect(
       updateUserGlobalRole(prisma as never, "admin-1", "u1", "owner"),
     ).rejects.toMatchObject({
@@ -106,10 +110,23 @@ describe("updateUserGlobalRole", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("rejects a former global role (analyst) as invalid without touching the DB", async () => {
+    // `analyst` moved to a team role; as a global role it is now rejected with
+    // the new "Must be member or admin." message.
+    const { prisma, update } = buildPrisma({ target: member });
+    await expect(
+      updateUserGlobalRole(prisma as never, "admin-1", "u1", "analyst"),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/Must be member or admin/),
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("refuses to let an admin demote themselves", async () => {
     const { prisma, update } = buildPrisma({ target: admin });
     await expect(
-      updateUserGlobalRole(prisma as never, "admin-1", "admin-1", "viewer"),
+      updateUserGlobalRole(prisma as never, "admin-1", "admin-1", "member"),
     ).rejects.toThrow(/cannot change your own role/i);
     expect(update).not.toHaveBeenCalled();
   });
@@ -125,7 +142,7 @@ describe("updateUserGlobalRole", () => {
       target: { id: "p1", email: "p@x.com", role: "pending" },
     });
     await expect(
-      updateUserGlobalRole(prisma as never, "admin-1", "p1", "viewer"),
+      updateUserGlobalRole(prisma as never, "admin-1", "p1", "member"),
     ).rejects.toThrow(/Approve pending users first/);
     expect(update).not.toHaveBeenCalled();
   });
@@ -133,24 +150,24 @@ describe("updateUserGlobalRole", () => {
   it("refuses to demote the last admin", async () => {
     const { prisma, update } = buildPrisma({ target: admin, adminCount: 1 });
     await expect(
-      updateUserGlobalRole(prisma as never, "other-admin", "admin-1", "viewer"),
+      updateUserGlobalRole(prisma as never, "other-admin", "admin-1", "member"),
     ).rejects.toThrow(/last admin/);
     expect(update).not.toHaveBeenCalled();
   });
 
   it("allows demoting an admin when another remains", async () => {
     const { prisma, update } = buildPrisma({ target: admin, adminCount: 2 });
-    await updateUserGlobalRole(prisma as never, "other-admin", "admin-1", "viewer");
+    await updateUserGlobalRole(prisma as never, "other-admin", "admin-1", "member");
     expect(update).toHaveBeenCalled();
   });
 
   it("throws NOT_FOUND for a missing user", async () => {
     const { prisma } = buildPrisma({ target: null });
     await expect(
-      updateUserGlobalRole(prisma as never, "admin-1", "missing", "viewer"),
+      updateUserGlobalRole(prisma as never, "admin-1", "missing", "member"),
     ).rejects.toBeInstanceOf(GraphQLError);
     await expect(
-      updateUserGlobalRole(prisma as never, "admin-1", "missing", "viewer"),
+      updateUserGlobalRole(prisma as never, "admin-1", "missing", "member"),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 });

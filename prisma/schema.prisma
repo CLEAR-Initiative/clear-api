@@ -57,6 +57,10 @@ enum SignalStatus {
   NEW
   PROCESSED
   FAILED
+  /// Already grouped into event(s), then changed (content revision or
+  /// retraction flip). The drain re-aggregates its events from their live
+  /// members, then marks it PROCESSED. Describes pending work only.
+  NEEDS_RECOMPUTE
 }
 
 /// Crisis enrichment status — the drain marker for the crisis enrichment
@@ -77,7 +81,7 @@ model user {
   emailVerified Boolean @default(false) @map("email_verified")
   phoneNumber   String? @map("phone_number")
   image         String?
-  role          String  @default("viewer")
+  role          String  @default("member")
   isActive      Boolean @default(true) @map("is_active")
   language      String  @default("en")
 
@@ -106,7 +110,10 @@ model user {
   invitationsSent       invitations[]           @relation("InvitedBy")
   activityLogs          activityLogs[]
   conversations         conversations[]
+  /// Signals this person submitted (the Domain Ontology's `submitted_by_user`).
+  submittedSignals      signals[]               @relation("SignalSubmittedBy")
   agentWorkingMemory    agentWorkingMemory?
+  estimatesCreated      estimate[]              @relation("EstimateCreatedBy")
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -338,6 +345,7 @@ model teams {
   defaultForUsers user[]            @relation("DefaultTeam")
   invitations     invitations[]
   invitationTeams invitationTeams[]
+  webhookSubscriptions WebhookSubscription[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -347,7 +355,7 @@ model teamMembers {
   id        String   @id @default(cuid())
   teamId    String   @map("team_id")
   userId    String   @map("user_id")
-  role      String   @default("team_member") // team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
+  role      String   @default("team_member") // team_admin | analyst | emergency_response_manager | team_member (legacy: lead → team_admin, viewer/field_coordinator → team_member, analyst stays analyst — see migration)
   createdAt DateTime @default(now()) @map("created_at")
 
   team teams @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -383,7 +391,7 @@ model invitations {
   /// null on multi-team invites.
   teamId         String?   @map("team_id")
   role           String    @default("member") // org role: org_admin | member (legacy: owner, admin → org_admin — see migration)
-  teamRole       String?   @map("team_role") // team role: team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
+  teamRole       String?   @map("team_role") // team role: team_admin | analyst | emergency_response_manager | team_member (legacy: lead → team_admin, viewer/field_coordinator → team_member, analyst stays analyst — see migration)
   token          String    @unique
   expiresAt      DateTime  @map("expires_at")
   acceptedAt     DateTime? @map("accepted_at")
@@ -407,10 +415,10 @@ model invitationTeams {
   id           String @id @default(cuid())
   invitationId String @map("invitation_id")
   teamId       String @map("team_id")
-  /// Team role: team_admin | field_coordinator | team_member. Stored as a
-  /// string to mirror teamMembers.role semantics; the GraphQL enum lives in
-  /// the typedefs. Legacy values (lead / analyst / viewer) were folded into
-  /// the new set by the Phase-3 backfill.
+  /// Team role: team_admin | analyst | emergency_response_manager |
+  /// team_member. Stored as a string to mirror teamMembers.role semantics; the
+  /// GraphQL enum lives in the typedefs. Legacy values (lead → team_admin,
+  /// viewer / field_coordinator → team_member; analyst stays analyst).
   teamRole     String @map("team_role")
 
   invitation invitations @relation(fields: [invitationId], references: [id], onDelete: Cascade)
@@ -615,6 +623,16 @@ model signals {
   contentHash String? @map("content_hash")
   lastRevisedAt DateTime? @map("last_revised_at")
 
+  /// Superseded upstream. Reversible and independent of `status`: keeps its
+  /// signal_to_events links but is excluded from event aggregates and the NEW
+  /// drain queue. NOT NULL because the queue filters `retracted = false`,
+  /// which a NULL would silently fail.
+  retracted Boolean @default(false)
+  /// Incremented on every effective change via updateSignalContent.
+  /// Compare-and-set token: the drain marks a signal processed only if the
+  /// revision is unchanged since it fetched the row.
+  revision  Int     @default(0)
+
   url         String?
   title       String?
   description String?
@@ -623,8 +641,18 @@ model signals {
   /// `fatalities` field directly, and parsed from raw text for Dataminr
   /// (regex: "X killed", "X dead", "X fatalities", etc.).
   casualties  Int?
+  /// Glide code the pipeline grouped this signal with (its first disaster
+  /// type). Lets an event recompute reproduce grouping's per-signal stats
+  /// fallback. Null for signals grouped before this column, or never grouped.
+  glideCode   String?  @map("glide_code")
   media       String[]
   isDummy     Boolean  @default(false)
+
+  /// The person who submitted this Signal, when one did (the Domain
+  /// Ontology's `submitted_by_user`): e.g. the analyst who accepted a web
+  /// case (V4). Null for Signals a pipeline ingested.
+  submittedById String? @map("submitted_by_id")
+  submittedBy   user?   @relation("SignalSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("SignalOrigin", fields: [originId], references: [id])
@@ -661,6 +689,7 @@ model signals {
   signalEvents  signalEvents[]
 
   signalLocationChallenges signalLocationChallenges[]
+  estimates                estimate[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
@@ -711,7 +740,9 @@ model events {
   description_signals Json?
 
   validFrom            DateTime @default(now()) @map("valid_from")
-  validTo              DateTime @map("valid_to")
+  /// Event end / expiry. Null when no real end is known (the pipeline no longer
+  /// invents start + 7 days) — a null validTo means "ongoing / no known end".
+  validTo              DateTime? @map("valid_to")
   firstSignalCreatedAt DateTime @map("first_signal_created_at")
   lastSignalCreatedAt  DateTime @map("last_signal_created_at")
   /// When the real-world event actually STARTED (its onset) — distinct from
@@ -743,9 +774,17 @@ model events {
   /// DTM figures are district-wide/event-agnostic and would misattribute a
   /// whole district's total to one event.
   populationDisplaced   BigInt?                 @map("population_displaced")
-  /// Aggregated casualties for this event (max across constituent signals).
+  /// Aggregated casualties for this event (sum across constituent signals).
   casualties            Int?
+  /// Figures for this Event in the Domain Ontology's shape. The three loose
+  /// scalars above were backfilled into it once (population affected and
+  /// displaced; casualties has no ontology metric yet) and are still written
+  /// by the pipeline.
+  estimates             estimate[]
   rank                  Float
+  /// Hash of the live (non-retracted) member signal ids at the last LLM
+  /// rewrite. Lets the recompute skip the rewrite when membership is unchanged.
+  rewriteMembersHash    String?                 @map("rewrite_members_hash")
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]
   userComments          userComments[]
@@ -753,6 +792,11 @@ model events {
   eventEscaladedByUsers eventEscaladedByUsers[]
   eventCrises           eventCrises[]
   translations          translations[]
+  impactPriors          impactPrior[]
+  /// Web cases proposed while enriching this Event (V4).
+  caseProposals         caseProposal[] @relation("CaseProposalEvent")
+  /// Web cases a Worker matched to this (historical) Event.
+  matchedCaseProposals  caseProposal[] @relation("CaseProposalMatchedEvent")
 }
 
 model disasterTypes {
@@ -767,6 +811,13 @@ model disasterTypes {
   level2 String @default("") @map("level_2")
   /// Identifier system for glideNumber: "glide_number" or "clear_id".
   idType String @default("glide_number") @map("id_type")
+
+  /// Whether this event/disaster type is relevant to NRC analysts. Source of
+  /// truth: the "Add out-of-interest event types" doc ("Relevant to NRC").
+  /// Keyed by glideNumber; populated for existing rows by the add_nrc_relevant
+  /// migration and kept in sync by scripts/seed-disaster-types.ts. Defaults
+  /// false so a newly added type is out-of-interest until explicitly marked.
+  nrcRelevant Boolean @default(false) @map("nrc_relevant")
 
   @@index([level1])
   @@index([level2])
@@ -1292,29 +1343,49 @@ model eventsIndex {
   @@map("events_index")
 }
 
-/// Outbound webhook subscription. Configured by platform admins; every
-/// incoming GlitchTip alert is fanned out to every active subscription
-/// whose filters match. HMAC signing is opt-out (not currently exposed —
-/// every delivery is signed with the row's `secret`).
+/// Outbound webhook subscription. Two sources (see `source`):
+///   - `glitchtip` — platform-admin-configured; every incoming GlitchTip alert
+///     is fanned out to active subscriptions whose `eventTypeFilter` matches.
+///   - `clear_alert` — TEAM-configured (team_admin / org_admin); every PUBLISHED
+///     CLEAR alert whose event location falls in the owning team's location
+///     scope (and that passes the optional `alertTypeFilter` / `minSeverity`
+///     filters) is fanned out. See createAlert's fan-out + services/webhook.
+/// HMAC signing is always on — every delivery is signed with the row's `secret`.
 model WebhookSubscription {
   id        String @id @default(uuid())
+  /// Which trigger feeds this subscription: "glitchtip" (default, legacy) or
+  /// "clear_alert" (team alert webhooks). Discriminates fan-out + the filters
+  /// that apply.
+  source    String @default("glitchtip")
+  /// Owning team for a `clear_alert` subscription; null for platform-level
+  /// `glitchtip` subscriptions. Drives the location-scope match (teamLocations)
+  /// and who may manage the row.
+  teamId    String? @map("team_id")
+  team      teams?  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   /// Human-readable label shown in the admin UI. Not sent downstream.
   name      String
   /// Target URL. Must include scheme; https is enforced at write time.
   targetUrl String @map("target_url")
   /// HMAC-SHA256 key. Generated on create (32 random bytes, hex-encoded),
   /// rotatable via a dedicated mutation. Stored plaintext because the
-  /// signing worker needs it; scope of exposure is limited to platform
-  /// admins who created it and can already read it.
+  /// signing worker needs it; scope of exposure is limited to the admins /
+  /// team admins who created it and can already read it.
   secret    String
 
   /// Pause without deleting. `false` skips this subscription during fan-out.
   active Boolean @default(true)
 
-  /// Optional event-type allowlist. Empty array (default) = all types.
-  /// GlitchTip's alert payload carries an "event_type" field like
-  /// "issue.new", "issue.regression", "issue.resolved" — we match on that.
+  /// (glitchtip) Optional event-type allowlist. Empty array (default) = all
+  /// types. Matches GlitchTip's payload "event_type" (e.g. "issue.new").
   eventTypeFilter String[] @default([]) @map("event_type_filter")
+
+  /// (clear_alert) Optional glide-code allowlist on the alert's event types.
+  /// Empty array (default) = all types within the team's location scope.
+  alertTypeFilter String[] @default([]) @map("alert_type_filter")
+  /// (clear_alert) Optional minimum alert severity (1-5). Null = all
+  /// severities (incl. null-severity alerts). A set floor excludes
+  /// null-severity alerts.
+  minSeverity Int? @map("min_severity")
 
   /// User who created this subscription. Kept for audit; not FK-linked
   /// because the audit trail should survive user deletion.
@@ -1326,6 +1397,8 @@ model WebhookSubscription {
   deliveries WebhookDelivery[]
 
   @@index([active])
+  @@index([source, active])
+  @@index([teamId])
   @@map("webhook_subscriptions")
 }
 
@@ -2001,8 +2074,9 @@ model groundSources {
   privacyDefault String @default("private") @map("privacy_default")
 
   /// Global user roles allowed to review (approve/reject/promote) threads
-  /// from this source. Platform admins always pass.
-  reviewerRoles String[] @default(["admin", "analyst"]) @map("reviewer_roles")
+  /// from this source. Platform admins always pass. (`analyst` is no longer a
+  /// global role — ground triage is otherwise the ERM's team-scoped job.)
+  reviewerRoles String[] @default(["admin"]) @map("reviewer_roles")
 
   /// Free-text retention rule (e.g. "delete raw exports after 90 days").
   /// Enforcement is operational for V1; the field keeps the policy with
@@ -2249,4 +2323,340 @@ model agentWorkingMemory {
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agent_working_memory")
+}
+
+// ─── Estimates (CLEAR Domain Ontology v0.3.0) ──────────────────────────────
+
+/// The seven distinct figures the sector routinely conflates (the ontology's
+/// Metric types). Keeping them apart is the point; a new one is an ontology
+/// change first.
+enum EstimateMetric {
+  people_affected
+  people_displaced_new
+  people_displaced_cumulative
+  people_in_need
+  people_targeted
+  people_reached
+  households_affected
+}
+
+/// How a figure was arrived at (the ontology's Estimate methods).
+enum EstimateMethod {
+  exposure_model
+  model_inference
+  rapid_assessment
+  formal_assessment
+  registration
+  field_staff_judgement
+  partner_or_cluster_figure
+  prior_caseload_analogue
+  government_figure
+  media_report
+  not_documented
+}
+
+/// Whether a figure counts need caused by the Event, need that existed
+/// beforehand, or both. Required: conflating the two claims credit for
+/// baseline conditions.
+enum EstimateAttribution {
+  event_caused
+  pre_existing
+  combined
+}
+
+/// A figure for one metric on an Event (the CLEAR Domain Ontology's
+/// Estimate): its value and bounds, how it was arrived at, and both time
+/// axes. Never overwritten — a correction is a new row whose `supersedesId`
+/// points at the one it replaces; the sequence over time is the measurement.
+/// The migration enforces `lowerBound ≤ value ≤ upperBound` where bounds are
+/// present (CHECK), immutability (trigger `estimates_immutable`) and that a
+/// correction is of the same figure (trigger `estimates_supersede_same_figure`).
+model estimate {
+  id      String @id @default(cuid())
+  eventId String @map("event_id")
+
+  metric          EstimateMetric
+  /// IDP, refugee, returnee, host community, non-displaced affected.
+  populationGroup String?             @map("population_group")
+  value           Float
+  /// e.g. `people`, `households`.
+  unit            String?
+  lowerBound      Float?              @map("lower_bound")
+  upperBound      Float?              @map("upper_bound")
+  method          EstimateMethod
+  attribution     EstimateAttribution
+
+  /// The date the figure describes (valid time).
+  validFor      DateTime @map("valid_for")
+  /// When the figure was made (transaction time).
+  estimatedAt   DateTime @map("estimated_at")
+  /// True for verified figures used to score earlier estimates.
+  isGroundTruth Boolean  @default(false) @map("is_ground_truth")
+
+  sourceSignalId String? @map("source_signal_id")
+  sourceUrl      String? @map("source_url")
+
+  /// The Estimate this one corrects: same Event, metric and population
+  /// group. Unique: an Estimate is superseded at most once, so the history
+  /// of a figure is a chain, not a tree. NoAction, never SetNull: clearing
+  /// the link would make the corrected figure current again. A chain lives
+  /// on one Event, so the Event cascade removes it whole.
+  supersedesId String?   @unique @map("supersedes_id")
+  supersedes   estimate? @relation("EstimateSupersedes", fields: [supersedesId], references: [id], onDelete: NoAction)
+  supersededBy estimate? @relation("EstimateSupersedes")
+
+  /// The ontology version whose definitions the figure was made under, so
+  /// figures stay interpretable if a metric is redefined.
+  definitionVersion String  @map("definition_version")
+  /// Null for system-written rows (the backfill, pipelines).
+  createdById       String? @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Cascade: an Estimate's subject is its Event; `deleteEvent` (admin)
+  /// must keep working for the Events the backfill gave figures to.
+  event        events   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sourceSignal signals? @relation(fields: [sourceSignalId], references: [id], onDelete: SetNull)
+  createdBy    user?    @relation("EstimateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([eventId, metric, estimatedAt])
+  @@index([sourceSignalId])
+  @@map("estimates")
+}
+
+// ─── Tasks and Workers (ADR-0010) ──────────────────────────────────────────
+
+enum TaskStatus {
+  PENDING
+  LEASED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Who asked for the Task: a signed-in user, an automatic rule (nothing
+/// writes `rule` yet; the column exists so the first rule needs no
+/// migration), or an API-key caller.
+enum TaskOrigin {
+  user
+  rule
+  api
+}
+
+/// A Worker writes `proposed` only. A named admin or analyst moves it to
+/// `accepted` or `rejected` with a rationale (V2); only `accepted` counts
+/// downstream.
+enum ImpactPriorState {
+  proposed
+  accepted
+  rejected
+}
+
+/// A Worker writes `proposed` only. A named admin or analyst accepts or
+/// rejects each case (V4); a rejected one stays, so its URL is not proposed
+/// again for the same Event.
+enum CaseProposalState {
+  proposed
+  accepted
+  rejected
+}
+
+/// One unit of Worker-performed work (ADR-0010): exactly one `kind`, exactly
+/// one subject, a status, a row-level lease (owner + expiry), an attempt
+/// counter and the raw Worker output. Postgres is the broker — `claimTasks`
+/// leases rows with `FOR UPDATE SKIP LOCKED` — and GraphQL is the only door.
+/// Tasks are never deleted.
+model task {
+  id          String @id @default(cuid())
+  /// e.g. `event.impact_prior.clear`. The handler vocabulary, not an enum, so
+  /// a new kind is a Worker and a handler, not a migration. One enrichment
+  /// request fans out into one Task per enabled kind (TASK_IMPACT_PRIOR_KINDS).
+  kind        String
+  /// e.g. `event`.
+  subjectType String @map("subject_type")
+  subjectId   String @map("subject_id")
+  /// Per-kind inputs, e.g. `{ horizonYears: 10 }`.
+  payload     Json
+
+  status TaskStatus @default(PENDING)
+  origin TaskOrigin @default(user)
+
+  /// Shared by every Task one request fanned out into. The per-requester
+  /// daily cap counts distinct requests, not rows.
+  requestId   String  @map("request_id")
+  /// `context.user.id` of the requester; null for origin `rule`.
+  requesterId String? @map("requester_id")
+  /// The view-scope team the requester passed (Events have no team of their
+  /// own; this is the authorisation hint `escalateEvent` also takes).
+  teamId      String? @map("team_id")
+
+  /// user.id of the Worker (or person) holding the lease.
+  leaseOwnerId   String?   @map("lease_owner_id")
+  leaseExpiresAt DateTime? @map("lease_expires_at")
+  /// Secret minted per claim and handed only to the Worker that claimed;
+  /// heartbeat, complete and fail must present it. Distinguishes two runs
+  /// of the same Worker identity (one service user) so a stale run cannot
+  /// write over a reclaimed lease.
+  leaseToken     String?   @map("lease_token")
+
+  attempts    Int     @default(0)
+  maxAttempts Int     @default(3) @map("max_attempts")
+  lastError   String? @map("last_error")
+
+  /// Set on a LEASED Task by `cancelTask`; the Worker's next heartbeat or
+  /// completion turns it into CANCELLED.
+  cancelRequestedAt DateTime? @map("cancel_requested_at")
+  cancelledById     String?   @map("cancelled_by_id")
+
+  /// Kind-specific vocabulary: `produced` | `no_prior_found` for
+  /// `event.impact_prior`, plus `no_new_cases` for the web kind when every
+  /// case it found was already proposed for the Event.
+  outcome String?
+  /// Raw Worker output, kept for audit only — the typed result lives beside
+  /// the subject (first: `impact_priors`).
+  result  Json?
+
+  /// Spend as the Worker reports it (cost from its own price table, like
+  /// conversationMessages).
+  model        String?
+  inputTokens  Int?    @map("input_tokens")
+  outputTokens Int?    @map("output_tokens")
+  costUsd      Float?  @map("cost_usd")
+
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  impactPriors  impactPrior[]
+  caseProposals caseProposal[]
+
+  /// (status, kind, created_at) serves the oldest-first claim; the partial
+  /// unique `tasks_open_subject_uk` — one PENDING/LEASED Task per (kind,
+  /// subject) — is SQL-only in the migration (Prisma can't express it).
+  @@index([status, kind, createdAt])
+  @@index([subjectType, subjectId])
+  @@index([requesterId, createdAt])
+  @@map("tasks")
+}
+
+/// What has typically happened before given a hazard type, a context and a
+/// population (the CLEAR Domain Ontology's ImpactPrior), inferred from
+/// historical Events similar to the input Event. Produced by a Worker from
+/// an `event.impact_prior.*` Task; shaped on the ontology's attributes, the
+/// quantitative ones nullable until a later step fills them. Supersede,
+/// never overwrite: a new result is a new row pointing at the previous one
+/// of the same source kind; different sources sit side by side.
+model impactPrior {
+  id      String @id @default(cuid())
+  eventId String @map("event_id")
+  taskId  String @map("task_id")
+
+  state ImpactPriorState @default(proposed)
+
+  /// The kind of the Task that produced it (`event.impact_prior.clear`,
+  /// `event.impact_prior.web`, …), so the UI can label the source.
+  /// Supersession is within a source kind: proposals from different
+  /// Workers sit side by side on the Event.
+  sourceKind String @map("source_kind")
+
+  /// GLIDE code, one of the Event's `types`.
+  hazardType        String @map("hazard_type")
+  /// The level-0 ancestor of the Event's primary location.
+  countryLocationId String @map("country_location_id")
+  /// `district` | `country` — the scope the cases were matched at.
+  geographicScope   String @map("geographic_scope")
+  horizonYears      Int    @map("horizon_years")
+
+  populationGroup String? @map("population_group")
+  metric          String?
+  lowerBound      Float?  @map("lower_bound")
+  upperBound      Float?  @map("upper_bound")
+  numberOfCases   Int     @map("number_of_cases")
+  /// `[{ tier: "clear"|"web", eventId?, sourceUrl?, quote?, occurredAt?,
+  /// locationLabel?, scope }]` — one entry per case.
+  basis           Json
+
+  validFrom DateTime? @map("valid_from")
+  validTo   DateTime? @map("valid_to")
+  /// Skill / handler version string that produced this row.
+  methodVersion String @map("method_version")
+
+  supersedesId String?       @map("supersedes_id")
+  supersedes   impactPrior?  @relation("ImpactPriorSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy impactPrior[] @relation("ImpactPriorSupersedes")
+
+  /// DecisionRecord fields (who, when, why) — extractable to their own table
+  /// later. Null while `proposed`.
+  decidedById       String?   @map("decided_by_id")
+  decidedAt         DateTime? @map("decided_at")
+  decisionRationale String?   @map("decision_rationale")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Restrict: an Event with ImpactPriors cannot be hard-deleted without an
+  /// explicit decision.
+  event events @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  task  task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, createdAt])
+  @@index([state, createdAt])
+  @@map("impact_priors")
+}
+
+/// One historical case a Worker found on the web while enriching an Event
+/// (V4): a past incident like it, the source that reports it, the figures it
+/// gives, and the CLEAR Event it describes when CLEAR already holds one. The
+/// unit an analyst accepts or rejects. Accepting writes the case into CLEAR
+/// as history; the ImpactPrior is computed from that history rather than
+/// reviewed itself.
+model caseProposal {
+  id      String @id @default(cuid())
+  /// The Event whose enrichment request produced the case.
+  eventId String @map("event_id")
+  taskId  String @map("task_id")
+
+  state CaseProposalState @default(proposed)
+
+  sourceUrl       String   @map("source_url")
+  /// The source's own words, verbatim.
+  quote           String
+  /// When the incident happened (valid time), not when it was reported.
+  occurredAt      DateTime @map("occurred_at")
+  locationLabel   String   @map("location_label")
+  /// A CLEAR location for the place, when the Worker resolved one.
+  locationId      String?  @map("location_id")
+  /// GLIDE code; one of the requesting Event's `types`.
+  hazardType      String   @map("hazard_type")
+  /// `district` | `country` — the scope the case was matched at.
+  geographicScope String   @map("geographic_scope")
+  /// `[{ metric, value, lowerBound?, upperBound?, unit?, populationGroup? }]`,
+  /// `metric` one of the Domain Ontology's seven metric types.
+  figures         Json     @default("[]")
+  /// The CLEAR Event this case describes, when CLEAR already holds it.
+  matchedEventId  String?  @map("matched_event_id")
+  /// Skill / handler version string that produced the case.
+  methodVersion   String   @map("method_version")
+
+  /// DecisionRecord fields (who, when, why). Null while `proposed`; the
+  /// rationale is required on reject.
+  decidedById       String?   @map("decided_by_id")
+  decidedAt         DateTime? @map("decided_at")
+  decisionRationale String?   @map("decision_rationale")
+
+  /// What accepting wrote into CLEAR: the Signal and the Event it sits on.
+  resultSignalId String? @map("result_signal_id")
+  resultEventId  String? @map("result_event_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event        events  @relation("CaseProposalEvent", fields: [eventId], references: [id], onDelete: Restrict)
+  matchedEvent events? @relation("CaseProposalMatchedEvent", fields: [matchedEventId], references: [id], onDelete: SetNull)
+  task         task    @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  /// One proposal per source per Event: a later request never re-proposes a
+  /// URL already proposed, accepted or rejected for the same Event.
+  @@unique([eventId, sourceUrl])
+  @@index([state, createdAt])
+  @@index([taskId])
+  @@map("case_proposals")
 }

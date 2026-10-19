@@ -25,8 +25,9 @@ export const userTypeDef = gql`
     emailVerified: Boolean!
     phoneNumber: String
     image: String
-    """User role: viewer, analyst, admin, or pending. Null when caller is not
-    authorised to see this user's role."""
+    """Global user role: member, admin, or pending (plus system roles). Null
+    when caller is not authorised to see this user's role. Note: analyst is now
+    a TEAM role (see TeamMemberRole), not a global role."""
     role: String
     """Null when caller is not authorised to see this field."""
     isActive: Boolean
@@ -58,10 +59,10 @@ export const userTypeDef = gql`
   }
 
   """Assignable global platform roles. \`pending\` is not in this
-  enum — those users must go through \`approveUser\` first."""
+  enum — those users must go through \`approveUser\` first. \`analyst\` is no
+  longer global — it is a TeamMemberRole."""
   enum GlobalRole {
-    viewer
-    analyst
+    member
     admin
   }
 

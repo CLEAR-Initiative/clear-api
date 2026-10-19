@@ -1,6 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
+import { getTeamScopeLocationIds } from "./location-scope.js";
 
 export function requireAuth(context: Context) {
   if (!context.user) {
@@ -37,34 +38,35 @@ export function isPlatformAdmin(
  */
 export const TEAM_CONTENT_WRITER_ROLES: ReadonlySet<string> = new Set([
   "team_admin",
-  "field_coordinator",
+  "analyst",
   "emergency_response_manager",
   "team_member",
 ]);
 
 /**
- * Content-write gate for mutations that can be either platform-wide
- * (any admin or analyst) or team-scoped (a `team_admin` or
- * `field_coordinator` acting on behalf of `teamId`).
+ * Content-write gate for mutations that are either platform-wide (global
+ * `admin`) or team-scoped (any team membership acting on behalf of `teamId`).
  *
  * Precedence:
  *   1. Global admin  → allowed unconditionally.
- *   2. Global analyst → allowed unconditionally.
- *   3. `teamId` provided AND caller has any TEAM_CONTENT_WRITER_ROLES
+ *   2. `teamId` provided AND caller has any TEAM_CONTENT_WRITER_ROLES
  *      role (currently: any team membership) on it → allowed.
- *   4. Everything else → FORBIDDEN.
+ *   3. Everything else → FORBIDDEN.
  *
- * A viewer with no team membership and anyone whose only role is
- * `pending` are rejected. Returns the authenticated user so the caller
- * can attribute activity, and `via` so an audit log can distinguish
- * global from team-scoped writes.
+ * `analyst` is no longer a global role (it is a TEAM role now), so there is no
+ * global-analyst bypass here — a team analyst writes via their membership like
+ * any other team role. A global `member` with no team membership, anyone whose
+ * only role is `pending`, and the `worker` role (even with a team membership)
+ * are rejected. Returns the authenticated user so the caller can attribute
+ * activity, and `via` so an audit log can distinguish global from team-scoped
+ * writes.
  */
 export async function requireTeamContentWriter(
   context: Context,
   teamId?: string | null,
 ): Promise<{ user: NonNullable<Context["user"]>; via: "global" | "team" }> {
-  const user = requireAuth(context);
-  if (isPlatformAdmin(user) || user.role === "analyst") {
+  const user = requireNonWorker(context);
+  if (isPlatformAdmin(user)) {
     return { user, via: "global" };
   }
   if (!teamId) {
@@ -78,14 +80,97 @@ export async function requireTeamContentWriter(
   });
   if (!membership || !TEAM_CONTENT_WRITER_ROLES.has(membership.role)) {
     throw new GraphQLError(
-      "Requires team_admin or field_coordinator on this team, or global admin/analyst",
+      "Requires a team membership on this team, or global admin",
       { extensions: { code: "FORBIDDEN" } },
     );
   }
   return { user, via: "team" };
 }
 
-/** Check global user.role (admin, viewer). Use for platform-wide operations. */
+/** The team role carrying the elevated, location-scoped powers formerly held by
+ *  the (now removed) global `analyst`: promote alerts, decide tasks / case
+ *  proposals, manage team analyses, and act on events / alerts / crises that
+ *  fall within the team's location scope. A TEAM value of `teamMembers.role`. */
+export const TEAM_ANALYST_ROLE = "analyst";
+
+/**
+ * True when the user is a team `analyst` on at least one team whose location
+ * scope covers one of `locationIds`. A team with NO location bindings is
+ * "global monitoring" (wide-open) — its analysts match any location. Used to
+ * scope the former global-analyst powers on events / alerts / crises, which
+ * carry locations but no `teamId`.
+ */
+export async function userIsTeamAnalystForLocations(
+  prisma: PrismaClient,
+  userId: string,
+  locationIds: ReadonlyArray<string | null | undefined>,
+): Promise<boolean> {
+  const memberships = await prisma.teamMembers.findMany({
+    where: { userId, role: TEAM_ANALYST_ROLE },
+    select: { teamId: true },
+  });
+  if (memberships.length === 0) return false;
+  const locs = locationIds.filter((x): x is string => Boolean(x));
+  for (const m of memberships) {
+    const scope = await getTeamScopeLocationIds(prisma, m.teamId);
+    if (scope === undefined) return true; // wide-open team → any location
+    if (locs.some((id) => scope.includes(id))) return true;
+  }
+  return false;
+}
+
+/**
+ * Elevated-action gate for an entity identified by its location(s) — the
+ * location-scoped replacement for the old `requireRole(["admin","analyst"])` on
+ * events / alerts / crises. Global admin passes unconditionally; otherwise the
+ * caller must be a team `analyst` whose team location scope covers one of
+ * `entityLocationIds` (see {@link userIsTeamAnalystForLocations}).
+ */
+export async function requireAdminOrTeamAnalystForLocations(
+  context: Context,
+  entityLocationIds: ReadonlyArray<string | null | undefined>,
+): Promise<NonNullable<Context["user"]>> {
+  // requireNonWorkerContentReader admits only approved humans (admin / member) —
+  // a `pending` signup or a service role (worker/pipeline/agent) is rejected
+  // BEFORE any team-membership lookup, so a pending account that somehow holds a
+  // team `analyst` membership cannot reach these elevated writes.
+  const user = requireNonWorkerContentReader(context);
+  if (isPlatformAdmin(user)) return user;
+  if (await userIsTeamAnalystForLocations(context.prisma, user.id, entityLocationIds)) {
+    return user;
+  }
+  throw new GraphQLError(
+    "Requires global admin, or a team analyst within the target's location scope",
+    { extensions: { code: "FORBIDDEN" } },
+  );
+}
+
+/**
+ * Elevated-action gate for an entity that DOES carry a `teamId` (tasks,
+ * analyses). Global admin passes; otherwise the caller must be a team `analyst`
+ * on that team. A null `teamId` (platform-owned / system row) is admin-only.
+ */
+export async function requireAdminOrTeamAnalyst(
+  context: Context,
+  teamId?: string | null,
+): Promise<NonNullable<Context["user"]>> {
+  // Approved humans only (admin / member) — pending + service roles rejected
+  // before the membership lookup (see requireAdminOrTeamAnalystForLocations).
+  const user = requireNonWorkerContentReader(context);
+  if (isPlatformAdmin(user)) return user;
+  if (teamId) {
+    const membership = await context.prisma.teamMembers.findUnique({
+      where: { teamId_userId: { teamId, userId: user.id } },
+      select: { role: true },
+    });
+    if (membership?.role === TEAM_ANALYST_ROLE) return user;
+  }
+  throw new GraphQLError("Requires global admin, or team analyst on this team", {
+    extensions: { code: "FORBIDDEN" },
+  });
+}
+
+/** Check global user.role (admin, member). Use for platform-wide operations. */
 export function requireRole(context: Context, roles: string[]) {
   const user = requireAuth(context);
   if (!user.role || !roles.includes(user.role)) {
@@ -97,9 +182,19 @@ export function requireRole(context: Context, roles: string[]) {
 }
 
 /**
- * Approved-tier gate. Admits `admin`, `analyst`, and `viewer`; rejects
- * `pending` (the default for fresh signups) and any other unrecognised
- * role.
+ * Approved-tier gate. Admits `admin`, `member` and `worker`; rejects
+ * `pending` (the default for fresh signups) and any other unrecognised role.
+ *
+ * `member` is the default human role (formerly `viewer`). `analyst` is no
+ * longer a global role — it is a TEAM role — so it is not listed here; a team
+ * analyst carries the global `member` role and is admitted as such.
+ *
+ * `worker` is the narrow service role a Task Worker runs as (ADR-0010):
+ * it reads content like any approved user so it can research its Task,
+ * and its only writes are the Task mutations on Tasks it holds. This gate
+ * admits it, so a mutation must never rely on it alone — use
+ * `requireNonWorkerContentReader` for writes. `pipeline` and `agent` are
+ * deliberately not here.
  *
  * Use this on every content-read resolver (signals, events, alerts,
  * crises and their by-location / by-id variants). Pending users still
@@ -112,8 +207,8 @@ export function requireRole(context: Context, roles: string[]) {
  */
 const APPROVED_ROLES: ReadonlySet<string> = new Set([
   "admin",
-  "analyst",
-  "viewer",
+  "member",
+  "worker",
 ]);
 
 export function requireContentReader(context: Context) {
@@ -125,6 +220,36 @@ export function requireContentReader(context: Context) {
     );
   }
   return user;
+}
+
+/** The Task Worker service role (ADR-0010). */
+export const WORKER_ROLE = "worker";
+
+function rejectWorker<U extends { role?: string | null }>(user: U): U {
+  if (user.role === WORKER_ROLE) {
+    throw new GraphQLError("The worker role may only call the Task mutations", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+  return user;
+}
+
+/**
+ * `requireAuth` for writes. A Task Worker's key lives in an unattended,
+ * prompt-injectable routine, so its write surface is exactly the four Task
+ * mutations (claim / heartbeat / complete / fail) — every other mutation a
+ * signed-in caller can reach uses this or `requireNonWorkerContentReader`
+ * instead of the bare gates. Call it first, before any lookup, so a worker
+ * learns nothing about the target. tests/schema/worker-write-scope.test.ts
+ * fails any new mutation that lets the worker role through.
+ */
+export function requireNonWorker(context: Context) {
+  return rejectWorker(requireAuth(context));
+}
+
+/** `requireContentReader` for writes: approved tier, minus the worker role. */
+export function requireNonWorkerContentReader(context: Context) {
+  return rejectWorker(requireContentReader(context));
 }
 
 /**
@@ -149,6 +274,52 @@ export async function resolveTeamMembership(
     });
   }
   return membership;
+}
+
+/** Team role that triages the hotline ("ground intel") inbox. A TEAM role
+ *  (a value of `teamMembers.role`), distinct from the global admin/member roles. */
+export const EMERGENCY_RESPONSE_MANAGER = "emergency_response_manager";
+
+/** True when the user is an active `emergency_response_manager` on any team. */
+export async function isEmergencyResponseManager(
+  prisma: PrismaClient,
+  userId: string,
+): Promise<boolean> {
+  const membership = await prisma.teamMembers.findFirst({
+    where: { userId, role: EMERGENCY_RESPONSE_MANAGER },
+    select: { id: true },
+  });
+  return membership !== null;
+}
+
+/**
+ * Ground-intel inbox access gate. Admits a global `admin` (who sees everything)
+ * OR an `emergency_response_manager` on any team. Returns the user plus `isErm`
+ * so callers can branch review rights — admins keep the per-source
+ * `reviewerRoles` policy; an ERM may triage. (Phase 2 will scope an ERM to the
+ * hotline numbers their team subscribes to.)
+ *
+ * `analyst` is no longer a global role and does NOT grant ground-inbox access:
+ * ground triage is the ERM's team-scoped job. A team analyst's elevated powers
+ * are on events/alerts/crises within their location scope, not the hotline.
+ */
+export async function requireGroundInboxAccess(
+  context: Context,
+): Promise<{ user: ReturnType<typeof requireAuth>; isErm: boolean }> {
+  const user = requireAuth(context);
+  if (isPlatformAdmin(user)) {
+    return { user, isErm: false };
+  }
+  // An ERM carries the global `member` role plus the emergency_response_manager
+  // TEAM role. Only check team membership for members — service roles
+  // (worker/pipeline/agent) and pending users can't be ERMs and are rejected
+  // without a DB lookup (keeps a service-role rejection free of DB touches).
+  if (user.role === "member" && (await isEmergencyResponseManager(context.prisma, user.id))) {
+    return { user, isErm: true };
+  }
+  throw new GraphQLError("Insufficient permissions", {
+    extensions: { code: "FORBIDDEN" },
+  });
 }
 
 /**

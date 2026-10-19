@@ -4,10 +4,6 @@ dist
 .env.*
 !.env.example
 *.tsbuildinfo
-.terraform
-*.tfstate
-*.tfstate.backup
-.terraform.lock.hcl
 
 /src/generated/prisma
 /coverage

@@ -12,7 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireContentReader } from "../utils/auth-guard.js";
+import { requireContentReader, requireNonWorkerContentReader } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import {
   cacheDel,
@@ -54,7 +54,7 @@ interface PublicEventSnapshot {
   description: string | null;
   severity: number | null;
   validFrom: string;
-  validTo: string;
+  validTo: string | null;
   types: string[];
   primaryLocationName: string | null;
   primaryLocationCoords: [number, number] | null;
@@ -122,8 +122,8 @@ export const publicEventResolvers = {
       args: { eventId: string },
       context: Context,
     ) => {
-      // Same gate as mint — pending users blocked, viewer / analyst /
-      // admin allowed. Idempotent reads on the cache don't expose
+      // Same gate as mint — pending users blocked, member / admin allowed.
+      // Idempotent reads on the cache don't expose
       // anything the caller couldn't already see by minting, but the
       // role check keeps the surface tidy.
       requireContentReader(context);
@@ -166,7 +166,7 @@ export const publicEventResolvers = {
     ) => {
       // Mint requires read access to the event — same gate as the
       // authenticated `event(id)` query. Pending users blocked.
-      requireContentReader(context);
+      requireNonWorkerContentReader(context);
 
       const { eventId } = args.input;
       const ttlDays = Math.min(
@@ -219,7 +219,8 @@ export const publicEventResolvers = {
       // fields, deduped by location id). Polygon-only locations are
       // dropped via the `ST_GeometryType = 'ST_Point'` filter below.
       const signalLinks = await context.prisma.signalEvents.findMany({
-        where: { eventId },
+        // Retracted signals were superseded upstream: no map point for them.
+        where: { eventId, signal: { retracted: false } },
         select: {
           signal: {
             select: {
@@ -329,7 +330,7 @@ export const publicEventResolvers = {
         description: event.description ?? null,
         severity: event.severity ?? null,
         validFrom: event.validFrom.toISOString(),
-        validTo: event.validTo.toISOString(),
+        validTo: event.validTo ? event.validTo.toISOString() : null,
         types: event.types,
         primaryLocationName: primary?.name ?? null,
         primaryLocationCoords: primaryCoords,
@@ -372,11 +373,11 @@ export const publicEventResolvers = {
       args: { eventId: string; token: string },
       context: Context,
     ) => {
-      // Same gate as mint. Pending users blocked; viewer / analyst /
-      // admin can all revoke. Ownership-of-link isn't checked because
+      // Same gate as mint. Pending users blocked; member / admin can all
+      // revoke. Ownership-of-link isn't checked because
       // the link is unauthenticated by design and the only revocable
       // state is the cache entry itself.
-      requireContentReader(context);
+      requireNonWorkerContentReader(context);
       await cacheDel(publicEventCacheKey(args.eventId, args.token));
       return true;
     },

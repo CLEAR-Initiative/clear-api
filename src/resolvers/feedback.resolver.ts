@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireNonWorker } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ export const feedbackResolvers = {
       args: { input: AddFeedbackInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { eventId, signalId, crisisId, rating, text } = args.input;
 
       exactlyOneTarget(eventId, signalId, crisisId);
@@ -98,7 +98,7 @@ export const feedbackResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const feedback = await context.prisma.userFeedbacks.findUnique({
         where: { id: args.id },
@@ -123,7 +123,7 @@ export const feedbackResolvers = {
       args: { input: AddCommentInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { eventId, signalId, crisisId, comment, tagUserIds } = args.input;
 
       exactlyOneTarget(eventId, signalId, crisisId);
@@ -157,7 +157,7 @@ export const feedbackResolvers = {
       args: { input: ReplyToCommentInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       const { repliedToCommentId, comment, tagUserIds } = args.input;
 
       const parentComment = await context.prisma.userComments.findUnique({
@@ -199,7 +199,7 @@ export const feedbackResolvers = {
       args: { id: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const comment = await context.prisma.userComments.findUnique({
         where: { id: args.id },
@@ -224,7 +224,7 @@ export const feedbackResolvers = {
       args: { commentId: string; userIds: string[] },
       context: Context,
     ) => {
-      requireAuth(context);
+      requireNonWorker(context);
 
       const comment = await context.prisma.userComments.findUnique({
         where: { id: args.commentId },

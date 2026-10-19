@@ -86,14 +86,14 @@ describe("Docs Composer", () => {
     it("renders Account footer with email when account provided", () => {
       const html = composeDocsPage({
         bodyHtml: "<p>Test</p>",
-        account: { email: "dev@example.com", role: "analyst" },
+        account: { email: "dev@example.com", role: "member" },
         types: [],
         mutations: [],
       });
 
       expect(html).toContain("sidebar-footer");
       expect(html).toContain("dev@example.com");
-      expect(html).toContain("Analyst Account");
+      expect(html).toContain("Member Account");
       expect(html).toContain("Sign Out");
     });
 

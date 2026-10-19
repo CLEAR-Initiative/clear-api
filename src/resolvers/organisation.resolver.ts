@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth, requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
 import { removeOrgMember as removeOrgMemberService } from "../services/team-membership.js";
 
 interface CreateOrganisationInput {
@@ -82,7 +82,7 @@ export const organisationResolvers = {
       // The schema doc for this mutation states the creator becomes
       // the first org_admin. Bind the authenticated user here so we
       // can insert the organisationUsers row in the same transaction.
-      const creator = requireAuth(context);
+      const creator = requireNonWorker(context);
       const { name, slug } = args.input;
 
       const existing = await context.prisma.organisations.findUnique({
@@ -154,7 +154,7 @@ export const organisationResolvers = {
       args: { id: string; input: UpdateOrganisationInput },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
 
       const org = await context.prisma.organisations.findUnique({
         where: { id: args.id },
@@ -178,7 +178,7 @@ export const organisationResolvers = {
       args: { orgId: string; userId: string; role?: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
       let targetUserId = args.userId;
@@ -243,7 +243,7 @@ export const organisationResolvers = {
       args: { orgId: string; userId: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
       // Delegate to the shared service — it also cascades team
@@ -269,7 +269,7 @@ export const organisationResolvers = {
       args: { orgId: string; userId: string; role: string },
       context: Context,
     ) => {
-      const user = requireAuth(context);
+      const user = requireNonWorker(context);
       await requireOrgAdmin(context.prisma, user, args.orgId);
 
       if (!["org_admin", "member"].includes(args.role)) {

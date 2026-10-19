@@ -396,6 +396,76 @@ ${dashboardUrl}
   };
 }
 
+/** Escape text that came from outside the template (a Worker's error, a
+ *  user's name) before it is interpolated into HTML. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export interface TaskOutcomeExtras {
+  outcomeKind: "completed" | "failed";
+  /** The Worker's error, for recipients allowed to read it; null otherwise. */
+  error: string | null;
+}
+
+/**
+ * Task outcome (ADR-0010, V2): an Event enrichment the recipient asked for,
+ * or may decide, completed or failed. One line of what happened and a link
+ * to the Event page, where what it proposed is reviewed.
+ */
+export function taskOutcome(
+  recipientName: string,
+  message: string,
+  eventUrl: string,
+  extras: TaskOutcomeExtras,
+): EmailContent {
+  const failed = extras.outcomeKind === "failed";
+  const errorLine = extras.error ? `\n\nError: ${extras.error}` : "";
+  // The Worker's error and the recipient's name are not ours: escape them
+  // before they reach the HTML body (the text body is plain text).
+  const safeName = escapeHtml(recipientName);
+  const safeMessage = escapeHtml(message);
+  const safeError = extras.error ? escapeHtml(extras.error) : null;
+  return {
+    subject: `CLEAR: ${message}`,
+
+    textBody: `Hi ${recipientName},
+
+${message}.${errorLine}
+
+Open the event to ${failed ? "see the details" : "review it"}:
+
+${eventUrl}
+
+- The CLEAR Platform Team`,
+
+    htmlBody: wrapHtml(
+      failed ? "Enrichment failed" : "Enrichment ready for review",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${safeName},
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        ${safeMessage}.
+      </p>
+      ${
+        safeError
+          ? `<p style="margin: 0 0 24px; font-size: 13px; color: #B91C1C; line-height: 1.5;">Error: ${safeError}</p>`
+          : ""
+      }
+      ${ctaButton("Open Event", eventUrl)}
+      <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
+      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
+        You received this because you requested the enrichment, or may decide what it proposed.
+      </p>`,
+    ),
+  };
+}
+
 /**
  * Password reset template.
  */

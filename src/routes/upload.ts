@@ -11,7 +11,7 @@
  *     content hash so identical re-uploads are idempotent (one S3 object).
  *
  * Unauthenticated callers get 401; an authenticated-but-wrong-role API key
- * (e.g. viewer) gets 403. Returns { keys: string[] }.
+ * (e.g. member) gets 403. Returns { keys: string[] }.
  */
 
 import { Router, type NextFunction, type Request, type Response } from "express";

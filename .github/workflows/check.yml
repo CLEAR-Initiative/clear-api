@@ -1,0 +1,91 @@
+name: Check
+
+on:
+  pull_request:
+    # prod gets PR CI for the periodic dev -> prod sync PRs.
+    branches: [dev, prod]
+  push:
+    branches: [dev]
+
+# Cancel a superseded run only for pull_request events (keyed on the PR
+# number). Push-to-dev runs are keyed on the SHA and never cancelled: with
+# branch protection's strict mode off they are the only test of the merged
+# result. Greptile auto-merge ignores the cancelled run (workflow_run
+# conclusion 'cancelled' -> evaluate skips) and acts on the new head's run.
+concurrency:
+  group: check-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Normal runs are ~1.5 min; the default 360-min cap once let a hung run
+    # block the required check for 15 min until cancelled by hand.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma generate
+      - run: bun run lint
+      - run: bun run typecheck
+      # Fail if the committed generated docs drifted from its source template.
+      - name: Docs HTML is in sync with template
+        run: bun run build:docs && git diff --exit-code src/docs/docs-body.html
+      # Same compile path as Dockerfile (`bun run build`). This runner has
+      # Node, so `tsx` would still succeed here — the bun-vs-tsx gate is
+      # tests/docs/build-docs-runtime.test.ts.
+      - run: bun run build
+
+      # Run the DB-free test suite WITH coverage, and gate on the thresholds in
+      # vitest.config.ts (calibrated to the DB-free baseline). DB-backed suites
+      # are skipped here via SKIP_DB_TESTS=1 and run in the db-tests job below.
+      # The dummy env vars only need to satisfy the src/utils/env.ts schema
+      # parse at import time — no real services are contacted.
+      - name: Test (DB-free) + coverage gate
+        run: bun run test:ci:coverage
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
+          BETTER_AUTH_SECRET: ci-dummy-secret-at-least-32-chars-long-xxxx
+          BETTER_AUTH_URL: http://localhost:4000
+
+  # The suite again, against a fresh Postgres built like production's (PostGIS
+  # + pgvector) with every migration applied from empty — so migrations and
+  # the self-seeding DB suites (`describeIfDb`) are checked on every PR.
+  # Suites that need dev seed data (`describeIfSeededDb`) stay skipped.
+  # No coverage gate: the thresholds are calibrated to the DB-free run.
+  db-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bunx prisma generate
+
+      # Build the scratch Postgres image through the Actions cache and load it
+      # into the daemon; TEST_DB_SKIP_BUILD below tells scripts/test-db.sh to
+      # use that image instead of repeating its own `docker build` (the plain
+      # builder cannot see the buildx builder's cache). Local runs still build.
+      # Measured on PR #219: cold cache 48 s (build + export), warm 18 s.
+      - uses: docker/setup-buildx-action@v3
+      - name: Build scratch Postgres image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/db
+          platforms: linux/amd64
+          load: true
+          tags: clear-api-test-db
+          cache-from: type=gha,scope=test-db
+          cache-to: type=gha,mode=max,scope=test-db
+
+      - name: Test against a migrated scratch database
+        run: bun run test:db
+        env:
+          TEST_DB_SKIP_BUILD: "1"

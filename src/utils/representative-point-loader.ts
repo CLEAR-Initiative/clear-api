@@ -90,9 +90,11 @@ export async function batchResolve(
 
   // (2) All signals for these events, earliest first, with the join rows
   //     (so we know which of the batch events each belongs to) and the
-  //     location cascade.
+  //     location cascade. Retracted signals are excluded, matching the
+  //     event's aggregates; if the original first signal is retracted, no
+  //     publishedAt matches and the earliest live signal is used.
   const signals = await prisma.signals.findMany({
-    where: { signalEvents: { some: { eventId: { in: [...eventIds] } } } },
+    where: { retracted: false, signalEvents: { some: { eventId: { in: [...eventIds] } } } },
     orderBy: { publishedAt: "asc" },
     include: {
       signalEvents: { where: { eventId: { in: [...eventIds] } }, select: { eventId: true } },

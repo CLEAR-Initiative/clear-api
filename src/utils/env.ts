@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRetiredKind } from "./task-kinds.js";
 
 /**
  * Optional URL that treats the empty string as "not set". Needed because
@@ -121,7 +122,7 @@ const envSchema = z.object({
   S3_ENDPOINT: z.string().optional(),
 
   // Global admin seed (env overrides seed defaults)
-  ADMIN_EMAIL: z.string().email().default("admin@clear.dev"),
+  ADMIN_EMAIL: z.string().email().default("admin@clearinitiative.io"),
   ADMIN_PASSWORD: z.string().min(8).default("password123"),
 
   // ─── Exponential CRM integration ─────────────────────────────────────
@@ -185,6 +186,69 @@ const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.coerce.number().nonnegative().default(2),
   ),
+
+  // ─── Tasks and Workers (ADR-0010) ────────────────────────────────
+  // All four are enforced server-side in task.resolver.ts (unlike
+  // AGENT_DAILY_BUDGET_USD, which is only reported): third-party Workers
+  // and API callers will not self-limit. Empty means default.
+  /** Minutes a claimed Task stays leased before it returns to the pool;
+   *  a heartbeat extends the lease by this much again. */
+  TASK_LEASE_MINUTES: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(15),
+  ),
+  /** Claims a Task may take before it is marked FAILED with its last
+   *  error. Stamped on each Task at creation (`maxAttempts`). */
+  TASK_MAX_ATTEMPTS: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(3),
+  ),
+  /** Most Tasks one `claimTasks` call may lease at once. */
+  TASK_CLAIM_MAX: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(10),
+  ),
+  /** Enrichment requests one requester may create per UTC day. A request
+   *  that fans out into several Tasks counts once. */
+  TASK_REQUEST_DAILY_CAP: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(20),
+  ),
+  /** The source kinds one enrichment request fans out into — one Task per
+   *  kind, each drained by its own Worker. Comma-separated; each must be
+   *  `event.impact_prior.<source>`. Dropping a kind here stops new Tasks of
+   *  it; open ones stay claimable.
+   *
+   *  Default `.web` only: the Claude routine proposes signals, and the
+   *  ImpactPrior is computed from accepted history. The retired whole-prior
+   *  kinds (the bare `event.impact_prior`, `event.impact_prior.clear`) are
+   *  dropped with a warning rather than failing boot, since an env file may
+   *  still name them. */
+  TASK_IMPACT_PRIOR_KINDS: z
+    .preprocess(
+      (v) => (v === "" ? undefined : v),
+      z.string().default("event.impact_prior.web"),
+    )
+    .transform((s) => {
+      const kinds = [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))];
+      const retired = kinds.filter(isRetiredKind);
+      if (retired.length > 0) {
+        console.warn(`[env] TASK_IMPACT_PRIOR_KINDS: ignoring retired kind(s) ${retired.join(", ")}`);
+      }
+      return kinds.filter((k) => !isRetiredKind(k));
+    })
+    .pipe(
+      z
+        .array(
+          z
+            .string()
+            .regex(
+              /^event\.impact_prior\.[a-z0-9_]+$/,
+              "each kind must be event.impact_prior.<source> (lowercase letters, digits, _)",
+            ),
+        )
+        .min(1, "TASK_IMPACT_PRIOR_KINDS must name at least one kind that is not retired"),
+    ),
 });
 
 const parsed = envSchema.parse(process.env);

@@ -59,10 +59,11 @@ export async function approveUserById(
   }
 
   // Local role flip first — authoritative even if Exponential is
-  // unreachable, so the user gets access immediately.
+  // unreachable, so the user gets access immediately. `member` is the default
+  // approved human role (formerly `viewer`).
   const updated = await prisma.user.update({
     where: { id: user.id },
-    data: { role: "viewer" },
+    data: { role: "member" },
   });
 
   // Resolve the CRM contact by email (no pointer stored on the user

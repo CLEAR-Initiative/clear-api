@@ -1,13 +1,20 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import {
+  requireContentReader,
+  requireRole,
+  requireAdminOrTeamAnalystForLocations,
+} from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
+import { minSeverityFilterFor } from "../utils/alert-severity.js";
+import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
+import { fanOutAlertWebhooks } from "../services/webhook/alert-fanout.js";
 import {
   severityToLabel,
   formatCount,
@@ -84,7 +91,6 @@ export const alertResolvers = {
       args: { input: CreateAlertInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       // Verify the event exists
@@ -95,6 +101,33 @@ export const alertResolvers = {
         throw new GraphQLError("Event not found", {
           extensions: { code: "NOT_FOUND" },
         });
+      }
+
+      // Elevated gate, scoped to the alert's event locations: a global admin
+      // (the pipeline authenticates as one via API key) passes, else the caller
+      // must be a team analyst whose location scope covers the event.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        event.originId,
+        event.destinationId,
+        event.locationId,
+      ]);
+
+      // Don't raise alerts for out-of-interest events: an event whose types are
+      // ALL out-of-interest (disaster_types.nrc_relevant = false) is skipped.
+      // An event with at least one NRC-relevant glide code may still alert; an
+      // event with no classified types carries no NRC signal and is not skipped.
+      // This is expected business behaviour (the pipeline asks to raise an alert
+      // for every event it processes), NOT an error — so LOG and return null
+      // rather than throwing, which would otherwise surface as a GlitchTip alert
+      // on the pipeline side. `createAlert` is nullable for exactly this reason.
+      if (
+        (event.types?.length ?? 0) > 0 &&
+        !(await anyTypeNrcRelevant(context.prisma, event.types))
+      ) {
+        console.log(
+          `[createAlert] Event ${event.id}: types=${JSON.stringify(event.types)} are all NRC-irrelevant — no alert raised (skipping, not an error)`,
+        );
+        return null;
       }
 
       // Idempotent creation: if an alert already exists for this event,
@@ -178,14 +211,14 @@ export const alertResolvers = {
         const locationNames = locations.map((l) => l.name).join(", ");
         console.log(`[createAlert] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
-        const eventSeverity = event.severity ?? 1;
+        // Unknown (null) severity reaches only "all severities" subscribers.
         const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
           where: {
             active: true,
             frequency: "immediately",
             alertType: { in: event.types },
             locationId: { in: [...allLocationIds] },
-            minSeverity: { lte: eventSeverity },
+            minSeverity: minSeverityFilterFor(event.severity),
           },
           select: { userId: true },
         });
@@ -359,6 +392,23 @@ export const alertResolvers = {
         }
       }
 
+      // Fan out to team-configured `clear_alert` webhooks alongside email.
+      // Fire-and-forget: webhook delivery (async, retried) must never block or
+      // fail alert creation. Matching + delivery live in the service.
+      try {
+        const webhookCount = await fanOutAlertWebhooks(
+          context.prisma,
+          { id: alert.id, status: alert.status, createdAt: alert.createdAt },
+          event,
+          env.FRONTEND_URL,
+        );
+        if (webhookCount > 0) {
+          console.log(`[createAlert] Dispatched ${webhookCount} alert webhook delivery(ies)`);
+        }
+      } catch (e) {
+        console.error("[createAlert] alert webhook fan-out failed (alert already created):", e);
+      }
+
       return alert;
     },
 
@@ -367,7 +417,6 @@ export const alertResolvers = {
       args: { id: string; input: UpdateAlertInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
 
       const existing = await context.prisma.alerts.findUnique({ where: { id } });
@@ -376,6 +425,20 @@ export const alertResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the alert's event locations: load the alert's
+      // event and gate on its locations (admin passes, else team analyst in
+      // scope). The alert should always have an event, but if it's missing we
+      // fall through with no derivable location → admin-only.
+      const alertEvent = await context.prisma.events.findUnique({
+        where: { id: existing.eventId },
+        select: { originId: true, destinationId: true, locationId: true },
+      });
+      await requireAdminOrTeamAnalystForLocations(context, [
+        alertEvent?.originId,
+        alertEvent?.destinationId,
+        alertEvent?.locationId,
+      ]);
 
       return context.prisma.alerts.update({
         where: { id },

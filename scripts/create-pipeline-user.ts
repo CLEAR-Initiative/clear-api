@@ -15,7 +15,7 @@
  *   bun run scripts/create-pipeline-user.ts --new-key  # rotate: mint a fresh key
  *
  * Env overrides:
- *   PIPELINE_USER_EMAIL  (default "pipeline@clear.dev")
+ *   PIPELINE_USER_EMAIL  (default "pipeline@clearinitiative.io")
  *   PIPELINE_USER_NAME   (default "CLEAR Pipeline")
  */
 import "dotenv/config";
@@ -23,7 +23,7 @@ import { prisma } from "../src/lib/prisma.js";
 import { generateApiKey } from "../src/utils/api-key.js";
 
 const PIPELINE_ROLE = "pipeline";
-const email = process.env.PIPELINE_USER_EMAIL ?? "pipeline@clear.dev";
+const email = process.env.PIPELINE_USER_EMAIL ?? "pipeline@clearinitiative.io";
 const name = process.env.PIPELINE_USER_NAME ?? "CLEAR Pipeline";
 const rotate = process.argv.includes("--new-key");
 

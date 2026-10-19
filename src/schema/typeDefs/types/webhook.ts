@@ -8,6 +8,18 @@ export const webhookTypeDef = gql`
   """
   type WebhookSubscription {
     id: String!
+    """Which trigger feeds this subscription: "glitchtip" (platform-admin
+    GlitchTip alerts) or "clear_alert" (team-managed alert webhooks)."""
+    source: String!
+    """Owning team for a clear_alert subscription; null for platform-level
+    glitchtip subscriptions."""
+    teamId: String
+    """(clear_alert) Glide-code allowlist on the alert's event types.
+    Empty = all types within the team's location scope."""
+    alertTypeFilter: [String!]!
+    """(clear_alert) Minimum alert severity (1-5). Null = all severities
+    (including null-severity alerts). A set floor excludes null-severity alerts."""
+    minSeverity: Int
     """Human-readable label shown in the admin UI. Not sent downstream."""
     name: String!
     """Target URL that receives HMAC-signed POST requests."""
@@ -95,6 +107,31 @@ export const webhookTypeDef = gql`
     name: String
     targetUrl: String
     eventTypeFilter: [String!]
+    active: Boolean
+  }
+
+  """Input for creating a team-scoped clear_alert webhook. The secret is
+  generated server-side (openssl rand -hex 32 equivalent) and returned once
+  on create."""
+  input CreateAlertWebhookInput {
+    """Owning team. The caller must be a team admin of this team, an org
+    admin of its organisation, or a platform admin."""
+    teamId: String!
+    name: String!
+    targetUrl: String!
+    """Optional glide-code allowlist. Empty / omitted = all event types."""
+    alertTypeFilter: [String!]
+    """Optional minimum alert severity (1-5). Omitted = all severities."""
+    minSeverity: Int
+  }
+
+  """Input for updating a clear_alert webhook. All fields optional —
+  provide only what you want to change."""
+  input UpdateAlertWebhookInput {
+    name: String
+    targetUrl: String
+    alertTypeFilter: [String!]
+    minSeverity: Int
     active: Boolean
   }
 `;

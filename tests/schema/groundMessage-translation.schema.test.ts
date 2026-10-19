@@ -58,6 +58,8 @@ function buildContext(role: string | null, translated: string | null): Context {
       translations: {
         findUnique: vi.fn(async () => (translated ? { data: { text: translated } } : null)),
       },
+      // Inbox gate checks for an ERM team membership when the caller is a viewer.
+      teamMembers: { findFirst: vi.fn(async () => null) },
     },
     user: role ? { id: "u1", role } : null,
     session: null,
@@ -84,7 +86,7 @@ describe("GroundMessage translation schema contract", () => {
   it("requestGroundMessageTranslation queues an English translation", async () => {
     const result = await run(
       `mutation { requestGroundMessageTranslation(messageId: "m1", locale: "en") { locale status text } }`,
-      "analyst",
+      "admin",
     );
     expect(result.errors).toBeUndefined();
     expect(result.data?.requestGroundMessageTranslation).toEqual({
@@ -123,7 +125,7 @@ describe("GroundMessage translation schema contract", () => {
   it("a viewer cannot request a translation", async () => {
     const result = await run(
       `mutation { requestGroundMessageTranslation(messageId: "m1", locale: "en") { status } }`,
-      "viewer",
+      "member",
     );
     expect(result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
   });

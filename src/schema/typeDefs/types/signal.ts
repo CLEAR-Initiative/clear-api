@@ -1,13 +1,16 @@
 import { gql } from "graphql-tag";
 
 export const signalTypeDef = gql`
-  """Durable processing status for the Dagster event-driven drain.
-  NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
-  alert done; FAILED = terminal failure."""
+  """Durable processing status for the Dagster event-driven drain (pending
+  work only; see \`retracted\`). NEW = awaiting first grouping; PROCESSED =
+  classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
+  grouped, then changed (content revision or retraction flip), so its events
+  must be re-aggregated from their live members."""
   enum SignalStatus {
     NEW
     PROCESSED
     FAILED
+    NEEDS_RECOMPUTE
   }
 
   """A source observation ingested from a data source or filed manually.
@@ -24,9 +27,16 @@ export const signalTypeDef = gql`
     revised in place (e.g. IDMC). Null for sources that never revise a signal
     after creation."""
     contentHash: String
-    """When the API last applied an in-place content revision to this signal
-    (e.g. an IDMC IDU row revised upstream). Null if never revised."""
+    """When the signal last had a content revision or retraction flip via
+    updateSignalContent. Not set by the first contentHash seed. Null if never
+    revised."""
     lastRevisedAt: DateTime
+    """Superseded upstream. Reversible. A retracted signal keeps its event
+    links but is excluded from event aggregates and the NEW drain queue."""
+    retracted: Boolean!
+    """Count of effective changes via updateSignalContent. Compare-and-set
+    token for markSignalsProcessed(items:)."""
+    revision: Int!
     """Pointer to the raw payload blob in the S3 data lake, when landed there."""
     rawS3Key: String
     """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
@@ -42,6 +52,9 @@ export const signalTypeDef = gql`
     """Reported casualties for the signal. Sourced from ACLED's fatalities
     field; for Dataminr, parsed from raw text via regex."""
     casualties: Int
+    """Glide code the pipeline grouped this signal with. Null for signals
+    grouped before it was recorded, or never grouped."""
+    glideCode: String
     """Media URLs (S3 keys for manual uploads, or source URLs for pipeline signals)."""
     media: [String!]!
     """Whether this is seed/demo data."""

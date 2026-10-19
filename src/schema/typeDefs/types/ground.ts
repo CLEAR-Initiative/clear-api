@@ -4,7 +4,7 @@ export const groundTypeDef = gql`
   """Per-source policy record for ground intelligence (WhatsApp groups,
   future hotline). Carries the consent scope, privacy default, reviewer
   roles, and retention rule for everything ingested from the source. The
-  whole ground staging tier is private: admin/analyst only."""
+  whole ground staging tier is private: admin only."""
   type GroundSource {
     id: ID!
     name: String!
@@ -42,7 +42,7 @@ export const groundTypeDef = gql`
     consentRecordedBy: String
     """Defaults to "private"."""
     privacyDefault: String
-    """Defaults to ["admin", "analyst"]."""
+    """Defaults to ["admin"]."""
     reviewerRoles: [String!]
     retentionRule: String
   }

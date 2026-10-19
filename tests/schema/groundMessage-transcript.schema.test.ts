@@ -67,6 +67,8 @@ function buildContext(role: string | null): Context {
     prisma: {
       groundMessages: { findMany },
       groundThreads: { findUnique: vi.fn(async () => ({ id: "t1", groundSourceId: "gs_1" })) },
+      // Inbox gate checks for an ERM team membership when the caller is a viewer.
+      teamMembers: { findFirst: vi.fn(async () => null) },
     },
     user: role ? { id: "u1", role } : null,
     session: null,
@@ -99,7 +101,7 @@ const THREAD_MESSAGES = `
 
 describe("GroundMessage transcript / hasVoice schema contract", () => {
   it("groundMessages exposes transcript and hasVoice (with and without a transcript)", async () => {
-    const result = await run(GROUND_MESSAGES, "analyst");
+    const result = await run(GROUND_MESSAGES, "admin");
     expect(result.errors).toBeUndefined();
     expect(result.data?.groundMessages).toEqual(EXPECTED);
   });
@@ -110,8 +112,8 @@ describe("GroundMessage transcript / hasVoice schema contract", () => {
     expect((result.data?.groundThread as { messages: unknown }).messages).toEqual(EXPECTED);
   });
 
-  it("keeps GroundMessage's role gating: a viewer is FORBIDDEN", async () => {
-    const result = await run(GROUND_MESSAGES, "viewer");
+  it("keeps GroundMessage's role gating: a plain member is FORBIDDEN", async () => {
+    const result = await run(GROUND_MESSAGES, "member");
     expect(result.data?.groundMessages ?? null).toBeNull();
     expect(result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
   });

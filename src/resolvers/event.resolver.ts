@@ -1,11 +1,14 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
+import { logEventChange } from "../utils/event-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
+import { minSeverityFilterFor } from "../utils/alert-severity.js";
+import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -47,7 +50,7 @@ interface CreateEventInput {
   description?: string;
   descriptionSignals?: Record<string, unknown>;
   validFrom: string;
-  validTo: string;
+  validTo?: string | null;
   firstSignalCreatedAt: string;
   lastSignalCreatedAt: string;
   startedAt?: string;
@@ -65,9 +68,9 @@ interface CreateEventInput {
   lng?: number;
   /**
    * Team the event is being filed under. Used only for authorisation —
-   * a `team_admin` or `field_coordinator` on this team is admitted even
-   * without a global admin/analyst role. Ignored for platform-level
-   * callers; the event itself has no team column.
+   * any team membership on this team is admitted even without a global
+   * admin role. Ignored for platform-level callers; the event itself has
+   * no team column.
    */
   teamId?: string;
 }
@@ -77,7 +80,8 @@ interface UpdateEventInput {
   description?: string;
   descriptionSignals?: Record<string, unknown>;
   validFrom?: string;
-  validTo?: string;
+  /** Explicit null clears a known end back to "ongoing / no known end". */
+  validTo?: string | null;
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
   startedAt?: string;
@@ -86,11 +90,45 @@ interface UpdateEventInput {
   locationId?: string;
   types?: string[];
   severity?: number;
-  populationAffected?: string;
-  populationDisplaced?: string;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
   casualties?: number;
   rank?: number;
   signalIds?: string[];
+}
+
+/** Absent = leave unchanged; explicit null = clear (`?? undefined` would
+ *  swallow the null, which is why updateEvent can't be used for this). */
+interface EventAggregatesInput {
+  severity?: number | null;
+  casualties?: number | null;
+  populationAffected?: string | null;
+  populationDisplaced?: string | null;
+  rank: number;
+  title?: string | null;
+  description?: string | null;
+  rewriteMembersHash?: string | null;
+}
+
+/** BigInt column from its decimal-string input, keeping absent (undefined)
+ *  and cleared (null) distinct. */
+function bigIntOrKeep(value: string | null | undefined, field: string): bigint | null | undefined {
+  if (value === undefined || value === null) return value;
+  // BigInt() alone would turn "" into 0n and "0x10" into 16n.
+  if (!/^-?\d+$/.test(value)) {
+    throw new GraphQLError(`${field} must be a decimal integer string`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return BigInt(value);
+}
+
+/** Lenient variant for createEvent/updateEvent, whose form callers may send
+ *  "", padded or "+"-signed values (all accepted by the old raw BigInt()):
+ *  blank/null = absent, whitespace and a leading "+" ignored. */
+function optionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
+  const trimmed = value?.trim().replace(/^\+/, "");
+  return bigIntOrKeep(trimmed ? trimmed : undefined, field) ?? undefined;
 }
 
 export const eventResolvers = {
@@ -191,11 +229,14 @@ export const eventResolvers = {
       args: { input: CreateEventInput },
       context: Context,
     ) => {
-      // Global admin/analyst may create events for any location; a team
-      // team_admin / field_coordinator may create when they supply the
-      // teamId they're acting on behalf of. See `requireTeamContentWriter`.
+      // Global admin may create events for any location; any team member may
+      // create when they supply the teamId they're acting on behalf of.
+      // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      // Validated before any write (point location, event row).
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       // Resolve location for the event
       let locationId = input.locationId;
@@ -285,7 +326,7 @@ export const eventResolvers = {
             ? (input.descriptionSignals as InputJsonValue)
             : undefined,
           validFrom: new Date(input.validFrom),
-          validTo: new Date(input.validTo),
+          validTo: input.validTo ? new Date(input.validTo) : null,
           firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
           startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
@@ -294,12 +335,8 @@ export const eventResolvers = {
           locationId,
           types: input.types,
           severity: input.severity,
-          populationAffected: input.populationAffected
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced
-            ? BigInt(input.populationDisplaced)
-            : undefined,
+          populationAffected,
+          populationDisplaced,
           casualties: input.casualties,
           rank: input.rank,
         },
@@ -307,8 +344,8 @@ export const eventResolvers = {
 
       // Create signalEvents join entries (dedupe the input array first so
       // the same signalId repeated in the request doesn't create duplicate links).
-      if (input.signalIds.length > 0) {
-        const uniqueSignalIds = [...new Set(input.signalIds)];
+      const uniqueSignalIds = [...new Set(input.signalIds)];
+      if (uniqueSignalIds.length > 0) {
         await context.prisma.signalEvents.createMany({
           data: uniqueSignalIds.map((signalId) => ({
             signalId,
@@ -317,6 +354,8 @@ export const eventResolvers = {
           })),
         });
       }
+
+      logEventChange("created", event, uniqueSignalIds);
 
       const actor = context.user;
       if (actor) {
@@ -337,13 +376,76 @@ export const eventResolvers = {
       return event;
     },
 
+    // Overwrites an event's aggregates with values the pipeline recomputed from
+    // its live members. Absent fields are kept; explicit nulls clear them.
+    setEventAggregates: async (
+      _parent: unknown,
+      args: { id: string; input: EventAggregatesInput; members: { id: string; revision: number }[] },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", "pipeline"]);
+      const { id, input, members } = args;
+      const data = {
+        severity: input.severity,
+        casualties: input.casualties,
+        populationAffected: bigIntOrKeep(input.populationAffected, "populationAffected"),
+        populationDisplaced: bigIntOrKeep(input.populationDisplaced, "populationDisplaced"),
+        rank: input.rank,
+        title: input.title,
+        description: input.description,
+        rewriteMembersHash: input.rewriteMembersHash,
+      };
+      const sent = new Map(members.map((m) => [m.id, m.revision]));
+      // Would otherwise read as stale and be silently dropped.
+      if (sent.size !== members.length) {
+        throw new GraphQLError("members has duplicate ids", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const updated = await context.prisma.$transaction(async (tx) => {
+        // Serialises writers per event: the member check below sees every
+        // write committed by an earlier writer.
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "events" WHERE id = ${id} FOR UPDATE
+        `;
+        if (locked.length === 0) {
+          throw new GraphQLError("Event not found", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+
+        // Totals computed from a stale member snapshot must not overwrite newer
+        // ones. A change committed after this check leaves its signal pending,
+        // so a later recompute writes after this one.
+        const live = await tx.signals.findMany({
+          where: { retracted: false, signalEvents: { some: { eventId: id } } },
+          select: { id: true, revision: true },
+        });
+        const stale =
+          live.length !== sent.size || live.some((s) => sent.get(s.id) !== s.revision);
+        if (stale) {
+          throw new GraphQLError(
+            "Event members changed since they were read; a newer recompute supersedes this one",
+            { extensions: { code: "STALE_EVENT_MEMBERS" } },
+          );
+        }
+
+        return tx.events.update({ where: { id }, data });
+      });
+      logEventChange("aggregates", updated, [], sent.size);
+      return updated;
+    },
+
     updateEvent: async (
       _parent: unknown,
       args: { id: string; input: UpdateEventInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
+      // Validated before signal linking. Null/blank = no change, like the other fields here.
+      const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
+      const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
 
       const existing = await context.prisma.events.findUnique({ where: { id } });
       if (!existing) {
@@ -352,10 +454,19 @@ export const eventResolvers = {
         });
       }
 
+      // Elevated gate, scoped to the event's locations: admin passes, else the
+      // caller must be a team analyst whose location scope covers the event.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        existing.originId,
+        existing.destinationId,
+        existing.locationId,
+      ]);
+
       // Update signal links -  ADDITIVE + IDEMPOTENT semantics. Passing
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
+      let newlyLinked: string[] = [];
       if (input.signalIds !== undefined && input.signalIds.length > 0) {
         const alreadyLinked = await context.prisma.signalEvents.findMany({
           where: {
@@ -366,6 +477,7 @@ export const eventResolvers = {
         });
         const linkedSet = new Set(alreadyLinked.map((r) => r.signalId));
         const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
+        newlyLinked = toLink;
         if (toLink.length > 0) {
           await context.prisma.signalEvents.createMany({
             data: toLink.map((signalId) => ({
@@ -377,38 +489,58 @@ export const eventResolvers = {
         }
       }
 
-      return context.prisma.events.update({
-        where: { id },
-        data: {
-          title: input.title ?? undefined,
-          description: input.description ?? undefined,
-          description_signals: input.descriptionSignals
-            ? (input.descriptionSignals as InputJsonValue)
-            : undefined,
-          validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
-          validTo: input.validTo ? new Date(input.validTo) : undefined,
-          firstSignalCreatedAt: input.firstSignalCreatedAt
-            ? new Date(input.firstSignalCreatedAt)
-            : undefined,
-          lastSignalCreatedAt: input.lastSignalCreatedAt
-            ? new Date(input.lastSignalCreatedAt)
-            : undefined,
-          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
-          originId: input.originId,
-          destinationId: input.destinationId,
-          locationId: input.locationId,
-          types: input.types ?? undefined,
-          severity: input.severity ?? undefined,
-          populationAffected: input.populationAffected !== undefined
-            ? BigInt(input.populationAffected)
-            : undefined,
-          populationDisplaced: input.populationDisplaced !== undefined
-            ? BigInt(input.populationDisplaced)
-            : undefined,
-          casualties: input.casualties ?? undefined,
-          rank: input.rank ?? undefined,
-        },
+      // The signal-time bounds only ever widen. Signals arrive out of order
+      // (a backdated ACLED/IDMC record, a delayed Dataminr item), and a
+      // stale lastSignalCreatedAt drops a live Event out of grouping's
+      // active window and eventsPendingAlert's 48h window. Each bound is a
+      // conditional updateMany, so the comparison runs inside the row-locked
+      // UPDATE rather than against `existing`, which a concurrent writer may
+      // have already moved. They run before the main update so the row it
+      // returns carries the result, and in one transaction with it so a
+      // failed update (bad locationId, say) leaves the bounds untouched.
+      const updated = await context.prisma.$transaction(async (tx) => {
+        if (input.lastSignalCreatedAt) {
+          const last = new Date(input.lastSignalCreatedAt);
+          await tx.events.updateMany({
+            where: { id, lastSignalCreatedAt: { lt: last } },
+            data: { lastSignalCreatedAt: last },
+          });
+        }
+        if (input.firstSignalCreatedAt) {
+          const first = new Date(input.firstSignalCreatedAt);
+          await tx.events.updateMany({
+            where: { id, firstSignalCreatedAt: { gt: first } },
+            data: { firstSignalCreatedAt: first },
+          });
+        }
+
+        return tx.events.update({
+          where: { id },
+          data: {
+            title: input.title ?? undefined,
+            description: input.description ?? undefined,
+            description_signals: input.descriptionSignals
+              ? (input.descriptionSignals as InputJsonValue)
+              : undefined,
+            validFrom: input.validFrom ? new Date(input.validFrom) : undefined,
+            // null clears the end date; omitted leaves it untouched.
+            validTo:
+              input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
+            startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            originId: input.originId,
+            destinationId: input.destinationId,
+            locationId: input.locationId,
+            types: input.types ?? undefined,
+            severity: input.severity ?? undefined,
+            populationAffected,
+            populationDisplaced,
+            casualties: input.casualties ?? undefined,
+            rank: input.rank ?? undefined,
+          },
+        });
       });
+      logEventChange("updated", updated, [...new Set(newlyLinked)]);
+      return updated;
     },
 
     deleteEvent: async (
@@ -436,9 +568,9 @@ export const eventResolvers = {
       args: { eventId: string; userId: string; teamId?: string },
       context: Context,
     ) => {
-      // Global admin/analyst may escalate any event; a team_admin or
-      // field_coordinator may escalate when they pass the teamId they're
-      // acting on behalf of. team_member and everyone else are rejected.
+      // Global admin may escalate any event; any team member may escalate
+      // when they pass the teamId they're acting on behalf of. The worker
+      // role and non-members are rejected. See `requireTeamContentWriter`.
       await requireTeamContentWriter(context, args.teamId);
 
       const event = await context.prisma.events.findUnique({
@@ -448,6 +580,20 @@ export const eventResolvers = {
         throw new GraphQLError("Event not found", {
           extensions: { code: "NOT_FOUND" },
         });
+      }
+
+      // Escalation auto-publishes an alert, so apply the same NRC gate: refuse
+      // when the event's types are ALL out-of-interest
+      // (disaster_types.nrc_relevant = false). One relevant type is enough to
+      // pass; an event with no classified types is not blocked here.
+      if (
+        (event.types?.length ?? 0) > 0 &&
+        !(await anyTypeNrcRelevant(context.prisma, event.types))
+      ) {
+        throw new GraphQLError(
+          "Cannot escalate: none of this event's types are relevant to NRC",
+          { extensions: { code: "NRC_IRRELEVANT" } },
+        );
       }
 
       // Check if an alert already exists for this event
@@ -490,14 +636,14 @@ export const eventResolvers = {
           const locationNames = locations.map((l) => l.name).join(", ");
           console.log(`[escalateEvent] Searching subscribers for types=${JSON.stringify(event.types)}, locations=[${locationNames}] (${allLocationIds.size} IDs including ancestors)`);
 
-          const eventSeverity = event.severity ?? 1;
+          // Unknown (null) severity reaches only "all severities" subscribers.
           const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
             where: {
               active: true,
               frequency: "immediately",
               alertType: { in: event.types },
               locationId: { in: [...allLocationIds] },
-              minSeverity: { lte: eventSeverity },
+              minSeverity: minSeverityFilterFor(event.severity),
             },
             select: { userId: true },
           });
@@ -752,8 +898,12 @@ export const eventResolvers = {
       info: import("graphql").GraphQLResolveInfo,
     ) => {
       // Fast path: pre-loaded from a deeper include.
+      // Retracted signals keep their link (retraction is reversible) but are hidden,
+      // matching their exclusion from the event's aggregates.
       if (parent.signalEvents) {
-        return parent.signalEvents.map((l) => l.signal);
+        return parent.signalEvents
+          .map((l) => l.signal)
+          .filter((s) => (s as { retracted?: boolean }).retracted !== true);
       }
       // Inspect the GraphQL selection to decide whether to include
       // signal-locations + their translations. /detection's events tab
@@ -791,7 +941,7 @@ export const eventResolvers = {
       };
       return context.prisma.signalEvents
         .findMany({
-          where: { eventId: parent.id },
+          where: { eventId: parent.id, signal: { retracted: false } },
           include: { signal: { include: signalInclude } },
           take: 50,
           // Intentionally no orderBy: ordering by signal.publishedAt
@@ -866,15 +1016,16 @@ export const eventResolvers = {
       if (parent.alerts !== undefined) return parent.alerts;
       return prisma.alerts.findMany({ where: { eventId: parent.id } });
     },
-    // Same visibility split as Crisis.feedbacks / comments: admin /
-    // analyst see all; viewer sees only their own; everyone else gets
-    // empty. See crisis.resolver for the rationale.
+    // Same visibility split as Crisis.feedbacks / comments: admin sees all;
+    // member sees only their own; everyone else gets empty. (analyst is no
+    // longer a global role, so it no longer grants a global all-rows view
+    // here.) See crisis.resolver for the rationale.
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userFeedbacks.findMany({
           where: { eventId: parent.id, userId: ctx.user.id },
         });
@@ -883,10 +1034,10 @@ export const eventResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userComments.findMany({ where: { eventId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userComments.findMany({
           where: { eventId: parent.id, userId: ctx.user.id },
         });

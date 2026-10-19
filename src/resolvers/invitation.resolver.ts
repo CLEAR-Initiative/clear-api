@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireNonWorker } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import {
@@ -48,7 +48,7 @@ function invitationStatus(invite: {
 }
 
 async function requireOrgAdmin(context: Context, organisationId: string) {
-  const user = requireAuth(context);
+  const user = requireNonWorker(context);
 
   // Global admins bypass org-level checks
   if (isPlatformAdmin(user)) return user;
@@ -372,7 +372,7 @@ export const invitationResolvers = {
         // stuck behind requireContentReader's approval wall until a
         // platform admin separately approves them — even though an org
         // admin's invite already vouches for them. Minting directly lets
-        // us set the approved "viewer" role up front. This also decouples
+        // us set the approved "member" role up front. This also decouples
         // invite-acceptance from whatever the public sign-up endpoint's
         // policy happens to be (open-with-pending-role today; disabled
         // entirely in the past), so it can't be silently broken again by
@@ -395,7 +395,7 @@ export const invitationResolvers = {
         // approval the way a self-signup would.
         existingUser = await context.prisma.user.update({
           where: { id: user.id },
-          data: { role: "viewer" },
+          data: { role: "member" },
         });
       }
 
@@ -462,6 +462,9 @@ export const invitationResolvers = {
       args: { id: string },
       context: Context,
     ) => {
+      // Authenticate before the lookup so the caller can't probe which
+      // invitation ids exist; requireOrgAdmin below scopes it to the org.
+      requireNonWorker(context);
       const invitation = await context.prisma.invitations.findUnique({
         where: { id: args.id },
       });
@@ -486,6 +489,9 @@ export const invitationResolvers = {
       args: { id: string },
       context: Context,
     ) => {
+      // Authenticate before the lookup so the caller can't probe which
+      // invitation ids exist; requireOrgAdmin below scopes it to the org.
+      requireNonWorker(context);
       const invitation = await context.prisma.invitations.findUnique({
         where: { id: args.id },
         include: {

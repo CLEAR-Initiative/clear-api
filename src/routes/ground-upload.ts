@@ -14,8 +14,9 @@
  *     duplicate S3 objects. Unmatched refs are reported, not fatal — an
  *     export can be ingested text-first and media backfilled later.
  *
- * Callers: admin/analyst only (session or API key) — the staging tier is
- * private, so the viewer role has no access. Response reports created vs
+ * Callers: platform admin only (session or API key) — the staging tier is
+ * private, and `analyst` is a TEAM role now rather than a global one.
+ * Response reports created vs
  * skipped counts; re-uploading the same export is idempotent and creates
  * zero duplicates (deterministic externalIds + unique constraint).
  *
@@ -39,7 +40,9 @@ const router = Router();
 // 50 MB per file — matches /api/upload; source PDFs and videos can be big.
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const MAX_MEDIA_FILES = 200;
-const GROUND_UPLOAD_ROLES = new Set(["admin", "analyst"]);
+// `analyst` is a TEAM role now, not a global one, so ground uploads are
+// platform-admin-only (ground triage otherwise flows through the ERM).
+const GROUND_UPLOAD_ROLES = new Set(["admin"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),

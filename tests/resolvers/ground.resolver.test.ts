@@ -30,7 +30,10 @@ type User = { id: string; role: string } | null;
 
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
-    prisma: prisma as Context["prisma"],
+    // requireGroundInboxAccess consults teamMembers for the emergency_response_manager
+    // role when the caller is a non-admin member — default it to "no ERM
+    // membership"; a test can override by passing its own teamMembers stub.
+    prisma: { teamMembers: { findFirst: async () => null }, ...prisma } as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -39,7 +42,7 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
 
 const PIPELINE: User = { id: "machine", role: "pipeline" };
 const ADMIN: User = { id: "admin1", role: "admin" };
-const ANALYST: User = { id: "a1", role: "analyst" };
+const MEMBER: User = { id: "a1", role: "member" };
 
 const { groundMessagesForClassification, groundThreadsForSource, pipelineGroundSourceIds } =
   groundResolvers.Query;
@@ -53,7 +56,7 @@ const {
 } = groundResolvers.Mutation;
 
 // ---------------------------------------------------------------------------
-// Auth gate — pipeline surface is admin/pipeline only (NOT analyst).
+// Auth gate — pipeline surface is admin/pipeline only (NOT ordinary members).
 // ---------------------------------------------------------------------------
 
 describe("pipeline-contract auth gate", () => {
@@ -119,8 +122,8 @@ describe("pipeline-contract auth gate", () => {
   ];
 
   for (const { name, run } of cases) {
-    it(`${name} rejects an analyst with FORBIDDEN`, async () => {
-      await expect(run(buildContext(ANALYST))).rejects.toMatchObject({
+    it(`${name} rejects a non-admin member with FORBIDDEN`, async () => {
+      await expect(run(buildContext(MEMBER))).rejects.toMatchObject({
         extensions: { code: "FORBIDDEN" },
       });
     });
@@ -810,7 +813,7 @@ describe("retryGroundMessage", () => {
     const result = await retryGroundMessage(
       null,
       { messageId: "m1", stage: "ENRICH" },
-      buildContext(ANALYST, prisma),
+      buildContext(ADMIN, prisma),
     );
     expect(result).toEqual({ id: "m1" });
     expect(update).toHaveBeenCalledWith({
@@ -842,12 +845,25 @@ describe("retryGroundMessage", () => {
 
   it.each([
     ["the pipeline role", PIPELINE],
-    ["a viewer", { id: "v1", role: "viewer" }],
+    ["a plain member", { id: "v1", role: "member" }],
   ] as const)("is a reviewer action: rejects %s with FORBIDDEN", async (_name, user) => {
     const { prisma } = retryPrisma();
     await expect(
       retryGroundMessage(null, { messageId: "m1", stage: "ENRICH" }, buildContext(user, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("admits an emergency_response_manager (member global role + ERM team membership)", async () => {
+    const { prisma, update } = retryPrisma();
+    // Global role is member, but an active ERM team membership grants inbox access.
+    const ermPrisma = { ...prisma, teamMembers: { findFirst: async () => ({ id: "tm1" }) } };
+    const result = await retryGroundMessage(
+      null,
+      { messageId: "m1", stage: "ENRICH" },
+      buildContext({ id: "erm1", role: "member" }, ermPrisma),
+    );
+    expect(result).toEqual({ id: "m1" });
+    expect(update).toHaveBeenCalled();
   });
 });
 

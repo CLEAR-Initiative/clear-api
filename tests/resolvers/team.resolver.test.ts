@@ -117,22 +117,22 @@ const ADMIN_CALLER_CASES: Array<{ label: string; caller: { id: string; role: str
   },
   {
     label: "org_admin",
-    caller: { id: "u-caller", role: "viewer" },
+    caller: { id: "u-caller", role: "member" },
     opts: { callerOrgMembership: { role: "org_admin" } },
   },
   {
     label: "team_admin",
-    caller: { id: "u-caller", role: "viewer" },
+    caller: { id: "u-caller", role: "member" },
     opts: { callerTeamMembership: { role: "team_admin" } },
   },
 ];
 
 // Non-admin team roles — these callers must NOT be able to manage members.
-// Only the two lower team roles left after Phase 3.
-const NON_ADMIN_TEAM_ROLES = ["field_coordinator", "team_member"];
+// Everything below `team_admin` in the current taxonomy.
+const NON_ADMIN_TEAM_ROLES = ["analyst", "emergency_response_manager", "team_member"];
 
 // Canonical team roles the resolver still accepts as input.
-const CANONICAL_TEAM_ROLES = ["team_admin", "field_coordinator", "team_member"];
+const CANONICAL_TEAM_ROLES = ["team_admin", "analyst", "emergency_response_manager", "team_member"];
 
 describe("addTeamMember — role validation", () => {
   it('defaults role to "team_member" when none is supplied', async () => {
@@ -216,8 +216,8 @@ describe("updateTeamMemberRole — role validation", () => {
     }
   });
 
-  it('rejects the legacy team roles ("lead", "analyst", "viewer") so callers get a clear error', async () => {
-    for (const role of ["lead", "analyst", "viewer"]) {
+  it('rejects the legacy team roles ("lead", "field_coordinator", "viewer") so callers get a clear error', async () => {
+    for (const role of ["lead", "field_coordinator", "viewer"]) {
       const { ctx, updateSpy } = buildContext({ id: "u-caller", role: "admin" });
       await expect(
         updateTeamMemberRole(
@@ -247,7 +247,7 @@ describe("requireTeamAdminOrOrgAdmin (via updateTeamMemberRole)", () => {
   for (const role of NON_ADMIN_TEAM_ROLES) {
     it(`denies a caller whose team role is "${role}"`, async () => {
       const { ctx, updateSpy } = buildContext(
-        { id: "u-caller", role: "viewer" },
+        { id: "u-caller", role: "member" },
         { callerTeamMembership: { role } },
       );
       await expect(
@@ -263,7 +263,7 @@ describe("requireTeamAdminOrOrgAdmin (via updateTeamMemberRole)", () => {
 
   it('denies a caller whose org role is "member"', async () => {
     const { ctx, updateSpy } = buildContext(
-      { id: "u-caller", role: "viewer" },
+      { id: "u-caller", role: "member" },
       { callerOrgMembership: { role: "member" } },
     );
     await expect(
@@ -278,7 +278,7 @@ describe("requireTeamAdminOrOrgAdmin (via updateTeamMemberRole)", () => {
 
   it('denies the legacy org "owner" role now that it has been folded into org_admin', async () => {
     const { ctx, updateSpy } = buildContext(
-      { id: "u-caller", role: "viewer" },
+      { id: "u-caller", role: "member" },
       { callerOrgMembership: { role: "owner" } },
     );
     await expect(

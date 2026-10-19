@@ -28,7 +28,7 @@ describe("Query.myApiKeys", () => {
   it("returns the caller's keys, newest first", () => {
     const rows = [{ id: "k1" }];
     const findMany = vi.fn().mockReturnValue(rows);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { findMany });
+    const ctx = buildContext({ id: "u1", role: "member" }, { findMany });
     expect(myApiKeys(null, {}, ctx)).toBe(rows);
     expect(findMany).toHaveBeenCalledWith({
       where: { userId: "u1" },
@@ -46,7 +46,7 @@ describe("Mutation.createApiKey", () => {
     const created = { id: "k1", name: "CI" };
     const count = vi.fn().mockResolvedValue(3);
     const create = vi.fn().mockResolvedValue(created);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { count, create });
+    const ctx = buildContext({ id: "u1", role: "member" }, { count, create });
 
     const result = await createApiKey(null, { input: { name: "CI" } }, ctx);
 
@@ -63,7 +63,7 @@ describe("Mutation.createApiKey", () => {
 
   it("passes expiresAt through as a Date when provided", async () => {
     const create = vi.fn().mockResolvedValue({ id: "k1" });
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       count: vi.fn().mockResolvedValue(0),
       create,
     });
@@ -79,7 +79,7 @@ describe("Mutation.createApiKey", () => {
 
   it("rejects with BAD_USER_INPUT when the caller already has 10 active keys", async () => {
     const create = vi.fn();
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       count: vi.fn().mockResolvedValue(10),
       create,
     });
@@ -99,7 +99,7 @@ describe("Mutation.createApiKey", () => {
 describe("Mutation.revokeApiKey", () => {
   it("revokes the caller's own key by stamping revokedAt", async () => {
     const update = vi.fn().mockResolvedValue({ id: "k1", revokedAt: new Date() });
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       findUnique: vi.fn().mockResolvedValue({ id: "k1", userId: "u1", revokedAt: null }),
       update,
     });
@@ -119,7 +119,7 @@ describe("Mutation.revokeApiKey", () => {
   });
 
   it("throws NOT_FOUND when the key does not exist", async () => {
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       findUnique: vi.fn().mockResolvedValue(null),
     });
     await expect(revokeApiKey(null, { id: "missing" }, ctx)).rejects.toMatchObject({
@@ -129,7 +129,7 @@ describe("Mutation.revokeApiKey", () => {
 
   it("throws FORBIDDEN when a non-admin tries to revoke someone else's key", async () => {
     const update = vi.fn();
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       findUnique: vi.fn().mockResolvedValue({ id: "k1", userId: "other", revokedAt: null }),
       update,
     });
@@ -141,7 +141,7 @@ describe("Mutation.revokeApiKey", () => {
 
   it("throws BAD_USER_INPUT when the key is already revoked", async () => {
     const update = vi.fn();
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {
+    const ctx = buildContext({ id: "u1", role: "member" }, {
       findUnique: vi
         .fn()
         .mockResolvedValue({ id: "k1", userId: "u1", revokedAt: new Date() }),

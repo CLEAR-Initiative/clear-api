@@ -113,12 +113,14 @@
           <tbody>
             <tr><td><a href="#type-signal">Signals</a></td><td>Query verified source observations with location links and metadata. Upstream source payloads are not returned.</td></tr>
             <tr><td><a href="#type-event">Events</a></td><td>Browse grouped signals forming coherent narratives, with location, population, and type data.</td></tr>
+            <tr><td><a href="#type-estimate">Estimates</a></td><td>Read an Event&rsquo;s figures in the CLEAR Domain Ontology&rsquo;s shape &mdash; one of seven metrics, with method, attribution, bounds and both time axes. Corrections supersede; nothing is overwritten.</td></tr>
             <tr><td><a href="#type-alert">Alerts</a></td><td>View events escalated for notification, delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-datasource">Data Sources</a></td><td>Discover the external data feeds (ACLED, FEWS NET, social media monitors) that supply signals.</td></tr>
             <tr><td><a href="#type-location">Locations</a></td><td>Query a hierarchical geographic tree &mdash; countries, states, cities &mdash; with PostGIS geometry.</td></tr>
             <tr><td><a href="#type-disastertype">Disaster Types</a></td><td>Look up disaster classifications with GLIDE numbers.</td></tr>
             <tr><td><a href="#type-featureflag">Feature Flags</a></td><td>Check runtime feature toggles to adapt your application&rsquo;s behaviour.</td></tr>
             <tr><td><a href="#type-apikey">API Keys</a></td><td>Create and manage personal API keys for server-to-server authentication.</td></tr>
+            <tr><td><a href="#type-task">Tasks</a></td><td>Request an Event enrichment (today a web search, whose Worker proposes signals — <a href="#type-caseproposal">CaseProposals</a> — for analysts to accept or reject; one Task per source kind) and, as a Worker with the <code>worker</code> role, claim, heartbeat, complete or fail Tasks over GraphQL alone.</td></tr>
           </tbody>
         </table>
       </div>
@@ -234,9 +236,22 @@ like signals when teamId is given; status defaults to &quot;consideration&quot;.
   </tr><tr>
     <td><code>pendingSignals</code></td>
     <td><code>[Signal!]!</code></td>
-    <td>Signals awaiting downstream processing (status = NEW), oldest-first — the
-Dagster event-driven drain. `source` filters by DataSource name (e.g.
-&quot;dataminr&quot;); `first` caps the batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
+    <td>Signals awaiting their first grouping (status = NEW, not retracted, not
+yet linked to any event), oldest-first — the Dagster event-driven drain.
+`source` filters by DataSource name (e.g. &quot;dataminr&quot;); `first` caps the
+batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
+  </tr><tr>
+    <td><code>pendingRecomputes</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>Signals whose events must be re-aggregated: status NEEDS_RECOMPUTE, or
+NEW but already linked to an event. Includes retracted rows, since removing
+them from event totals is the work. Oldest-first; `first` caps the batch
+(default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>eventMembers</code></td>
+    <td><code>[Signal!]!</code></td>
+    <td>An event's live (non-retracted) member signals, newest first. Uncapped
+unless `first` is given. Admin/pipeline only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>first: Int</code></span></div></td>
   </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
@@ -262,7 +277,7 @@ if one still exists in the cache. The Share modal calls this on
 open so it can reuse an existing link rather than minting a fresh
 token every time. Returns null when no live link exists - the
 caller then mints one via `createPublicEventLink`. Requires
-`requireContentReader` (admin / analyst / viewer); pending users
+`requireContentReader` (admin / member); pending users
 are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr>
     <td><code>eventsPendingAlert</code></td>
@@ -479,6 +494,14 @@ can backfill them client-side when plotting.<div class="field-args"><span class=
     <td><code>[MauPoint!]!</code></td>
     <td>Monthly Active Users time series - one point per UTC calendar
 month in the window. Admin only.<div class="field-args"><span class="arg"><code>from: DateTime!</code></span><span class="arg"><code>to: DateTime!</code></span></div></td>
+  </tr><tr>
+    <td><code>detectionMetrics</code></td>
+    <td><code>DetectionMetrics!</code></td>
+    <td>Time to detection: how soon after an Event's onset CLEAR received its
+first ingested Signal, in whole days, over a range (default: the last 12
+ISO weeks) and optionally one location. Counts only. Admin only. Refuses
+an inverted range or one over 364 days with BAD_USER_INPUT. See
+`DetectionMetrics` and ADR-0011.<div class="field-args"><span class="arg"><code>input: DetectionMetricsInput</code></span></div></td>
   </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
@@ -710,6 +733,11 @@ at this timestamp. Defaults to `now`.</span></div></td>
     <td><code>[WebhookDelivery!]!</code></td>
     <td>Recent delivery attempts for a subscription, newest first.<div class="field-args"><span class="arg"><code>subscriptionId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
+    <td><code>teamAlertWebhooks</code></td>
+    <td><code>[WebhookSubscription!]!</code></td>
+    <td>A team's clear_alert webhook subscriptions. Caller must be a team
+admin, org admin, or platform admin for the team. Secrets are scrubbed.<div class="field-args"><span class="arg"><code>teamId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>groundSources</code></td>
     <td><code>[GroundSource!]!</code></td>
     <td>All ground sources (per-source policy records), newest first.</td>
@@ -766,6 +794,52 @@ the hotline enrichment job to enumerate sources to drain.<div class="field-args"
     <td>PIPELINE CONTRACT (admin/pipeline only): the translate drain's
 canonical fetch for a queued groundMessage translation — text and
 detected language, no sender identity. Null if the message is gone.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task</code></td>
+    <td>One Task by id, or null. Any authenticated content reader; the
+Task's status follows its Event's visibility. `lastError` is visible
+to the requester and platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>eventTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>Enrichment Tasks about an Event, newest first. Same gate as
+`task`.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>myTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>The caller's own requests: Tasks they asked for, across every Event,
+newest first — &quot;what happened to the thing I asked for&quot;. Always scoped
+to the signed-in requester; `status` narrows it. `lastError` is
+present (the caller is the requester). Any approved content reader
+except the worker role, which requests nothing.<div class="field-args"><span class="arg"><code>status: TaskStatus</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>eventImpactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>History: the whole ImpactPriors Workers proposed for an Event in
+V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
+computed, see `Event.computedImpactPriors`) and none can be decided.
+An `accepted` one follows the Event's visibility; a `proposed` one
+is visible to its requester and to deciders (admins and analysts); a
+`rejected` one to deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>caseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>The Inbox's per-case Review items (V4): CaseProposals in one state
+across every Event, newest first — `proposed` by default. Platform
+admins and analysts only, so the list is exactly what the caller may
+decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>eventCaseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>Web cases proposed for an Event, newest first. Same visibility as
+`Event.caseProposals`.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>rejectedCaseUrls</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Source URLs already rejected for an Event: a web Worker reads this
+before searching and never proposes one again. The worker role,
+platform admins and analysts.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -814,7 +888,7 @@ event's safe-to-share fields is stored under a key derived from
 the eventId + token and lives for `ttlDays` days (default 30, max
 90). Anyone who has the resulting URL can read the snapshot via
 the `publicEvent(eventId, token)` query. Caller must be able to
-read the event normally (admin / analyst / viewer); pending users
+read the event normally (admin / member); pending users
 are blocked.<div class="field-args"><span class="arg"><code>input: CreatePublicEventLinkInput!</code></span></div></td>
   </tr><tr id="mutation-revokepubliceventlink">
     <td><code>revokePublicEventLink</code></td>
@@ -850,9 +924,9 @@ can offer a retry. Requires global `admin`.<div class="field-args"><span class="
   </tr><tr id="mutation-updateuserrole">
     <td><code>updateUserRole</code></td>
     <td><code>User!</code></td>
-    <td>Set a user's global platform role (`viewer`, `analyst`, or
-`admin`). Does not approve pending users — call `approveUser`
-first. Requires global `admin`. Cannot demote yourself or the
+    <td>Set a user's global platform role (`member` or `admin`;
+`analyst` is now a team role). Does not approve pending users — call
+`approveUser` first. Requires global `admin`. Cannot demote yourself or the
 last remaining admin. This is the product write path for the
 Users-tab dropdown on the operator app; the Developer Portal
 HTML form hits the same service via POST
@@ -871,8 +945,10 @@ HTML form hits the same service via POST
     <td>Update the authenticated user's profile and notification preferences.<div class="field-args"><span class="arg"><code>input: UpdateProfileInput!</code></span></div></td>
   </tr><tr id="mutation-createalert">
     <td><code>createAlert</code></td>
-    <td><code>Alert!</code></td>
-    <td>Create an alert from an event, notifying subscribers.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
+    <td><code>Alert</code></td>
+    <td>Create an alert from an event, notifying subscribers. Returns `null`
+(no error) when the event's types are all NRC-irrelevant, so the
+pipeline can skip it without a thrown error / GlitchTip alert.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
   </tr><tr id="mutation-updatealert">
     <td><code>updateAlert</code></td>
     <td><code>Alert!</code></td>
@@ -894,9 +970,11 @@ pipeline only. Returns the number of rows affected.<div class="field-args"><span
   </tr><tr id="mutation-marksignalsprocessed">
     <td><code>markSignalsProcessed</code></td>
     <td><code>Int!</code></td>
-    <td>Mark signals as done for the Dagster drain — the downstream pipeline calls
-this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
-and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
+    <td>Mark signals done for the Dagster drain, after classify→group→alert or
+after recomputing a changed signal's events. Sets status (PROCESSED, or
+FAILED) and processedAt. Pass exactly one of `ids` (unconditional) or
+`items` (compare-and-set: a row is updated only if its revision still
+matches). Returns rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
   </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>
@@ -906,6 +984,12 @@ Persists the signal and sends it to the pipeline for event grouping and auto-esc
     <td><code>updateSignalSeverity</code></td>
     <td><code>Signal!</code></td>
     <td>Update a signal's severity score.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>severity: Int!</code></span></div></td>
+  </tr><tr id="mutation-setsignalglidecode">
+    <td><code>setSignalGlideCode</code></td>
+    <td><code>Signal!</code></td>
+    <td>Record the glide code the pipeline grouped a signal with, so an event
+recompute can reproduce grouping's per-signal stats fallback. Idempotent
+(overwrites). Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>glideCode: String!</code></span></div></td>
   </tr><tr id="mutation-updatesignalgeoparseddata">
     <td><code>updateSignalGeoparsedData</code></td>
     <td><code>Signal!</code></td>
@@ -926,16 +1010,25 @@ creating an isolated event. Admin/pipeline only.<div class="field-args"><span cl
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>
-    <td>Apply an in-place content revision to an existing signal (e.g. IDMC's
-IDU rows being revised upstream — same id, changed figures/role/dates/
-location). Only writes when input.contentHash differs from the stored
-contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
-unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
-only.<div class="field-args"><span class="arg"><code>input: UpdateSignalContentInput!</code></span></div></td>
+    <td>Apply an in-place change to a signal, identified by `id` or by
+(`sourceId`, `externalId`). Content is written when contentHash differs,
+`retracted` when the flag differs; either bumps `revision`, stamps
+lastRevisedAt and moves a grouped signal to NEEDS_RECOMPUTE. A changed
+`rawS3Key` alone is metadata-only; a no-op re-send is ignored. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: UpdateSignalContentInput!</code></span></div></td>
   </tr><tr id="mutation-deletesignal">
     <td><code>deleteSignal</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a signal.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-seteventaggregates">
+    <td><code>setEventAggregates</code></td>
+    <td><code>Event!</code></td>
+    <td>Overwrite an event's aggregates with values recomputed from scratch from
+its live (non-retracted) member signals. Absent fields are left unchanged;
+explicit nulls clear them. `members` is the (id, revision) snapshot the
+values were computed from; if the live members differ, nothing is written
+and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
+it; do not retry).
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span><span class="arg"><code>members: [SignalRevisionInput!]!</code></span></div></td>
   </tr><tr id="mutation-submitsignallocationchallenge">
     <td><code>submitSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
@@ -959,9 +1052,9 @@ does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="fie
     <td><code>EventEscalation!</code></td>
     <td>Escalate an event: creates an alert (published) and records the user escalation.
 If the event already has a published alert, just records the user escalation.
-teamId (optional) admits a team_admin or field_coordinator on that team
-even without a global admin/analyst role — purely an authorisation hint,
-not stored on the event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
+teamId (optional) admits any team member on that team even without a
+global admin role — purely an authorisation hint, not stored on the
+event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
   </tr><tr id="mutation-createdatasource">
     <td><code>createDataSource</code></td>
     <td><code>DataSource!</code></td>
@@ -1229,33 +1322,37 @@ until the async enrichment task completes).<div class="field-args"><span class="
   </tr><tr id="mutation-updatecrisistitle">
     <td><code>updateCrisisTitle</code></td>
     <td><code>Crisis!</code></td>
-    <td>Edit a crisis's title in place. Any authenticated user. Pass an empty
-string to clear the field.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>title: String!</code></span></div></td>
+    <td>Edit a crisis's title in place. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
+empty string to clear the field.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>title: String!</code></span></div></td>
   </tr><tr id="mutation-updatecrisisdescription">
     <td><code>updateCrisisDescription</code></td>
     <td><code>Crisis!</code></td>
     <td>Edit the human-facing description on a crisis. The crisis's summary
 column stores JSON of the form description+tldr — this mutation updates
 just the description key and preserves any existing tldr bullets (which
-the LLM enrichment task generates). Any authenticated user. Pass an
+the LLM enrichment task generates). Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
 empty string to clear the description without disturbing the tldr.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>description: String!</code></span></div></td>
   </tr><tr id="mutation-deletecrisis">
     <td><code>deleteCrisis</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a crisis. Cascades the eventCrises join rows, user feedback,
-and user comments via the FK constraints. Any authenticated user.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+and user comments via the FK constraints. Platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-addcrisisattachments">
     <td><code>addCrisisAttachments</code></td>
     <td><code>Crisis!</code></td>
     <td>Append S3 keys to a crisis's attachments list. Idempotent — keys
 already present in the list are skipped silently. Returns the updated
-crisis with the new list.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
+crisis with the new list. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
   </tr><tr id="mutation-removecrisisattachment">
     <td><code>removeCrisisAttachment</code></td>
     <td><code>Crisis!</code></td>
     <td>Remove an S3 key from a crisis's attachments list. Does NOT delete
 the underlying S3 object (operators can clean those up separately).
-Returns the updated crisis.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
+Returns the updated crisis. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
   </tr><tr id="mutation-setcrisisneedsanalysis">
     <td><code>setCrisisNeedsAnalysis</code></td>
     <td><code>Crisis!</code></td>
@@ -1338,20 +1435,20 @@ exists for the frame. Admin / pipeline only.<div class="field-args"><span class=
     <td><code>createAnalysisAutomation</code></td>
     <td><code>AnalysisAutomation!</code></td>
     <td>Create an analysis automation — a subscription that keeps a frame's
-analysis current on a cadence (ADR-0007 §5). Admin / analyst.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
+analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
   </tr><tr id="mutation-updateanalysisautomation">
     <td><code>updateAnalysisAutomation</code></td>
     <td><code>AnalysisAutomation!</code></td>
-    <td>Update an analysis automation's cadence or enabled flag. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
+    <td>Update an analysis automation's cadence or enabled flag. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
   </tr><tr id="mutation-deleteanalysisautomation">
     <td><code>deleteAnalysisAutomation</code></td>
     <td><code>Boolean!</code></td>
-    <td>Delete an analysis automation subscription. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Delete an analysis automation subscription. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-requestanalysis">
     <td><code>requestAnalysis</code></td>
     <td><code>AnalysisRequest!</code></td>
     <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-an existing PENDING request for the same frame. Admin / analyst.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
   </tr><tr id="mutation-markanalysisrequestgenerated">
     <td><code>markAnalysisRequestGenerated</code></td>
     <td><code>AnalysisRequest!</code></td>
@@ -1405,7 +1502,7 @@ prefixed `manual:`) so re-uploading the same bytes is idempotent
 in place. To force a fresh row, tweak the file (any byte) or
 switch to a scripted upload that supplies its own report_id.
 
-Restricted to admin / analyst — the ingest costs LLM + embedding
+Restricted to admin — the ingest costs LLM + embedding
 credits per document. When DAGSTER_URL is unset the mutation
 still stages the PDF in S3 but returns a UNKNOWN-status job with
 no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
@@ -1496,13 +1593,13 @@ a warning. Returns the number of messages marked.<div class="field-args"><span c
   </tr><tr id="mutation-retrygroundmessage">
     <td><code>retryGroundMessage</code></td>
     <td><code>GroundMessage!</code></td>
-    <td>Clear a message's failure marker for one stage (admin/analyst), so
+    <td>Clear a message's failure marker for one stage (admin), so
 it re-enters that drain's queue on the next pipeline run. No-op when
 the stage isn't marked failed. Returns the message.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>stage: GroundPipelineStage!</code></span></div></td>
   </tr><tr id="mutation-requestgroundmessagetranslation">
     <td><code>requestGroundMessageTranslation</code></td>
     <td><code>GroundMessageTranslation!</code></td>
-    <td>Translate one staged message's text into `locale` (admin/analyst)
+    <td>Translate one staged message's text into `locale` (admin)
 — any supported locale, `en` included (the source is the reporter's
 language). Queues it for the pipeline's translate drain and returns the
 current state; poll GroundMessage.translation(locale) while queued.
@@ -1543,16 +1640,137 @@ realistic shape.<div class="field-args"><span class="arg"><code>id: String!</cod
     <td><code>WebhookDelivery!</code></td>
     <td>Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
 schedules an immediate retry via the poller.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-createalertwebhook">
+    <td><code>createAlertWebhook</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Create a team-scoped clear_alert webhook subscription. The caller
+must be a team admin, org admin, or platform admin for the team. The
+response is the only place the plaintext secret is returned.<div class="field-args"><span class="arg"><code>input: CreateAlertWebhookInput!</code></span></div></td>
+  </tr><tr id="mutation-updatealertwebhook">
+    <td><code>updateAlertWebhook</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Update a clear_alert webhook. Only provide fields you want to change.
+The secret is never returned here — rotate it with
+rotateAlertWebhookSecret.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAlertWebhookInput!</code></span></div></td>
+  </tr><tr id="mutation-deletealertwebhook">
+    <td><code>deleteAlertWebhook</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Permanently delete a clear_alert webhook and its delivery history.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-rotatealertwebhooksecret">
+    <td><code>rotateAlertWebhookSecret</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Generate a new secret for a clear_alert webhook and invalidate the
+old one. Response includes the new plaintext secret (one-shot).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-requesteventenrichment">
+    <td><code>requestEventEnrichment</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>Request an Event enrichment. Always fans out: one Task per enabled
+source kind of the `kind` family (server-configured; today
+`event.impact_prior.web`, the web search that proposes signals for
+analysts to review), so every Worker proposes on the Event side by side
+and nothing marks it done. Returns the open (PENDING / LEASED) Task per
+kind, in configured order — an already-open one is returned unchanged
+rather than duplicated; only kinds with none get a new Task. Same
+rights as `escalateEvent`: a global admin anywhere; a team member
+(incl. a team analyst) for the `teamId` they act on behalf of. Capped per
+requester per UTC day, counting requests not Tasks (FORBIDDEN with
+subCode `DAILY_CAP`); a request that creates nothing does not count.
+The only family today is `event.impact_prior` (a historical name: the
+ImpactPrior itself is computed, see `Event.computedImpactPriors`);
+`horizonYears` (default 10) is how far back each Worker looks for
+cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>kind: String</code></span><span class="arg"><code>teamId: String</code></span><span class="arg"><code>horizonYears: Int</code></span></div></td>
+  </tr><tr id="mutation-decidecaseproposal">
+    <td><code>decideCaseProposal</code></td>
+    <td><code>CaseProposal!</code></td>
+    <td>Decide one web case (V4): a platform admin or a team analyst on the
+case's team accepts or
+rejects it, recorded as who, when and why (the Domain Ontology's
+DecisionRecord). Only from `proposed` (CONFLICT otherwise). The
+`rationale` is required to reject and optional to accept.
+
+Accepting writes the case into CLEAR as history, in one transaction:
+a Signal (source `web_enrichment`, `url` the case's source,
+`publishedAt` the date the incident happened, submitted by the decider)
+on the CLEAR Event it describes — the Worker's matched Event, else the
+Event that already carries the same URL, else a new historical Event
+dated to the incident. A Signal with the same URL already in CLEAR is
+reused, not duplicated. Historical Events never alert: their newest
+Signal is the incident's date. The case's figures become Estimates on
+that Event (`media_report`, `event_caused`). The returned case carries
+`resultSignalId` and `resultEventId`.
+
+Rejecting keeps the case, so its URL is never proposed again for that
+Event.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>decision: CaseProposalDecision!</code></span><span class="arg"><code>rationale: String</code></span></div></td>
+  </tr><tr id="mutation-canceltask">
+    <td><code>cancelTask</code></td>
+    <td><code>Task!</code></td>
+    <td>Cancel a Task. The requester or a platform admin only. A PENDING
+Task is CANCELLED at once; a LEASED one is flagged and becomes
+CANCELLED at the Worker's next heartbeat, completion or failure (its
+result is discarded). Any other status is CONFLICT.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-claimtasks">
+    <td><code>claimTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>WORKER CONTRACT (`worker` role): lease up to `limit` of the
+oldest claimable Tasks of exactly `kind` — PENDING, or LEASED past
+their expiry — atomically (`FOR UPDATE SKIP LOCKED`), so no two
+Workers hold the same Task. A Worker drains its own source kind
+(`event.impact_prior.web`, …). The retired whole-prior kinds — the
+bare `event.impact_prior` and `event.impact_prior.clear` — are
+BAD_USER_INPUT. `limit` is
+clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
+heartbeat to keep it.<div class="field-args"><span class="arg"><code>kind: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr id="mutation-heartbeattask">
+    <td><code>heartbeatTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: keep a lease alive. Extends `leaseExpiresAt` by
+TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+(CONFLICT `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER` — the latter
+means the lease lapsed and was reclaimed, so this `leaseToken` is
+stale; stop working on it). If cancellation was requested, the Task becomes
+CANCELLED and the Worker should stop.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span></div></td>
+  </tr><tr id="mutation-failtask">
+    <td><code>failTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: give the Task up with an error. It returns to
+PENDING for another Worker (or attempt) while attempts remain, and
+becomes FAILED with this as its `lastError` once `maxAttempts`
+claims have been used. Only the lease owner, only while LEASED.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>error: String!</code></span></div></td>
+  </tr><tr id="mutation-completetask">
+    <td><code>completeTask</code></td>
+    <td><code>Task!</code></td>
+    <td>WORKER CONTRACT: report the Task done. `result` is the raw output
+(audit only). For an `event.impact_prior.web` Task, pass `cases`
+and `methodVersion` (V4): one CaseProposal per case, each decided on
+its own (outcome `produced`); a URL already proposed for the Event is
+skipped (`no_new_cases` when all were); an empty list or none records
+`no_prior_found`. Any other kind completes with `result` only. The
+whole-prior `impactPrior` input was removed (2026-10-08): the
+ImpactPrior is computed from history. Only the lease owner,
+only while LEASED (CONFLICT
+`NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
+requested meanwhile the Task becomes CANCELLED and the result is
+discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
   </tr></tbody>
     </table>
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposaldecision"><code>CaseProposalDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed case.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
+accepts or rejects each case; a rejected one stays, so its URL is never
+proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
-ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
-enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
-up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
+Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
+beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>event_caused</code></td><td>—</td></tr><tr><td><code>pre_existing</code></td><td>—</td></tr><tr><td><code>combined</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemethod"><code>EstimateMethod</code> <span class="type-badge">enum</span></h3><p>How a figure was arrived at (the Domain Ontology's Estimate methods).
+`not_documented` when the method is unknown, e.g. figures backfilled from
+the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
+Ontology's Metric types). The sector routinely conflates them; keeping
+them apart is the point.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>people_affected</code></td><td>—</td></tr><tr><td><code>people_displaced_new</code></td><td>—</td></tr><tr><td><code>people_displaced_cumulative</code></td><td>—</td></tr><tr><td><code>people_in_need</code></td><td>—</td></tr><tr><td><code>people_targeted</code></td><td>—</td></tr><tr><td><code>people_reached</code></td><td>—</td></tr><tr><td><code>households_affected</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
+enum — those users must go through `approveUser` first. `analyst` is no
+longer global — it is a TeamMemberRole.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
+up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>The state a V1–V3 whole-prior proposal was left in. Retired: none is
+created or decided any more.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
 / …) — we fold those down to what a UI actually needs to render.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>QUEUED</code></td><td>—</td></tr><tr><td><code>STARTED</code></td><td>—</td></tr><tr><td><code>SUCCESS</code></td><td>—</td></tr><tr><td><code>FAILURE</code></td><td>—</td></tr><tr><td><code>CANCELED</code></td><td>—</td></tr><tr><td><code>UNKNOWN</code></td><td>Dagster is offline, the run id doesn't exist, or the run status
 is one this API doesn't recognise. Non-terminal — poll again.</td></tr></tbody></table><h3 id="type-knowledgebasesearchmode"><code>KnowledgebaseSearchMode</code> <span class="type-badge">enum</span></h3><p>How `searchKnowledgebase` merges the report + incident tiers
@@ -1564,12 +1782,19 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain.
-NEW = ingested, awaiting downstream processing; PROCESSED = classify→group→
-alert done; FAILED = terminal failure.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
+classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
+grouped, then changed (content revision or retraction flip), so its events
+must be re-aggregated from their live members.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NEW</code></td><td>—</td></tr><tr><td><code>PROCESSED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>NEEDS_RECOMPUTE</code></td><td>—</td></tr></tbody></table><h3 id="type-statsgroupby"><code>StatsGroupBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>none</code></td><td>Single bucket — just `total`. Use this for &quot;how many X&quot; queries.</td></tr><tr><td><code>type</code></td><td>Group by event/signal type (event.types[] is unnested; signals use
 their source name as the type proxy).</td></tr><tr><td><code>severity</code></td><td>Group by integer severity (1-5).</td></tr><tr><td><code>day</code></td><td>Group by day / week / month of the entity's primary timestamp.
 Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
-`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+`YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-taskorigin"><code>TaskOrigin</code> <span class="type-badge">enum</span></h3><p>Who asked for the Task: a signed-in user, an automatic rule, or an
+API-key caller.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>user</code></td><td>—</td></tr><tr><td><code>rule</code></td><td>—</td></tr><tr><td><code>api</code></td><td>—</td></tr></tbody></table><h3 id="type-taskstatus"><code>TaskStatus</code> <span class="type-badge">enum</span></h3><p>Lifecycle of a Task. PENDING → LEASED (claimed) → COMPLETED | FAILED;
+PENDING or LEASED → CANCELLED. An expired lease returns the Task to
+PENDING lazily, at the next claim. Tasks are never deleted.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>LEASED</code></td><td>—</td></tr><tr><td><code>COMPLETED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>CANCELLED</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team. `analyst` carries elevated, location-scoped powers
+(promote alerts, decide tasks/cases, manage team analyses, act on
+events/alerts/crises within the team's location scope).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -1730,6 +1955,71 @@ server-side).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th>
     <td><code>windowEnd</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-casefigureinput"><code>CaseFigureInput</code> <span class="type-badge">input</span></h3><p>One figure a case's source gives.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>String!</code></td>
+    <td>One of `people_affected`, `people_displaced_new`,
+`people_displaced_cumulative`, `people_in_need`, `people_targeted`,
+`people_reached`, `households_affected`.</td>
+  </tr><tr>
+    <td><code>value</code></td>
+    <td><code>Float!</code></td>
+    <td>Non-negative. With bounds, `lowerBound ≤ value ≤ upperBound`.</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-caseproposalinput"><code>CaseProposalInput</code> <span class="type-badge">input</span></h3><p>One case a web Worker proposes on completing an
+`event.impact_prior.web` Task (V4).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>Absolute http(s) URL; one case per URL per Event.</td>
+  </tr><tr>
+    <td><code>quote</code></td>
+    <td><code>String!</code></td>
+    <td>The source's own words, verbatim.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the incident happened: within the request's horizon, not in the future.</td>
+  </tr><tr>
+    <td><code>locationLabel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A CLEAR location in the Event's country, if resolved.</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>Must be one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`.</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>[CaseFigureInput!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>matchedEventId</code></td>
+    <td><code>String</code></td>
+    <td>The CLEAR Event this case describes, if the Worker found one: it must
+exist, not be the Event being enriched, manifest the case's hazard and
+sit in the same country.</td>
   </tr></tbody></table><h3 id="type-conversationmessageinput"><code>ConversationMessageInput</code> <span class="type-badge">input</span></h3><p>One message to create or replace, matched by id.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -1783,6 +2073,29 @@ never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-createalertwebhookinput"><code>CreateAlertWebhookInput</code> <span class="type-badge">input</span></h3><p>Input for creating a team-scoped clear_alert webhook. The secret is
+generated server-side (openssl rand -hex 32 equivalent) and returned once
+on create.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>teamId</code></td>
+    <td><code>String!</code></td>
+    <td>Owning team. The caller must be a team admin of this team, an org
+admin of its organisation, or a platform admin.</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>targetUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]</code></td>
+    <td>Optional glide-code allowlist. Empty / omitted = all event types.</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>Optional minimum alert severity (1-5). Omitted = all severities.</td>
   </tr></tbody></table><h3 id="type-createanalysisautomationinput"><code>CreateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]</code></td>
@@ -1863,9 +2176,9 @@ never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the crisis is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the crisis itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the crisis itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
@@ -1929,7 +2242,7 @@ Ignored for platform-level callers.</td>
     <td>—</td>
   </tr><tr>
     <td><code>validTo</code></td>
-    <td><code>String!</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>firstSignalCreatedAt</code></td>
@@ -1975,7 +2288,7 @@ ISO-8601; null/omitted when no onset could be resolved.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float!</code></td>
@@ -1992,9 +2305,9 @@ ISO-8601; null/omitted when no onset could be resolved.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the event is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the event itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the event itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-creategroundsourceinput"><code>CreateGroundSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
@@ -2028,7 +2341,7 @@ group kinds; hotline consent is explicit by design.</td>
   </tr><tr>
     <td><code>reviewerRoles</code></td>
     <td><code>[String!]</code></td>
-    <td>Defaults to [&quot;admin&quot;, &quot;analyst&quot;].</td>
+    <td>Defaults to [&quot;admin&quot;].</td>
   </tr><tr>
     <td><code>retentionRule</code></td>
     <td><code>String</code></td>
@@ -2114,9 +2427,9 @@ Not surfaced in the UI - use freely without schema changes.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the signal is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the signal itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the signal itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createnotificationinput"><code>CreateNotificationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
@@ -2300,6 +2613,19 @@ window. Chunks whose time_range overlaps the window match.</p><table class="ref-
     <td><code>to</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-detectionmetricsinput"><code>DetectionMetricsInput</code> <span class="type-badge">input</span></h3><p>The range and place to measure time to detection over. Every field is
+optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Events whose origin, destination or general location is this location or inside it.</td>
   </tr></tbody></table><h3 id="type-entitystatsinput"><code>EntityStatsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entity</code></td>
     <td><code>EntityKind!</code></td>
@@ -2339,6 +2665,39 @@ window. Chunks whose time_range overlaps the window match.</p><table class="ref-
   </tr><tr>
     <td><code>includeDummy</code></td>
     <td><code>Boolean</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-eventaggregatesinput"><code>EventAggregatesInput</code> <span class="type-badge">input</span></h3><p>Absolute event aggregates from the pipeline's recompute. Absent fields are
+left unchanged; explicit nulls clear them.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>casualties</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationAffected</code></td>
+    <td><code>String</code></td>
+    <td>BigInt as a decimal string.</td>
+  </tr><tr>
+    <td><code>populationDisplaced</code></td>
+    <td><code>String</code></td>
+    <td>BigInt as a decimal string.</td>
+  </tr><tr>
+    <td><code>rank</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>rewriteMembersHash</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventspageinput"><code>EventsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
@@ -2774,6 +3133,14 @@ Admin only — a non-admin passing `true` is rejected.</td>
     <td><code>metadata</code></td>
     <td><code>JSON</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-signalrevisioninput"><code>SignalRevisionInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>revision</code></td>
+    <td><code>Int!</code></td>
+    <td>The revision the caller read; the write applies only if it still matches.</td>
   </tr></tbody></table><h3 id="type-signalspageinput"><code>SignalsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
     <td><code>Int</code></td>
@@ -2879,6 +3246,23 @@ Location correction — one without the other is rejected.</td>
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5) to notify on. Defaults to 1 (all alerts).</td>
+  </tr></tbody></table><h3 id="type-taskusageinput"><code>TaskUsageInput</code> <span class="type-badge">input</span></h3><p>Spend a Worker reports when completing a Task. Cost is computed by the
+caller from its own price table.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-teamassignmentinput"><code>TeamAssignmentInput</code> <span class="type-badge">input</span></h3><p>One (team, role) assignment passed to inviteUser.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>teamId</code></td>
     <td><code>String!</code></td>
@@ -2907,6 +3291,27 @@ Location correction — one without the other is rejected.</td>
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5).</td>
+  </tr></tbody></table><h3 id="type-updatealertwebhookinput"><code>UpdateAlertWebhookInput</code> <span class="type-badge">input</span></h3><p>Input for updating a clear_alert webhook. All fields optional —
+provide only what you want to change.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>targetUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>active</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updateanalysisautomationinput"><code>UpdateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>cadence</code></td>
     <td><code>String</code></td>
@@ -2987,15 +3392,18 @@ Location correction — one without the other is rejected.</td>
   </tr><tr>
     <td><code>validTo</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>ISO-8601 event end. Pass `null` to clear it (&quot;ongoing / no known end&quot;);
+omit it to leave the stored value unchanged.</td>
   </tr><tr>
     <td><code>firstSignalCreatedAt</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>ISO-8601. Only ever moves earlier: a value later than the stored one is
+ignored.</td>
   </tr><tr>
     <td><code>lastSignalCreatedAt</code></td>
     <td><code>String</code></td>
-    <td>—</td>
+    <td>ISO-8601. Only ever moves later: a value earlier than the stored one is
+ignored, so an out-of-order signal can't pull it back.</td>
   </tr><tr>
     <td><code>startedAt</code></td>
     <td><code>String</code></td>
@@ -3032,7 +3440,7 @@ ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
@@ -3138,14 +3546,31 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
   </tr></tbody></table><h3 id="type-updatesignalcontentinput"><code>UpdateSignalContentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
-    <td><code>String!</code></td>
+    <td><code>String</code></td>
+    <td>The signal's id. Alternatively use sourceId + externalId.</td>
+  </tr><tr>
+    <td><code>sourceId</code></td>
+    <td><code>String</code></td>
+    <td>With externalId: the signal's natural key, unique per source.</td>
+  </tr><tr>
+    <td><code>externalId</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>contentHash</code></td>
     <td><code>String!</code></td>
     <td>Fingerprint of the incoming raw payload. Compared against the
-signal's stored contentHash; the write (and lastRevisedAt) only
-happens when they differ.</td>
+signal's stored contentHash; content fields are written only when they
+differ.</td>
+  </tr><tr>
+    <td><code>retracted</code></td>
+    <td><code>Boolean</code></td>
+    <td>Superseded upstream. Null or absent leaves the stored flag unchanged.</td>
+  </tr><tr>
+    <td><code>rawS3Key</code></td>
+    <td><code>String</code></td>
+    <td>Pointer to the raw payload blob in the S3 data lake. Null or absent
+leaves it unchanged; a change alone is metadata-only (no revision bump).</td>
   </tr><tr>
     <td><code>rawData</code></td>
     <td><code>JSON!</code></td>
@@ -4028,6 +4453,108 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td><code>alertsArchived</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-caseproposal"><code>CaseProposal</code> <span class="type-badge">object</span></h3><p>One historical case a web Worker found while enriching an Event (V4):
+a past incident like it, the source that reports it, the figures it gives,
+and the CLEAR Event it describes when CLEAR already holds one. The unit an
+analyst accepts or rejects, one by one, in the Inbox and on the Event page.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>The Event whose enrichment request produced the case.</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>taskId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>CaseProposalState!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>quote</code></td>
+    <td><code>String!</code></td>
+    <td>The source's own words, verbatim.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the incident happened (valid time), not when it was reported.</td>
+  </tr><tr>
+    <td><code>locationLabel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A CLEAR location for the place, when the Worker resolved one.</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the requesting Event's `types`.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`: the scope the case was matched at.</td>
+  </tr><tr>
+    <td><code>figures</code></td>
+    <td><code>JSON!</code></td>
+    <td>The figures the source gives, each on one of the Domain Ontology's
+seven metric types —
+`[{ metric, value, lowerBound?, upperBound?, unit?, populationGroup? }]`.
+Empty when the source states none.</td>
+  </tr><tr>
+    <td><code>matchedEventId</code></td>
+    <td><code>String</code></td>
+    <td>The CLEAR Event this case describes, when CLEAR already holds it.</td>
+  </tr><tr>
+    <td><code>matchedEvent</code></td>
+    <td><code>Event</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version string of the skill or handler that produced the case.</td>
+  </tr><tr>
+    <td><code>decidedById</code></td>
+    <td><code>String</code></td>
+    <td>Who decided it, when and why (null while `proposed`).</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decisionRationale</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>resultSignalId</code></td>
+    <td><code>String</code></td>
+    <td>What accepting wrote into CLEAR: the Signal, and the Event it sits on.</td>
+  </tr><tr>
+    <td><code>resultEventId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-commenttag"><code>CommentTag</code> <span class="type-badge">object</span></h3><p>A tag linking a user to a comment.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -4036,6 +4563,80 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td><code>comment</code></td>
     <td><code>UserComment!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-computedimpactprior"><code>ComputedImpactPrior</code> <span class="type-badge">object</span></h3><p>What has typically happened before (the Domain Ontology's ImpactPrior),
+computed from CLEAR's history (V4): the Events before this one that
+manifest the same hazard in the same country within the horizon, one
+current figure each for one metric and population group. Computed on
+read from accepted history — nothing to review. Read `numberOfCases`
+beside the figure: a prior resting on three Events is not one resting on
+ninety.
+
+Only observed or reported figures count: Estimates whose method is one of
+`media_report`, `government_figure`, `partner_or_cluster_figure`, `rapid_assessment`, `formal_assessment`, `registration`, `field_staff_judgement`. Figures with method `not_documented` (the
+pipeline's backfilled placeholders), `model_inference`,
+`exposure_model` or `prior_caseload_analogue` (itself derived from a
+prior) are not history, so they are never summarised.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>The Event's country (level-0 location).</td>
+  </tr><tr>
+    <td><code>horizonYears</code></td>
+    <td><code>Int!</code></td>
+    <td>How far back history was taken, in years.</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>String!</code></td>
+    <td>One of the Domain Ontology's seven metric types.</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>String</code></td>
+    <td>The figures' unit (lower-cased), or null when they state none.
+Figures in different units are never summarised together.</td>
+  </tr><tr>
+    <td><code>centralValue</code></td>
+    <td><code>Float!</code></td>
+    <td>The median of the historical figures.</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float!</code></td>
+    <td>The smallest historical figure.</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float!</code></td>
+    <td>The largest historical figure.</td>
+  </tr><tr>
+    <td><code>numberOfCases</code></td>
+    <td><code>Int!</code></td>
+    <td>How many historical Events it rests on.</td>
+  </tr><tr>
+    <td><code>lowConfidence</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True below three cases: a starting point, not a basis.</td>
+  </tr><tr>
+    <td><code>eventIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The historical Events it rests on.</td>
+  </tr><tr>
+    <td><code>estimateIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The Estimates it rests on, one per Event.</td>
+  </tr><tr>
+    <td><code>basisMethods</code></td>
+    <td><code>[EstimateMethodCount!]!</code></td>
+    <td>How the Estimates it rests on were arrived at, most common first, so
+a reader can see what the prior is built from.</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version of the method that computed it.</td>
   </tr></tbody></table><h3 id="type-conversation"><code>Conversation</code> <span class="type-badge">object</span></h3><p>One CLEAR Agent Thread, stored as the record of what the Agent told its
 owner: the user's turns, the Answers, and the tools and Source documents
 each Answer drew on. Readable by its owner and, read-only, by platform
@@ -4329,6 +4930,99 @@ Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline A
     <td><code>uniqueUsers</code></td>
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in on this date.</td>
+  </tr></tbody></table><h3 id="type-detectionexclusion"><code>DetectionExclusion</code> <span class="type-badge">object</span></h3><p>Events in range left out of time to detection for one reason.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reason</code></td>
+    <td><code>DetectionExclusionReason!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Events left out for this reason.</td>
+  </tr></tbody></table><h3 id="type-detectionhistogrambucket"><code>DetectionHistogramBucket</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal came this many days after onset.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>daysAfterOnset</code></td>
+    <td><code>Int!</code></td>
+    <td>Whole UTC days from onset to first ingested Signal; the open-ended row's lower bound.</td>
+  </tr><tr>
+    <td><code>isOpenEnded</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True for the last row, which counts `daysAfterOnset` days and more.</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events in this bucket.</td>
+  </tr></tbody></table><h3 id="type-detectionmetrics"><code>DetectionMetrics</code> <span class="type-badge">object</span></h3><p>Time to detection: how soon after an Event's real-world onset CLEAR
+received its first ingested Signal, in whole UTC days (same day = 0, next
+day = 1). Counts only; shares are the caller's to compute. See ADR-0011.
+
+An Event is in range when its first ingested Signal's `publishedAt` is,
+or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range: `counted` plus every exclusion.</td>
+  </tr><tr>
+    <td><code>withOnset</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range with an onset date.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Events measured: an onset, a first ingested Signal with a time of day, on or after the onset day.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>histogram</code></td>
+    <td><code>[DetectionHistogramBucket!]!</code></td>
+    <td>Counted Events by whole days from onset: exactly 9 rows, 0 to 7, then 8 and more (`isOpenEnded`).</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[DetectionWeek!]!</code></td>
+    <td>Counted Events per ISO week of their first ingested Signal, with each week's Events in range, ascending, one row per week the range touches (zero-filled).</td>
+  </tr><tr>
+    <td><code>exclusions</code></td>
+    <td><code>[DetectionExclusion!]!</code></td>
+    <td>Events in range not measured, by reason: exactly 4 rows, one per reason.</td>
+  </tr></tbody></table><h3 id="type-detectionweek"><code>DetectionWeek</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W42`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range this week, counted plus excluded, bucketed by the same instant that puts them in range (the first ingested Signal, or with none `firstSignalCreatedAt`). `counted / eventsInRange` is the week's measured coverage.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled this week.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
   </tr></tbody></table><h3 id="type-disasterlevel1"><code>DisasterLevel1</code> <span class="type-badge">object</span></h3><p>A level-1 category with its level-2 groups.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -4386,6 +5080,107 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>buckets</code></td>
     <td><code>[StatsBucket!]!</code></td>
     <td>Buckets when groupBy != none. Empty when groupBy = none.</td>
+  </tr></tbody></table><h3 id="type-estimate"><code>Estimate</code> <span class="type-badge">object</span></h3><p>A figure for one metric on an Event (the Domain Ontology's Estimate),
+with its method, its uncertainty and both timestamps. Never overwritten: a
+correction is a new Estimate whose `supersedes` is the one it replaces.
+Where bounds are present, `lowerBound ≤ value ≤ upperBound`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>EstimateMetric!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>IDP, refugee, returnee, host community or non-displaced affected;
+null when the figure covers everyone.</td>
+  </tr><tr>
+    <td><code>value</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>String</code></td>
+    <td>e.g. `people`, `households`.</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>method</code></td>
+    <td><code>EstimateMethod!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>attribution</code></td>
+    <td><code>EstimateAttribution!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validFor</code></td>
+    <td><code>DateTime!</code></td>
+    <td>The date the figure describes (valid time).</td>
+  </tr><tr>
+    <td><code>estimatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the figure was made (transaction time).</td>
+  </tr><tr>
+    <td><code>isGroundTruth</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True for verified figures used to score earlier Estimates.</td>
+  </tr><tr>
+    <td><code>sourceSignalId</code></td>
+    <td><code>String</code></td>
+    <td>The Signal the figure was read from, if any.</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>supersedesId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>supersedes</code></td>
+    <td><code>Estimate</code></td>
+    <td>The Estimate this one corrects.</td>
+  </tr><tr>
+    <td><code>supersededBy</code></td>
+    <td><code>Estimate</code></td>
+    <td>The Estimate that corrects this one; null while it is current.</td>
+  </tr><tr>
+    <td><code>definitionVersion</code></td>
+    <td><code>String!</code></td>
+    <td>The Domain Ontology version whose definitions the figure was made
+under, e.g. `0.3.0`.</td>
+  </tr><tr>
+    <td><code>createdBy</code></td>
+    <td><code>User</code></td>
+    <td>Who recorded it; null for system-written Estimates.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-estimatemethodcount"><code>EstimateMethodCount</code> <span class="type-badge">object</span></h3><p>How many of a prior's figures were arrived at by one method.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>method</code></td>
+    <td><code>EstimateMethod!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>count</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-event"><code>Event</code> <span class="type-badge">object</span></h3><p>An event grouping related signals into a coherent narrative.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -4408,8 +5203,8 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td>—</td>
   </tr><tr>
     <td><code>validTo</code></td>
-    <td><code>DateTime!</code></td>
-    <td>—</td>
+    <td><code>DateTime</code></td>
+    <td>Event end / expiry. Null when no real end is known (not invented).</td>
   </tr><tr>
     <td><code>firstSignalCreatedAt</code></td>
     <td><code>DateTime!</code></td>
@@ -4468,15 +5263,20 @@ Requires any authenticated content reader.</td>
   </tr><tr>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
-    <td>Aggregated casualties for the event (max across constituent signals).</td>
+    <td>Aggregated casualties for the event (sum across constituent signals).</td>
   </tr><tr>
     <td><code>rank</code></td>
     <td><code>Float!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>rewriteMembersHash</code></td>
+    <td><code>String</code></td>
+    <td>Hash of the live member signal ids at the last LLM rewrite. Lets the
+recompute skip the rewrite when membership is unchanged.</td>
+  </tr><tr>
     <td><code>signals</code></td>
     <td><code>[Signal!]!</code></td>
-    <td>Signals linked to this event.</td>
+    <td>Signals linked to this event, excluding retracted ones.</td>
   </tr><tr>
     <td><code>alerts</code></td>
     <td><code>[Alert!]!</code></td>
@@ -4493,6 +5293,41 @@ Requires any authenticated content reader.</td>
     <td><code>escalations</code></td>
     <td><code>[EventEscalation!]!</code></td>
     <td>Escalations by users.</td>
+  </tr><tr>
+    <td><code>estimates</code></td>
+    <td><code>[Estimate!]!</code></td>
+    <td>Figures for this Event, newest first (by `estimatedAt`). Follows the
+Event's visibility: any authenticated content reader. By default the
+whole history, superseded Estimates included; `current: true` keeps
+only those not yet superseded.<div class="field-args"><span class="arg"><code>metric: EstimateMetric</code></span><span class="arg"><code>current: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>enrichmentTasks</code></td>
+    <td><code>[Task!]!</code></td>
+    <td>Enrichment Tasks about this Event, newest first. Requires any
+authenticated content reader; `lastError` is redacted for all but the
+requester and platform admins.</td>
+  </tr><tr>
+    <td><code>impactPriors</code></td>
+    <td><code>[ImpactPrior!]!</code></td>
+    <td>History: the whole ImpactPriors Workers proposed for this Event in
+V1–V3, newest first. `accepted` follows the Event's visibility;
+`proposed` is visible to its requester and to deciders; `rejected`
+to deciders only. For what history suggests now, read
+`computedImpactPriors`.</td>
+  </tr><tr>
+    <td><code>caseProposals</code></td>
+    <td><code>[CaseProposal!]!</code></td>
+    <td>Web cases proposed while enriching this Event (V4), newest first,
+under the ImpactPrior visibility rule: `accepted` follows the Event,
+`proposed` is visible to the requester and deciders, `rejected` to
+deciders only.</td>
+  </tr><tr>
+    <td><code>computedImpactPriors</code></td>
+    <td><code>[ComputedImpactPrior!]!</code></td>
+    <td>ImpactPriors computed from CLEAR's history (V4), one per hazard the
+Event manifests × metric × population group with any history, most
+evidence first. Follows the Event's visibility. `horizonYears`
+(default 10, at most 50) is how far back history is taken.<div class="field-args"><span class="arg"><code>horizonYears: Int</code></span></div></td>
   </tr></tbody></table><h3 id="type-eventcrisis"><code>EventCrisis</code> <span class="type-badge">object</span></h3><p>Link between a crisis and an event.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -4876,7 +5711,7 @@ the original text stays canonical.</p><table class="ref-table"><thead><tr><th>Fi
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The
-whole ground staging tier is private: admin/analyst only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+whole ground staging tier is private: admin only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>ID!</code></td>
     <td>—</td>
@@ -5013,6 +5848,121 @@ it carries no message content and no sender identity.</td>
     <td>—</td>
   </tr><tr>
     <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-impactprior"><code>ImpactPrior</code> <span class="type-badge">object</span></h3><p>History: a whole ImpactPrior a Worker proposed in V1–V3, and the
+decision recorded on it. Retired (2026-10-08): nothing creates or decides
+one any more. The ImpactPrior is computed from history instead (see
+`ComputedImpactPrior`); what analysts review is CaseProposals.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>taskId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>Task!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>ImpactPriorState!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceKind</code></td>
+    <td><code>String!</code></td>
+    <td>The kind of the Task that produced it — `event.impact_prior.clear`
+(CLEAR data), `event.impact_prior.web` (the web), or the pre-fan-out
+`event.impact_prior` — so a client can label the source.</td>
+  </tr><tr>
+    <td><code>hazardType</code></td>
+    <td><code>String!</code></td>
+    <td>GLIDE code; one of the Event's `types`.</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>The level-0 (country) ancestor of the Event's primary location.</td>
+  </tr><tr>
+    <td><code>geographicScope</code></td>
+    <td><code>String!</code></td>
+    <td>`district` or `country`: the scope the cases were matched at.</td>
+  </tr><tr>
+    <td><code>horizonYears</code></td>
+    <td><code>Int!</code></td>
+    <td>How far back cases were sought, in years.</td>
+  </tr><tr>
+    <td><code>populationGroup</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lowerBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>upperBound</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>numberOfCases</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>basis</code></td>
+    <td><code>JSON!</code></td>
+    <td>The evidence: one entry per case —
+`{ tier: &quot;clear&quot; | &quot;web&quot;, eventId?, sourceUrl?, quote?, occurredAt?, locationLabel?, scope }`.</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>methodVersion</code></td>
+    <td><code>String!</code></td>
+    <td>Version string of the skill or handler that produced it.</td>
+  </tr><tr>
+    <td><code>supersedesId</code></td>
+    <td><code>String</code></td>
+    <td>The previous ImpactPrior of the same `sourceKind` for the same
+Event, if any. Never crosses sources.</td>
+  </tr><tr>
+    <td><code>supersedes</code></td>
+    <td><code>ImpactPrior</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedById</code></td>
+    <td><code>String</code></td>
+    <td>Who decided it, when and why (null while `proposed`).</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decisionRationale</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -5539,8 +6489,8 @@ when the snapshot was taken — the public page is not locale-aware).</td>
     <td>Window during which the event is considered valid.</td>
   </tr><tr>
     <td><code>validTo</code></td>
-    <td><code>DateTime!</code></td>
-    <td>—</td>
+    <td><code>DateTime</code></td>
+    <td>Event end / expiry. Null when no real end is known (not invented).</td>
   </tr><tr>
     <td><code>types</code></td>
     <td><code>[String!]!</code></td>
@@ -5876,8 +6826,19 @@ after creation.</td>
   </tr><tr>
     <td><code>lastRevisedAt</code></td>
     <td><code>DateTime</code></td>
-    <td>When the API last applied an in-place content revision to this signal
-(e.g. an IDMC IDU row revised upstream). Null if never revised.</td>
+    <td>When the signal last had a content revision or retraction flip via
+updateSignalContent. Not set by the first contentHash seed. Null if never
+revised.</td>
+  </tr><tr>
+    <td><code>retracted</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Superseded upstream. Reversible. A retracted signal keeps its event
+links but is excluded from event aggregates and the NEW drain queue.</td>
+  </tr><tr>
+    <td><code>revision</code></td>
+    <td><code>Int!</code></td>
+    <td>Count of effective changes via updateSignalContent. Compare-and-set
+token for markSignalsProcessed(items:).</td>
   </tr><tr>
     <td><code>rawS3Key</code></td>
     <td><code>String</code></td>
@@ -5916,6 +6877,11 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
 field; for Dataminr, parsed from raw text via regex.</td>
+  </tr><tr>
+    <td><code>glideCode</code></td>
+    <td><code>String</code></td>
+    <td>Glide code the pipeline grouped this signal with. Null for signals
+grouped before it was recorded, or never grouped.</td>
   </tr><tr>
     <td><code>media</code></td>
     <td><code>[String!]!</code></td>
@@ -6126,6 +7092,138 @@ skipped (an id that no longer resolves to an event).</p><table class="ref-table"
   </tr><tr>
     <td><code>skipped</code></td>
     <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-task"><code>Task</code> <span class="type-badge">object</span></h3><p>One unit of Worker-performed work (ADR-0010).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>String!</code></td>
+    <td>The kind of work, e.g. `event.impact_prior.web` (the web search
+that proposes signals; the name is historical). A Worker claims by exact
+kind. One request fans out into one Task per enabled source kind. Older
+Tasks may carry the retired whole-prior kinds `event.impact_prior`
+and `event.impact_prior.clear`.</td>
+  </tr><tr>
+    <td><code>subjectType</code></td>
+    <td><code>String!</code></td>
+    <td>The subject's type, e.g. `event`.</td>
+  </tr><tr>
+    <td><code>subjectId</code></td>
+    <td><code>String!</code></td>
+    <td>The subject's id, e.g. an Event id.</td>
+  </tr><tr>
+    <td><code>payload</code></td>
+    <td><code>JSON!</code></td>
+    <td>Per-kind inputs, e.g. `{ &quot;horizonYears&quot;: 10 }`.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>TaskStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>origin</code></td>
+    <td><code>TaskOrigin!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>requestId</code></td>
+    <td><code>String!</code></td>
+    <td>Shared by every Task one request fanned out into (one per source
+kind). The per-requester daily cap counts distinct requests, not
+Tasks.</td>
+  </tr><tr>
+    <td><code>requesterId</code></td>
+    <td><code>String</code></td>
+    <td>The user who requested it; null for origin `rule`.</td>
+  </tr><tr>
+    <td><code>requester</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>The view-scope team passed at request time (an authorisation hint,
+not an Event team — Events have none).</td>
+  </tr><tr>
+    <td><code>leaseOwnerId</code></td>
+    <td><code>String</code></td>
+    <td>The Worker (a service user) or person currently holding the lease.</td>
+  </tr><tr>
+    <td><code>leaseOwner</code></td>
+    <td><code>User</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>leaseExpiresAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the current lease lapses. A heartbeat extends it by
+TASK_LEASE_MINUTES; past this instant the Task is claimable again.</td>
+  </tr><tr>
+    <td><code>leaseToken</code></td>
+    <td><code>String</code></td>
+    <td>Secret minted per claim. Returned only to the lease owner (null for
+everyone else); the Worker presents it on heartbeat, complete and fail.
+A new claim mints a new token, so a run whose lease lapsed and was
+reclaimed — even by the same Worker identity — can no longer write.</td>
+  </tr><tr>
+    <td><code>attempts</code></td>
+    <td><code>Int!</code></td>
+    <td>Times the Task has been claimed.</td>
+  </tr><tr>
+    <td><code>maxAttempts</code></td>
+    <td><code>Int!</code></td>
+    <td>Claims allowed before the Task is marked FAILED.</td>
+  </tr><tr>
+    <td><code>lastError</code></td>
+    <td><code>String</code></td>
+    <td>The last Worker-reported error. Visible to the requester and platform
+admins only; null for everyone else.</td>
+  </tr><tr>
+    <td><code>cancelRequestedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set when a LEASED Task was cancelled; the Worker learns at its next
+heartbeat or completion and stops.</td>
+  </tr><tr>
+    <td><code>cancelledById</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outcome</code></td>
+    <td><code>String</code></td>
+    <td>Kind-specific result vocabulary. For `event.impact_prior.*`:
+`produced` or `no_prior_found`; for the web kind also
+`no_new_cases` (every case found was already proposed for the Event).</td>
+  </tr><tr>
+    <td><code>result</code></td>
+    <td><code>JSON</code></td>
+    <td>Raw Worker output, kept for audit. The typed result lives beside the
+subject (see `Event.caseProposals`).</td>
+  </tr><tr>
+    <td><code>model</code></td>
+    <td><code>String</code></td>
+    <td>Spend as the Worker reported it on completion.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>completedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-team"><code>Team</code> <span class="type-badge">object</span></h3><p>A team within an organisation, scoped to specific locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
@@ -6381,8 +7479,9 @@ the commenter's email.</p><table class="ref-table"><thead><tr><th>Field</th><th>
   </tr><tr>
     <td><code>role</code></td>
     <td><code>String</code></td>
-    <td>User role: viewer, analyst, admin, or pending. Null when caller is not
-authorised to see this user's role.</td>
+    <td>Global user role: member, admin, or pending (plus system roles). Null
+when caller is not authorised to see this user's role. Note: analyst is now
+a TEAM role (see TeamMemberRole), not a global role.</td>
   </tr><tr>
     <td><code>isActive</code></td>
     <td><code>Boolean</code></td>
@@ -6635,6 +7734,26 @@ matches. Managed by platform admins.</p><table class="ref-table"><thead><tr><th>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>Which trigger feeds this subscription: &quot;glitchtip&quot; (platform-admin
+GlitchTip alerts) or &quot;clear_alert&quot; (team-managed alert webhooks).</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team for a clear_alert subscription; null for platform-level
+glitchtip subscriptions.</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]!</code></td>
+    <td>(clear_alert) Glide-code allowlist on the alert's event types.
+Empty = all types within the team's location scope.</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>(clear_alert) Minimum alert severity (1-5). Null = all severities
+(including null-severity alerts). A set floor excludes null-severity alerts.</td>
   </tr><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>

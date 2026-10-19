@@ -1,0 +1,55 @@
+name: Bot / Exponential promote
+on:
+  pull_request:
+    types: [closed]
+    branches: [dev]
+env:
+  EXPO_API_URL: https://www.exponential.im
+  EXPO_PRODUCT: clear
+  EXPO_WORKSPACE: clear
+jobs:
+  promote:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with: { node-version: '20' }
+      - run: npm i -g exponential-cli
+      - name: Auth
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPONENTIAL_TOKEN }}
+        run: exponential auth login --token "$EXPO_TOKEN" --api-url "$EXPO_API_URL"
+      - name: Resolve merged PR -> Tickets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_URL: ${{ github.event.pull_request.base.repo.html_url }}
+        run: |
+          set -euo pipefail
+          # Child-PR refs (#123) come from the PR's commit messages via the API,
+          # not `git log base..head`: after a squash-merge the head commits are
+          # unreachable (branch auto-deleted), so that range fails on re-runs
+          # and races branch deletion on first runs.
+          {
+            echo "$PR_URL"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" \
+              --paginate --jq '.[].commit.message' \
+              | { grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -u \
+              | sed "s@^@${REPO_URL}/pull/@"
+          } | sort -u > /tmp/prs
+          jq -R -s -c 'split("\n") | map(select(length > 0))' /tmp/prs > /tmp/prs.json
+          exponential tickets list --product "$EXPO_PRODUCT" --workspace "$EXPO_WORKSPACE" --json > /tmp/all.json
+          jq --slurpfile prs /tmp/prs.json \
+            '[.tickets[] | select(.prUrl != null and (.prUrl as $u | $prs[0] | index($u)))]' \
+            /tmp/all.json > /tmp/tickets.json
+          echo "Matched $(jq length /tmp/tickets.json) ticket(s)."
+      - name: Promote
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          jq -r '.[].id' /tmp/tickets.json | while read -r cuid; do
+            exponential tickets update --id "$cuid" --status DONE
+            exponential tickets comment add --id "$cuid" -m "Shipped: $PR_URL"
+          done

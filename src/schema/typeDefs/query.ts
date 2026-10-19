@@ -30,10 +30,21 @@ export const queryTypeDef = gql`
     like signals when teamId is given; status defaults to "consideration"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
 
-    """Signals awaiting downstream processing (status = NEW), oldest-first — the
-    Dagster event-driven drain. \`source\` filters by DataSource name (e.g.
-    "dataminr"); \`first\` caps the batch (default 100, max 500). Admin/pipeline only."""
+    """Signals awaiting their first grouping (status = NEW, not retracted, not
+    yet linked to any event), oldest-first — the Dagster event-driven drain.
+    \`source\` filters by DataSource name (e.g. "dataminr"); \`first\` caps the
+    batch (default 100, max 500). Admin/pipeline only."""
     pendingSignals(first: Int, source: String): [Signal!]!
+
+    """Signals whose events must be re-aggregated: status NEEDS_RECOMPUTE, or
+    NEW but already linked to an event. Includes retracted rows, since removing
+    them from event totals is the work. Oldest-first; \`first\` caps the batch
+    (default 100, max 500). Admin/pipeline only."""
+    pendingRecomputes(first: Int): [Signal!]!
+
+    """An event's live (non-retracted) member signals, newest first. Uncapped
+    unless \`first\` is given. Admin/pipeline only."""
+    eventMembers(eventId: String!, first: Int): [Signal!]!
 
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean): [Event!]!
@@ -57,7 +68,7 @@ export const queryTypeDef = gql`
     open so it can reuse an existing link rather than minting a fresh
     token every time. Returns null when no live link exists - the
     caller then mints one via \`createPublicEventLink\`. Requires
-    \`requireContentReader\` (admin / analyst / viewer); pending users
+    \`requireContentReader\` (admin / member); pending users
     are blocked.
     """
     existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
@@ -255,6 +266,13 @@ export const queryTypeDef = gql`
     """Monthly Active Users time series - one point per UTC calendar
     month in the window. Admin only."""
     mauSeries(from: DateTime!, to: DateTime!): [MauPoint!]!
+
+    """Time to detection: how soon after an Event's onset CLEAR received its
+    first ingested Signal, in whole days, over a range (default: the last 12
+    ISO weeks) and optionally one location. Counts only. Admin only. Refuses
+    an inverted range or one over 364 days with BAD_USER_INPUT. See
+    \`DetectionMetrics\` and ADR-0011."""
+    detectionMetrics(input: DetectionMetricsInput): DetectionMetrics!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which
@@ -520,7 +538,12 @@ export const queryTypeDef = gql`
     """Recent delivery attempts for a subscription, newest first."""
     webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
 
-    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    # ─── Alert Webhooks (team-scoped clear_alert) ──────────────────────
+    """A team's clear_alert webhook subscriptions. Caller must be a team
+    admin, org admin, or platform admin for the team. Secrets are scrubbed."""
+    teamAlertWebhooks(teamId: String!): [WebhookSubscription!]!
+
+    # ─── Ground intel staging tier (admin only) ────────────────
     """All ground sources (per-source policy records), newest first."""
     groundSources: [GroundSource!]!
 
@@ -589,5 +612,45 @@ export const queryTypeDef = gql`
     canonical fetch for a queued groundMessage translation — text and
     detected language, no sender identity. Null if the message is gone."""
     groundMessageForTranslation(id: String!): GroundMessageForTranslation
+
+    # ─── Tasks (ADR-0010) ──────────────────────────────────────────────────
+    """One Task by id, or null. Any authenticated content reader; the
+    Task's status follows its Event's visibility. \`lastError\` is visible
+    to the requester and platform admins only."""
+    task(id: String!): Task
+
+    """Enrichment Tasks about an Event, newest first. Same gate as
+    \`task\`."""
+    eventTasks(eventId: String!): [Task!]!
+
+    """The caller's own requests: Tasks they asked for, across every Event,
+    newest first — "what happened to the thing I asked for". Always scoped
+    to the signed-in requester; \`status\` narrows it. \`lastError\` is
+    present (the caller is the requester). Any approved content reader
+    except the worker role, which requests nothing."""
+    myTasks(status: TaskStatus, limit: Int = 50, offset: Int = 0): [Task!]!
+
+    """History: the whole ImpactPriors Workers proposed for an Event in
+    V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
+    computed, see \`Event.computedImpactPriors\`) and none can be decided.
+    An \`accepted\` one follows the Event's visibility; a \`proposed\` one
+    is visible to its requester and to deciders (admins and analysts); a
+    \`rejected\` one to deciders only."""
+    eventImpactPriors(eventId: String!): [ImpactPrior!]!
+
+    """The Inbox's per-case Review items (V4): CaseProposals in one state
+    across every Event, newest first — \`proposed\` by default. Platform
+    admins and analysts only, so the list is exactly what the caller may
+    decide."""
+    caseProposals(state: CaseProposalState = proposed, limit: Int = 50, offset: Int = 0): [CaseProposal!]!
+
+    """Web cases proposed for an Event, newest first. Same visibility as
+    \`Event.caseProposals\`."""
+    eventCaseProposals(eventId: String!): [CaseProposal!]!
+
+    """Source URLs already rejected for an Event: a web Worker reads this
+    before searching and never proposes one again. The worker role,
+    platform admins and analysts."""
+    rejectedCaseUrls(eventId: String!): [String!]!
   }
 `;

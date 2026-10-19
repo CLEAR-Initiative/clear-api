@@ -9,7 +9,8 @@ export const eventTypeDef = gql`
     """LLM-generated signal descriptions as JSON."""
     descriptionSignals: JSON
     validFrom: DateTime!
-    validTo: DateTime!
+    """Event end / expiry. Null when no real end is known (not invented)."""
+    validTo: DateTime
     firstSignalCreatedAt: DateTime!
     lastSignalCreatedAt: DateTime!
     """When the real-world event actually STARTED (its onset) — parsed from the
@@ -39,10 +40,13 @@ export const eventTypeDef = gql`
     populationAffected: String
     """Estimated population displaced by the event (BigInt as string)."""
     populationDisplaced: String
-    """Aggregated casualties for the event (max across constituent signals)."""
+    """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float!
-    """Signals linked to this event."""
+    """Hash of the live member signal ids at the last LLM rewrite. Lets the
+    recompute skip the rewrite when membership is unchanged."""
+    rewriteMembersHash: String
+    """Signals linked to this event, excluding retracted ones."""
     signals: [Signal!]!
     """Alerts created from this event."""
     alerts: [Alert!]!

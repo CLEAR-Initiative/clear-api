@@ -1,0 +1,63 @@
+name: Release / prod
+# Mirrors release-dev.yml: a merge to `prod` tags a new MAJOR version,
+# builds the prod image and pushes it to GHCR. Deployment happens outside this repo.
+# A prod deploy is a MAJOR release (X.0.0); dev deploys that follow are MINOR
+# releases within it (X.1.0, X.2.0, …). `prod` merges are human-gated
+# (no-automerge), so the merge itself is the deploy gate.
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & push image
+    # workflow_dispatch's branch filter is NOT restricted by `push.branches`, and
+    # this job hardcodes environment=prod — so without this guard a manual run
+    # from another branch would publish that branch's code as :prod. Only ever
+    # tag/build from the prod branch.
+    if: github.ref == 'refs/heads/prod'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Idempotent: a re-run of a failed build reuses the version tag this commit
+      # already has instead of allocating the next one and orphaning the previous
+      # tag. A prod deploy bumps the MAJOR (dev bumps the MINOR), so dev and prod
+      # never compute the same next version and can't contend for a tag.
+      - name: Compute version
+        id: version
+        run: |
+          TAGS=$(git ls-remote --tags --refs origin)
+          EXISTING=$(echo "$TAGS" | awk -v sha="$GITHUB_SHA" '$1 == sha { sub(".*/", "", $2); print $2 }' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -n "$EXISTING" ]; then
+            echo "Reusing existing tag $EXISTING for $GITHUB_SHA"
+            echo "version=$EXISTING" >> "$GITHUB_OUTPUT"
+            echo "existing=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LATEST=$(echo "$TAGS" | sed 's#.*refs/tags/##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST:-0.0.0}"
+          echo "version=$((MAJOR + 1)).0.0" >> "$GITHUB_OUTPUT"
+          echo "existing=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create git tag
+        if: steps.version.outputs.existing != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION"
+
+      - uses: ./.github/actions/build-image
+        with:
+          environment: prod
+          version: ${{ steps.version.outputs.version }}
+          registry-token: ${{ secrets.GITHUB_TOKEN }}

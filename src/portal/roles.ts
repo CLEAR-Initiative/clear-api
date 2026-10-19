@@ -9,7 +9,7 @@ export type OrgRole = (typeof ORG_ROLES)[number];
 
 export const TEAM_ROLES = [
   "team_admin",
-  "field_coordinator",
+  "analyst",
   "emergency_response_manager",
   "team_member",
 ] as const;
@@ -30,8 +30,10 @@ export function canonicalOrgRole(role: string | null | undefined): OrgRole {
 export function canonicalTeamRole(role: string | null | undefined): TeamRole {
   const r = (role ?? "").toLowerCase();
   if (r === "team_admin" || r === "lead") return "team_admin";
-  if (r === "field_coordinator" || r === "analyst") return "field_coordinator";
+  if (r === "analyst") return "analyst";
   if (r === "emergency_response_manager") return "emergency_response_manager";
+  // `field_coordinator` is a removed role — merged into `team_member` — as is
+  // any other legacy value (e.g. `viewer`).
   return "team_member";
 }
 

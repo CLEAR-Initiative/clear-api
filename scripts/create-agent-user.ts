@@ -16,7 +16,7 @@
  *   bun run scripts/create-agent-user.ts --new-key  # rotate: mint a fresh key
  *
  * Env overrides:
- *   AGENT_USER_EMAIL  (default "agent@clear.dev")
+ *   AGENT_USER_EMAIL  (default "agent@clearinitiative.io")
  *   AGENT_USER_NAME   (default "CLEAR Agent")
  */
 import "dotenv/config";
@@ -24,7 +24,7 @@ import { prisma } from "../src/lib/prisma.js";
 import { generateApiKey } from "../src/utils/api-key.js";
 import { AGENT_ROLE } from "../src/utils/request-auth.js";
 
-const email = process.env.AGENT_USER_EMAIL ?? "agent@clear.dev";
+const email = process.env.AGENT_USER_EMAIL ?? "agent@clearinitiative.io";
 const name = process.env.AGENT_USER_NAME ?? "CLEAR Agent";
 const rotate = process.argv.includes("--new-key");
 

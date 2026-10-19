@@ -15,7 +15,12 @@ port="${TEST_DB_PORT:-55432}"
 cd "$(dirname "$0")/.."
 
 # postgis/postgis is amd64-only; on Apple silicon this runs under emulation.
-docker build --quiet --platform linux/amd64 -t clear-api-test-db tests/db >/dev/null
+# CI pre-builds and loads the image through the Actions cache and sets
+# TEST_DB_SKIP_BUILD=1 so this plain `docker build` (which cannot see the
+# buildx builder's cache) is not repeated; local runs always build.
+if [ "${TEST_DB_SKIP_BUILD:-0}" != "1" ]; then
+  docker build --quiet --platform linux/amd64 -t clear-api-test-db tests/db >/dev/null
+fi
 docker rm -f "$name" >/dev/null 2>&1 || true
 docker run -d --rm --platform linux/amd64 --name "$name" \
   -e POSTGRES_PASSWORD=test -e POSTGRES_DB=clear_test \

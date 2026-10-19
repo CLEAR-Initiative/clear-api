@@ -83,7 +83,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   getSessionMock.mockReset().mockResolvedValue({
-    user: { id: "admin-1", email: "admin@clear.dev", role: "admin", name: "Admin" },
+    user: { id: "admin-1", email: "admin@clearinitiative.io", role: "admin", name: "Admin" },
   });
   portalUpdateOrgMemberRoleMock.mockReset().mockResolvedValue({ id: "m1" });
   portalUpdateTeamMemberRoleMock.mockReset().mockResolvedValue({ id: "tm1" });
@@ -219,7 +219,7 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
   it("refuses to let an admin demote themselves", async () => {
     const res = await postRole("/portal/admin/users/role", {
       userId: "admin-1",
-      role: "viewer",
+      role: "member",
     });
 
     expect(res.status).toBe(400);
@@ -240,7 +240,7 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
 
     const res = await postRole("/portal/admin/users/role", {
       userId: "other-admin",
-      role: "viewer",
+      role: "member",
     });
 
     expect(res.status).toBe(400);

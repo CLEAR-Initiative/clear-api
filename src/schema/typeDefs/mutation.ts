@@ -47,7 +47,7 @@ export const mutationTypeDef = gql`
     the eventId + token and lives for \`ttlDays\` days (default 30, max
     90). Anyone who has the resulting URL can read the snapshot via
     the \`publicEvent(eventId, token)\` query. Caller must be able to
-    read the event normally (admin / analyst / viewer); pending users
+    read the event normally (admin / member); pending users
     are blocked.
     """
     createPublicEventLink(input: CreatePublicEventLinkInput!): CreatePublicEventLinkResult!
@@ -89,9 +89,9 @@ export const mutationTypeDef = gql`
     approveUser(userId: String!): ApproveUserResult!
 
     """
-    Set a user's global platform role (\`viewer\`, \`analyst\`, or
-    \`admin\`). Does not approve pending users — call \`approveUser\`
-    first. Requires global \`admin\`. Cannot demote yourself or the
+    Set a user's global platform role (\`member\` or \`admin\`;
+    \`analyst\` is now a team role). Does not approve pending users — call
+    \`approveUser\` first. Requires global \`admin\`. Cannot demote yourself or the
     last remaining admin. This is the product write path for the
     Users-tab dropdown on the operator app; the Developer Portal
     HTML form hits the same service via POST
@@ -111,8 +111,10 @@ export const mutationTypeDef = gql`
     updateProfile(input: UpdateProfileInput!): User!
 
     # ─── Alerts ────────────────────────────────────────────────────────────────
-    """Create an alert from an event, notifying subscribers."""
-    createAlert(input: CreateAlertInput!): Alert!
+    """Create an alert from an event, notifying subscribers. Returns \`null\`
+    (no error) when the event's types are all NRC-irrelevant, so the
+    pipeline can skip it without a thrown error / GlitchTip alert."""
+    createAlert(input: CreateAlertInput!): Alert
 
     """Update an existing alert."""
     updateAlert(id: String!, input: UpdateAlertInput!): Alert!
@@ -129,10 +131,12 @@ export const mutationTypeDef = gql`
     """Create a signal from a data source."""
     createSignal(input: CreateSignalInput!): Signal!
 
-    """Mark signals as done for the Dagster drain — the downstream pipeline calls
-    this after classify→group→alert. Sets status (PROCESSED by default, or FAILED)
-    and processedAt. Returns the number of rows updated. Idempotent. Admin/pipeline only."""
-    markSignalsProcessed(ids: [String!]!, status: SignalStatus): Int!
+    """Mark signals done for the Dagster drain, after classify→group→alert or
+    after recomputing a changed signal's events. Sets status (PROCESSED, or
+    FAILED) and processedAt. Pass exactly one of \`ids\` (unconditional) or
+    \`items\` (compare-and-set: a row is updated only if its revision still
+    matches). Returns rows updated. Idempotent. Admin/pipeline only."""
+    markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
 
     """Create a manual signal from a field officer, partner, or government source.
     Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
@@ -140,6 +144,11 @@ export const mutationTypeDef = gql`
 
     """Update a signal's severity score."""
     updateSignalSeverity(id: String!, severity: Int!): Signal!
+
+    """Record the glide code the pipeline grouped a signal with, so an event
+    recompute can reproduce grouping's per-signal stats fallback. Idempotent
+    (overwrites). Admin/pipeline only."""
+    setSignalGlideCode(id: String!, glideCode: String!): Signal!
 
     """Attach the clear-pipeline geoparser's result to an existing signal.
     Used for the manual-signal flow, where the signal is created via
@@ -156,16 +165,24 @@ export const mutationTypeDef = gql`
     creating an isolated event. Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
-    """Apply an in-place content revision to an existing signal (e.g. IDMC's
-    IDU rows being revised upstream — same id, changed figures/role/dates/
-    location). Only writes when input.contentHash differs from the stored
-    contentHash; a no-op retry (e.g. the pipeline's Redis seen-set re-sending
-    unchanged data) leaves the row and lastRevisedAt untouched. Admin/pipeline
-    only."""
+    """Apply an in-place change to a signal, identified by \`id\` or by
+    (\`sourceId\`, \`externalId\`). Content is written when contentHash differs,
+    \`retracted\` when the flag differs; either bumps \`revision\`, stamps
+    lastRevisedAt and moves a grouped signal to NEEDS_RECOMPUTE. A changed
+    \`rawS3Key\` alone is metadata-only; a no-op re-send is ignored. Admin/pipeline only."""
     updateSignalContent(input: UpdateSignalContentInput!): Signal!
 
     """Delete a signal."""
     deleteSignal(id: String!): Boolean!
+
+    """Overwrite an event's aggregates with values recomputed from scratch from
+    its live (non-retracted) member signals. Absent fields are left unchanged;
+    explicit nulls clear them. \`members\` is the (id, revision) snapshot the
+    values were computed from; if the live members differ, nothing is written
+    and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
+    it; do not retry).
+    Admin/pipeline only."""
+    setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
 
     """Create or replace the open (consideration) Location challenge for a Signal.
     Auth: any approved logged-in team member who can view the Signal. Queue only —
@@ -184,9 +201,9 @@ export const mutationTypeDef = gql`
 
     """Escalate an event: creates an alert (published) and records the user escalation.
     If the event already has a published alert, just records the user escalation.
-    teamId (optional) admits a team_admin or field_coordinator on that team
-    even without a global admin/analyst role — purely an authorisation hint,
-    not stored on the event."""
+    teamId (optional) admits any team member on that team even without a
+    global admin role — purely an authorisation hint, not stored on the
+    event."""
     escalateEvent(eventId: String!, userId: String!, teamId: String): EventEscalation!
 
     # ─── Data Sources ──────────────────────────────────────────────────────────
@@ -408,29 +425,33 @@ export const mutationTypeDef = gql`
     until the async enrichment task completes)."""
     removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
 
-    """Edit a crisis's title in place. Any authenticated user. Pass an empty
-    string to clear the field."""
+    """Edit a crisis's title in place. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
+    empty string to clear the field."""
     updateCrisisTitle(id: String!, title: String!): Crisis!
 
     """Edit the human-facing description on a crisis. The crisis's summary
     column stores JSON of the form description+tldr — this mutation updates
     just the description key and preserves any existing tldr bullets (which
-    the LLM enrichment task generates). Any authenticated user. Pass an
+    the LLM enrichment task generates). Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
     empty string to clear the description without disturbing the tldr."""
     updateCrisisDescription(id: String!, description: String!): Crisis!
 
     """Delete a crisis. Cascades the eventCrises join rows, user feedback,
-    and user comments via the FK constraints. Any authenticated user."""
+    and user comments via the FK constraints. Platform admins only."""
     deleteCrisis(id: String!): Boolean!
 
     """Append S3 keys to a crisis's attachments list. Idempotent — keys
     already present in the list are skipped silently. Returns the updated
-    crisis with the new list."""
+    crisis with the new list. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
 
     """Remove an S3 key from a crisis's attachments list. Does NOT delete
     the underlying S3 object (operators can clean those up separately).
-    Returns the updated crisis."""
+    Returns the updated crisis. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     removeCrisisAttachment(id: String!, key: String!): Crisis!
 
     """Set the LLM-generated NRC SAF needs analysis inside the crisis's
@@ -518,15 +539,15 @@ export const mutationTypeDef = gql`
     touchAnalysisSynced(frame: AnalysisFrameInput!): Boolean!
 
     """Create an analysis automation — a subscription that keeps a frame's
-    analysis current on a cadence (ADR-0007 §5). Admin / analyst."""
+    analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the owning team."""
     createAnalysisAutomation(input: CreateAnalysisAutomationInput!): AnalysisAutomation!
-    """Update an analysis automation's cadence or enabled flag. Admin / analyst."""
+    """Update an analysis automation's cadence or enabled flag. Admin, or a team analyst on the owning team."""
     updateAnalysisAutomation(id: String!, input: UpdateAnalysisAutomationInput!): AnalysisAutomation!
-    """Delete an analysis automation subscription. Admin / analyst."""
+    """Delete an analysis automation subscription. Admin, or a team analyst on the owning team."""
     deleteAnalysisAutomation(id: String!): Boolean!
 
     """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-    an existing PENDING request for the same frame. Admin / analyst."""
+    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team."""
     requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
     """Pipeline: mark a drained request GENERATED after its analysis was
     upserted. Admin / pipeline only."""
@@ -579,7 +600,7 @@ export const mutationTypeDef = gql`
     in place. To force a fresh row, tweak the file (any byte) or
     switch to a scripted upload that supplies its own report_id.
 
-    Restricted to admin / analyst — the ingest costs LLM + embedding
+    Restricted to admin — the ingest costs LLM + embedding
     credits per document. When DAGSTER_URL is unset the mutation
     still stages the PDF in S3 but returns a UNKNOWN-status job with
     no runId — useful for offline dev of the upload path."""
@@ -676,12 +697,12 @@ export const mutationTypeDef = gql`
     a warning. Returns the number of messages marked."""
     markGroundMessagesFailed(inputs: [GroundMessageFailureInput!]!): Int!
 
-    """Clear a message's failure marker for one stage (admin/analyst), so
+    """Clear a message's failure marker for one stage (admin), so
     it re-enters that drain's queue on the next pipeline run. No-op when
     the stage isn't marked failed. Returns the message."""
     retryGroundMessage(messageId: String!, stage: GroundPipelineStage!): GroundMessage!
 
-    """Translate one staged message's text into \`locale\` (admin/analyst)
+    """Translate one staged message's text into \`locale\` (admin)
     — any supported locale, \`en\` included (the source is the reporter's
     language). Queues it for the pipeline's translate drain and returns the
     current state; poll GroundMessage.translation(locale) while queued.
@@ -790,9 +811,9 @@ export const mutationTypeDef = gql`
     Not surfaced in the UI - use freely without schema changes."""
     metadata: JSON
     """Team the signal is being filed under. When present, the caller may be
-    a team-level team_admin or field_coordinator on that team instead of a
-    platform admin/analyst. Purely an authorisation hint — the signal itself
-    has no team column; team affiliation is derived from location scope.
+    any team member on that team instead of a global admin. Purely an
+    authorisation hint — the signal itself has no team column; team affiliation
+    is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
   }
@@ -848,12 +869,42 @@ export const mutationTypeDef = gql`
     pointName: String
   }
 
-  input UpdateSignalContentInput {
+  input SignalRevisionInput {
     id: String!
+    """The revision the caller read; the write applies only if it still matches."""
+    revision: Int!
+  }
+
+  """Absolute event aggregates from the pipeline's recompute. Absent fields are
+  left unchanged; explicit nulls clear them."""
+  input EventAggregatesInput {
+    severity: Int
+    casualties: Int
+    """BigInt as a decimal string."""
+    populationAffected: String
+    """BigInt as a decimal string."""
+    populationDisplaced: String
+    rank: Float!
+    title: String
+    description: String
+    rewriteMembersHash: String
+  }
+
+  input UpdateSignalContentInput {
+    """The signal's id. Alternatively use sourceId + externalId."""
+    id: String
+    """With externalId: the signal's natural key, unique per source."""
+    sourceId: String
+    externalId: String
     """Fingerprint of the incoming raw payload. Compared against the
-    signal's stored contentHash; the write (and lastRevisedAt) only
-    happens when they differ."""
+    signal's stored contentHash; content fields are written only when they
+    differ."""
     contentHash: String!
+    """Superseded upstream. Null or absent leaves the stored flag unchanged."""
+    retracted: Boolean
+    """Pointer to the raw payload blob in the S3 data lake. Null or absent
+    leaves it unchanged; a change alone is metadata-only (no revision bump)."""
+    rawS3Key: String
     rawData: JSON!
     url: String
     title: String
@@ -877,7 +928,7 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String!
-    validTo: String!
+    validTo: String
     firstSignalCreatedAt: String!
     lastSignalCreatedAt: String!
     """When the real-world event started (onset), parsed from signal text.
@@ -892,7 +943,7 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
-    """Aggregated casualties for the event (max across constituent signals)."""
+    """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float!
     """Latitude for automatic geo-resolution (resolves to nearest location in hierarchy)."""
@@ -900,9 +951,9 @@ export const mutationTypeDef = gql`
     """Longitude for automatic geo-resolution."""
     lng: Float
     """Team the event is being filed under. When present, the caller may be
-    a team-level team_admin or field_coordinator on that team instead of a
-    platform admin/analyst. Purely an authorisation hint — the event itself
-    has no team column; team affiliation is derived from location scope.
+    any team member on that team instead of a global admin. Purely an
+    authorisation hint — the event itself has no team column; team affiliation
+    is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
   }
@@ -913,8 +964,14 @@ export const mutationTypeDef = gql`
     description: String
     descriptionSignals: JSON
     validFrom: String
+    """ISO-8601 event end. Pass \`null\` to clear it ("ongoing / no known end");
+    omit it to leave the stored value unchanged."""
     validTo: String
+    """ISO-8601. Only ever moves earlier: a value later than the stored one is
+    ignored."""
     firstSignalCreatedAt: String
+    """ISO-8601. Only ever moves later: a value earlier than the stored one is
+    ignored, so an out-of-order signal can't pull it back."""
     lastSignalCreatedAt: String
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
@@ -927,7 +984,7 @@ export const mutationTypeDef = gql`
     populationAffected: String
     """Estimated population displaced (BigInt as string)."""
     populationDisplaced: String
-    """Aggregated casualties for the event (max across constituent signals)."""
+    """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float
   }
@@ -1074,5 +1131,125 @@ export const mutationTypeDef = gql`
     """Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
     schedules an immediate retry via the poller."""
     retryWebhookDelivery(id: String!): WebhookDelivery!
+  }
+
+  # ─── Alert Webhook Mutations (team-scoped clear_alert) ───────────────
+  extend type Mutation {
+    """Create a team-scoped clear_alert webhook subscription. The caller
+    must be a team admin, org admin, or platform admin for the team. The
+    response is the only place the plaintext secret is returned."""
+    createAlertWebhook(input: CreateAlertWebhookInput!): WebhookSubscription!
+
+    """Update a clear_alert webhook. Only provide fields you want to change.
+    The secret is never returned here — rotate it with
+    rotateAlertWebhookSecret."""
+    updateAlertWebhook(id: String!, input: UpdateAlertWebhookInput!): WebhookSubscription!
+
+    """Permanently delete a clear_alert webhook and its delivery history."""
+    deleteAlertWebhook(id: String!): Boolean!
+
+    """Generate a new secret for a clear_alert webhook and invalidate the
+    old one. Response includes the new plaintext secret (one-shot)."""
+    rotateAlertWebhookSecret(id: String!): WebhookSubscription!
+  }
+
+  # ─── Tasks (ADR-0010) ────────────────────────────────────────────────
+  extend type Mutation {
+    """Request an Event enrichment. Always fans out: one Task per enabled
+    source kind of the \`kind\` family (server-configured; today
+    \`event.impact_prior.web\`, the web search that proposes signals for
+    analysts to review), so every Worker proposes on the Event side by side
+    and nothing marks it done. Returns the open (PENDING / LEASED) Task per
+    kind, in configured order — an already-open one is returned unchanged
+    rather than duplicated; only kinds with none get a new Task. Same
+    rights as \`escalateEvent\`: a global admin anywhere; a team member
+    (incl. a team analyst) for the \`teamId\` they act on behalf of. Capped per
+    requester per UTC day, counting requests not Tasks (FORBIDDEN with
+    subCode \`DAILY_CAP\`); a request that creates nothing does not count.
+    The only family today is \`event.impact_prior\` (a historical name: the
+    ImpactPrior itself is computed, see \`Event.computedImpactPriors\`);
+    \`horizonYears\` (default 10) is how far back each Worker looks for
+    cases."""
+    requestEventEnrichment(
+      eventId: String!
+      kind: String = "event.impact_prior"
+      teamId: String
+      horizonYears: Int
+    ): [Task!]!
+
+    """Decide one web case (V4): a platform admin or a team analyst on the
+    case's team accepts or
+    rejects it, recorded as who, when and why (the Domain Ontology's
+    DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
+    \`rationale\` is required to reject and optional to accept.
+
+    Accepting writes the case into CLEAR as history, in one transaction:
+    a Signal (source \`web_enrichment\`, \`url\` the case's source,
+    \`publishedAt\` the date the incident happened, submitted by the decider)
+    on the CLEAR Event it describes — the Worker's matched Event, else the
+    Event that already carries the same URL, else a new historical Event
+    dated to the incident. A Signal with the same URL already in CLEAR is
+    reused, not duplicated. Historical Events never alert: their newest
+    Signal is the incident's date. The case's figures become Estimates on
+    that Event (\`media_report\`, \`event_caused\`). The returned case carries
+    \`resultSignalId\` and \`resultEventId\`.
+
+    Rejecting keeps the case, so its URL is never proposed again for that
+    Event."""
+    decideCaseProposal(id: String!, decision: CaseProposalDecision!, rationale: String): CaseProposal!
+
+    """Cancel a Task. The requester or a platform admin only. A PENDING
+    Task is CANCELLED at once; a LEASED one is flagged and becomes
+    CANCELLED at the Worker's next heartbeat, completion or failure (its
+    result is discarded). Any other status is CONFLICT."""
+    cancelTask(id: String!): Task!
+
+    """WORKER CONTRACT (\`worker\` role): lease up to \`limit\` of the
+    oldest claimable Tasks of exactly \`kind\` — PENDING, or LEASED past
+    their expiry — atomically (\`FOR UPDATE SKIP LOCKED\`), so no two
+    Workers hold the same Task. A Worker drains its own source kind
+    (\`event.impact_prior.web\`, …). The retired whole-prior kinds — the
+    bare \`event.impact_prior\` and \`event.impact_prior.clear\` — are
+    BAD_USER_INPUT. \`limit\` is
+    clamped to the platform cap. Each lease lasts TASK_LEASE_MINUTES;
+    heartbeat to keep it."""
+    claimTasks(kind: String!, limit: Int = 1): [Task!]!
+    # Each leased row carries a fresh \`leaseToken\`; keep it for the writes below.
+
+    """WORKER CONTRACT: keep a lease alive. Extends \`leaseExpiresAt\` by
+    TASK_LEASE_MINUTES from now. Only the lease owner, only while LEASED
+    (CONFLICT \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\` — the latter
+    means the lease lapsed and was reclaimed, so this \`leaseToken\` is
+    stale; stop working on it). If cancellation was requested, the Task becomes
+    CANCELLED and the Worker should stop."""
+    heartbeatTask(id: String!, leaseToken: String!): Task!
+
+    """WORKER CONTRACT: give the Task up with an error. It returns to
+    PENDING for another Worker (or attempt) while attempts remain, and
+    becomes FAILED with this as its \`lastError\` once \`maxAttempts\`
+    claims have been used. Only the lease owner, only while LEASED."""
+    failTask(id: String!, leaseToken: String!, error: String!): Task!
+
+    """WORKER CONTRACT: report the Task done. \`result\` is the raw output
+    (audit only). For an \`event.impact_prior.web\` Task, pass \`cases\`
+    and \`methodVersion\` (V4): one CaseProposal per case, each decided on
+    its own (outcome \`produced\`); a URL already proposed for the Event is
+    skipped (\`no_new_cases\` when all were); an empty list or none records
+    \`no_prior_found\`. Any other kind completes with \`result\` only. The
+    whole-prior \`impactPrior\` input was removed (2026-10-08): the
+    ImpactPrior is computed from history. Only the lease owner,
+    only while LEASED (CONFLICT
+    \`NOT_LEASED\`, FORBIDDEN \`NOT_LEASE_OWNER\`). If cancellation was
+    requested meanwhile the Task becomes CANCELLED and the result is
+    discarded."""
+    completeTask(
+      id: String!
+      leaseToken: String!
+      result: JSON!
+      usage: TaskUsageInput
+      cases: [CaseProposalInput!]
+      """Skill or handler version that produced \`cases\`; required with them."""
+      methodVersion: String
+    ): Task!
   }
 `;

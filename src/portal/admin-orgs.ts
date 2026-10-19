@@ -499,10 +499,13 @@ async function uniqueTeamSlugInOrg(orgId: string, baseSlug: string): Promise<str
 }
 
 function assertTeamRole(role: string): string {
+  // Accept the canonical TEAM_ROLES plus legacy values still seen on old rows
+  // (lead → team_admin; viewer / field_coordinator → team_member). `analyst` is
+  // now a canonical TEAM_ROLES value.
   const known =
     (TEAM_ROLES as readonly string[]).includes(role) ||
     role === "lead" ||
-    role === "analyst" ||
+    role === "field_coordinator" ||
     role === "viewer";
   if (!known) throw new Error(`Invalid team role "${role}".`);
   return canonicalTeamRole(role);
