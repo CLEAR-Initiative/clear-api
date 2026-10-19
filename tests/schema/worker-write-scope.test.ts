@@ -50,6 +50,13 @@ const REJECT_AFTER_READ = new Set([
   "createSignal",
   "updateSignalSeverity",
   "decideCaseProposal",
+  // Team alert-webhook mutations load the subscription / resolve the team's org
+  // for the team-ownership gate before rejecting a non-admin — a read-only
+  // lookup, never a write.
+  "createAlertWebhook",
+  "updateAlertWebhook",
+  "deleteAlertWebhook",
+  "rotateAlertWebhookSecret",
 ]);
 
 /** Prisma write operations a worker must never reach on any mutation. */

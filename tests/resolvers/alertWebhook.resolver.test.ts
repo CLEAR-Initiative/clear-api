@@ -170,6 +170,28 @@ describe("createAlertWebhook", () => {
     ).rejects.toThrow(/https/i);
     expect(createSpy).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "https://127.0.0.1/hook",
+    "https://169.254.169.254/latest/meta-data", // cloud metadata
+    "https://10.0.0.5/hook",
+    "https://192.168.1.10/hook",
+    "https://localhost/hook",
+  ])("rejects SSRF to internal host %s", async (targetUrl) => {
+    const { ctx, createSpy } = buildContext({ id: "u-admin", role: "admin" }, {});
+    await expect(
+      createAlertWebhook(undefined, { input: { ...CREATE_INPUT, targetUrl } }, ctx),
+    ).rejects.toThrow(/public address|loopback|private|link-local/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range minSeverity", async () => {
+    const { ctx, createSpy } = buildContext({ id: "u-admin", role: "admin" }, {});
+    await expect(
+      createAlertWebhook(undefined, { input: { ...CREATE_INPUT, minSeverity: 6 } }, ctx),
+    ).rejects.toThrow(/between 1 and 5/i);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("updateAlertWebhook", () => {
@@ -196,6 +218,17 @@ describe("updateAlertWebhook", () => {
     await expect(
       updateAlertWebhook(undefined, { id: "sub-1", input: { name: "x" } }, ctx),
     ).rejects.toThrow(/team admin or org admin/i);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty targetUrl instead of writing it (no silent break)", async () => {
+    const { ctx, updateSpy } = buildContext(
+      { id: "u-ta", role: "member" },
+      { teamMembership: { role: "team_admin" } },
+    );
+    await expect(
+      updateAlertWebhook(undefined, { id: "sub-1", input: { targetUrl: "" } }, ctx),
+    ).rejects.toThrow(/absolute URL|https/i);
     expect(updateSpy).not.toHaveBeenCalled();
   });
 

@@ -57,17 +57,18 @@ export async function fanOutAlertWebhooks(
 
   const matchedIds: string[] = [];
   for (const s of subs) {
-    const teamId = s.teamId as string; // where clause filtered out null
-    const scope = await scopeFor(teamId);
-    // `undefined` scope = team with no location bindings = wide-open (any location).
-    const inScope = scope === undefined || eventLocationIds.some((id) => scope.includes(id));
-    if (!inScope) continue;
+    // Apply the CHEAP in-memory filters first, so a subscription excluded by
+    // type/severity never pays for a (DB-backed) team-scope lookup.
     if (s.alertTypeFilter.length > 0 && !event.types.some((t) => s.alertTypeFilter.includes(t))) {
       continue;
     }
     if (s.minSeverity != null && (event.severity == null || event.severity < s.minSeverity)) {
       continue;
     }
+    const scope = await scopeFor(s.teamId as string); // where clause filtered out null
+    // `undefined` scope = team with no location bindings = wide-open (any location).
+    const inScope = scope === undefined || eventLocationIds.some((id) => scope.includes(id));
+    if (!inScope) continue;
     matchedIds.push(s.id);
   }
   if (matchedIds.length === 0) return 0;
@@ -97,24 +98,37 @@ export async function fanOutAlertWebhooks(
     url: `${frontendUrl}/event/${event.id}`,
   };
 
-  const deliveries = await Promise.all(
-    matchedIds.map((subscriptionId) =>
-      prisma.webhookDelivery.create({
-        data: {
-          subscriptionId,
-          eventId: `alert:${alert.id}`,
-          eventType: "alert.created",
-          requestBody: payload,
-        },
-        select: { id: true },
-      }),
-    ),
+  // Create + dispatch each delivery INDEPENDENTLY. A subscription deleted
+  // between matching and insert fails its FK — that one is skipped and logged,
+  // and must not strand (reject) the others' inserts, which would leave them
+  // with no nextRetryAt and never retried.
+  let dispatched = 0;
+  await Promise.all(
+    matchedIds.map(async (subscriptionId) => {
+      let deliveryId: string;
+      try {
+        const d = await prisma.webhookDelivery.create({
+          data: {
+            subscriptionId,
+            eventId: `alert:${alert.id}`,
+            eventType: "alert.created",
+            requestBody: payload,
+          },
+          select: { id: true },
+        });
+        deliveryId = d.id;
+      } catch (e) {
+        console.error(
+          `[alert-webhook] delivery insert failed for subscription ${subscriptionId} (likely deleted) — skipping:`,
+          e,
+        );
+        return;
+      }
+      dispatched += 1;
+      void attemptDelivery(prisma, deliveryId).catch((e) =>
+        console.error(`[alert-webhook] initial attempt ${deliveryId} threw:`, e),
+      );
+    }),
   );
-
-  for (const d of deliveries) {
-    void attemptDelivery(prisma, d.id).catch((e) =>
-      console.error(`[alert-webhook] initial attempt ${d.id} threw:`, e),
-    );
-  }
-  return deliveries.length;
+  return dispatched;
 }

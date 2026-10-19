@@ -99,8 +99,12 @@ router.post("/glitchtip", async (req: Request, res: Response) => {
   // logic would require special handling, so we filter in JS: cheaper
   // than expressing "empty OR contains X" in Prisma's where DSL and the
   // subscription set is small (dozens at most).
+  // ONLY glitchtip subscriptions receive GlitchTip events. `clear_alert`
+  // (team) subscriptions have an empty eventTypeFilter and would otherwise
+  // match every GlitchTip alert, leaking its raw payload to team endpoints and
+  // bypassing the team location/type/severity filters.
   const active = await prisma.webhookSubscription.findMany({
-    where: { active: true },
+    where: { active: true, source: "glitchtip" },
     select: { id: true, eventTypeFilter: true },
   });
 

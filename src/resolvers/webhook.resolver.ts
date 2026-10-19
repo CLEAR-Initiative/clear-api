@@ -52,6 +52,65 @@ function assertValidTargetUrl(url: string): void {
   );
 }
 
+/** True for hostnames/IP-literals that point at the server's own network:
+ *  loopback, RFC-1918 private, link-local (incl. the 169.254.169.254 cloud
+ *  metadata endpoint), and their IPv6 equivalents. */
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, ""); // strip IPv6 brackets
+  if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0" || h === "::") return true;
+  if (h === "::1") return true; // IPv6 loopback
+  if (/^fe[89ab]/.test(h)) return true; // IPv6 link-local fe80::/10
+  if (/^f[cd]/.test(h)) return true; // IPv6 unique-local fc00::/7
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 127 || a === 10) return true; // loopback / private
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata)
+  }
+  return false;
+}
+
+/** Stricter validation for TEAM-configured (`clear_alert`) webhooks: a public
+ *  https endpoint only. Team admins are less trusted than platform admins, so
+ *  block SSRF to internal services (loopback/private/link-local). NOTE: a
+ *  hostname that *resolves* to a private address (DNS rebinding) is not caught
+ *  here — delivery-time destination pinning is a follow-up. */
+export function assertPublicTargetUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new GraphQLError("Invalid targetUrl — must be an absolute URL", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  if (parsed.protocol !== "https:") {
+    throw new GraphQLError("Team webhook targetUrl must use https", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  if (isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new GraphQLError(
+      "targetUrl must be a public address (loopback, private, and link-local hosts are not allowed)",
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+}
+
+/** Validate an optional alert-severity floor. Null/undefined = no floor (fine);
+ *  a set value must be an integer in 1–5, else it would silence every alert. */
+function assertMinSeverity(minSeverity: number | null | undefined): void {
+  if (minSeverity == null) return;
+  if (!Number.isInteger(minSeverity) || minSeverity < 1 || minSeverity > 5) {
+    throw new GraphQLError("minSeverity must be an integer between 1 and 5", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+}
+
 /**
  * Resolve the org of a team, 404 if the team is gone. Shared by the
  * clear_alert create/update/delete/rotate/list paths so they all gate on
@@ -366,7 +425,8 @@ export const webhookResolvers = {
       const user = requireAuth(ctx);
       const orgId = await resolveTeamOrgId(ctx, args.input.teamId);
       await requireTeamAdminOrOrgAdmin(ctx.prisma, user, args.input.teamId, orgId);
-      assertValidTargetUrl(args.input.targetUrl);
+      assertPublicTargetUrl(args.input.targetUrl);
+      assertMinSeverity(args.input.minSeverity);
       // NB: the `secret` field is returned exactly ONCE, right here — list
       // reads scrub it, mirroring createWebhookSubscription.
       return ctx.prisma.webhookSubscription.create({
@@ -398,7 +458,12 @@ export const webhookResolvers = {
       ctx: Context,
     ) => {
       await loadAlertWebhookForWrite(ctx, args.id);
-      if (args.input.targetUrl) assertValidTargetUrl(args.input.targetUrl);
+      // Validate under the SAME condition used for the write below, so an empty
+      // string can't slip past a truthy check and then overwrite a good URL.
+      if (args.input.targetUrl !== undefined && args.input.targetUrl !== null) {
+        assertPublicTargetUrl(args.input.targetUrl);
+      }
+      assertMinSeverity(args.input.minSeverity);
       const row = await ctx.prisma.webhookSubscription.update({
         where: { id: args.id },
         data: {
