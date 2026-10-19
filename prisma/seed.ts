@@ -507,7 +507,6 @@ async function seed() {
       name: "sudan_witness",
       type: "api",
       isActive: true,
-      synonyms: ["Sudan Witness"],
       baseUrl:
         "https://services-eu1.arcgis.com/06WOSMGHsCnaFyMp/arcgis/rest/services/SUW_Incidents/FeatureServer/0",
       infoUrl: "https://www.info-res.org/sudan-witness/",
