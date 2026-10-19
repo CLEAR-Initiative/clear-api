@@ -3,12 +3,13 @@ import type { Context } from "../context.js";
 import { isPlatformAdmin, requireAuth, requireNonWorker } from "../utils/auth-guard.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
-// Valid team-member roles. Legacy values (lead/analyst/viewer) were folded
-// into (team_admin/field_coordinator/team_member) by the Phase-3 backfill,
-// so this list is intentionally the closed new set.
+// Valid team-member roles. Legacy values (lead/viewer) fold into
+// (team_admin/team_member); the removed `field_coordinator` folds into
+// `team_member`; legacy team `analyst` stays `analyst` (now a first-class team
+// role). This list is intentionally the closed new set.
 const TEAM_MEMBER_ROLES = [
   "team_admin",
-  "field_coordinator",
+  "analyst",
   "emergency_response_manager",
   "team_member",
 ] as const;

@@ -54,7 +54,10 @@ vi.mock("../../src/utils/geo-resolve.js", () => ({
   resolvePointsToCommonAncestor: vi.fn(),
   getLocationIdsWithDescendants: vi.fn(),
 }));
-vi.mock("../../src/utils/location-scope.js", () => ({
+// Keep the real `getTeamScopeLocationIds` (location-scoped analyst guard) over
+// mocked prisma + mocked geo; only the list filter builder is stubbed.
+vi.mock("../../src/utils/location-scope.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/utils/location-scope.js")>()),
   buildEventLocationFilterForTeam: vi.fn(),
 }));
 vi.mock("../../src/utils/activity-log.js", () => ({
@@ -119,8 +122,21 @@ function buildContext(
 }
 
 const ADMIN = { id: "admin1", role: "admin" };
-const ANALYST = { id: "an1", role: "analyst" };
-const VIEWER = { id: "v1", role: "viewer" };
+// A former global `analyst` is now a global `member`; elevated event actions
+// (updateEvent) require a TEAM `analyst` membership whose location scope covers
+// the event. Content creation (createEvent/escalateEvent) goes through
+// `requireTeamContentWriter` (any team membership on the supplied teamId).
+const MEMBER = { id: "v1", role: "member" };
+const TEAM_ANALYST = { id: "an1", role: "member" };
+
+// A team analyst on a wide-open team (no teamLocations) matches any location.
+const wideOpenAnalystScope = () => ({
+  teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "ta" }]) },
+  teamLocations: { findMany: vi.fn().mockResolvedValue([]) },
+});
+const noTeamScope = () => ({
+  teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
+});
 
 const { events, eventsByLocation, event } = eventResolvers.Query;
 const { createEvent, updateEvent, deleteEvent, escalateEvent } = eventResolvers.Mutation;
@@ -140,7 +156,7 @@ describe("Query.events", () => {
   it("returns the global feed with isDummy:false by default (no teamId)", async () => {
     const rows = [{ id: "e1" }];
     const findMany = vi.fn().mockResolvedValue(rows);
-    const ctx = buildContext(VIEWER, { events: { findMany } });
+    const ctx = buildContext(MEMBER, { events: { findMany } });
     await expect(events(null, {}, ctx)).resolves.toBe(rows);
     expect(findMany).toHaveBeenCalledWith({ where: { isDummy: false } });
     expect(buildEventLocationFilterForTeam).not.toHaveBeenCalled();
@@ -148,7 +164,7 @@ describe("Query.events", () => {
 
   it("includes dummy events when includeDummy is true", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { events: { findMany } });
+    const ctx = buildContext(MEMBER, { events: { findMany } });
     await events(null, { includeDummy: true }, ctx);
     expect(findMany).toHaveBeenCalledWith({ where: {} });
   });
@@ -157,7 +173,7 @@ describe("Query.events", () => {
     const teamFilter = { OR: [{ locationId: { in: ["L1"] } }] };
     (buildEventLocationFilterForTeam as ReturnType<typeof vi.fn>).mockResolvedValue(teamFilter);
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { events: { findMany } });
+    const ctx = buildContext(MEMBER, { events: { findMany } });
     await events(null, { teamId: "t1" }, ctx);
     expect(buildEventLocationFilterForTeam).toHaveBeenCalledWith(ctx.prisma, "t1");
     expect(findMany).toHaveBeenCalledWith({ where: { ...teamFilter, isDummy: false } });
@@ -165,7 +181,7 @@ describe("Query.events", () => {
 
   it("adds the translations include for a non-default locale", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { events: { findMany } }, "ar");
+    const ctx = buildContext(MEMBER, { events: { findMany } }, "ar");
     await events(null, {}, ctx);
     expect(findMany).toHaveBeenCalledWith({
       where: { isDummy: false },
@@ -187,7 +203,7 @@ describe("Query.eventsByLocation", () => {
   it("expands to descendants and queries the origin/destination/location OR filter", async () => {
     (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["L1", "L2"]);
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { events: { findMany } });
+    const ctx = buildContext(MEMBER, { events: { findMany } });
     await eventsByLocation(null, { locationId: "L1" }, ctx);
     expect(getLocationIdsWithDescendants).toHaveBeenCalledWith(ctx.prisma, "L1");
     expect(findMany).toHaveBeenCalledWith({
@@ -213,7 +229,7 @@ describe("Query.event", () => {
   it("fetches a single event by id without include for default locale", async () => {
     const row = { id: "e1" };
     const findUnique = vi.fn().mockResolvedValue(row);
-    const ctx = buildContext(VIEWER, { events: { findUnique } });
+    const ctx = buildContext(MEMBER, { events: { findUnique } });
     await expect(event(null, { id: "e1" }, ctx)).resolves.toBe(row);
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "e1" } });
   });
@@ -236,10 +252,22 @@ function baseCreateInput(over: Record<string, unknown> = {}) {
 }
 
 describe("Mutation.createEvent", () => {
-  it("throws FORBIDDEN for a viewer", async () => {
+  it("throws FORBIDDEN for a global member with no team membership (no teamId)", async () => {
     await expect(
-      createEvent(null, { input: baseCreateInput() as never }, buildContext(VIEWER)),
+      createEvent(null, { input: baseCreateInput() as never }, buildContext(MEMBER)),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("allows a global member who is on the supplied team (requireTeamContentWriter)", async () => {
+    // Any team membership on the supplied teamId is sufficient to file content.
+    const create = vi.fn().mockResolvedValue({ id: "e1", title: "T", types: ["flood"], severity: null });
+    const ctx = buildContext(MEMBER, {
+      events: { create },
+      signalEvents: { createMany: vi.fn() },
+      teamMembers: { findUnique: vi.fn().mockResolvedValue({ role: "team_member" }) },
+    });
+    await createEvent(null, { input: baseCreateInput({ locationId: "L1", teamId: "t1" }) as never }, ctx);
+    expect(create).toHaveBeenCalledOnce();
   });
 
   it("throws UNAUTHENTICATED when not logged in", async () => {
@@ -251,7 +279,7 @@ describe("Mutation.createEvent", () => {
   it("creates a point location from lat/lng when no explicit location given", async () => {
     (createPointLocation as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "point-loc" });
     const create = vi.fn().mockResolvedValue({ id: "e1", title: "T", types: ["flood"], severity: null });
-    const ctx = buildContext(ANALYST, { events: { create }, signalEvents: { createMany: vi.fn() } });
+    const ctx = buildContext(ADMIN, { events: { create }, signalEvents: { createMany: vi.fn() } });
     await createEvent(
       null,
       { input: baseCreateInput({ lat: 1.5, lng: 2.5 }) as never },
@@ -265,7 +293,7 @@ describe("Mutation.createEvent", () => {
     const signalsFindMany = vi.fn().mockResolvedValue([{ locationId: "S1", originId: null, destinationId: null }]);
     const queryRaw = vi.fn().mockResolvedValue([{ lat: 1, lng: 2 }]); // exactly one point
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(ADMIN, {
       signals: { findMany: signalsFindMany },
       $queryRaw: queryRaw,
       events: { create },
@@ -283,7 +311,7 @@ describe("Mutation.createEvent", () => {
     const queryRaw = vi.fn().mockResolvedValue([{ lat: 1, lng: 2 }, { lat: 3, lng: 4 }]);
     (resolvePointsToCommonAncestor as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "ancestor" });
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(ADMIN, {
       signals: { findMany: signalsFindMany },
       $queryRaw: queryRaw,
       events: { create },
@@ -296,7 +324,7 @@ describe("Mutation.createEvent", () => {
 
   it("converts population strings to BigInt and leaves undefined fields out", async () => {
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: 3 });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(ADMIN, {
       events: { create },
       signalEvents: { createMany: vi.fn() },
     });
@@ -320,7 +348,7 @@ describe("Mutation.createEvent", () => {
 
   it.each(["abc", "0x10", "1.5", "1,000"])("rejects invalid population string %j before any write", async (bad) => {
     const create = vi.fn();
-    const ctx = buildContext(ANALYST, { events: { create } });
+    const ctx = buildContext(ADMIN, { events: { create } });
     await expect(
       createEvent(null, { input: baseCreateInput({ lat: 1, lng: 2, populationAffected: bad }) as never }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
@@ -330,7 +358,7 @@ describe("Mutation.createEvent", () => {
 
   it("treats blank population as absent and trims padded values", async () => {
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
-    const ctx = buildContext(ANALYST, { events: { create }, signalEvents: { createMany: vi.fn() } });
+    const ctx = buildContext(ADMIN, { events: { create }, signalEvents: { createMany: vi.fn() } });
     await createEvent(
       null,
       { input: baseCreateInput({ locationId: "L1", populationAffected: "", populationDisplaced: " +5 " }) as never },
@@ -344,7 +372,7 @@ describe("Mutation.createEvent", () => {
   it("dedupes signalIds before creating signalEvents links", async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });
     const create = vi.fn().mockResolvedValue({ id: "e1", types: [], severity: null });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(ADMIN, {
       signals: { findMany: vi.fn().mockResolvedValue([]) },
       $queryRaw: vi.fn().mockResolvedValue([]),
       events: { create },
@@ -362,7 +390,7 @@ describe("Mutation.createEvent", () => {
 
   it("logs an activity for the actor on create", async () => {
     const create = vi.fn().mockResolvedValue({ id: "e1", title: "T", types: ["flood"], severity: 2 });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(ADMIN, {
       events: { create },
       signalEvents: { createMany: vi.fn() },
     });
@@ -370,7 +398,7 @@ describe("Mutation.createEvent", () => {
     expect(logActivity).toHaveBeenCalledWith(
       ctx.prisma,
       expect.objectContaining({
-        userId: ANALYST.id,
+        userId: ADMIN.id,
         action: "event.create",
         resourceType: "event",
         resourceId: "e1",
@@ -383,10 +411,40 @@ describe("Mutation.createEvent", () => {
 // Mutation.updateEvent
 // ---------------------------------------------------------------------------
 describe("Mutation.updateEvent", () => {
-  it("throws FORBIDDEN for a viewer", async () => {
+  it("throws FORBIDDEN for a global member with no team-analyst scope", async () => {
+    // The event resolves first; the location gate then denies a plain global
+    // member who holds no team membership.
+    const ctx = buildContext(MEMBER, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "l1", destinationId: null, locationId: null }) },
+      ...noTeamScope(),
+    });
     await expect(
-      updateEvent(null, { id: "e1", input: {} }, buildContext(VIEWER)),
+      updateEvent(null, { id: "e1", input: {} }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("allows a team analyst whose location scope covers the event", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "e1" });
+    const ctx = buildContext(TEAM_ANALYST, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "l1", destinationId: null, locationId: null }), update },
+      ...wideOpenAnalystScope(),
+    });
+    await updateEvent(null, { id: "e1", input: {} }, ctx);
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a team analyst whose location scope does NOT cover the event", async () => {
+    (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["other"]);
+    const update = vi.fn();
+    const ctx = buildContext(TEAM_ANALYST, {
+      events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "l1", destinationId: null, locationId: null }), update },
+      teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "ta" }]) },
+      teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "other" }]) },
+    });
+    await expect(
+      updateEvent(null, { id: "e1", input: {} }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("throws NOT_FOUND when the event does not exist", async () => {
@@ -533,9 +591,9 @@ describe("Mutation.updateEvent", () => {
 // Mutation.deleteEvent
 // ---------------------------------------------------------------------------
 describe("Mutation.deleteEvent", () => {
-  it("throws FORBIDDEN for an analyst (admin-only)", async () => {
+  it("throws FORBIDDEN for a non-admin member (even a team analyst) — admin-only", async () => {
     await expect(
-      deleteEvent(null, { id: "e1" }, buildContext(ANALYST)),
+      deleteEvent(null, { id: "e1" }, buildContext(MEMBER)),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -562,7 +620,7 @@ describe("Mutation.deleteEvent", () => {
 describe("Mutation.escalateEvent", () => {
   it("throws FORBIDDEN for a viewer", async () => {
     await expect(
-      escalateEvent(null, { eventId: "e1", userId: "u1" }, buildContext(VIEWER)),
+      escalateEvent(null, { eventId: "e1", userId: "u1" }, buildContext(MEMBER)),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -639,21 +697,21 @@ describe("Mutation.escalateEvent", () => {
 // ---------------------------------------------------------------------------
 describe("Event.title (locale overlay)", () => {
   it("returns the canonical title for the default locale", async () => {
-    const ctx = buildContext(VIEWER, {}, "en");
+    const ctx = buildContext(MEMBER, {}, "en");
     await expect(
       eventResolvers.Event.title({ id: "e1", title: "Canonical" }, {}, ctx),
     ).resolves.toBe("Canonical");
   });
 
   it("returns the localized title from the pre-included translation row", async () => {
-    const ctx = buildContext(VIEWER, {}, "ar");
+    const ctx = buildContext(MEMBER, {}, "ar");
     const parent = { id: "e1", title: "Canonical", translations: [{ data: { title: "مترجم" } }] };
     await expect(eventResolvers.Event.title(parent, {}, ctx)).resolves.toBe("مترجم");
     expect(enqueueTranslationDurable).not.toHaveBeenCalled();
   });
 
   it("falls back to canonical and enqueues a translation when the included row is empty", async () => {
-    const ctx = buildContext(VIEWER, {}, "ar");
+    const ctx = buildContext(MEMBER, {}, "ar");
     const parent = { id: "e1", title: "Canonical", translations: [] };
     await expect(eventResolvers.Event.title(parent, {}, ctx)).resolves.toBe("Canonical");
     expect(enqueueTranslationDurable).toHaveBeenCalledWith(ctx.prisma, "event", "e1", "ar");
@@ -661,7 +719,7 @@ describe("Event.title (locale overlay)", () => {
 
   it("uses the per-request translationLoader when translations were not pre-included", async () => {
     const load = vi.fn().mockResolvedValue({ title: "FromLoader" });
-    const ctx = buildContext(VIEWER, {}, "ar", { load });
+    const ctx = buildContext(MEMBER, {}, "ar", { load });
     const parent = { id: "e1", title: "Canonical" };
     await expect(eventResolvers.Event.title(parent, {}, ctx)).resolves.toBe("FromLoader");
     expect(load).toHaveBeenCalledWith("event", "e1");
@@ -681,7 +739,7 @@ describe("Event.signals", () => {
     }) as unknown as GraphQLResolveInfo;
 
   it("uses the pre-loaded fast path when parent.signalEvents is present", () => {
-    const ctx = buildContext(VIEWER, {});
+    const ctx = buildContext(MEMBER, {});
     const parent = { id: "e1", signalEvents: [{ signal: { id: "s1" } }, { signal: { id: "s2" } }] };
     const result = eventResolvers.Event.signals(parent, {}, ctx, infoWithSelections([]));
     expect(result).toEqual([{ id: "s1" }, { id: "s2" }]);
@@ -689,7 +747,7 @@ describe("Event.signals", () => {
 
   it("omits location includes when the selection does not ask for them", async () => {
     const findMany = vi.fn().mockResolvedValue([{ signal: { id: "s1" } }]);
-    const ctx = buildContext(VIEWER, { signalEvents: { findMany } }, "ar");
+    const ctx = buildContext(MEMBER, { signalEvents: { findMany } }, "ar");
     await eventResolvers.Event.signals({ id: "e1" }, {}, ctx, infoWithSelections(["source"]));
     const include = findMany.mock.calls[0][0].include.signal.include;
     expect(include.generalLocation).toBeUndefined();
@@ -698,7 +756,7 @@ describe("Event.signals", () => {
   });
 
   it("hides retracted signals on the pre-loaded fast path", () => {
-    const ctx = buildContext(VIEWER, {});
+    const ctx = buildContext(MEMBER, {});
     const parent = {
       id: "e1",
       signalEvents: [{ signal: { id: "s1", retracted: false } }, { signal: { id: "s2", retracted: true } }],
@@ -709,7 +767,7 @@ describe("Event.signals", () => {
 
   it("adds location includes when the selection requests a signal location", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { signalEvents: { findMany } }, "ar");
+    const ctx = buildContext(MEMBER, { signalEvents: { findMany } }, "ar");
     await eventResolvers.Event.signals({ id: "e1" }, {}, ctx, infoWithSelections(["generalLocation"]));
     const include = findMany.mock.calls[0][0].include.signal.include;
     expect(include.generalLocation).toEqual({ include: { translations: { where: { locale: "ar" } } } });
@@ -718,7 +776,7 @@ describe("Event.signals", () => {
 
 describe("Event.originLocation / generalLocation", () => {
   it("returns the pre-loaded location without a query (fast path)", () => {
-    const ctx = buildContext(VIEWER, {});
+    const ctx = buildContext(MEMBER, {});
     const preloaded = { id: "L1" };
     expect(
       eventResolvers.Event.originLocation({ originId: "L1", originLocation: preloaded }, {}, ctx),
@@ -726,13 +784,13 @@ describe("Event.originLocation / generalLocation", () => {
   });
 
   it("returns null when there is no originId", () => {
-    const ctx = buildContext(VIEWER, {});
+    const ctx = buildContext(MEMBER, {});
     expect(eventResolvers.Event.originLocation({ originId: null }, {}, ctx)).toBeNull();
   });
 
   it("queries locations.findUnique with the locale include when not pre-loaded", async () => {
     const findUnique = vi.fn().mockResolvedValue({ id: "L1" });
-    const ctx = buildContext(VIEWER, { locations: { findUnique } }, "fr");
+    const ctx = buildContext(MEMBER, { locations: { findUnique } }, "fr");
     await eventResolvers.Event.generalLocation({ locationId: "L1" }, {}, ctx);
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "L1" },

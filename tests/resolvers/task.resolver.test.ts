@@ -168,8 +168,12 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   const activityLogs = { create: vi.fn(async () => ({})) };
   // Membership fixture: the coordinator belongs to team-a only; the ERM
   // carries the emergency_response_manager role on team-a.
+  // `u-coord` is a plain team_member on team-a (the removed `field_coordinator`
+  // role folds into team_member); `u-tanalyst` is the team `analyst` (the
+  // elevated decider role); `u-erm` carries the emergency_response_manager role.
   const MEMBERSHIPS: Record<string, Record<string, string>> = {
-    "u-coord": { "team-a": "field_coordinator" },
+    "u-coord": { "team-a": "team_member" },
+    "u-tanalyst": { "team-a": "analyst" },
     "u-erm": { "team-a": "emergency_response_manager" },
   };
   const teamMembers = {
@@ -180,6 +184,14 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
         return role ? { teamId, userId, role } : null;
       },
     ),
+    // deciderTeamIds / requireCaseProposalInboxAccess ask for a user's memberships
+    // filtered by role (either a bare role or a `{ in: [...] }` set).
+    findMany: vi.fn(async ({ where }: { where: { userId: string; role: string | { in: string[] } } }) => {
+      const wanted = typeof where.role === "string" ? [where.role] : where.role.in;
+      return Object.entries(MEMBERSHIPS[where.userId] ?? {})
+        .filter(([, role]) => wanted.includes(role))
+        .map(([teamId, role]) => ({ teamId, role }));
+    }),
     // The inbox gate asks "is this user an ERM on any team?".
     findFirst: vi.fn(async ({ where }: { where: { userId: string; role: string } }) => {
       const has = Object.values(MEMBERSHIPS[where.userId] ?? {}).includes(where.role);
@@ -222,12 +234,20 @@ function ctx(
 }
 
 const admin: User = { id: "u-admin", role: "admin" };
-const analyst: User = { id: "u-analyst", role: "analyst" };
-const viewer: User = { id: "u-viewer", role: "viewer" };
-const coordinator: User = { id: "u-coord", role: "viewer" };
-// An emergency_response_manager: global `viewer` plus the ERM team membership
+// The primary requester. requestEventEnrichment is gated by
+// `requireTeamContentWriter(teamId)`; the fan-out/dedupe/cap tests call it with
+// NO teamId, where only a global admin passes — so the requester is an admin.
+// (The team-scoped writer path is covered explicitly in the gate tests.) The id
+// stays "u-analyst" so the requester-attribution assertions are unchanged.
+const analyst: User = { id: "u-analyst", role: "admin" };
+const viewer: User = { id: "u-viewer", role: "member" };
+// A plain team member on team-a (the removed `field_coordinator` → team_member).
+const coordinator: User = { id: "u-coord", role: "member" };
+// A team `analyst` on team-a — the elevated decider role (global member).
+const teamAnalyst: User = { id: "u-tanalyst", role: "member" };
+// An emergency_response_manager: global `member` plus the ERM team membership
 // in the fixture. Sees the whole inbox (ground + proposed cases) in Phase 1.
-const erm: User = { id: "u-erm", role: "viewer" };
+const erm: User = { id: "u-erm", role: "member" };
 const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
@@ -294,8 +314,8 @@ describe("requestEventEnrichment", () => {
   describe("gate — the same as escalateEvent", () => {
     it.each([
       ["admin", admin, undefined],
-      ["analyst", analyst, undefined],
-      ["team field_coordinator with their teamId", coordinator, "team-a"],
+      ["team analyst with their teamId", teamAnalyst, "team-a"],
+      ["team member with their teamId", coordinator, "team-a"],
     ])("allows a %s", async (_name, user, teamId) => {
       const prisma = makePrisma();
       const result = await requestEventEnrichment(null, { eventId: "ev-1", teamId }, ctx(user, prisma));
@@ -412,19 +432,24 @@ describe("requestEventEnrichment", () => {
     });
 
     it("redacts the open Task's lastError for a different requester, on both dedupe paths", async () => {
-      const open = makeTask({ id: "t-open", kind: OTHER_KIND, requesterId: "u-someone-else", lastError: "attempt 1 failed" });
+      // The open Task was requested by the team member u-coord. Both dedupe
+      // callers below are team writers on team-a (so they pass the content-writer
+      // gate), but only the requester and a platform admin may see lastError.
+      const open = makeTask({ id: "t-open", kind: OTHER_KIND, requesterId: "u-coord", lastError: "attempt 1 failed" });
       const prisma = makePrisma();
       prisma.task.findFirst.mockImplementation(openFor(OTHER_KIND, open));
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, prisma)))[0].lastError).toBeNull();
+      // A different team writer (the ERM) dedupes onto it → lastError redacted.
+      expect((await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(erm, prisma)))[0].lastError).toBeNull();
+      // The task's own requester, and a platform admin, both see it.
+      expect((await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(coordinator, prisma)))[0].lastError).toBe("attempt 1 failed");
       expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(admin, prisma)))[0].lastError).toBe("attempt 1 failed");
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx({ id: "u-someone-else", role: "analyst" }, prisma)))[0].lastError).toBe("attempt 1 failed");
 
       const racing = makePrisma();
       racing.task.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(open);
       racing.task.create.mockRejectedValueOnce(
         new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
       );
-      expect((await requestEventEnrichment(null, { eventId: "ev-1" }, ctx(analyst, racing)))[0].lastError).toBeNull();
+      expect((await requestEventEnrichment(null, { eventId: "ev-1", teamId: "team-a" }, ctx(erm, racing)))[0].lastError).toBeNull();
     });
 
     it("creates every missing kind in one transaction — a failure midway leaves no half-created request", async () => {
@@ -559,9 +584,9 @@ describe("requestEventEnrichment", () => {
 describe("claimTasks", () => {
   it.each([
     ["admin", admin],
-    ["analyst", analyst],
+    ["team analyst", teamAnalyst],
     ["pipeline", pipeline],
-    ["viewer", viewer],
+    ["member", viewer],
   ])("is FORBIDDEN for a %s — only the worker role claims", async (_name, user) => {
     const prisma = makePrisma();
     const err = await errorOf(claimTasks(null, { kind: WEB_KIND }, ctx(user, prisma)));
@@ -791,8 +816,8 @@ describe("cancelTask", () => {
   });
 
   it.each([
-    ["another analyst", { id: "u-analyst-2", role: "analyst" }],
-    ["a viewer", viewer],
+    ["another non-admin member", { id: "u-analyst-2", role: "member" }],
+    ["a member", viewer],
     ["the worker holding it", worker],
   ])("is FORBIDDEN for %s", async (_name, user) => {
     const prisma = seeded(leased({ requesterId: "u-analyst" }));
@@ -1052,12 +1077,10 @@ describe("case reads (V4)", () => {
     expect(prisma.caseProposal.findMany).not.toHaveBeenCalled();
   });
 
-  it("caseProposals admits an emergency_response_manager (viewer + ERM team role)", async () => {
+  it("caseProposals is FORBIDDEN for a plain ERM (case proposals are admin + team-analyst only, not the ground inbox)", async () => {
     const prisma = makePrisma();
-    await caseProposalsQuery(null, {}, ctx(erm, prisma));
-    expect(prisma.caseProposal.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { state: "proposed" } }),
-    );
+    expect((await errorOf(caseProposalsQuery(null, {}, ctx(erm, prisma)))).extensions.code).toBe("FORBIDDEN");
+    expect(prisma.caseProposal.findMany).not.toHaveBeenCalled();
   });
 
   it("eventCaseProposals follows the ImpactPrior visibility rule", async () => {
@@ -1071,7 +1094,7 @@ describe("case reads (V4)", () => {
     prisma.caseProposal.findMany.mockResolvedValue(rows);
     const ids = async (user: User) => (await eventCaseProposals(null, { eventId: "ev-1" }, ctx(user, prisma))).map((r) => r.id);
     expect(await ids(admin)).toEqual(["cp-accepted", "cp-mine", "cp-theirs", "cp-rejected"]);
-    expect(await ids({ id: "u-analyst", role: "viewer" })).toEqual(["cp-accepted", "cp-mine"]);
+    expect(await ids({ id: "u-analyst", role: "member" })).toEqual(["cp-accepted", "cp-mine"]);
     expect(await ids(viewer)).toEqual(["cp-accepted"]);
     // The requester link is resolver plumbing, not part of the row returned.
     expect((await eventCaseProposals(null, { eventId: "ev-1" }, ctx(admin, prisma)))[0]).not.toHaveProperty("task");

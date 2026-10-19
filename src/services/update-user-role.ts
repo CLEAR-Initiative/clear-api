@@ -9,7 +9,7 @@ import { GraphQLError } from "graphql";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { logActivity } from "../utils/activity-log.js";
 
-export const GLOBAL_ROLES = ["viewer", "analyst", "admin"] as const;
+export const GLOBAL_ROLES = ["member", "admin"] as const;
 export type GlobalRole = (typeof GLOBAL_ROLES)[number];
 
 export function isGlobalRole(role: string): role is GlobalRole {
@@ -29,7 +29,7 @@ export async function updateUserGlobalRole(
   }
   if (!isGlobalRole(role)) {
     throw new GraphQLError(
-      `Invalid role "${role}". Must be viewer, analyst, or admin.`,
+      `Invalid role "${role}". Must be member or admin.`,
       { extensions: { code: "BAD_USER_INPUT" } },
     );
   }

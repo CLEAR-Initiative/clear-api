@@ -35,10 +35,12 @@ export const organisationTypeDef = gql`
     member
   }
 
-  """Role within a team."""
+  """Role within a team. \`analyst\` carries elevated, location-scoped powers
+  (promote alerts, decide tasks/cases, manage team analyses, act on
+  events/alerts/crises within the team's location scope)."""
   enum TeamMemberRole {
     team_admin
-    field_coordinator
+    analyst
     emergency_response_manager
     team_member
   }

@@ -65,7 +65,7 @@ describe("Event.estimates", () => {
   });
 
   it("returns the whole history of the Event's figures, newest first, to any content reader", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimates({ id: "ev-1" }, {}, context);
     expect(prisma.estimate.findMany).toHaveBeenCalledWith({
       where: { eventId: "ev-1" },
@@ -80,7 +80,7 @@ describe("Event.estimates", () => {
   });
 
   it("narrows to one metric and to the not-yet-superseded Estimates", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "analyst" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimates({ id: "ev-1" }, { metric: "people_displaced_new", current: true }, context);
     expect(prisma.estimate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -90,7 +90,7 @@ describe("Event.estimates", () => {
   });
 
   it("treats current: false and a null metric as no filter", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "analyst" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimates({ id: "ev-1" }, { metric: null, current: false }, context);
     expect(prisma.estimate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { eventId: "ev-1" } }),
@@ -100,31 +100,31 @@ describe("Event.estimates", () => {
 
 describe("Estimate fields", () => {
   it("supersedes is null without a lookup when the Estimate corrects nothing", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     expect(await estimateResolvers.Estimate.supersedes(makeEstimate(), {}, context)).toBeNull();
     expect(prisma.estimate.findUnique).not.toHaveBeenCalled();
   });
 
   it("supersedes loads the Estimate it corrects", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimateResolvers.Estimate.supersedes(makeEstimate({ supersedesId: "est-0" }), {}, context);
     expect(prisma.estimate.findUnique).toHaveBeenCalledWith({ where: { id: "est-0" } });
   });
 
   it("supersededBy finds the one correction pointing at it", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimateResolvers.Estimate.supersededBy(makeEstimate(), {}, context);
     expect(prisma.estimate.findUnique).toHaveBeenCalledWith({ where: { supersedesId: "est-1" } });
   });
 
   it("createdBy is null for system-written Estimates", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     expect(await estimateResolvers.Estimate.createdBy(makeEstimate(), {}, context)).toBeNull();
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
   it("event resolves the Estimate's subject", async () => {
-    const { context, prisma } = makeContext({ id: "u-1", role: "viewer" });
+    const { context, prisma } = makeContext({ id: "u-1", role: "member" });
     await estimateResolvers.Estimate.event(makeEstimate(), {}, context);
     expect(prisma.events.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "ev-1" } });
   });

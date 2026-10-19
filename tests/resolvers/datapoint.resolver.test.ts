@@ -56,7 +56,7 @@ const {
   upsertReportDatapoints, refreshAggregatedDatapoints,
 } = datapointResolvers.Mutation;
 
-const VIEWER = { id: "u1", role: "viewer" };
+const VIEWER = { id: "u1", role: "member" };
 const ADMIN = { id: "u2", role: "admin" };
 const PIPELINE = { id: "u3", role: "pipeline" };
 const PENDING = { id: "u4", role: "pending" };

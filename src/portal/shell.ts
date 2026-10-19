@@ -75,10 +75,8 @@ function formatAccountLabel(role?: string | null): string {
   switch (role) {
     case "admin":
       return "Admin Account";
-    case "analyst":
-      return "Analyst Account";
-    case "viewer":
-      return "Viewer Account";
+    case "member":
+      return "Member Account";
     default:
       return "Developer Account";
   }

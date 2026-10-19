@@ -6,9 +6,16 @@
  * the four Task mutations. It still reads content like any approved user.
  * This walks every Mutation field in the executable schema and calls its
  * resolver as a worker: anything outside the four must reject with
- * FORBIDDEN before touching the database. A new mutation gated by bare
+ * FORBIDDEN and never WRITE. A new mutation gated by bare
  * `requireAuth` / `requireContentReader` fails here — use
  * `requireNonWorker` / `requireNonWorkerContentReader` instead.
+ *
+ * Most reject before any DB access at all. The location-scoped mutations in
+ * REJECT_AFTER_READ are the exception: their elevated gate
+ * (`requireAdminOrTeamAnalystForLocations` / the CaseProposal decide gate)
+ * needs the target entity's locations/team, so the resolver reads the entity
+ * (read-only) before the gate rejects the worker. The worker still performs no
+ * write — that is the invariant pinned here.
  *
  * DB-FREE: `context.prisma` is a proxy that records and throws on any access.
  */
@@ -27,6 +34,31 @@ import type { Context } from "../../src/context.js";
 
 /** The only mutations a worker may reach (ADR-0010). */
 const WORKER_MUTATIONS = new Set(["claimTasks", "heartbeatTask", "completeTask", "failTask"]);
+
+/**
+ * Mutations whose elevated gate is scoped to the target entity's locations or
+ * team (events/alerts/crises/signals + the CaseProposal decide gate). The gate
+ * needs the entity first, so the resolver performs a read-only lookup before it
+ * rejects the worker. These still never WRITE as a worker — asserted below.
+ */
+const REJECT_AFTER_READ = new Set([
+  "createAlert",
+  "updateAlert",
+  "updateEvent",
+  "addEventToCrisis",
+  "removeEventFromCrisis",
+  "createSignal",
+  "updateSignalSeverity",
+  "decideCaseProposal",
+]);
+
+/** Prisma write operations a worker must never reach on any mutation. */
+const WRITE_OPS = new Set([
+  "create", "createMany", "update", "updateMany", "upsert",
+  "delete", "deleteMany", "executeRaw", "executeRawUnsafe",
+]);
+const writeTouches = (touched: string[]) =>
+  touched.filter((t) => WRITE_OPS.has(t.split(".")[1] ?? t));
 
 /**
  * Mutations that read no identity at all — a worker key grants nothing an
@@ -156,12 +188,24 @@ describe("worker role write scope", () => {
   const denied = Object.keys(mutationFields).filter(
     (name) => !WORKER_MUTATIONS.has(name) && !PUBLIC_MUTATIONS.has(name),
   );
+  const deniedBeforeRead = denied.filter((name) => !REJECT_AFTER_READ.has(name));
 
-  it.each(denied)("%s rejects the worker with FORBIDDEN before touching the database", async (name) => {
+  it.each(deniedBeforeRead)("%s rejects the worker with FORBIDDEN before touching the database", async (name) => {
     const { error, touched } = await call(mutationFields[name]!, WORKER);
     expect(touched).toEqual([]);
     expect(error).toBeInstanceOf(GraphQLError);
     expect((error as GraphQLError).extensions.code).toBe("FORBIDDEN");
+  });
+
+  // The location/decide-scoped gates need the target entity first, so these may
+  // perform a read-only lookup (or an input-validation throw) before rejecting
+  // the worker. The sentinel prisma throws on that first (read-only) access, so
+  // the FORBIDDEN isn't observable here — the per-resolver tests pin it. What
+  // this pins is the write-surface invariant: the worker never WRITES.
+  it.each([...REJECT_AFTER_READ])("%s rejects the worker without ever writing", async (name) => {
+    const { error, touched } = await call(mutationFields[name]!, WORKER);
+    expect(error).toBeTruthy();
+    expect(writeTouches(touched)).toEqual([]);
   });
 
   it.each([...WORKER_MUTATIONS])("%s admits the worker", async (name) => {

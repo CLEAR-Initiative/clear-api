@@ -28,7 +28,7 @@ const { entityStats } = paginationResolvers.Query;
 
 const ctx = {
   prisma,
-  user: { id: "entity-stats-test", role: "viewer" },
+  user: { id: "entity-stats-test", role: "member" },
   session: null,
   authMethod: "session",
 } as unknown as Context;

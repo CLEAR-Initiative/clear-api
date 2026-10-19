@@ -23,7 +23,7 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
   } as Context;
 }
 
-const ANALYST = { id: "u-analyst", role: "analyst" };
+const MEMBER = { id: "u-analyst", role: "member" };
 const PENDING = { id: "u-pending", role: "pending" };
 
 const { signalLocationChallenges } = signalResolvers.Query;
@@ -40,7 +40,7 @@ describe("Query.signalLocationChallenges", () => {
 
   it("defaults status to consideration and applies no signal filter without teamId", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(ANALYST, { signalLocationChallenges: { findMany } });
+    const ctx = buildContext(MEMBER, { signalLocationChallenges: { findMany } });
     await signalLocationChallenges(null, {}, ctx);
     expect(findMany.mock.calls[0][0].where).toEqual({ status: "consideration" });
   });
@@ -49,7 +49,7 @@ describe("Query.signalLocationChallenges", () => {
     const findMany = vi.fn().mockResolvedValue([]);
     // buildLocationFilterForTeam returns undefined when the team has no scope
     // locations → the query is unfiltered beyond status.
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(MEMBER, {
       signalLocationChallenges: { findMany },
       teamLocations: { findMany: vi.fn().mockResolvedValue([]) },
     });
@@ -80,21 +80,21 @@ describe("Mutation.submitSignalLocationChallenge", () => {
   });
 
   it("throws NOT_FOUND when the signal does not exist", async () => {
-    const ctx = buildContext(ANALYST, { signals: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { signals: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(
       submitSignalLocationChallenge(null, { input: base }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 
   it("rejects a half point (lng without lat)", async () => {
-    const ctx = buildContext(ANALYST, { signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }) } });
+    const ctx = buildContext(MEMBER, { signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }) } });
     await expect(
       submitSignalLocationChallenge(null, { input: { ...base, proposedLng: 30 } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
   });
 
   it("rejects an out-of-range latitude", async () => {
-    const ctx = buildContext(ANALYST, { signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }) } });
+    const ctx = buildContext(MEMBER, { signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }) } });
     await expect(
       submitSignalLocationChallenge(null, { input: { ...base, proposedLng: 30, proposedLat: 999 } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
@@ -103,7 +103,7 @@ describe("Mutation.submitSignalLocationChallenge", () => {
   it("upserts a bare challenge with createdBy and the open-status key, no geometry write", async () => {
     const upsert = vi.fn().mockResolvedValue({ id: "C1" });
     const signalsUpdate = vi.fn();
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(MEMBER, {
       signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }), update: signalsUpdate },
       signalLocationChallenges: { upsert },
     });
@@ -120,7 +120,7 @@ describe("Mutation.submitSignalLocationChallenge", () => {
 
   it("upserts a correction with a valid point", async () => {
     const upsert = vi.fn().mockResolvedValue({ id: "C2" });
-    const ctx = buildContext(ANALYST, {
+    const ctx = buildContext(MEMBER, {
       signals: { findUnique: vi.fn().mockResolvedValue({ id: "S1" }) },
       signalLocationChallenges: { upsert },
     });
@@ -136,7 +136,7 @@ describe("Signal.locationChallenge field resolver", () => {
     const findFirst = vi.fn();
     const preloaded = { id: "C1" };
     const out = await locationChallenge(
-      { id: "S1", locationChallenge: preloaded }, {}, buildContext(ANALYST, { signalLocationChallenges: { findFirst } }),
+      { id: "S1", locationChallenge: preloaded }, {}, buildContext(MEMBER, { signalLocationChallenges: { findFirst } }),
     );
     expect(out).toBe(preloaded);
     expect(findFirst).not.toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe("Signal.locationChallenge field resolver", () => {
 
   it("loads the open row when not preloaded", async () => {
     const findFirst = vi.fn().mockResolvedValue({ id: "C1" });
-    await locationChallenge({ id: "S1" }, {}, buildContext(ANALYST, { signalLocationChallenges: { findFirst } }));
+    await locationChallenge({ id: "S1" }, {}, buildContext(MEMBER, { signalLocationChallenges: { findFirst } }));
     expect(findFirst.mock.calls[0][0].where).toEqual({ signalId: "S1", status: "consideration" });
   });
 });

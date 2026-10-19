@@ -277,7 +277,7 @@ if one still exists in the cache. The Share modal calls this on
 open so it can reuse an existing link rather than minting a fresh
 token every time. Returns null when no live link exists - the
 caller then mints one via `createPublicEventLink`. Requires
-`requireContentReader` (admin / analyst / viewer); pending users
+`requireContentReader` (admin / member); pending users
 are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr>
     <td><code>eventsPendingAlert</code></td>
@@ -883,7 +883,7 @@ event's safe-to-share fields is stored under a key derived from
 the eventId + token and lives for `ttlDays` days (default 30, max
 90). Anyone who has the resulting URL can read the snapshot via
 the `publicEvent(eventId, token)` query. Caller must be able to
-read the event normally (admin / analyst / viewer); pending users
+read the event normally (admin / member); pending users
 are blocked.<div class="field-args"><span class="arg"><code>input: CreatePublicEventLinkInput!</code></span></div></td>
   </tr><tr id="mutation-revokepubliceventlink">
     <td><code>revokePublicEventLink</code></td>
@@ -919,9 +919,9 @@ can offer a retry. Requires global `admin`.<div class="field-args"><span class="
   </tr><tr id="mutation-updateuserrole">
     <td><code>updateUserRole</code></td>
     <td><code>User!</code></td>
-    <td>Set a user's global platform role (`viewer`, `analyst`, or
-`admin`). Does not approve pending users — call `approveUser`
-first. Requires global `admin`. Cannot demote yourself or the
+    <td>Set a user's global platform role (`member` or `admin`;
+`analyst` is now a team role). Does not approve pending users — call
+`approveUser` first. Requires global `admin`. Cannot demote yourself or the
 last remaining admin. This is the product write path for the
 Users-tab dropdown on the operator app; the Developer Portal
 HTML form hits the same service via POST
@@ -1045,9 +1045,9 @@ does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="fie
     <td><code>EventEscalation!</code></td>
     <td>Escalate an event: creates an alert (published) and records the user escalation.
 If the event already has a published alert, just records the user escalation.
-teamId (optional) admits a team_admin or field_coordinator on that team
-even without a global admin/analyst role — purely an authorisation hint,
-not stored on the event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
+teamId (optional) admits any team member on that team even without a
+global admin role — purely an authorisation hint, not stored on the
+event.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>teamId: String</code></span></div></td>
   </tr><tr id="mutation-createdatasource">
     <td><code>createDataSource</code></td>
     <td><code>DataSource!</code></td>
@@ -1315,8 +1315,8 @@ until the async enrichment task completes).<div class="field-args"><span class="
   </tr><tr id="mutation-updatecrisistitle">
     <td><code>updateCrisisTitle</code></td>
     <td><code>Crisis!</code></td>
-    <td>Edit a crisis's title in place. Any approved user (admin, analyst or
-viewer); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
+    <td>Edit a crisis's title in place. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
 empty string to clear the field.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>title: String!</code></span></div></td>
   </tr><tr id="mutation-updatecrisisdescription">
     <td><code>updateCrisisDescription</code></td>
@@ -1324,8 +1324,8 @@ empty string to clear the field.<div class="field-args"><span class="arg"><code>
     <td>Edit the human-facing description on a crisis. The crisis's summary
 column stores JSON of the form description+tldr — this mutation updates
 just the description key and preserves any existing tldr bullets (which
-the LLM enrichment task generates). Any approved user (admin, analyst or
-viewer); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
+the LLM enrichment task generates). Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN. Pass an
 empty string to clear the description without disturbing the tldr.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>description: String!</code></span></div></td>
   </tr><tr id="mutation-deletecrisis">
     <td><code>deleteCrisis</code></td>
@@ -1337,15 +1337,15 @@ and user comments via the FK constraints. Platform admins only.<div class="field
     <td><code>Crisis!</code></td>
     <td>Append S3 keys to a crisis's attachments list. Idempotent — keys
 already present in the list are skipped silently. Returns the updated
-crisis with the new list. Any approved user (admin, analyst or
-viewer); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
+crisis with the new list. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>keys: [String!]!</code></span></div></td>
   </tr><tr id="mutation-removecrisisattachment">
     <td><code>removeCrisisAttachment</code></td>
     <td><code>Crisis!</code></td>
     <td>Remove an S3 key from a crisis's attachments list. Does NOT delete
 the underlying S3 object (operators can clean those up separately).
-Returns the updated crisis. Any approved user (admin, analyst or
-viewer); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
+Returns the updated crisis. Any approved user (admin or
+member); a `pending` signup or the `worker` role is FORBIDDEN.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>key: String!</code></span></div></td>
   </tr><tr id="mutation-setcrisisneedsanalysis">
     <td><code>setCrisisNeedsAnalysis</code></td>
     <td><code>Crisis!</code></td>
@@ -1428,20 +1428,20 @@ exists for the frame. Admin / pipeline only.<div class="field-args"><span class=
     <td><code>createAnalysisAutomation</code></td>
     <td><code>AnalysisAutomation!</code></td>
     <td>Create an analysis automation — a subscription that keeps a frame's
-analysis current on a cadence (ADR-0007 §5). Admin / analyst.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
+analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: CreateAnalysisAutomationInput!</code></span></div></td>
   </tr><tr id="mutation-updateanalysisautomation">
     <td><code>updateAnalysisAutomation</code></td>
     <td><code>AnalysisAutomation!</code></td>
-    <td>Update an analysis automation's cadence or enabled flag. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
+    <td>Update an analysis automation's cadence or enabled flag. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAnalysisAutomationInput!</code></span></div></td>
   </tr><tr id="mutation-deleteanalysisautomation">
     <td><code>deleteAnalysisAutomation</code></td>
     <td><code>Boolean!</code></td>
-    <td>Delete an analysis automation subscription. Admin / analyst.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Delete an analysis automation subscription. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-requestanalysis">
     <td><code>requestAnalysis</code></td>
     <td><code>AnalysisRequest!</code></td>
     <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-an existing PENDING request for the same frame. Admin / analyst.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
   </tr><tr id="mutation-markanalysisrequestgenerated">
     <td><code>markAnalysisRequestGenerated</code></td>
     <td><code>AnalysisRequest!</code></td>
@@ -1495,7 +1495,7 @@ prefixed `manual:`) so re-uploading the same bytes is idempotent
 in place. To force a fresh row, tweak the file (any byte) or
 switch to a scripted upload that supplies its own report_id.
 
-Restricted to admin / analyst — the ingest costs LLM + embedding
+Restricted to admin — the ingest costs LLM + embedding
 credits per document. When DAGSTER_URL is unset the mutation
 still stages the PDF in S3 but returns a UNKNOWN-status job with
 no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
@@ -1586,13 +1586,13 @@ a warning. Returns the number of messages marked.<div class="field-args"><span c
   </tr><tr id="mutation-retrygroundmessage">
     <td><code>retryGroundMessage</code></td>
     <td><code>GroundMessage!</code></td>
-    <td>Clear a message's failure marker for one stage (admin/analyst), so
+    <td>Clear a message's failure marker for one stage (admin), so
 it re-enters that drain's queue on the next pipeline run. No-op when
 the stage isn't marked failed. Returns the message.<div class="field-args"><span class="arg"><code>messageId: String!</code></span><span class="arg"><code>stage: GroundPipelineStage!</code></span></div></td>
   </tr><tr id="mutation-requestgroundmessagetranslation">
     <td><code>requestGroundMessageTranslation</code></td>
     <td><code>GroundMessageTranslation!</code></td>
-    <td>Translate one staged message's text into `locale` (admin/analyst)
+    <td>Translate one staged message's text into `locale` (admin)
 — any supported locale, `en` included (the source is the reporter's
 language). Queues it for the pipeline's translate drain and returns the
 current state; poll GroundMessage.translation(locale) while queued.
@@ -1643,8 +1643,8 @@ analysts to review), so every Worker proposes on the Event side by side
 and nothing marks it done. Returns the open (PENDING / LEASED) Task per
 kind, in configured order — an already-open one is returned unchanged
 rather than duplicated; only kinds with none get a new Task. Same
-rights as `escalateEvent`: a global admin or analyst anywhere; a team
-content writer for the `teamId` they act on behalf of. Capped per
+rights as `escalateEvent`: a global admin anywhere; a team member
+(incl. a team analyst) for the `teamId` they act on behalf of. Capped per
 requester per UTC day, counting requests not Tasks (FORBIDDEN with
 subCode `DAILY_CAP`); a request that creates nothing does not count.
 The only family today is `event.impact_prior` (a historical name: the
@@ -1654,7 +1654,8 @@ cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
   </tr><tr id="mutation-decidecaseproposal">
     <td><code>decideCaseProposal</code></td>
     <td><code>CaseProposal!</code></td>
-    <td>Decide one web case (V4): a platform admin or analyst accepts or
+    <td>Decide one web case (V4): a platform admin or a team analyst on the
+case's team accepts or
 rejects it, recorded as who, when and why (the Domain Ontology's
 DecisionRecord). Only from `proposed` (CONFLICT otherwise). The
 `rationale` is required to reject and optional to accept.
@@ -1738,7 +1739,8 @@ beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>De
 the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
 Ontology's Metric types). The sector routinely conflates them; keeping
 them apart is the point.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>people_affected</code></td><td>—</td></tr><tr><td><code>people_displaced_new</code></td><td>—</td></tr><tr><td><code>people_displaced_cumulative</code></td><td>—</td></tr><tr><td><code>people_in_need</code></td><td>—</td></tr><tr><td><code>people_targeted</code></td><td>—</td></tr><tr><td><code>people_reached</code></td><td>—</td></tr><tr><td><code>households_affected</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
-enum — those users must go through `approveUser` first.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>viewer</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
+enum — those users must go through `approveUser` first. `analyst` is no
+longer global — it is a TeamMemberRole.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
 up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>The state a V1–V3 whole-prior proposal was left in. Retired: none is
 created or decided any more.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-invitationstatus"><code>InvitationStatus</code> <span class="type-badge">enum</span></h3><p>Status of an invitation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>expired</code></td><td>—</td></tr></tbody></table><h3 id="type-knowledgebaseingeststatus"><code>KnowledgebaseIngestStatus</code> <span class="type-badge">enum</span></h3><p>Coarse-grained status of a manual-ingest Dagster run. Dagster's
 own RunStatus enum is finer-grained (STARTING / MANAGED / CANCELING
@@ -1762,7 +1764,9 @@ Buckets are returned with ISO-8601 keys (`YYYY-MM-DD`, `YYYY-Www`,
 `YYYY-MM`).</td></tr><tr><td><code>week</code></td><td>—</td></tr><tr><td><code>month</code></td><td>—</td></tr></tbody></table><h3 id="type-taskorigin"><code>TaskOrigin</code> <span class="type-badge">enum</span></h3><p>Who asked for the Task: a signed-in user, an automatic rule, or an
 API-key caller.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>user</code></td><td>—</td></tr><tr><td><code>rule</code></td><td>—</td></tr><tr><td><code>api</code></td><td>—</td></tr></tbody></table><h3 id="type-taskstatus"><code>TaskStatus</code> <span class="type-badge">enum</span></h3><p>Lifecycle of a Task. PENDING → LEASED (claimed) → COMPLETED | FAILED;
 PENDING or LEASED → CANCELLED. An expired lease returns the Task to
-PENDING lazily, at the next claim. Tasks are never deleted.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>LEASED</code></td><td>—</td></tr><tr><td><code>COMPLETED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>CANCELLED</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>field_coordinator</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+PENDING lazily, at the next claim. Tasks are never deleted.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>LEASED</code></td><td>—</td></tr><tr><td><code>COMPLETED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>CANCELLED</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team. `analyst` carries elevated, location-scoped powers
+(promote alerts, decide tasks/cases, manage team analyses, act on
+events/alerts/crises within the team's location scope).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -2121,9 +2125,9 @@ never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the crisis is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the crisis itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the crisis itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
@@ -2250,9 +2254,9 @@ ISO-8601; null/omitted when no onset could be resolved.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the event is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the event itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the event itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-creategroundsourceinput"><code>CreateGroundSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
@@ -2286,7 +2290,7 @@ group kinds; hotline consent is explicit by design.</td>
   </tr><tr>
     <td><code>reviewerRoles</code></td>
     <td><code>[String!]</code></td>
-    <td>Defaults to [&quot;admin&quot;, &quot;analyst&quot;].</td>
+    <td>Defaults to [&quot;admin&quot;].</td>
   </tr><tr>
     <td><code>retentionRule</code></td>
     <td><code>String</code></td>
@@ -2372,9 +2376,9 @@ Not surfaced in the UI - use freely without schema changes.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Team the signal is being filed under. When present, the caller may be
-a team-level team_admin or field_coordinator on that team instead of a
-platform admin/analyst. Purely an authorisation hint — the signal itself
-has no team column; team affiliation is derived from location scope.
+any team member on that team instead of a global admin. Purely an
+authorisation hint — the signal itself has no team column; team affiliation
+is derived from location scope.
 Ignored for platform-level callers.</td>
   </tr></tbody></table><h3 id="type-createnotificationinput"><code>CreateNotificationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
@@ -5635,7 +5639,7 @@ the original text stays canonical.</p><table class="ref-table"><thead><tr><th>Fi
   </tr></tbody></table><h3 id="type-groundsource"><code>GroundSource</code> <span class="type-badge">object</span></h3><p>Per-source policy record for ground intelligence (WhatsApp groups,
 future hotline). Carries the consent scope, privacy default, reviewer
 roles, and retention rule for everything ingested from the source. The
-whole ground staging tier is private: admin/analyst only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+whole ground staging tier is private: admin only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>ID!</code></td>
     <td>—</td>
@@ -7403,8 +7407,9 @@ the commenter's email.</p><table class="ref-table"><thead><tr><th>Field</th><th>
   </tr><tr>
     <td><code>role</code></td>
     <td><code>String</code></td>
-    <td>User role: viewer, analyst, admin, or pending. Null when caller is not
-authorised to see this user's role.</td>
+    <td>Global user role: member, admin, or pending (plus system roles). Null
+when caller is not authorised to see this user's role. Note: analyst is now
+a TEAM role (see TeamMemberRole), not a global role.</td>
   </tr><tr>
     <td><code>isActive</code></td>
     <td><code>Boolean</code></td>

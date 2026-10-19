@@ -80,7 +80,7 @@ function buildContext(user: User, prisma: PrismaStub = {}): Context {
 }
 
 const admin: User = { id: "admin1", role: "admin" };
-const viewer: User = { id: "u1", role: "viewer" };
+const viewer: User = { id: "u1", role: "member" };
 
 const { createDevUser, rotateDevUserApiKey } = devUserResolvers.Mutation;
 
@@ -203,7 +203,7 @@ describe("Mutation.createDevUser", () => {
     expect(userData.name).toBe("Dev Person");
     expect(userData.emailVerified).toBe(true);
     expect(userData.isActive).toBe(true);
-    expect(userData.role).toBe("viewer");
+    expect(userData.role).toBe("member");
 
     // Key row carries the new user's id, a prefix + hash, and no expiry.
     const keyData = apiKeysCreate.mock.calls[0][0].data;

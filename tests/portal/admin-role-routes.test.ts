@@ -219,7 +219,7 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
   it("refuses to let an admin demote themselves", async () => {
     const res = await postRole("/portal/admin/users/role", {
       userId: "admin-1",
-      role: "viewer",
+      role: "member",
     });
 
     expect(res.status).toBe(400);
@@ -240,7 +240,7 @@ describe("POST /portal/admin/users/role (global role dropdown)", () => {
 
     const res = await postRole("/portal/admin/users/role", {
       userId: "other-admin",
-      role: "viewer",
+      role: "member",
     });
 
     expect(res.status).toBe(400);

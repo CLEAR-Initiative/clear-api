@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireNonWorkerContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireNonWorkerContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
@@ -34,9 +34,9 @@ interface CreateManualSignalInput {
   metadata?: Record<string, unknown>;
   /**
    * Team the signal is filed under. Used only for authorisation — when
-   * present, a caller with `team_admin` or `field_coordinator` on this team
-   * is admitted even without a global `admin`/`analyst` role. The signal
-   * itself has no team column; team scope is derived from location.
+   * present, a caller with any team membership on this team is admitted
+   * even without a global `admin` role. The signal itself has no team
+   * column; team scope is derived from location.
    */
   teamId?: string;
 }
@@ -334,11 +334,6 @@ export const signalResolvers = {
       args: { input: CreateSignalInput },
       context: Context,
     ) => {
-      // Admin/analyst only. The pipeline integrations (Dataminr, ACLED,
-      // GDACS) authenticate as a system admin user via API key. Viewers
-      // are read-only in the new role model and pending users are
-      // blocked from every content path.
-      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       const dataSource = await context.prisma.dataSources.findUnique({
@@ -349,6 +344,18 @@ export const signalResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the signal's input locations. The pipeline
+      // integrations (Dataminr, ACLED, GDACS) authenticate as a system admin
+      // user via API key and pass unconditionally; a human caller must be a
+      // team analyst whose location scope covers the signal's input locations.
+      // (lat/lng-only signals carry no input location id — those remain
+      // admin/pipeline-only via the empty-scope path.)
+      await requireAdminOrTeamAnalystForLocations(context, [
+        input.originId,
+        input.destinationId,
+        input.locationId,
+      ]);
 
       // Idempotent ingestion: if an externalId is provided and a signal
       // already exists for (sourceId, externalId), return it as-is. This
@@ -484,9 +491,9 @@ export const signalResolvers = {
       context: Context,
     ) => {
       // Authorisation model — see `requireTeamContentWriter`:
-      // global admin/analyst may file for any location; a `team_admin` or
-      // `field_coordinator` may file when they supply the `teamId` they're
-      // acting on behalf of. `team_member` and everyone else are rejected.
+      // global admin may file for any location; any team member may file when
+      // they supply the `teamId` they're acting on behalf of. The worker role
+      // and non-members are rejected.
       // Downstream guards (TRUSTED_SOURCE_NAMES on dataSource, severity >= 4,
       // staleness gate) still keep low-severity / stale manual entries from
       // fanning out as alerts.
@@ -579,8 +586,6 @@ export const signalResolvers = {
       args: { id: string; severity: number },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
-
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.id },
       });
@@ -589,6 +594,14 @@ export const signalResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the signal's locations: admin passes, else
+      // the caller must be a team analyst whose scope covers the signal.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        existing.originId,
+        existing.destinationId,
+        existing.locationId,
+      ]);
 
       return context.prisma.signals.update({
         where: { id: args.id },
@@ -923,14 +936,15 @@ export const signalResolvers = {
         take: 25,
       }).then((links) => links.map((l) => l.event));
     },
-    // Same visibility split as Crisis/Event feedbacks/comments: admin/
-    // analyst see all; viewer sees only their own; everyone else empty.
+    // Same visibility split as Crisis/Event feedbacks/comments: admin sees
+    // all; member sees only their own; everyone else empty. (analyst is no
+    // longer a global role, so it no longer grants a global all-rows view.)
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userFeedbacks.findMany({ where: { signalId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userFeedbacks.findMany({
           where: { signalId: parent.id, userId: ctx.user.id },
         });
@@ -939,10 +953,10 @@ export const signalResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userComments.findMany({ where: { signalId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userComments.findMany({
           where: { signalId: parent.id, userId: ctx.user.id },
         });

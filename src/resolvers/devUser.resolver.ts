@@ -104,7 +104,8 @@ export const devUserResolvers = {
             // email wall for the website login flow.
             emailVerified: true,
             isActive: true,
-            role: "viewer",
+            // `member` is the default approved human role (formerly `viewer`).
+            role: "member",
           },
         });
         await tx.apiKeys.create({

@@ -68,7 +68,7 @@ export const queryTypeDef = gql`
     open so it can reuse an existing link rather than minting a fresh
     token every time. Returns null when no live link exists - the
     caller then mints one via \`createPublicEventLink\`. Requires
-    \`requireContentReader\` (admin / analyst / viewer); pending users
+    \`requireContentReader\` (admin / member); pending users
     are blocked.
     """
     existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
@@ -538,7 +538,7 @@ export const queryTypeDef = gql`
     """Recent delivery attempts for a subscription, newest first."""
     webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
 
-    # ─── Ground intel staging tier (admin/analyst only) ────────────────
+    # ─── Ground intel staging tier (admin only) ────────────────
     """All ground sources (per-source policy records), newest first."""
     groundSources: [GroundSource!]!
 

@@ -33,7 +33,7 @@ function buildContext(reviewState: string) {
     promotedSignalId: null,
     createdAt: new Date("2026-09-01T00:00:00Z"),
     updatedAt: new Date("2026-09-01T00:00:00Z"),
-    source: { reviewerRoles: ["admin", "analyst"] },
+    source: { reviewerRoles: ["admin"] },
     messages: [
       {
         externalId: "whatsapp:+100:SM1",
@@ -66,7 +66,7 @@ function buildContext(reviewState: string) {
         }),
       },
     },
-    user: { id: "u1", role: "analyst" },
+    user: { id: "u1", role: "admin" },
     session: null,
     authMethod: "session",
     locale: "en",

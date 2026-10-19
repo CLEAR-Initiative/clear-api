@@ -81,7 +81,7 @@ model user {
   emailVerified Boolean @default(false) @map("email_verified")
   phoneNumber   String? @map("phone_number")
   image         String?
-  role          String  @default("viewer")
+  role          String  @default("member")
   isActive      Boolean @default(true) @map("is_active")
   language      String  @default("en")
 
@@ -354,7 +354,7 @@ model teamMembers {
   id        String   @id @default(cuid())
   teamId    String   @map("team_id")
   userId    String   @map("user_id")
-  role      String   @default("team_member") // team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
+  role      String   @default("team_member") // team_admin | analyst | emergency_response_manager | team_member (legacy: lead → team_admin, viewer/field_coordinator → team_member, analyst stays analyst — see migration)
   createdAt DateTime @default(now()) @map("created_at")
 
   team teams @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -390,7 +390,7 @@ model invitations {
   /// null on multi-team invites.
   teamId         String?   @map("team_id")
   role           String    @default("member") // org role: org_admin | member (legacy: owner, admin → org_admin — see migration)
-  teamRole       String?   @map("team_role") // team role: team_admin | field_coordinator | team_member (legacy: lead → team_admin, analyst → field_coordinator, viewer → team_member — see migration)
+  teamRole       String?   @map("team_role") // team role: team_admin | analyst | emergency_response_manager | team_member (legacy: lead → team_admin, viewer/field_coordinator → team_member, analyst stays analyst — see migration)
   token          String    @unique
   expiresAt      DateTime  @map("expires_at")
   acceptedAt     DateTime? @map("accepted_at")
@@ -414,10 +414,10 @@ model invitationTeams {
   id           String @id @default(cuid())
   invitationId String @map("invitation_id")
   teamId       String @map("team_id")
-  /// Team role: team_admin | field_coordinator | team_member. Stored as a
-  /// string to mirror teamMembers.role semantics; the GraphQL enum lives in
-  /// the typedefs. Legacy values (lead / analyst / viewer) were folded into
-  /// the new set by the Phase-3 backfill.
+  /// Team role: team_admin | analyst | emergency_response_manager |
+  /// team_member. Stored as a string to mirror teamMembers.role semantics; the
+  /// GraphQL enum lives in the typedefs. Legacy values (lead → team_admin,
+  /// viewer / field_coordinator → team_member; analyst stays analyst).
   teamRole     String @map("team_role")
 
   invitation invitations @relation(fields: [invitationId], references: [id], onDelete: Cascade)
@@ -2051,8 +2051,9 @@ model groundSources {
   privacyDefault String @default("private") @map("privacy_default")
 
   /// Global user roles allowed to review (approve/reject/promote) threads
-  /// from this source. Platform admins always pass.
-  reviewerRoles String[] @default(["admin", "analyst"]) @map("reviewer_roles")
+  /// from this source. Platform admins always pass. (`analyst` is no longer a
+  /// global role — ground triage is otherwise the ERM's team-scoped job.)
+  reviewerRoles String[] @default(["admin"]) @map("reviewer_roles")
 
   /// Free-text retention rule (e.g. "delete raw exports after 90 days").
   /// Enforcement is operational for V1; the field keeps the policy with

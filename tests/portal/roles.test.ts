@@ -21,14 +21,24 @@ describe("canonicalOrgRole", () => {
 describe("canonicalTeamRole", () => {
   it("maps legacy lead/analyst/viewer onto the current taxonomy", () => {
     expect(canonicalTeamRole("lead")).toBe("team_admin");
-    expect(canonicalTeamRole("analyst")).toBe("field_coordinator");
+    expect(canonicalTeamRole("analyst")).toBe("analyst");
+    expect(canonicalTeamRole("emergency_response_manager")).toBe(
+      "emergency_response_manager",
+    );
+    // `field_coordinator` and `viewer` are removed team roles — merged into
+    // `team_member`.
+    expect(canonicalTeamRole("field_coordinator")).toBe("team_member");
     expect(canonicalTeamRole("viewer")).toBe("team_member");
   });
 });
 
 describe("isGlobalRole", () => {
-  it("accepts viewer, analyst, and admin only", () => {
+  it("accepts member and admin only", () => {
+    expect(isGlobalRole("member")).toBe(true);
     expect(isGlobalRole("admin")).toBe(true);
+    // `analyst` and `viewer` are no longer global roles.
+    expect(isGlobalRole("analyst")).toBe(false);
+    expect(isGlobalRole("viewer")).toBe(false);
     expect(isGlobalRole("pending")).toBe(false);
     expect(isGlobalRole("org_admin")).toBe(false);
   });

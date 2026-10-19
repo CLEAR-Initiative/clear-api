@@ -23,9 +23,13 @@ import { groundResolvers } from "../../src/resolvers/ground.resolver.js";
 type User = { id: string; role: string } | null;
 
 const ADMIN: User = { id: "admin1", role: "admin" };
-const ANALYST: User = { id: "a1", role: "analyst" };
+// The ground inbox is admin-or-ERM now (analyst no longer grants ground access).
+// This caller is a global `member` carrying the emergency_response_manager TEAM
+// role (the stub's teamMembers.findFirst returns an ERM row for id "a1").
+const ERM: User = { id: "a1", role: "member" };
 const PIPELINE: User = { id: "machine", role: "pipeline" };
-const VIEWER: User = { id: "v1", role: "viewer" };
+// A plain global member with no ERM membership.
+const MEMBER: User = { id: "v1", role: "member" };
 
 const { requestGroundMessageTranslation } = groundResolvers.Mutation;
 const { groundMessageForTranslation } = groundResolvers.Query;
@@ -58,6 +62,10 @@ function stub(opts: {
         return opts.translated != null ? { data: { text: opts.translated } } : null;
       }),
     },
+    teamMembers: {
+      // The inbox gate asks "is this user an ERM?" — only id "a1" is one here.
+      findFirst: vi.fn(async ({ where }: { where: { userId: string } }) => (where.userId === "a1" ? { id: "tm-erm" } : null)),
+    },
   };
   return { prisma, order };
 }
@@ -77,7 +85,7 @@ describe("requestGroundMessageTranslation", () => {
     const result = await requestGroundMessageTranslation(
       null,
       { messageId: "m1", locale: "EN" },
-      ctx(ANALYST, prisma),
+      ctx(ERM, prisma),
     );
 
     expect(result).toEqual({ locale: "en", status: "queued", text: null });
@@ -107,7 +115,7 @@ describe("requestGroundMessageTranslation", () => {
     const result = await requestGroundMessageTranslation(
       null,
       { messageId: "m1", locale: "fr" },
-      ctx(ANALYST, prisma),
+      ctx(ERM, prisma),
     );
 
     expect(result.status).toBe("queued");
@@ -119,7 +127,7 @@ describe("requestGroundMessageTranslation", () => {
     const result = await requestGroundMessageTranslation(
       null,
       { messageId: "m1", locale: "en" },
-      ctx(ANALYST, prisma),
+      ctx(ERM, prisma),
     );
 
     expect(result).toEqual({ locale: "en", status: "unavailable", text: null });
@@ -129,20 +137,20 @@ describe("requestGroundMessageTranslation", () => {
   it("throws NOT_FOUND for an unknown message", async () => {
     const { prisma } = stub({ message: null });
     await expect(
-      requestGroundMessageTranslation(null, { messageId: "nope", locale: "en" }, ctx(ANALYST, prisma)),
+      requestGroundMessageTranslation(null, { messageId: "nope", locale: "en" }, ctx(ERM, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 
   it("rejects an unsupported locale before touching the DB", async () => {
     const { prisma } = stub({});
     await expect(
-      requestGroundMessageTranslation(null, { messageId: "m1", locale: "de" }, ctx(ANALYST, prisma)),
+      requestGroundMessageTranslation(null, { messageId: "m1", locale: "de" }, ctx(ERM, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     expect(prisma.groundMessages.findUnique).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["viewer", VIEWER],
+    ["a plain member", MEMBER],
     ["pipeline", PIPELINE],
     ["anonymous", null],
   ])("rejects a %s caller", async (_name, user) => {
@@ -157,7 +165,7 @@ describe("requestGroundMessageTranslation", () => {
 describe("GroundMessage.translation", () => {
   it("is ready once the overlay row exists, with its text", async () => {
     const { prisma } = stub({ translated: "Shelling at the main market" });
-    await expect(translation(MESSAGE, { locale: "en" }, ctx(ANALYST, prisma))).resolves.toEqual({
+    await expect(translation(MESSAGE, { locale: "en" }, ctx(ERM, prisma))).resolves.toEqual({
       locale: "en",
       status: "ready",
       text: "Shelling at the main market",
@@ -170,7 +178,7 @@ describe("GroundMessage.translation", () => {
 
   it("is queued while the queue row exists and no overlay is written", async () => {
     const { prisma } = stub({ queued: true });
-    await expect(translation(MESSAGE, { locale: "en" }, ctx(ANALYST, prisma))).resolves.toEqual({
+    await expect(translation(MESSAGE, { locale: "en" }, ctx(ERM, prisma))).resolves.toEqual({
       locale: "en",
       status: "queued",
       text: null,
@@ -179,13 +187,13 @@ describe("GroundMessage.translation", () => {
 
   it("is unavailable when neither exists", async () => {
     const { prisma } = stub({});
-    const result = await translation(MESSAGE, { locale: "ar" }, ctx(ANALYST, prisma));
+    const result = await translation(MESSAGE, { locale: "ar" }, ctx(ERM, prisma));
     expect(result.status).toBe("unavailable");
   });
 
   it("reads the queue before the overlay, so a drain finishing mid-read is never unavailable", async () => {
     const { prisma, order } = stub({ queued: true, translated: "done" });
-    const result = await translation(MESSAGE, { locale: "en" }, ctx(ANALYST, prisma));
+    const result = await translation(MESSAGE, { locale: "en" }, ctx(ERM, prisma));
     expect(order).toEqual(["queue", "overlay"]);
     expect(result.status).toBe("ready");
   });
@@ -193,14 +201,14 @@ describe("GroundMessage.translation", () => {
   it("ignores an overlay row without a text string", async () => {
     const { prisma } = stub({ queued: true });
     prisma.translations.findUnique.mockResolvedValueOnce({ data: { title: "x" } } as never);
-    const result = await translation(MESSAGE, { locale: "en" }, ctx(ANALYST, prisma));
+    const result = await translation(MESSAGE, { locale: "en" }, ctx(ERM, prisma));
     expect(result.status).toBe("queued");
   });
 
   it("rejects an unsupported locale", async () => {
     const { prisma } = stub({});
     await expect(
-      translation(MESSAGE, { locale: "xx" }, ctx(ANALYST, prisma)),
+      translation(MESSAGE, { locale: "xx" }, ctx(ERM, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
   });
 });
@@ -223,7 +231,7 @@ describe("groundMessageForTranslation (pipeline contract)", () => {
   it("is admin/pipeline only", async () => {
     const findUnique = vi.fn();
     await expect(
-      groundMessageForTranslation(null, { id: "m1" }, ctx(ANALYST, { groundMessages: { findUnique } })),
+      groundMessageForTranslation(null, { id: "m1" }, ctx(ERM, { groundMessages: { findUnique } })),
     ).rejects.toThrow();
     expect(findUnique).not.toHaveBeenCalled();
   });

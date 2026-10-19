@@ -27,7 +27,7 @@ import { describeIfDb } from "../helpers/db.js";
 const RUN = `estimate-db-${Date.now()}`;
 const VIEWER: Context = {
   prisma,
-  user: { id: `${RUN}-viewer`, role: "viewer" },
+  user: { id: `${RUN}-viewer`, role: "member" },
   session: null,
   authMethod: "session",
 } as unknown as Context;

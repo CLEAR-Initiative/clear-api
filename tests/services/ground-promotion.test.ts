@@ -185,7 +185,7 @@ function makePromotionContext() {
     lifecycleState: "reported",
     title: "Strike at the market",
     promotedSignalId: null as string | null,
-    source: { reviewerRoles: ["admin", "analyst"] },
+    source: { reviewerRoles: ["admin"] },
     messages: [
       {
         externalId: "whatsapp:group1@g.us:cccccccccccccccc",
@@ -234,7 +234,7 @@ function makePromotionContext() {
 
   const context = {
     prisma,
-    user: { id: "u1", role: "analyst" },
+    user: { id: "u1", role: "admin" },
     session: null,
     authMethod: "session",
     locale: "en",

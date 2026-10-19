@@ -47,7 +47,7 @@ export const mutationTypeDef = gql`
     the eventId + token and lives for \`ttlDays\` days (default 30, max
     90). Anyone who has the resulting URL can read the snapshot via
     the \`publicEvent(eventId, token)\` query. Caller must be able to
-    read the event normally (admin / analyst / viewer); pending users
+    read the event normally (admin / member); pending users
     are blocked.
     """
     createPublicEventLink(input: CreatePublicEventLinkInput!): CreatePublicEventLinkResult!
@@ -89,9 +89,9 @@ export const mutationTypeDef = gql`
     approveUser(userId: String!): ApproveUserResult!
 
     """
-    Set a user's global platform role (\`viewer\`, \`analyst\`, or
-    \`admin\`). Does not approve pending users — call \`approveUser\`
-    first. Requires global \`admin\`. Cannot demote yourself or the
+    Set a user's global platform role (\`member\` or \`admin\`;
+    \`analyst\` is now a team role). Does not approve pending users — call
+    \`approveUser\` first. Requires global \`admin\`. Cannot demote yourself or the
     last remaining admin. This is the product write path for the
     Users-tab dropdown on the operator app; the Developer Portal
     HTML form hits the same service via POST
@@ -199,9 +199,9 @@ export const mutationTypeDef = gql`
 
     """Escalate an event: creates an alert (published) and records the user escalation.
     If the event already has a published alert, just records the user escalation.
-    teamId (optional) admits a team_admin or field_coordinator on that team
-    even without a global admin/analyst role — purely an authorisation hint,
-    not stored on the event."""
+    teamId (optional) admits any team member on that team even without a
+    global admin role — purely an authorisation hint, not stored on the
+    event."""
     escalateEvent(eventId: String!, userId: String!, teamId: String): EventEscalation!
 
     # ─── Data Sources ──────────────────────────────────────────────────────────
@@ -423,16 +423,16 @@ export const mutationTypeDef = gql`
     until the async enrichment task completes)."""
     removeEventFromCrisis(crisisId: String!, eventId: String!): Crisis
 
-    """Edit a crisis's title in place. Any approved user (admin, analyst or
-    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
+    """Edit a crisis's title in place. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
     empty string to clear the field."""
     updateCrisisTitle(id: String!, title: String!): Crisis!
 
     """Edit the human-facing description on a crisis. The crisis's summary
     column stores JSON of the form description+tldr — this mutation updates
     just the description key and preserves any existing tldr bullets (which
-    the LLM enrichment task generates). Any approved user (admin, analyst or
-    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
+    the LLM enrichment task generates). Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN. Pass an
     empty string to clear the description without disturbing the tldr."""
     updateCrisisDescription(id: String!, description: String!): Crisis!
 
@@ -442,14 +442,14 @@ export const mutationTypeDef = gql`
 
     """Append S3 keys to a crisis's attachments list. Idempotent — keys
     already present in the list are skipped silently. Returns the updated
-    crisis with the new list. Any approved user (admin, analyst or
-    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
+    crisis with the new list. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     addCrisisAttachments(id: String!, keys: [String!]!): Crisis!
 
     """Remove an S3 key from a crisis's attachments list. Does NOT delete
     the underlying S3 object (operators can clean those up separately).
-    Returns the updated crisis. Any approved user (admin, analyst or
-    viewer); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
+    Returns the updated crisis. Any approved user (admin or
+    member); a \`pending\` signup or the \`worker\` role is FORBIDDEN."""
     removeCrisisAttachment(id: String!, key: String!): Crisis!
 
     """Set the LLM-generated NRC SAF needs analysis inside the crisis's
@@ -537,15 +537,15 @@ export const mutationTypeDef = gql`
     touchAnalysisSynced(frame: AnalysisFrameInput!): Boolean!
 
     """Create an analysis automation — a subscription that keeps a frame's
-    analysis current on a cadence (ADR-0007 §5). Admin / analyst."""
+    analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the owning team."""
     createAnalysisAutomation(input: CreateAnalysisAutomationInput!): AnalysisAutomation!
-    """Update an analysis automation's cadence or enabled flag. Admin / analyst."""
+    """Update an analysis automation's cadence or enabled flag. Admin, or a team analyst on the owning team."""
     updateAnalysisAutomation(id: String!, input: UpdateAnalysisAutomationInput!): AnalysisAutomation!
-    """Delete an analysis automation subscription. Admin / analyst."""
+    """Delete an analysis automation subscription. Admin, or a team analyst on the owning team."""
     deleteAnalysisAutomation(id: String!): Boolean!
 
     """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-    an existing PENDING request for the same frame. Admin / analyst."""
+    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team."""
     requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
     """Pipeline: mark a drained request GENERATED after its analysis was
     upserted. Admin / pipeline only."""
@@ -598,7 +598,7 @@ export const mutationTypeDef = gql`
     in place. To force a fresh row, tweak the file (any byte) or
     switch to a scripted upload that supplies its own report_id.
 
-    Restricted to admin / analyst — the ingest costs LLM + embedding
+    Restricted to admin — the ingest costs LLM + embedding
     credits per document. When DAGSTER_URL is unset the mutation
     still stages the PDF in S3 but returns a UNKNOWN-status job with
     no runId — useful for offline dev of the upload path."""
@@ -695,12 +695,12 @@ export const mutationTypeDef = gql`
     a warning. Returns the number of messages marked."""
     markGroundMessagesFailed(inputs: [GroundMessageFailureInput!]!): Int!
 
-    """Clear a message's failure marker for one stage (admin/analyst), so
+    """Clear a message's failure marker for one stage (admin), so
     it re-enters that drain's queue on the next pipeline run. No-op when
     the stage isn't marked failed. Returns the message."""
     retryGroundMessage(messageId: String!, stage: GroundPipelineStage!): GroundMessage!
 
-    """Translate one staged message's text into \`locale\` (admin/analyst)
+    """Translate one staged message's text into \`locale\` (admin)
     — any supported locale, \`en\` included (the source is the reporter's
     language). Queues it for the pipeline's translate drain and returns the
     current state; poll GroundMessage.translation(locale) while queued.
@@ -809,9 +809,9 @@ export const mutationTypeDef = gql`
     Not surfaced in the UI - use freely without schema changes."""
     metadata: JSON
     """Team the signal is being filed under. When present, the caller may be
-    a team-level team_admin or field_coordinator on that team instead of a
-    platform admin/analyst. Purely an authorisation hint — the signal itself
-    has no team column; team affiliation is derived from location scope.
+    any team member on that team instead of a global admin. Purely an
+    authorisation hint — the signal itself has no team column; team affiliation
+    is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
   }
@@ -949,9 +949,9 @@ export const mutationTypeDef = gql`
     """Longitude for automatic geo-resolution."""
     lng: Float
     """Team the event is being filed under. When present, the caller may be
-    a team-level team_admin or field_coordinator on that team instead of a
-    platform admin/analyst. Purely an authorisation hint — the event itself
-    has no team column; team affiliation is derived from location scope.
+    any team member on that team instead of a global admin. Purely an
+    authorisation hint — the event itself has no team column; team affiliation
+    is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
   }
@@ -1140,8 +1140,8 @@ export const mutationTypeDef = gql`
     and nothing marks it done. Returns the open (PENDING / LEASED) Task per
     kind, in configured order — an already-open one is returned unchanged
     rather than duplicated; only kinds with none get a new Task. Same
-    rights as \`escalateEvent\`: a global admin or analyst anywhere; a team
-    content writer for the \`teamId\` they act on behalf of. Capped per
+    rights as \`escalateEvent\`: a global admin anywhere; a team member
+    (incl. a team analyst) for the \`teamId\` they act on behalf of. Capped per
     requester per UTC day, counting requests not Tasks (FORBIDDEN with
     subCode \`DAILY_CAP\`); a request that creates nothing does not count.
     The only family today is \`event.impact_prior\` (a historical name: the
@@ -1155,7 +1155,8 @@ export const mutationTypeDef = gql`
       horizonYears: Int
     ): [Task!]!
 
-    """Decide one web case (V4): a platform admin or analyst accepts or
+    """Decide one web case (V4): a platform admin or a team analyst on the
+    case's team accepts or
     rejects it, recorded as who, when and why (the Domain Ontology's
     DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
     \`rationale\` is required to reject and optional to accept.

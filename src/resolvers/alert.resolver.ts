@@ -1,7 +1,11 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import {
+  requireContentReader,
+  requireRole,
+  requireAdminOrTeamAnalystForLocations,
+} from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -86,7 +90,6 @@ export const alertResolvers = {
       args: { input: CreateAlertInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { input } = args;
 
       // Verify the event exists
@@ -98,6 +101,15 @@ export const alertResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the alert's event locations: a global admin
+      // (the pipeline authenticates as one via API key) passes, else the caller
+      // must be a team analyst whose location scope covers the event.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        event.originId,
+        event.destinationId,
+        event.locationId,
+      ]);
 
       // Don't raise alerts for out-of-interest events: an event whose types are
       // ALL out-of-interest (disaster_types.nrc_relevant = false) is rejected.
@@ -384,7 +396,6 @@ export const alertResolvers = {
       args: { id: string; input: UpdateAlertInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
 
       const existing = await context.prisma.alerts.findUnique({ where: { id } });
@@ -393,6 +404,20 @@ export const alertResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the alert's event locations: load the alert's
+      // event and gate on its locations (admin passes, else team analyst in
+      // scope). The alert should always have an event, but if it's missing we
+      // fall through with no derivable location → admin-only.
+      const alertEvent = await context.prisma.events.findUnique({
+        where: { id: existing.eventId },
+        select: { originId: true, destinationId: true, locationId: true },
+      });
+      await requireAdminOrTeamAnalystForLocations(context, [
+        alertEvent?.originId,
+        alertEvent?.destinationId,
+        alertEvent?.locationId,
+      ]);
 
       return context.prisma.alerts.update({
         where: { id },

@@ -52,9 +52,15 @@ export async function taskRecipients(prisma: PrismaClient, task: TaskForNotifica
       ? prisma.user.findMany({ where: { id: task.requesterId, isActive: true }, select })
       : Promise.resolve([]),
     prisma.user.findMany({ where: { role: "admin", isActive: true }, select }),
+    // `analyst` is a TEAM role now, not a global one: match it on the team
+    // membership (teamMembers.role) on the Task's own team, not user.role
+    // (which would match nobody). A null team means no team analysts.
     task.teamId
       ? prisma.user.findMany({
-          where: { role: "analyst", isActive: true, teamMemberships: { some: { teamId: task.teamId } } },
+          where: {
+            isActive: true,
+            teamMemberships: { some: { teamId: task.teamId, role: "analyst" } },
+          },
           select,
         })
       : Promise.resolve([]),

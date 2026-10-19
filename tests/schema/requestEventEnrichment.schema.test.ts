@@ -123,7 +123,7 @@ async function run(
 
 describe("requestEventEnrichment schema contract", () => {
   it("executes clear-mvp's document and returns one PENDING Task per source kind, sharing a requestId", async () => {
-    const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" });
+    const result = await run({ id: "u-1", role: "admin" }, { eventId: "ev-1" });
     expect(result.errors).toBeUndefined();
     const tasks = result.data?.requestEventEnrichment as { kind: string; requestId: string }[];
     expect(tasks.map((t) => t.kind)).toEqual(["event.impact_prior.satellite", "event.impact_prior.web"]);
@@ -136,19 +136,19 @@ describe("requestEventEnrichment schema contract", () => {
     });
   });
 
-  it("surfaces FORBIDDEN with the guard's code for a viewer without a team", async () => {
-    const result = await run({ id: "u-1", role: "viewer" }, { eventId: "ev-1" });
+  it("surfaces FORBIDDEN with the guard's code for a member without a team", async () => {
+    const result = await run({ id: "u-1", role: "member" }, { eventId: "ev-1" });
     expect(result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
   });
 
   it("surfaces FORBIDDEN / DAILY_CAP with the cap in the message once the cap is reached", async () => {
-    const result = await run({ id: "u-1", role: "analyst" }, { eventId: "ev-1" }, 20);
+    const result = await run({ id: "u-1", role: "admin" }, { eventId: "ev-1" }, 20);
     expect(result.errors?.[0]?.extensions).toMatchObject({ code: "FORBIDDEN", subCode: "DAILY_CAP" });
     expect(result.errors?.[0]?.message).toMatch(/20/);
   });
 
   it("cancelTask executes clear-mvp's document for the requester", async () => {
-    const result = await run({ id: "u-1", role: "analyst" }, { id: "t-1" });
+    const result = await run({ id: "u-1", role: "admin" }, { id: "t-1" });
     expect(result.errors).toBeUndefined();
     expect(result.data?.cancelTask).toMatchObject({ id: "t-1", status: "CANCELLED", cancelledById: "u-1" });
   });

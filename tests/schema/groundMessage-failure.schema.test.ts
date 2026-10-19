@@ -90,7 +90,7 @@ describe("ground failure-marker schema contract", () => {
   it("GroundMessage exposes the failure markers to reviewers", async () => {
     const result = await run(
       `query { groundMessages(groundSourceId: "gs_1") { ${FAILURE_FIELDS} } }`,
-      "analyst",
+      "admin",
     );
     expect(result.errors).toBeUndefined();
     expect(result.data?.groundMessages).toEqual([EXPECTED_FAILURE]);
@@ -131,7 +131,7 @@ describe("ground failure-marker schema contract", () => {
   it("retryGroundMessage returns the cleared GroundMessage", async () => {
     const result = await run(
       `mutation { retryGroundMessage(messageId: "m1", stage: TRANSCRIBE) { ${FAILURE_FIELDS} } }`,
-      "analyst",
+      "admin",
     );
     expect(result.errors).toBeUndefined();
     expect(result.data?.retryGroundMessage).toEqual({
