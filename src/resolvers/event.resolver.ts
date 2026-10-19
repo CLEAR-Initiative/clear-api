@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
+import { logEventChange } from "../utils/event-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -343,8 +344,8 @@ export const eventResolvers = {
 
       // Create signalEvents join entries (dedupe the input array first so
       // the same signalId repeated in the request doesn't create duplicate links).
-      if (input.signalIds.length > 0) {
-        const uniqueSignalIds = [...new Set(input.signalIds)];
+      const uniqueSignalIds = [...new Set(input.signalIds)];
+      if (uniqueSignalIds.length > 0) {
         await context.prisma.signalEvents.createMany({
           data: uniqueSignalIds.map((signalId) => ({
             signalId,
@@ -353,6 +354,8 @@ export const eventResolvers = {
           })),
         });
       }
+
+      logEventChange("created", event, uniqueSignalIds);
 
       const actor = context.user;
       if (actor) {
@@ -400,7 +403,7 @@ export const eventResolvers = {
         });
       }
 
-      return context.prisma.$transaction(async (tx) => {
+      const updated = await context.prisma.$transaction(async (tx) => {
         // Serialises writers per event: the member check below sees every
         // write committed by an earlier writer.
         const locked = await tx.$queryRaw<{ id: string }[]>`
@@ -430,6 +433,8 @@ export const eventResolvers = {
 
         return tx.events.update({ where: { id }, data });
       });
+      logEventChange("aggregates", updated, [], sent.size);
+      return updated;
     },
 
     updateEvent: async (
@@ -461,6 +466,7 @@ export const eventResolvers = {
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
+      let newlyLinked: string[] = [];
       if (input.signalIds !== undefined && input.signalIds.length > 0) {
         const alreadyLinked = await context.prisma.signalEvents.findMany({
           where: {
@@ -471,6 +477,7 @@ export const eventResolvers = {
         });
         const linkedSet = new Set(alreadyLinked.map((r) => r.signalId));
         const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
+        newlyLinked = toLink;
         if (toLink.length > 0) {
           await context.prisma.signalEvents.createMany({
             data: toLink.map((signalId) => ({
@@ -491,7 +498,7 @@ export const eventResolvers = {
       // have already moved. They run before the main update so the row it
       // returns carries the result, and in one transaction with it so a
       // failed update (bad locationId, say) leaves the bounds untouched.
-      return context.prisma.$transaction(async (tx) => {
+      const updated = await context.prisma.$transaction(async (tx) => {
         if (input.lastSignalCreatedAt) {
           const last = new Date(input.lastSignalCreatedAt);
           await tx.events.updateMany({
@@ -532,6 +539,8 @@ export const eventResolvers = {
           },
         });
       });
+      logEventChange("updated", updated, [...new Set(newlyLinked)]);
+      return updated;
     },
 
     deleteEvent: async (
