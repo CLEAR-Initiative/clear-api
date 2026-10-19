@@ -975,6 +975,14 @@ after recomputing a changed signal's events. Sets status (PROCESSED, or
 FAILED) and processedAt. Pass exactly one of `ids` (unconditional) or
 `items` (compare-and-set: a row is updated only if its revision still
 matches). Returns rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
+  </tr><tr id="mutation-requeuesignals">
+    <td><code>requeueSignals</code></td>
+    <td><code>Int!</code></td>
+    <td>Put signals back in the Dagster drain queue for a backfill: sets status
+NEW and clears processedAt, so the next drain re-classifies and re-groups
+them. Only signals with no event link are requeued - a linked signal would
+be grouped a second time - so delete or unlink their events first. At most
+500 ids per call. Returns rows requeued. Admin only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
   </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>

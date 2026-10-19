@@ -138,6 +138,13 @@ export const mutationTypeDef = gql`
     matches). Returns rows updated. Idempotent. Admin/pipeline only."""
     markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
 
+    """Put signals back in the Dagster drain queue for a backfill: sets status
+    NEW and clears processedAt, so the next drain re-classifies and re-groups
+    them. Only signals with no event link are requeued - a linked signal would
+    be grouped a second time - so delete or unlink their events first. At most
+    500 ids per call. Returns rows requeued. Admin only."""
+    requeueSignals(ids: [String!]!): Int!
+
     """Create a manual signal from a field officer, partner, or government source.
     Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
     createManualSignal(input: CreateManualSignalInput!): Signal!
