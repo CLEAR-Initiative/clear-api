@@ -733,6 +733,11 @@ at this timestamp. Defaults to `now`.</span></div></td>
     <td><code>[WebhookDelivery!]!</code></td>
     <td>Recent delivery attempts for a subscription, newest first.<div class="field-args"><span class="arg"><code>subscriptionId: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
+    <td><code>teamAlertWebhooks</code></td>
+    <td><code>[WebhookSubscription!]!</code></td>
+    <td>A team's clear_alert webhook subscriptions. Caller must be a team
+admin, org admin, or platform admin for the team. Secrets are scrubbed.<div class="field-args"><span class="arg"><code>teamId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>groundSources</code></td>
     <td><code>[GroundSource!]!</code></td>
     <td>All ground sources (per-source policy records), newest first.</td>
@@ -1635,6 +1640,27 @@ realistic shape.<div class="field-args"><span class="arg"><code>id: String!</cod
     <td><code>WebhookDelivery!</code></td>
     <td>Re-fire a dead-lettered delivery. Resets attemptNumber to 1 and
 schedules an immediate retry via the poller.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-createalertwebhook">
+    <td><code>createAlertWebhook</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Create a team-scoped clear_alert webhook subscription. The caller
+must be a team admin, org admin, or platform admin for the team. The
+response is the only place the plaintext secret is returned.<div class="field-args"><span class="arg"><code>input: CreateAlertWebhookInput!</code></span></div></td>
+  </tr><tr id="mutation-updatealertwebhook">
+    <td><code>updateAlertWebhook</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Update a clear_alert webhook. Only provide fields you want to change.
+The secret is never returned here — rotate it with
+rotateAlertWebhookSecret.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateAlertWebhookInput!</code></span></div></td>
+  </tr><tr id="mutation-deletealertwebhook">
+    <td><code>deleteAlertWebhook</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Permanently delete a clear_alert webhook and its delivery history.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-rotatealertwebhooksecret">
+    <td><code>rotateAlertWebhookSecret</code></td>
+    <td><code>WebhookSubscription!</code></td>
+    <td>Generate a new secret for a clear_alert webhook and invalidate the
+old one. Response includes the new plaintext secret (one-shot).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-requesteventenrichment">
     <td><code>requestEventEnrichment</code></td>
     <td><code>[Task!]!</code></td>
@@ -2047,6 +2073,29 @@ never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-createalertwebhookinput"><code>CreateAlertWebhookInput</code> <span class="type-badge">input</span></h3><p>Input for creating a team-scoped clear_alert webhook. The secret is
+generated server-side (openssl rand -hex 32 equivalent) and returned once
+on create.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>teamId</code></td>
+    <td><code>String!</code></td>
+    <td>Owning team. The caller must be a team admin of this team, an org
+admin of its organisation, or a platform admin.</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>targetUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]</code></td>
+    <td>Optional glide-code allowlist. Empty / omitted = all event types.</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>Optional minimum alert severity (1-5). Omitted = all severities.</td>
   </tr></tbody></table><h3 id="type-createanalysisautomationinput"><code>CreateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]</code></td>
@@ -3242,6 +3291,27 @@ caller from its own price table.</p><table class="ref-table"><thead><tr><th>Fiel
     <td><code>minSeverity</code></td>
     <td><code>Int</code></td>
     <td>Minimum event severity (1-5).</td>
+  </tr></tbody></table><h3 id="type-updatealertwebhookinput"><code>UpdateAlertWebhookInput</code> <span class="type-badge">input</span></h3><p>Input for updating a clear_alert webhook. All fields optional —
+provide only what you want to change.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>targetUrl</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>active</code></td>
+    <td><code>Boolean</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updateanalysisautomationinput"><code>UpdateAnalysisAutomationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>cadence</code></td>
     <td><code>String</code></td>
@@ -7664,6 +7734,26 @@ matches. Managed by platform admins.</p><table class="ref-table"><thead><tr><th>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>Which trigger feeds this subscription: &quot;glitchtip&quot; (platform-admin
+GlitchTip alerts) or &quot;clear_alert&quot; (team-managed alert webhooks).</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Owning team for a clear_alert subscription; null for platform-level
+glitchtip subscriptions.</td>
+  </tr><tr>
+    <td><code>alertTypeFilter</code></td>
+    <td><code>[String!]!</code></td>
+    <td>(clear_alert) Glide-code allowlist on the alert's event types.
+Empty = all types within the team's location scope.</td>
+  </tr><tr>
+    <td><code>minSeverity</code></td>
+    <td><code>Int</code></td>
+    <td>(clear_alert) Minimum alert severity (1-5). Null = all severities
+(including null-severity alerts). A set floor excludes null-severity alerts.</td>
   </tr><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>

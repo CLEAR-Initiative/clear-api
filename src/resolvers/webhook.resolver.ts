@@ -2,6 +2,7 @@ import { GraphQLError } from "graphql";
 import { randomBytes } from "node:crypto";
 import type { Context } from "../context.js";
 import { requireAuth, isPlatformAdmin } from "../utils/auth-guard.js";
+import { requireTeamAdminOrOrgAdmin } from "./team.resolver.js";
 import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
 
 /**
@@ -51,6 +52,104 @@ function assertValidTargetUrl(url: string): void {
   );
 }
 
+/** True for hostnames/IP-literals that point at the server's own network:
+ *  loopback, RFC-1918 private, link-local (incl. the 169.254.169.254 cloud
+ *  metadata endpoint), and their IPv6 equivalents. */
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, ""); // strip IPv6 brackets
+  if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0" || h === "::") return true;
+  if (h === "::1") return true; // IPv6 loopback
+  if (/^fe[89ab]/.test(h)) return true; // IPv6 link-local fe80::/10
+  if (/^f[cd]/.test(h)) return true; // IPv6 unique-local fc00::/7
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 127 || a === 10) return true; // loopback / private
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata)
+  }
+  return false;
+}
+
+/** Stricter validation for TEAM-configured (`clear_alert`) webhooks: a public
+ *  https endpoint only. Team admins are less trusted than platform admins, so
+ *  block SSRF to internal services (loopback/private/link-local). NOTE: a
+ *  hostname that *resolves* to a private address (DNS rebinding) is not caught
+ *  here — delivery-time destination pinning is a follow-up. */
+export function assertPublicTargetUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new GraphQLError("Invalid targetUrl — must be an absolute URL", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  if (parsed.protocol !== "https:") {
+    throw new GraphQLError("Team webhook targetUrl must use https", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  if (isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new GraphQLError(
+      "targetUrl must be a public address (loopback, private, and link-local hosts are not allowed)",
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+}
+
+/** Validate an optional alert-severity floor. Null/undefined = no floor (fine);
+ *  a set value must be an integer in 1–5, else it would silence every alert. */
+function assertMinSeverity(minSeverity: number | null | undefined): void {
+  if (minSeverity == null) return;
+  if (!Number.isInteger(minSeverity) || minSeverity < 1 || minSeverity > 5) {
+    throw new GraphQLError("minSeverity must be an integer between 1 and 5", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+}
+
+/**
+ * Resolve the org of a team, 404 if the team is gone. Shared by the
+ * clear_alert create/update/delete/rotate/list paths so they all gate on
+ * the same (teamId, orgId) pair via requireTeamAdminOrOrgAdmin.
+ */
+async function resolveTeamOrgId(ctx: Context, teamId: string): Promise<string> {
+  const team = await ctx.prisma.teams.findUnique({
+    where: { id: teamId },
+    select: { organisationId: true },
+  });
+  if (!team) {
+    throw new GraphQLError("Team not found", {
+      extensions: { code: "NOT_FOUND" },
+    });
+  }
+  return team.organisationId;
+}
+
+/**
+ * Load a clear_alert subscription for a write (update/delete/rotate) and
+ * gate the caller. Returns the row once the caller is authorised.
+ *
+ * A missing row — OR a glitchtip row addressed by one of the alert
+ * mutations — is reported as NOT_FOUND: these mutations must never touch
+ * glitchtip subscriptions, and we don't leak the existence of one.
+ */
+async function loadAlertWebhookForWrite(ctx: Context, id: string) {
+  const user = requireAuth(ctx);
+  const row = await ctx.prisma.webhookSubscription.findUnique({ where: { id } });
+  if (!row || row.source !== "clear_alert" || !row.teamId) {
+    throw new GraphQLError("Alert webhook not found", {
+      extensions: { code: "NOT_FOUND" },
+    });
+  }
+  const orgId = await resolveTeamOrgId(ctx, row.teamId);
+  await requireTeamAdminOrOrgAdmin(ctx.prisma, user, row.teamId, orgId);
+  return row;
+}
+
 /** Derive delivery status from the timestamp/counter fields.
  * Duplicates the derivation logic on the client — kept server-side so
  * the wire format is self-describing. */
@@ -93,7 +192,11 @@ export const webhookResolvers = {
   Query: {
     webhookSubscriptions: async (_parent: unknown, _args: unknown, ctx: Context) => {
       requirePlatformAdmin(ctx);
+      // Scope to GlitchTip rows only — team-managed clear_alert webhooks are
+      // owned by teams and surfaced through teamAlertWebhooks, not the
+      // platform-admin GlitchTip list.
       const rows = await ctx.prisma.webhookSubscription.findMany({
+        where: { source: "glitchtip" },
         orderBy: { createdAt: "desc" },
       });
       // Scrub secrets from list view — only createWebhookSubscription /
@@ -126,6 +229,22 @@ export const webhookResolvers = {
         orderBy: { createdAt: "desc" },
         take: limit,
       });
+    },
+
+    teamAlertWebhooks: async (
+      _parent: unknown,
+      args: { teamId: string },
+      ctx: Context,
+    ) => {
+      const user = requireAuth(ctx);
+      const orgId = await resolveTeamOrgId(ctx, args.teamId);
+      await requireTeamAdminOrOrgAdmin(ctx.prisma, user, args.teamId, orgId);
+      const rows = await ctx.prisma.webhookSubscription.findMany({
+        where: { source: "clear_alert", teamId: args.teamId },
+        orderBy: { createdAt: "desc" },
+      });
+      // Scrub secrets from list view — only create/rotate expose them.
+      return rows.map((r) => ({ ...r, secret: null }));
     },
   },
 
@@ -287,6 +406,110 @@ export const webhookResolvers = {
       });
       return ctx.prisma.webhookDelivery.findUniqueOrThrow({
         where: { id: args.id },
+      });
+    },
+
+    createAlertWebhook: async (
+      _parent: unknown,
+      args: {
+        input: {
+          teamId: string;
+          name: string;
+          targetUrl: string;
+          alertTypeFilter?: string[] | null;
+          minSeverity?: number | null;
+        };
+      },
+      ctx: Context,
+    ) => {
+      const user = requireAuth(ctx);
+      const orgId = await resolveTeamOrgId(ctx, args.input.teamId);
+      await requireTeamAdminOrOrgAdmin(ctx.prisma, user, args.input.teamId, orgId);
+      assertPublicTargetUrl(args.input.targetUrl);
+      assertMinSeverity(args.input.minSeverity);
+      // NB: the `secret` field is returned exactly ONCE, right here — list
+      // reads scrub it, mirroring createWebhookSubscription.
+      return ctx.prisma.webhookSubscription.create({
+        data: {
+          source: "clear_alert",
+          teamId: args.input.teamId,
+          name: args.input.name,
+          targetUrl: args.input.targetUrl,
+          secret: generateSecret(),
+          alertTypeFilter: args.input.alertTypeFilter ?? [],
+          minSeverity: args.input.minSeverity ?? null,
+          createdBy: user.id,
+        },
+      });
+    },
+
+    updateAlertWebhook: async (
+      _parent: unknown,
+      args: {
+        id: string;
+        input: {
+          name?: string | null;
+          targetUrl?: string | null;
+          alertTypeFilter?: string[] | null;
+          minSeverity?: number | null;
+          active?: boolean | null;
+        };
+      },
+      ctx: Context,
+    ) => {
+      await loadAlertWebhookForWrite(ctx, args.id);
+      // Validate under the SAME condition used for the write below, so an empty
+      // string can't slip past a truthy check and then overwrite a good URL.
+      if (args.input.targetUrl !== undefined && args.input.targetUrl !== null) {
+        assertPublicTargetUrl(args.input.targetUrl);
+      }
+      assertMinSeverity(args.input.minSeverity);
+      const row = await ctx.prisma.webhookSubscription.update({
+        where: { id: args.id },
+        data: {
+          ...(args.input.name !== undefined && args.input.name !== null
+            ? { name: args.input.name }
+            : {}),
+          ...(args.input.targetUrl !== undefined && args.input.targetUrl !== null
+            ? { targetUrl: args.input.targetUrl }
+            : {}),
+          ...(args.input.alertTypeFilter !== undefined && args.input.alertTypeFilter !== null
+            ? { alertTypeFilter: args.input.alertTypeFilter }
+            : {}),
+          // minSeverity is nullable: an explicit null clears the floor.
+          ...(args.input.minSeverity !== undefined
+            ? { minSeverity: args.input.minSeverity }
+            : {}),
+          ...(args.input.active !== undefined && args.input.active !== null
+            ? { active: args.input.active }
+            : {}),
+        },
+      });
+      return { ...row, secret: null };
+    },
+
+    deleteAlertWebhook: async (
+      _parent: unknown,
+      args: { id: string },
+      ctx: Context,
+    ) => {
+      await loadAlertWebhookForWrite(ctx, args.id);
+      // Cascade in the Prisma schema removes delivery history too.
+      await ctx.prisma.webhookSubscription.delete({ where: { id: args.id } });
+      return true;
+    },
+
+    rotateAlertWebhookSecret: async (
+      _parent: unknown,
+      args: { id: string },
+      ctx: Context,
+    ) => {
+      await loadAlertWebhookForWrite(ctx, args.id);
+      // Same one-shot semantics as create — this response is the only place
+      // the new secret is visible.
+      return ctx.prisma.webhookSubscription.update({
+        where: { id: args.id },
+        data: { secret: generateSecret() },
       });
     },
   },

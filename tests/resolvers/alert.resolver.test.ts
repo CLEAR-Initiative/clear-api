@@ -79,6 +79,9 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
       // gate is a no-op for tests that aren't about it. A test overrides this
       // to exercise the gate (count → 0 means all-irrelevant).
       disasterTypes: { count: vi.fn().mockResolvedValue(1) },
+      // Default: no team alert webhooks, so createAlert's fan-out is a clean
+      // no-op for tests that aren't about it (avoids a caught/logged error).
+      webhookSubscription: { findMany: vi.fn().mockResolvedValue([]) },
       ...prisma,
     } as Context["prisma"],
     user: user as Context["user"],

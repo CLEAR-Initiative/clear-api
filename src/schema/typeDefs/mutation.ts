@@ -1133,6 +1133,26 @@ export const mutationTypeDef = gql`
     retryWebhookDelivery(id: String!): WebhookDelivery!
   }
 
+  # ─── Alert Webhook Mutations (team-scoped clear_alert) ───────────────
+  extend type Mutation {
+    """Create a team-scoped clear_alert webhook subscription. The caller
+    must be a team admin, org admin, or platform admin for the team. The
+    response is the only place the plaintext secret is returned."""
+    createAlertWebhook(input: CreateAlertWebhookInput!): WebhookSubscription!
+
+    """Update a clear_alert webhook. Only provide fields you want to change.
+    The secret is never returned here — rotate it with
+    rotateAlertWebhookSecret."""
+    updateAlertWebhook(id: String!, input: UpdateAlertWebhookInput!): WebhookSubscription!
+
+    """Permanently delete a clear_alert webhook and its delivery history."""
+    deleteAlertWebhook(id: String!): Boolean!
+
+    """Generate a new secret for a clear_alert webhook and invalidate the
+    old one. Response includes the new plaintext secret (one-shot)."""
+    rotateAlertWebhookSecret(id: String!): WebhookSubscription!
+  }
+
   # ─── Tasks (ADR-0010) ────────────────────────────────────────────────
   extend type Mutation {
     """Request an Event enrichment. Always fans out: one Task per enabled

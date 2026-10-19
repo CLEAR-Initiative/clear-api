@@ -435,7 +435,7 @@ async function requireOrgAdminForTeam(
 }
 
 /** Check that user is a team admin (lead/team_admin), org admin, or global admin. */
-async function requireTeamAdminOrOrgAdmin(
+export async function requireTeamAdminOrOrgAdmin(
   prisma: Context["prisma"],
   user: { id: string; role?: string | null },
   teamId: string,
