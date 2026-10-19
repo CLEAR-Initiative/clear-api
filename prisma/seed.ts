@@ -501,7 +501,20 @@ async function seed() {
     },
   });
 
-  console.log("Created 5 data sources + 1 manual source + 1 push feed");
+  // CIR's Sudan Witness ArcGIS layer, downloaded by clear-pipeline's gx. Ungraded
+  // until a domain expert signs off (proposed grade 2).
+  await prisma.dataSources.create({
+    data: {
+      name: "sudan_witness",
+      type: "api",
+      isActive: true,
+      baseUrl:
+        "https://services-eu1.arcgis.com/06WOSMGHsCnaFyMp/arcgis/rest/services/SUW_Incidents/FeatureServer/0",
+      infoUrl: "https://www.info-res.org/sudan-witness/",
+    },
+  });
+
+  console.log("Created 6 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
