@@ -508,3 +508,48 @@ describe("markTranslated", () => {
     expect(removed).toBe(false);
   });
 });
+
+// ─── updateSignalLocation ───────────────────────────────────────────────────
+
+describe("updateSignalLocation", () => {
+  function prismaFor(signalExists = true, locationExists = true) {
+    return {
+      signals: {
+        findUnique: vi.fn(async () => (signalExists ? { id: "s1" } : null)),
+        update: vi.fn(async ({ data }: { data: { locationId: string } }) => ({ id: "s1", ...data })),
+      },
+      locations: {
+        findUnique: vi.fn(async () => (locationExists ? { id: "loc-1" } : null)),
+      },
+    };
+  }
+
+  it("accepts a pipeline-role user (the drain locates push-feed signals)", async () => {
+    const prisma = prismaFor();
+    await signalResolvers.Mutation.updateSignalLocation(
+      {}, { id: "s1", locationId: "loc-1" }, ctx(prisma, "pipeline"),
+    );
+    expect(prisma.signals.update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: { locationId: "loc-1" },
+    });
+  });
+
+  it("rejects a member and an anonymous caller", async () => {
+    for (const role of ["member", null]) {
+      await expect(
+        signalResolvers.Mutation.updateSignalLocation(
+          {}, { id: "s1", locationId: "loc-1" }, ctx(prismaFor(), role),
+        ),
+      ).rejects.toBeInstanceOf(GraphQLError);
+    }
+  });
+
+  it("returns NOT_FOUND for an unknown location instead of an FK error", async () => {
+    await expect(
+      signalResolvers.Mutation.updateSignalLocation(
+        {}, { id: "s1", locationId: "nope" }, ctx(prismaFor(true, false), "pipeline"),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+});
