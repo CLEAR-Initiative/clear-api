@@ -112,18 +112,21 @@ export const alertResolvers = {
       ]);
 
       // Don't raise alerts for out-of-interest events: an event whose types are
-      // ALL out-of-interest (disaster_types.nrc_relevant = false) is rejected.
-      // An event with at least one NRC-relevant glide code may still alert.
-      // An event with no classified types carries no NRC signal, so it is not
-      // blocked here.
+      // ALL out-of-interest (disaster_types.nrc_relevant = false) is skipped.
+      // An event with at least one NRC-relevant glide code may still alert; an
+      // event with no classified types carries no NRC signal and is not skipped.
+      // This is expected business behaviour (the pipeline asks to raise an alert
+      // for every event it processes), NOT an error — so LOG and return null
+      // rather than throwing, which would otherwise surface as a GlitchTip alert
+      // on the pipeline side. `createAlert` is nullable for exactly this reason.
       if (
         (event.types?.length ?? 0) > 0 &&
         !(await anyTypeNrcRelevant(context.prisma, event.types))
       ) {
-        throw new GraphQLError(
-          "Cannot raise an alert: none of this event's types are relevant to NRC",
-          { extensions: { code: "NRC_IRRELEVANT" } },
+        console.log(
+          `[createAlert] Event ${event.id}: types=${JSON.stringify(event.types)} are all NRC-irrelevant — no alert raised (skipping, not an error)`,
         );
+        return null;
       }
 
       // Idempotent creation: if an alert already exists for this event,

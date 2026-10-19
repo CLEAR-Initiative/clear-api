@@ -940,8 +940,10 @@ HTML form hits the same service via POST
     <td>Update the authenticated user's profile and notification preferences.<div class="field-args"><span class="arg"><code>input: UpdateProfileInput!</code></span></div></td>
   </tr><tr id="mutation-createalert">
     <td><code>createAlert</code></td>
-    <td><code>Alert!</code></td>
-    <td>Create an alert from an event, notifying subscribers.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
+    <td><code>Alert</code></td>
+    <td>Create an alert from an event, notifying subscribers. Returns `null`
+(no error) when the event's types are all NRC-irrelevant, so the
+pipeline can skip it without a thrown error / GlitchTip alert.<div class="field-args"><span class="arg"><code>input: CreateAlertInput!</code></span></div></td>
   </tr><tr id="mutation-updatealert">
     <td><code>updateAlert</code></td>
     <td><code>Alert!</code></td>

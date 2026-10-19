@@ -280,7 +280,10 @@ describe("Mutation.createAlert", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("throws NRC_IRRELEVANT when every event type is out-of-interest", async () => {
+  it("returns null (no error) and raises no alert when every event type is out-of-interest", async () => {
+    // NRC-irrelevant is an expected skip, not an error — createAlert logs and
+    // returns null rather than throwing, so the pipeline doesn't trip a GlitchTip
+    // alert on a normal "not alert-worthy" event.
     const event = { id: "e1", types: ["pa", "fr"], severity: 2, originId: null, destinationId: null, locationId: null };
     const create = vi.fn();
     const ctx = buildContext(TEAM_ANALYST, {
@@ -290,9 +293,7 @@ describe("Mutation.createAlert", () => {
       disasterTypes: { count: vi.fn().mockResolvedValue(0) },
       ...wideOpenAnalystScope(),
     });
-    await expect(
-      createAlert(null, { input: { eventId: "e1" } }, ctx),
-    ).rejects.toMatchObject({ extensions: { code: "NRC_IRRELEVANT" } });
+    await expect(createAlert(null, { input: { eventId: "e1" } }, ctx)).resolves.toBeNull();
     expect(create).not.toHaveBeenCalled();
   });
 
