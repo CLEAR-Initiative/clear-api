@@ -22,9 +22,12 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
   isPlatformAdmin,
+  requireAdminOrTeamAnalyst,
   requireContentReader,
+  requireNonWorker,
   requireRole,
   resolveTeamMembership,
+  TEAM_ANALYST_ROLE,
 } from "../utils/auth-guard.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { deepMergeTranslation } from "../utils/translation-merge.js";
@@ -133,10 +136,11 @@ function nextScheduledRun(cadence: string, priorNextRunAt: Date | null, now: Dat
   return new Date(next);
 }
 
-/** Team-ownership gate for automation writes. A platform admin passes
- *  unconditionally; anyone else must be a member of the owning team
- *  (FORBIDDEN otherwise). A null team is a system/platform-level
- *  automation and is admin-only. */
+/** Team-scoped gate for automation writes. A platform admin passes
+ *  unconditionally; anyone else must be a team `analyst` on the owning team
+ *  (FORBIDDEN otherwise) — the team-scoped replacement for the old global
+ *  `analyst`. A null team is a system/platform-level automation and is
+ *  admin-only. */
 async function requireAutomationTeamAccess(
   context: Context,
   user: NonNullable<Context["user"]>,
@@ -148,7 +152,16 @@ async function requireAutomationTeamAccess(
       extensions: { code: "FORBIDDEN" },
     });
   }
-  await resolveTeamMembership(context.prisma, user.id, teamId, user.role);
+  const membership = await context.prisma.teamMembers.findUnique({
+    where: { teamId_userId: { teamId, userId: user.id } },
+    select: { role: true },
+  });
+  if (membership?.role !== TEAM_ANALYST_ROLE) {
+    throw new GraphQLError(
+      "Requires a team analyst on this automation's team, or global admin",
+      { extensions: { code: "FORBIDDEN" } },
+    );
+  }
 }
 
 /** Load an automation's owning team for an id-addressed write, then apply
@@ -442,8 +455,9 @@ export const analysisResolvers = {
       args: { input: CreateAnalysisAutomationInput },
       context: Context,
     ) => {
-      const user = requireRole(context, ["admin", "analyst"]);
+      const user = requireNonWorker(context);
       const { input } = args;
+      // admin OR team analyst on the owning team (null team → admin-only).
       await requireAutomationTeamAccess(context, user, input.teamId);
       const data = {
         locationIds: canonicalizeArray(input.locationIds),
@@ -487,7 +501,7 @@ export const analysisResolvers = {
       args: { id: string; input: UpdateAnalysisAutomationInput },
       context: Context,
     ) => {
-      const user = requireRole(context, ["admin", "analyst"]);
+      const user = requireNonWorker(context);
       await requireAutomationAccessById(context, user, args.id);
       const { input } = args;
       return context.prisma.analysisAutomation.update({
@@ -504,7 +518,7 @@ export const analysisResolvers = {
       args: { id: string },
       context: Context,
     ): Promise<boolean> => {
-      const user = requireRole(context, ["admin", "analyst"]);
+      const user = requireNonWorker(context);
       await requireAutomationAccessById(context, user, args.id);
       await context.prisma.analysisAutomation.delete({ where: { id: args.id } });
       return true;
@@ -518,7 +532,7 @@ export const analysisResolvers = {
       args: { input: FrameInput & { teamId?: string | null; force?: boolean | null } },
       context: Context,
     ) => {
-      const user = requireRole(context, ["admin", "analyst"]);
+      const user = requireNonWorker(context);
       const { input } = args;
       // Force bypasses the regeneration gate (ADR-0008) — admin only.
       const force = input.force ?? false;
@@ -527,10 +541,15 @@ export const analysisResolvers = {
           extensions: { code: "FORBIDDEN" },
         });
       }
-      // A team-attributed request must come from a member of that team
-      // (admins bypass). A team-less request stays open to admin/analyst.
+      // Authorisation: a team-attributed request requires admin OR a team
+      // `analyst` on that team (the team-scoped replacement for the old global
+      // analyst); a team-less (platform) request is admin-only.
       if (input.teamId) {
-        await resolveTeamMembership(context.prisma, user.id, input.teamId, user.role);
+        await requireAdminOrTeamAnalyst(context, input.teamId);
+      } else if (!isPlatformAdmin(user)) {
+        throw new GraphQLError("Only a platform admin can request a team-less analysis", {
+          extensions: { code: "FORBIDDEN" },
+        });
       }
       // A pending request for the same frame may belong to another team: dedupe
       // onto it, but never hand a non-admin that team's requester or error.

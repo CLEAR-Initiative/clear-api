@@ -59,8 +59,8 @@ function buildContext(
   } as Context;
 }
 
-const OWNER = { id: "u1", role: "viewer" };
-const OTHER = { id: "u2", role: "analyst" };
+const OWNER = { id: "u1", role: "member" };
+const OTHER = { id: "u2", role: "member" };
 const PENDING = { id: "u3", role: "pending" };
 const ADMIN = { id: "a1", role: "admin" };
 

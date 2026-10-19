@@ -85,13 +85,14 @@ describe("reviewTransition", () => {
 
 describe("canReviewSource", () => {
   it("platform admin always passes", () => {
-    expect(canReviewSource({ role: "admin" }, ["analyst"])).toBe(true);
+    expect(canReviewSource({ role: "admin" }, ["admin"])).toBe(true);
   });
   it("otherwise the global role must appear in the source's reviewerRoles", () => {
-    expect(canReviewSource({ role: "analyst" }, ["admin", "analyst"])).toBe(true);
-    expect(canReviewSource({ role: "analyst" }, ["admin"])).toBe(false);
-    expect(canReviewSource({ role: "viewer" }, ["admin", "analyst"])).toBe(false);
-    expect(canReviewSource(null, ["admin", "analyst"])).toBe(false);
+    // reviewerRoles now defaults to ["admin"]; the function still generically
+    // admits any global role explicitly listed.
+    expect(canReviewSource({ role: "member" }, ["admin", "member"])).toBe(true);
+    expect(canReviewSource({ role: "member" }, ["admin"])).toBe(false);
+    expect(canReviewSource(null, ["admin"])).toBe(false);
   });
 });
 
@@ -116,6 +117,9 @@ function buildContext(
   user: { id: string; role: string } | null,
   thread: StubThread | null,
   knownLocationIds: string[] = [],
+  // When true, the caller carries the `emergency_response_manager` TEAM role, so
+  // the inbox gate admits them as an ERM (isErm → bypasses the source policy).
+  isErm = false,
 ) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -130,8 +134,8 @@ function buildContext(
         return { ...thread, ...args.data };
       },
     },
-    // Inbox gate checks for an ERM team membership when the caller is a viewer.
-    teamMembers: { findFirst: async () => null },
+    // Inbox gate checks for an ERM team membership when the caller is a member.
+    teamMembers: { findFirst: async () => (isErm ? { id: "tm-erm" } : null) },
   };
   const context = {
     prisma,
@@ -204,11 +208,13 @@ describe("reviewGroundThread resolver", () => {
   const thread: StubThread = {
     id: "t1",
     reviewState: "unverified",
-    source: { reviewerRoles: ["admin", "analyst"] },
+    source: { reviewerRoles: ["admin"] },
   };
 
-  it("applies a valid decision and records the reviewer", async () => {
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread);
+  it("applies a valid decision and records the reviewer (an ERM triaging)", async () => {
+    // A global `member` carrying the emergency_response_manager TEAM role is
+    // admitted by the inbox gate and triages the thread.
+    const { context, updates } = buildContext({ id: "u1", role: "member" }, thread, [], true);
     const result = await reviewGroundThread(
       null,
       { id: "t1", decision: "approve_private", note: "looks credible" },
@@ -220,24 +226,35 @@ describe("reviewGroundThread resolver", () => {
     expect(updates).toHaveLength(1);
   });
 
-  it("rejects viewers before touching the thread", async () => {
-    const { context, updates } = buildContext({ id: "u1", role: "viewer" }, thread);
+  it("rejects a plain member (no admin, no ERM team role) before touching the thread", async () => {
+    const { context, updates } = buildContext({ id: "u1", role: "member" }, thread);
     await expect(
       reviewGroundThread(null, { id: "t1", decision: "reject" }, context),
     ).rejects.toThrowError(GraphQLError);
     expect(updates).toHaveLength(0);
   });
 
-  it("enforces the per-source reviewerRoles policy", async () => {
+  it("enforces the per-source reviewerRoles policy for non-ERM callers, which an ERM bypasses", async () => {
     const restricted: StubThread = { ...thread, source: { reviewerRoles: ["admin"] } };
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, restricted);
-    await expect(
-      reviewGroundThread(null, { id: "t1", decision: "reject" }, context),
-    ).rejects.toThrow(/requires one of: admin/);
-    expect(updates).toHaveLength(0);
 
-    // …but a platform admin passes the same policy.
-    const asAdmin = buildContext({ id: "u2", role: "admin" }, restricted);
+    // A plain member is stopped at the coarse inbox gate (never an ERM/admin).
+    const asMember = buildContext({ id: "u0", role: "member" }, restricted);
+    await expect(
+      reviewGroundThread(null, { id: "t1", decision: "reject" }, asMember.context),
+    ).rejects.toThrowError(GraphQLError);
+    expect(asMember.updates).toHaveLength(0);
+
+    // An ERM bypasses the source's reviewerRoles policy and may triage it.
+    const asErm = buildContext({ id: "u1", role: "member" }, restricted, [], true);
+    const ermResult = await reviewGroundThread(
+      null,
+      { id: "t1", decision: "reject" },
+      asErm.context,
+    );
+    expect(ermResult.reviewState).toBe("rejected");
+
+    // …and a platform admin passes the same policy.
+    const asAdmin = buildContext({ id: "u2", role: "admin" }, { ...thread, source: { reviewerRoles: ["admin"] } });
     const result = await reviewGroundThread(
       null,
       { id: "t1", decision: "reject" },
@@ -256,7 +273,7 @@ describe("reviewGroundThread resolver", () => {
   });
 
   it("stores the structured rejectReason on reject", async () => {
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread);
+    const { context, updates } = buildContext({ id: "u1", role: "admin" }, thread);
     const result = await reviewGroundThread(
       null,
       { id: "t1", decision: "reject", rejectReason: "spam", note: "spam: Spam" },
@@ -269,13 +286,13 @@ describe("reviewGroundThread resolver", () => {
 
   it("clears rejectReason when a rejected thread is re-approved", async () => {
     const rejected: StubThread = { ...thread, reviewState: "rejected" };
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, rejected);
+    const { context, updates } = buildContext({ id: "u1", role: "admin" }, rejected);
     await reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context);
     expect(updates[0]!.data.rejectReason).toBeNull();
   });
 
   it("refuses a bad rejectReason or overrides before touching the thread", async () => {
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread);
+    const { context, updates } = buildContext({ id: "u1", role: "admin" }, thread);
     await expect(
       reviewGroundThread(null, { id: "t1", decision: "reject", rejectReason: "boring" }, context),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
@@ -286,7 +303,7 @@ describe("reviewGroundThread resolver", () => {
   });
 
   it("refuses an overrides.locationId that doesn't exist, before promoting", async () => {
-    const { context, updates } = buildContext({ id: "u1", role: "analyst" }, thread, ["loc_known"]);
+    const { context, updates } = buildContext({ id: "u1", role: "admin" }, thread, ["loc_known"]);
     await expect(
       reviewGroundThread(
         null,

@@ -20,9 +20,13 @@ import { describeIfDb } from "../helpers/db.js";
 
 const { updateEvent } = eventResolvers.Mutation;
 
+// updateEvent's elevated gate (requireAdminOrTeamAnalystForLocations) admits a
+// global admin unconditionally; these tests exercise signal-time-bounds logic,
+// not the role gate, so the actor is an admin. (`analyst` is a team role now and
+// would need a location-scoped team membership — out of scope here.)
 const analyst = {
   prisma,
-  user: { id: `event-db-${Date.now()}-analyst`, role: "analyst" },
+  user: { id: `event-db-${Date.now()}-admin`, role: "admin" },
   session: null,
   authMethod: "session",
 } as unknown as Context;

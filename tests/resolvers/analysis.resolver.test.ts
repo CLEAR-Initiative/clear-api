@@ -37,15 +37,21 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
     update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
   };
-  // Membership fixture: analyst belongs to team-a only.
-  const MEMBERSHIPS: Record<string, string[]> = { "u-analyst": ["team-a"], "u-viewer": ["team-a"] };
+  // Membership fixture: `u-analyst` is a team `analyst` on team-a (the elevated
+  // team role that replaces the old global analyst); `u-viewer` is a plain
+  // team_member on team-a.
+  const MEMBERSHIPS: Record<string, Record<string, string>> = {
+    "u-analyst": { "team-a": "analyst" },
+    "u-viewer": { "team-a": "team_member" },
+  };
   const teamMembers = {
     findUnique: vi.fn(async ({ where }: { where: { teamId_userId: { teamId: string; userId: string } } }) => {
       const { teamId, userId } = where.teamId_userId;
-      return (MEMBERSHIPS[userId] ?? []).includes(teamId) ? { teamId, userId, role: "team_member" } : null;
+      const role = MEMBERSHIPS[userId]?.[teamId];
+      return role ? { teamId, userId, role } : null;
     }),
     findMany: vi.fn(async ({ where }: { where: { userId: string } }) =>
-      (MEMBERSHIPS[where.userId] ?? []).map((teamId) => ({ teamId })),
+      Object.keys(MEMBERSHIPS[where.userId] ?? {}).map((teamId) => ({ teamId })),
     ),
   };
   const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest, teamMembers };
@@ -67,8 +73,11 @@ function ctx(user: { id: string; role: string } | null, prisma = makePrisma()): 
 
 const admin = { id: "u-admin", role: "admin" };
 const pipeline = { id: "u-pipe", role: "pipeline" };
-const analyst = { id: "u-analyst", role: "analyst" };
-const viewer = { id: "u-viewer", role: "viewer" };
+// A team `analyst` (global member + analyst membership on team-a); carries the
+// elevated, team-scoped powers that replaced the old global analyst role.
+const analyst = { id: "u-analyst", role: "member" };
+// A plain team member on team-a (global member).
+const viewer = { id: "u-viewer", role: "member" };
 
 const p2002 = new Prisma.PrismaClientKnownRequestError("dup", {
   code: "P2002", clientVersion: "x",
@@ -83,13 +92,13 @@ describe("analysis resolver", () => {
       generatedByModel: "claude-sonnet-4-6", schemaVersion: "v4",
     });
 
-    it("rejects a viewer with FORBIDDEN", async () => {
+    it("rejects a plain member with FORBIDDEN", async () => {
       await expect(
         analysisResolvers.Mutation.upsertAnalysis(null, { input: input() }, ctx(viewer)),
       ).rejects.toThrow(/insufficient permissions/i);
     });
 
-    it("rejects an analyst (write is admin/pipeline only)", async () => {
+    it("rejects a team analyst (write is admin/pipeline only)", async () => {
       await expect(
         analysisResolvers.Mutation.upsertAnalysis(null, { input: input() }, ctx(analyst)),
       ).rejects.toThrow(/insufficient permissions/i);
@@ -284,16 +293,17 @@ describe("analysis resolver", () => {
   describe("requestAnalysis — on-demand enqueue + dedupe", () => {
     const input = () => ({ locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30") });
 
-    it("is admin/analyst only", async () => {
+    it("a team-less request is admin-only (a non-admin member is FORBIDDEN)", async () => {
       await expect(
         analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(viewer)),
-      ).rejects.toThrow(/insufficient permissions/i);
+      ).rejects.toThrow(/platform admin|insufficient permissions/i);
     });
 
     it("returns the existing PENDING request instead of creating a duplicate", async () => {
+      // input() is team-less → admin-only; drive the dedupe path as an admin.
       const prisma = makePrisma();
       (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "rq-existing", status: "PENDING" });
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(analyst, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
       expect(res).toEqual({ id: "rq-existing", status: "PENDING" });
       expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
     });
@@ -303,7 +313,7 @@ describe("analysis resolver", () => {
       const rq = prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
       rq.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "rq-winner", status: "PENDING" });
       rq.create.mockRejectedValue(p2002);
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(analyst, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
       expect(res).toEqual({ id: "rq-winner", status: "PENDING" });
     });
   });
@@ -366,7 +376,7 @@ describe("analysis resolver", () => {
 
       it("non-admin with no memberships gets an empty scope", async () => {
         const prisma = makePrisma();
-        await analysisResolvers.Query.analysisAutomations(null, {}, ctx({ id: "u-lonely", role: "viewer" }, prisma));
+        await analysisResolvers.Query.analysisAutomations(null, {}, ctx({ id: "u-lonely", role: "member" }, prisma));
         expect(au(prisma).findMany.mock.calls[0][0].where).toEqual({ teamId: { in: [] } });
       });
     });
@@ -382,7 +392,7 @@ describe("analysis resolver", () => {
         const prisma = makePrisma();
         await expect(
           analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-b") }, ctx(analyst, prisma)),
-        ).rejects.toThrow(/not a member/i);
+        ).rejects.toThrow(/team analyst on this automation's team/i);
         expect(au(prisma).create).not.toHaveBeenCalled();
       });
 
@@ -401,10 +411,10 @@ describe("analysis resolver", () => {
         expect(au(prisma).create).toHaveBeenCalledTimes(2);
       });
 
-      it("viewer is still rejected by the role gate", async () => {
+      it("a plain team member (not a team analyst) is rejected by the team gate", async () => {
         await expect(
           analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(viewer)),
-        ).rejects.toThrow(/insufficient permissions/i);
+        ).rejects.toThrow(/team analyst on this automation's team/i);
       });
     });
 
@@ -475,14 +485,18 @@ describe("analysis resolver", () => {
         const prisma = makePrisma();
         await expect(
           analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-b") }, ctx(analyst, prisma)),
-        ).rejects.toThrow(/not a member/i);
+        ).rejects.toThrow(/global admin, or team analyst/i);
         expect(rq(prisma).create).not.toHaveBeenCalled();
       });
 
-      it("team-less request stays open to analysts", async () => {
+      it("team-less request is admin-only — a team analyst is FORBIDDEN", async () => {
+        // A null teamId is a platform-level request; the team-scoped analyst
+        // power does not extend to it.
         const prisma = makePrisma();
-        await analysisResolvers.Mutation.requestAnalysis(null, { input: input(null) }, ctx(analyst, prisma));
-        expect(rq(prisma).create).toHaveBeenCalledOnce();
+        await expect(
+          analysisResolvers.Mutation.requestAnalysis(null, { input: input(null) }, ctx(analyst, prisma)),
+        ).rejects.toThrow(/platform admin/i);
+        expect(rq(prisma).create).not.toHaveBeenCalled();
       });
 
       it("admin bypasses membership", async () => {

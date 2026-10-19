@@ -13,7 +13,7 @@
  *   Query.notifications   — auth gate, self-scoped where, optional status filter
  *   Query.notification    — auth gate, self-scoped findFirst
  *   createNotification    — admin-only role gate, persisted fields
- *   createBulkNotifications — admin|analyst gate, fan-out + count return
+ *   createBulkNotifications — admin gate, fan-out + count return
  *   notifyAlertSubscribers  — role gate, NOT_FOUND, no-subscriber early return,
  *                             subscriber matching (ancestor expansion +
  *                             severity floor), join-table + notification writes,
@@ -102,7 +102,7 @@ describe("Query.notifications", () => {
   it("returns the caller's notifications, newest first", () => {
     const rows = [{ id: "n1" }];
     const findMany = vi.fn().mockReturnValue(rows);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { notifications: { findMany } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { findMany } });
 
     expect(notifications(null, {}, ctx)).toBe(rows);
     expect(findMany).toHaveBeenCalledWith({
@@ -113,7 +113,7 @@ describe("Query.notifications", () => {
 
   it("applies the status filter when supplied", () => {
     const findMany = vi.fn().mockReturnValue([]);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { notifications: { findMany } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { findMany } });
 
     notifications(null, { status: "READ" }, ctx);
     expect(findMany.mock.calls[0][0].where).toEqual({ userId: "u1", status: "READ" });
@@ -127,7 +127,7 @@ describe("Query.notifications", () => {
 describe("Query.notification", () => {
   it("scopes the lookup to the caller's own id", () => {
     const findFirst = vi.fn().mockReturnValue({ id: "n1" });
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { notifications: { findFirst } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { findFirst } });
 
     notification(null, { id: "n1" }, ctx);
     expect(findFirst).toHaveBeenCalledWith({ where: { id: "n1", userId: "u1" } });
@@ -139,9 +139,9 @@ describe("Query.notification", () => {
 });
 
 describe("Mutation.createNotification", () => {
-  it("requires admin role", async () => {
+  it("requires admin role — a non-admin member (even a team analyst) is FORBIDDEN", async () => {
     const create = vi.fn();
-    const ctx = buildContext({ id: "u1", role: "analyst" }, { notifications: { create } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { create } });
     await expect(
       createNotification(null, { input: { userId: "t", message: "m", notificationType: "x" } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
@@ -178,9 +178,9 @@ describe("Mutation.createNotification", () => {
 });
 
 describe("Mutation.createBulkNotifications", () => {
-  it("rejects a viewer with FORBIDDEN", async () => {
+  it("rejects a non-admin member with FORBIDDEN", async () => {
     const createMany = vi.fn();
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { notifications: { createMany } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { createMany } });
     await expect(
       createBulkNotifications(
         null,
@@ -193,7 +193,7 @@ describe("Mutation.createBulkNotifications", () => {
 
   it("fans out one row per user and returns the created count", async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });
-    const ctx = buildContext({ id: "an1", role: "analyst" }, { notifications: { createMany } });
+    const ctx = buildContext({ id: "an1", role: "admin" }, { notifications: { createMany } });
 
     const count = await createBulkNotifications(
       null,
@@ -209,8 +209,8 @@ describe("Mutation.createBulkNotifications", () => {
 });
 
 describe("Mutation.notifyAlertSubscribers", () => {
-  it("requires admin or analyst role", async () => {
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {});
+  it("requires admin role", async () => {
+    const ctx = buildContext({ id: "u1", role: "member" }, {});
     await expect(
       notifyAlertSubscribers(null, { input: { alertId: "a1" } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
@@ -218,7 +218,7 @@ describe("Mutation.notifyAlertSubscribers", () => {
 
   it("throws NOT_FOUND when the alert does not exist", async () => {
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       { alerts: { findUnique: vi.fn().mockResolvedValue(null) } },
     );
     await expect(
@@ -229,7 +229,7 @@ describe("Mutation.notifyAlertSubscribers", () => {
   it("returns 0 without writing when no subscribers match", async () => {
     const notificationsCreateMany = vi.fn();
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findUnique: vi.fn().mockResolvedValue({
@@ -263,7 +263,7 @@ describe("Mutation.notifyAlertSubscribers", () => {
   it("expands locations to ancestors and filters subscriptions by severity floor", async () => {
     const subFindMany = vi.fn().mockResolvedValue([{ userId: "u-sub" }]);
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findUnique: vi.fn().mockResolvedValue({
@@ -312,7 +312,7 @@ describe("Mutation.notifyAlertSubscribers", () => {
   it("queries only all-severities (minSeverity 1) subscriptions for a null-severity event", async () => {
     const subFindMany = vi.fn().mockResolvedValue([]);
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findUnique: vi.fn().mockResolvedValue({
@@ -335,7 +335,7 @@ describe("Mutation.notifyAlertSubscribers", () => {
 
   it("sends email only to recipients with emailNotification enabled", async () => {
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findUnique: vi.fn().mockResolvedValue({
@@ -385,15 +385,15 @@ describe("Mutation.notifyAlertSubscribers", () => {
 describe("Mutation.notifyAlertDigest", () => {
   const goodInput = { alertIds: ["a1"], frequency: "daily" as const };
 
-  it("requires admin or analyst role", async () => {
-    const ctx = buildContext({ id: "u1", role: "viewer" }, {});
+  it("requires admin role", async () => {
+    const ctx = buildContext({ id: "u1", role: "member" }, {});
     await expect(
       notifyAlertDigest(null, { input: goodInput }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
   it("rejects an invalid frequency with BAD_USER_INPUT", async () => {
-    const ctx = buildContext({ id: "an1", role: "analyst" }, {});
+    const ctx = buildContext({ id: "an1", role: "admin" }, {});
     await expect(
       notifyAlertDigest(
         null,
@@ -405,7 +405,7 @@ describe("Mutation.notifyAlertDigest", () => {
 
   it("returns 0 when no alerts are found", async () => {
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       { alerts: { findMany: vi.fn().mockResolvedValue([]) } },
     );
     expect(await notifyAlertDigest(null, { input: goodInput }, ctx)).toBe(0);
@@ -413,7 +413,7 @@ describe("Mutation.notifyAlertDigest", () => {
 
   it("returns 0 when no subscriptions match", async () => {
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findMany: vi.fn().mockResolvedValue([
@@ -433,7 +433,7 @@ describe("Mutation.notifyAlertDigest", () => {
   it("matches a subscription on type+location+severity and writes a digest", async () => {
     const notifCreateMany = vi.fn().mockResolvedValue({ count: 1 });
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findMany: vi.fn().mockResolvedValue([
@@ -476,7 +476,7 @@ describe("Mutation.notifyAlertDigest", () => {
   it("matches a null-severity alert only to all-severities (minSeverity 1) subscriptions", async () => {
     const notifCreateMany = vi.fn().mockResolvedValue({ count: 1 });
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: {
           findMany: vi.fn().mockResolvedValue([
@@ -521,7 +521,7 @@ describe("Mutation.notifyAlertDigest", () => {
       },
     }));
     const ctx = buildContext(
-      { id: "an1", role: "analyst" },
+      { id: "an1", role: "admin" },
       {
         alerts: { findMany: vi.fn().mockResolvedValue(events) },
         locations: { findMany: vi.fn().mockResolvedValue([{ ancestorIds: [] }]) },
@@ -553,7 +553,7 @@ describe("Mutation.deleteNotification", () => {
   it("throws NOT_FOUND for someone else's notification", async () => {
     const del = vi.fn();
     const ctx = buildContext(
-      { id: "u1", role: "viewer" },
+      { id: "u1", role: "member" },
       { notifications: { findUnique: vi.fn().mockResolvedValue({ id: "n1", userId: "other" }), delete: del } },
     );
     await expect(deleteNotification(null, { id: "n1" }, ctx)).rejects.toMatchObject({
@@ -564,7 +564,7 @@ describe("Mutation.deleteNotification", () => {
 
   it("throws NOT_FOUND when the notification is missing", async () => {
     const ctx = buildContext(
-      { id: "u1", role: "viewer" },
+      { id: "u1", role: "member" },
       { notifications: { findUnique: vi.fn().mockResolvedValue(null), delete: vi.fn() } },
     );
     await expect(deleteNotification(null, { id: "missing" }, ctx)).rejects.toMatchObject({
@@ -575,7 +575,7 @@ describe("Mutation.deleteNotification", () => {
   it("deletes the caller's own notification", async () => {
     const del = vi.fn().mockResolvedValue({});
     const ctx = buildContext(
-      { id: "u1", role: "viewer" },
+      { id: "u1", role: "member" },
       { notifications: { findUnique: vi.fn().mockResolvedValue({ id: "n1", userId: "u1" }), delete: del } },
     );
     expect(await deleteNotification(null, { id: "n1" }, ctx)).toBe(true);
@@ -593,7 +593,7 @@ describe("Mutation.markNotificationRead", () => {
   it("throws NOT_FOUND for someone else's notification", async () => {
     const update = vi.fn();
     const ctx = buildContext(
-      { id: "u1", role: "viewer" },
+      { id: "u1", role: "member" },
       { notifications: { findUnique: vi.fn().mockResolvedValue({ id: "n1", userId: "other" }), update } },
     );
     await expect(markNotificationRead(null, { id: "n1" }, ctx)).rejects.toMatchObject({
@@ -606,7 +606,7 @@ describe("Mutation.markNotificationRead", () => {
     const updated = { id: "n1", status: "READ" };
     const update = vi.fn().mockResolvedValue(updated);
     const ctx = buildContext(
-      { id: "u1", role: "viewer" },
+      { id: "u1", role: "member" },
       { notifications: { findUnique: vi.fn().mockResolvedValue({ id: "n1", userId: "u1" }), update } },
     );
     expect(await markNotificationRead(null, { id: "n1" }, ctx)).toBe(updated);
@@ -623,7 +623,7 @@ describe("Mutation.markAllNotificationsRead", () => {
 
   it("marks only the caller's unread notifications as READ", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 3 });
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { notifications: { updateMany } });
+    const ctx = buildContext({ id: "u1", role: "member" }, { notifications: { updateMany } });
 
     expect(await markAllNotificationsRead(null, {}, ctx)).toBe(true);
     expect(updateMany).toHaveBeenCalledWith({

@@ -69,9 +69,9 @@ export const crisisTypeDef = gql`
     """Event IDs to link to the newly created crisis (must not be empty)."""
     eventIds: [String!]!
     """Team the crisis is being filed under. When present, the caller may be
-    a team-level team_admin or field_coordinator on that team instead of a
-    platform admin/analyst. Purely an authorisation hint — the crisis itself
-    has no team column; team affiliation is derived from location scope.
+    any team member on that team instead of a global admin. Purely an
+    authorisation hint — the crisis itself has no team column; team affiliation
+    is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
   }

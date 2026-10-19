@@ -615,7 +615,7 @@ describe("Mutation.acceptInvite", () => {
       }),
     );
     // Approved-tier role granted immediately — the invite is the approval.
-    expect(userUpdate.mock.calls[0][0].data).toEqual({ role: "viewer" });
+    expect(userUpdate.mock.calls[0][0].data).toEqual({ role: "member" });
     expect(orgCreate).toHaveBeenCalledOnce();
     expect(teamUpsert).toHaveBeenCalledOnce();
     expect(teamUpsert.mock.calls[0][0].create).toEqual({

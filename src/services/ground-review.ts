@@ -15,8 +15,8 @@
  *     a promoted signal orphaned, so V1 forbids leaving this state.
  *
  * Role gating: the acting user must be a platform admin, or carry one of
- * the source's `reviewerRoles` (default ["admin", "analyst"]) — the
- * per-source policy record decides who may review its content.
+ * the source's `reviewerRoles` (default ["admin"]) — the per-source policy
+ * record decides who may review its content.
  *
  * Pure functions, unit-tested in tests/services/ground-review.test.ts.
  */

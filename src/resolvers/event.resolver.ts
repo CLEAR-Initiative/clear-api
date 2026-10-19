@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -67,9 +67,9 @@ interface CreateEventInput {
   lng?: number;
   /**
    * Team the event is being filed under. Used only for authorisation —
-   * a `team_admin` or `field_coordinator` on this team is admitted even
-   * without a global admin/analyst role. Ignored for platform-level
-   * callers; the event itself has no team column.
+   * any team membership on this team is admitted even without a global
+   * admin role. Ignored for platform-level callers; the event itself has
+   * no team column.
    */
   teamId?: string;
 }
@@ -228,9 +228,9 @@ export const eventResolvers = {
       args: { input: CreateEventInput },
       context: Context,
     ) => {
-      // Global admin/analyst may create events for any location; a team
-      // team_admin / field_coordinator may create when they supply the
-      // teamId they're acting on behalf of. See `requireTeamContentWriter`.
+      // Global admin may create events for any location; any team member may
+      // create when they supply the teamId they're acting on behalf of.
+      // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
       // Validated before any write (point location, event row).
@@ -437,7 +437,6 @@ export const eventResolvers = {
       args: { id: string; input: UpdateEventInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
       const { id, input } = args;
       // Validated before signal linking. Null/blank = no change, like the other fields here.
       const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
@@ -449,6 +448,14 @@ export const eventResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+
+      // Elevated gate, scoped to the event's locations: admin passes, else the
+      // caller must be a team analyst whose location scope covers the event.
+      await requireAdminOrTeamAnalystForLocations(context, [
+        existing.originId,
+        existing.destinationId,
+        existing.locationId,
+      ]);
 
       // Update signal links -  ADDITIVE + IDEMPOTENT semantics. Passing
       // signalIds appends them to the event; already-linked signals are
@@ -552,9 +559,9 @@ export const eventResolvers = {
       args: { eventId: string; userId: string; teamId?: string },
       context: Context,
     ) => {
-      // Global admin/analyst may escalate any event; a team_admin or
-      // field_coordinator may escalate when they pass the teamId they're
-      // acting on behalf of. team_member and everyone else are rejected.
+      // Global admin may escalate any event; any team member may escalate
+      // when they pass the teamId they're acting on behalf of. The worker
+      // role and non-members are rejected. See `requireTeamContentWriter`.
       await requireTeamContentWriter(context, args.teamId);
 
       const event = await context.prisma.events.findUnique({
@@ -1000,15 +1007,16 @@ export const eventResolvers = {
       if (parent.alerts !== undefined) return parent.alerts;
       return prisma.alerts.findMany({ where: { eventId: parent.id } });
     },
-    // Same visibility split as Crisis.feedbacks / comments: admin /
-    // analyst see all; viewer sees only their own; everyone else gets
-    // empty. See crisis.resolver for the rationale.
+    // Same visibility split as Crisis.feedbacks / comments: admin sees all;
+    // member sees only their own; everyone else gets empty. (analyst is no
+    // longer a global role, so it no longer grants a global all-rows view
+    // here.) See crisis.resolver for the rationale.
     feedbacks: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userFeedbacks.findMany({ where: { eventId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userFeedbacks.findMany({
           where: { eventId: parent.id, userId: ctx.user.id },
         });
@@ -1017,10 +1025,10 @@ export const eventResolvers = {
     },
     comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
       const role = ctx.user?.role ?? "";
-      if (isPlatformAdmin(ctx.user) || role === "analyst") {
+      if (isPlatformAdmin(ctx.user)) {
         return ctx.prisma.userComments.findMany({ where: { eventId: parent.id } });
       }
-      if (role === "viewer" && ctx.user) {
+      if (role === "member" && ctx.user) {
         return ctx.prisma.userComments.findMany({
           where: { eventId: parent.id, userId: ctx.user.id },
         });

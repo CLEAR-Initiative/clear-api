@@ -127,7 +127,7 @@ export const notificationResolvers = {
       args: { input: CreateBulkNotificationsInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin"]);
       const { input } = args;
 
       const result = await context.prisma.notifications.createMany({
@@ -147,7 +147,7 @@ export const notificationResolvers = {
       args: { input: AlertNotifyInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin"]);
 
       const alert = await context.prisma.alerts.findUnique({
         where: { id: args.input.alertId },
@@ -327,7 +327,7 @@ export const notificationResolvers = {
       args: { input: AlertDigestInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin", "analyst"]);
+      requireRole(context, ["admin"]);
       const { alertIds, frequency } = args.input;
 
       if (!["daily", "weekly", "monthly"].includes(frequency)) {

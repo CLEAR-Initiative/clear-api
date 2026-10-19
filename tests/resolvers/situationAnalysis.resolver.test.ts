@@ -46,7 +46,7 @@ const {
   upsertSituationAnalysis,
 } = situationAnalysisResolvers.Mutation;
 
-const VIEWER = { id: "u1", role: "viewer" };
+const VIEWER = { id: "u1", role: "member" };
 const PIPELINE = { id: "u2", role: "pipeline" };
 const ADMIN = { id: "u3", role: "admin" };
 const PENDING = { id: "u4", role: "pending" };

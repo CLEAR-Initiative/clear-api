@@ -49,6 +49,12 @@ const WORKER_B = `${RUN}-worker-b`;
 const ADMIN_ID = `${RUN}-admin`;
 const COUNTRY_ID = `${RUN}-country`;
 const DISTRICT_ID = `${RUN}-district`;
+// A team the requesters belong to. `analyst`/`analystB` are team `analyst`s (the
+// elevated decider role); `coord` is a plain team_member. Enrichment requests
+// carry this teamId so the Task is team-attributed (content-writer gate passes
+// for members, and team analysts may decide its proposals).
+const ORG_ID = `${RUN}-org`;
+const TEAM_ID = `${RUN}-team`;
 /** The suites' fan-out (TASK_IMPACT_PRIOR_KINDS, tests/setup.ts). */
 const OTHER_KIND = "event.impact_prior.satellite";
 const WEB_KIND = "event.impact_prior.web";
@@ -57,10 +63,12 @@ const RETIRED_CLEAR_KIND = `${IMPACT_PRIOR_KIND}.clear`;
 
 const asUser = (id: string, role: string): Context =>
   ({ prisma, user: { id, role }, session: null, authMethod: "session" }) as unknown as Context;
-const analyst = asUser(ANALYST_ID, "analyst");
-const analystB = asUser(ANALYST_B_ID, "analyst");
-const viewer = asUser(VIEWER_ID, "viewer");
-const coord = asUser(COORD_ID, "viewer");
+// Global role is `member` for everyone but the admin/workers; the elevated,
+// team-scoped powers come from the teamMembers rows seeded in beforeAll.
+const analyst = asUser(ANALYST_ID, "member");
+const analystB = asUser(ANALYST_B_ID, "member");
+const viewer = asUser(VIEWER_ID, "member");
+const coord = asUser(COORD_ID, "member");
 const admin = asUser(ADMIN_ID, "admin");
 const workerA = asUser(WORKER_A, "worker");
 const workerB = asUser(WORKER_B, "worker");
@@ -70,7 +78,9 @@ const eventIds: string[] = [];
 
 /** Request enrichment and pick out the per-source Tasks the fan-out created. */
 async function request(id: string, as: Context, args: { horizonYears?: number } = {}) {
-  const tasks = await requestEventEnrichment(null, { eventId: id, ...args }, as);
+  // Team-attributed: the Task carries TEAM_ID so members pass the content-writer
+  // gate and team analysts may decide its proposals.
+  const tasks = await requestEventEnrichment(null, { eventId: id, teamId: TEAM_ID, ...args }, as);
   const byKind = new Map(tasks.map((t) => [t.kind, t]));
   return { tasks, other: byKind.get(OTHER_KIND)!, web: byKind.get(WEB_KIND)! };
 }
@@ -115,11 +125,11 @@ async function makeEvent(): Promise<string> {
 describeIfDb("Tasks against the real schema", () => {
   beforeAll(async () => {
     for (const [id, role] of [
-      [ANALYST_ID, "analyst"],
-      [ANALYST_B_ID, "analyst"],
+      [ANALYST_ID, "member"],
+      [ANALYST_B_ID, "member"],
       [ADMIN_ID, "admin"],
-      [VIEWER_ID, "viewer"],
-      [COORD_ID, "viewer"],
+      [VIEWER_ID, "member"],
+      [COORD_ID, "member"],
       [WORKER_A, "worker"],
       [WORKER_B, "worker"],
     ]) {
@@ -127,6 +137,19 @@ describeIfDb("Tasks against the real schema", () => {
         data: { id, name: id, email: `${id}@example.test`, role },
       });
     }
+    // The team that attributes the enrichment requests. analyst/analystB are
+    // team `analyst`s (deciders); coord is a plain team_member; viewer is not a
+    // member at all. `analyst` is a TEAM role now — the elevated decider power
+    // comes from this membership, not a global role.
+    await prisma.organisations.create({ data: { id: ORG_ID, name: "Task DB Org", slug: ORG_ID } });
+    await prisma.teams.create({ data: { id: TEAM_ID, organisationId: ORG_ID, name: "Task DB Team", slug: TEAM_ID } });
+    await prisma.teamMembers.createMany({
+      data: [
+        { teamId: TEAM_ID, userId: ANALYST_ID, role: "analyst" },
+        { teamId: TEAM_ID, userId: ANALYST_B_ID, role: "analyst" },
+        { teamId: TEAM_ID, userId: COORD_ID, role: "team_member" },
+      ],
+    });
     // A country and a district under it (no geometry needed for Tasks).
     await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "ancestor_ids", "geometry")
       VALUES (${COUNTRY_ID}, 'Testland', 0, ARRAY[]::text[], ST_GeomFromText('POINT(0 0)', 4326))`;
@@ -147,9 +170,12 @@ describeIfDb("Tasks against the real schema", () => {
     await prisma.task.deleteMany({ where: { subjectType: "event", subjectId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT_ID, COUNTRY_ID] } } });
+    await prisma.teamMembers.deleteMany({ where: { teamId: TEAM_ID } });
     await prisma.user.deleteMany({
       where: { id: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, COORD_ID, WORKER_A, WORKER_B, ADMIN_ID] } },
     });
+    await prisma.teams.deleteMany({ where: { id: TEAM_ID } });
+    await prisma.organisations.deleteMany({ where: { id: ORG_ID } });
   });
 
   it("tracer bullet: request → claim → complete → the outcome on the Task, told to the requester", async () => {
@@ -201,7 +227,9 @@ describeIfDb("Tasks against the real schema", () => {
       await new Promise((r) => setTimeout(r, 25));
       rows = await prisma.notifications.findMany({ where: { notificationType: "task", actionUrl: `/event/${eventId}` } });
     }
-    expect(rows.map((r) => r.userId).sort()).toEqual([ADMIN_ID, ANALYST_ID].sort());
+    // Recipients: the requester, platform admins, and the Task team's analysts.
+    // ANALYST_B is a second team `analyst` on TEAM_ID, so it is notified too.
+    expect(rows.map((r) => r.userId).sort()).toEqual([ADMIN_ID, ANALYST_ID, ANALYST_B_ID].sort());
 
     // The Event page's reads: both Tasks (the .web Worker has not reported).
     const tasks = await eventTasks(null, { eventId }, analyst);
@@ -844,7 +872,9 @@ describeIfDb("Tasks against the real schema", () => {
     const legacy = await prisma.task.create({
       data: {
         kind: RETIRED_CLEAR_KIND, subjectType: "event", subjectId: id, payload: { horizonYears: 10 },
-        requestId: `${RUN}-history`, requesterId: COORD_ID, status: "COMPLETED", outcome: "produced",
+        // Team-attributed so a team `analyst` is a decider for its priors (the
+        // decider visibility rule is now team-scoped, not global).
+        requestId: `${RUN}-history`, requesterId: COORD_ID, teamId: TEAM_ID, status: "COMPLETED", outcome: "produced",
         completedAt: new Date(), lastError: "attempt 1 timed out",
       },
     });

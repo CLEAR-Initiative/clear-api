@@ -46,13 +46,13 @@ const T2 = `${RUN}-t2`;
 
 const ctx = {
   prisma,
-  user: { id: USER_ID, role: "viewer" },
+  user: { id: USER_ID, role: "member" },
   session: null,
   authMethod: "session",
   viaAgent: true,
 } as unknown as Context;
 
-const rivalCtx = { ...ctx, user: { id: RIVAL_ID, role: "viewer" } } as unknown as Context;
+const rivalCtx = { ...ctx, user: { id: RIVAL_ID, role: "member" } } as unknown as Context;
 
 const text = (t: string) => ({ format: 2, parts: [{ type: "text", text: t }] });
 
@@ -81,7 +81,7 @@ describeIfDb("Conversations against the real schema", () => {
   beforeAll(async () => {
     for (const id of [USER_ID, RIVAL_ID]) {
       await prisma.user.create({
-        data: { id, name: id, email: `${id}@example.test`, role: "viewer" },
+        data: { id, name: id, email: `${id}@example.test`, role: "member" },
       });
     }
   });
@@ -361,9 +361,9 @@ describeIfDb("Conversations against the real schema", () => {
   it("deletes a user's Conversations and working memory with the user", async () => {
     const other = `${RUN}-gone`;
     await prisma.user.create({
-      data: { id: other, name: other, email: `${other}@example.test`, role: "viewer" },
+      data: { id: other, name: other, email: `${other}@example.test`, role: "member" },
     });
-    const otherCtx = { ...ctx, user: { id: other, role: "viewer" } } as unknown as Context;
+    const otherCtx = { ...ctx, user: { id: other, role: "member" } } as unknown as Context;
     await upsertConversation(null, { input: { id: `${other}-t` } }, otherCtx);
     await upsertConversationMessages(
       null,

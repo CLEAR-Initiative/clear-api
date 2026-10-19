@@ -366,26 +366,27 @@ async function seed() {
   });
 
   const analyst = await getOrCreateUser("Analyst User", "analyst@clearinitiative.io", "password123");
-  // Grant the global "analyst" role (not just org membership): alert-promotion
-  // and crisis-creation are gated by requireRole(["admin","analyst"]) on the
-  // GLOBAL role, and the demo analyst is meant to exercise those.
+  // `analyst` is now a TEAM role, not a global one. This account carries the
+  // global "member" role; its elevated, location-scoped powers come from a team
+  // `analyst` membership assigned via the portal/invite flow (no team is seeded
+  // here yet — same TBD pattern as the ER-manager below).
   await prisma.user.update({
     where: { id: analyst.id },
-    data: { emailVerified: true, role: "analyst" },
+    data: { emailVerified: true, role: "member" },
   });
 
-  const viewer = await getOrCreateUser("Viewer User", "viewer@clearinitiative.io", "password123");
-  // Set the "viewer" role explicitly. Creating users through the internal
+  const viewer = await getOrCreateUser("Member User", "viewer@clearinitiative.io", "password123");
+  // Set the "member" role explicitly. Creating users through the internal
   // adapter applies the model's new-user default role ("pending", from the
-  // waitlist flow) rather than a read-only "viewer", so pin it to keep this a
-  // functional read-only demo account (matches the credentials log below).
+  // waitlist flow) rather than "member", so pin it to keep this a functional
+  // read-only demo account (matches the credentials log below).
   await prisma.user.update({
     where: { id: viewer.id },
-    data: { emailVerified: true, role: "viewer" },
+    data: { emailVerified: true, role: "member" },
   });
 
   // Emergency-response-manager demo account. `emergency_response_manager` is a
-  // TEAM role, not a global one, so this user carries the global "viewer" role
+  // TEAM role, not a global one, so this user carries the global "member" role
   // for now; its team membership (with the emergency_response_manager role) is
   // assigned separately once a team exists.
   // Distinct strong password (not the shared password123) for the ER-manager account.
@@ -397,7 +398,7 @@ async function seed() {
   );
   await prisma.user.update({
     where: { id: emrUser.id },
-    data: { emailVerified: true, role: "viewer" },
+    data: { emailVerified: true, role: "member" },
   });
 
   // ─── Organisation ────────────────────────────────────────────────────────
@@ -415,7 +416,7 @@ async function seed() {
     `Created 4 users: admin (${admin.id}), analyst (${analyst.id}), viewer (${viewer.id}), emr.user (${emrUser.id})`,
   );
   console.log(`  ${env.ADMIN_EMAIL} is global admin (no org membership needed)`);
-  console.log("  analyst@clearinitiative.io is org owner of 'CLEAR Platform'");
+  console.log("  analyst@clearinitiative.io is org owner of 'CLEAR Platform' (global member; team analyst TBD)");
   console.log("  viewer@clearinitiative.io has no org membership (invite-only)");
   console.log("  emr.user@clearinitiative.io is global viewer (team role assigned separately)");
 
@@ -922,9 +923,9 @@ async function seed() {
   console.log("");
   console.log("Seed complete! Demo credentials:");
   console.log(`  ${env.ADMIN_EMAIL}  / password123  (role: admin)`);
-  console.log("  analyst@clearinitiative.io      / password123  (role: analyst)");
-  console.log("  viewer@clearinitiative.io       / password123  (role: viewer)");
-  console.log(`  emr.user@clearinitiative.io     / ${emrPassword}  (role: viewer; team ERM TBD)`);
+  console.log("  analyst@clearinitiative.io      / password123  (role: member; team analyst TBD)");
+  console.log("  viewer@clearinitiative.io       / password123  (role: member)");
+  console.log(`  emr.user@clearinitiative.io     / ${emrPassword}  (role: member; team ERM TBD)`);
 }
 
 // ─── CLI Entry Point ─────────────────────────────────────────────────────────

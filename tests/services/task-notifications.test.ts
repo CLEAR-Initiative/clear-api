@@ -31,7 +31,8 @@ function makePrisma(users: { requester?: unknown[]; admins?: unknown[]; analysts
   const findMany = vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
     if (where.id) return users.requester ?? [];
     if (where.role === "admin") return users.admins ?? [];
-    if (where.role === "analyst") return users.analysts ?? [];
+    // `analyst` is a TEAM role now: matched via a teamMemberships filter.
+    if (where.teamMemberships) return users.analysts ?? [];
     return [];
   });
   const createMany = vi.fn(async () => ({ count: 0 }));
@@ -56,7 +57,7 @@ describe("taskRecipients", () => {
       "u-admin": true,
     });
     expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { role: "analyst", isActive: true, teamMemberships: { some: { teamId: "team-a" } } } }),
+      expect.objectContaining({ where: { isActive: true, teamMemberships: { some: { teamId: "team-a", role: "analyst" } } } }),
     );
   });
 

@@ -122,8 +122,8 @@ export const publicEventResolvers = {
       args: { eventId: string },
       context: Context,
     ) => {
-      // Same gate as mint — pending users blocked, viewer / analyst /
-      // admin allowed. Idempotent reads on the cache don't expose
+      // Same gate as mint — pending users blocked, member / admin allowed.
+      // Idempotent reads on the cache don't expose
       // anything the caller couldn't already see by minting, but the
       // role check keeps the surface tidy.
       requireContentReader(context);
@@ -373,8 +373,8 @@ export const publicEventResolvers = {
       args: { eventId: string; token: string },
       context: Context,
     ) => {
-      // Same gate as mint. Pending users blocked; viewer / analyst /
-      // admin can all revoke. Ownership-of-link isn't checked because
+      // Same gate as mint. Pending users blocked; member / admin can all
+      // revoke. Ownership-of-link isn't checked because
       // the link is unauthenticated by design and the only revocable
       // state is the cache entry itself.
       requireNonWorkerContentReader(context);

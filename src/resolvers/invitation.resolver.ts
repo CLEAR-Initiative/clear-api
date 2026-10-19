@@ -372,7 +372,7 @@ export const invitationResolvers = {
         // stuck behind requireContentReader's approval wall until a
         // platform admin separately approves them — even though an org
         // admin's invite already vouches for them. Minting directly lets
-        // us set the approved "viewer" role up front. This also decouples
+        // us set the approved "member" role up front. This also decouples
         // invite-acceptance from whatever the public sign-up endpoint's
         // policy happens to be (open-with-pending-role today; disabled
         // entirely in the past), so it can't be silently broken again by
@@ -395,7 +395,7 @@ export const invitationResolvers = {
         // approval the way a self-signup would.
         existingUser = await context.prisma.user.update({
           where: { id: user.id },
-          data: { role: "viewer" },
+          data: { role: "member" },
         });
       }
 

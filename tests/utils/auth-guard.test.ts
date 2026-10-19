@@ -53,7 +53,7 @@ function codeOf(fn: () => unknown): string {
 
 describe("requireAuth", () => {
   it("returns the user when authenticated", () => {
-    const user = { id: "u1", role: "viewer" };
+    const user = { id: "u1", role: "member" };
     expect(requireAuth(buildContext(user))).toBe(user);
   });
 
@@ -65,11 +65,11 @@ describe("requireAuth", () => {
 describe("requireRole", () => {
   it("returns the user when their role is in the allow-list", () => {
     const user = { id: "u1", role: "admin" };
-    expect(requireRole(buildContext(user), ["admin", "analyst"])).toBe(user);
+    expect(requireRole(buildContext(user), ["admin", "member"])).toBe(user);
   });
 
   it("throws FORBIDDEN when the role is not allowed", () => {
-    const ctx = buildContext({ id: "u1", role: "viewer" });
+    const ctx = buildContext({ id: "u1", role: "member" });
     expect(codeOf(() => requireRole(ctx, ["admin"]))).toBe("FORBIDDEN");
   });
 
@@ -88,7 +88,7 @@ describe("requireRole", () => {
 });
 
 describe("requireContentReader", () => {
-  it.each(["admin", "analyst", "viewer", "worker"])("admits the approved role %s", (role) => {
+  it.each(["admin", "member", "worker"])("admits the approved role %s", (role) => {
     const user = { id: "u1", role };
     expect(requireContentReader(buildContext(user))).toBe(user);
   });
@@ -134,7 +134,7 @@ describe("resolveTeamMembership", () => {
     const membership = { teamId: "t1", userId: "u1", role: "lead" };
     const findUnique = vi.fn().mockResolvedValue(membership);
     const prisma = { teamMembers: { findUnique } };
-    const result = await resolveTeamMembership(prisma as never, "u1", "t1", "viewer");
+    const result = await resolveTeamMembership(prisma as never, "u1", "t1", "member");
     expect(result).toBe(membership);
     expect(findUnique).toHaveBeenCalledWith({
       where: { teamId_userId: { teamId: "t1", userId: "u1" } },
@@ -144,7 +144,7 @@ describe("resolveTeamMembership", () => {
   it("throws FORBIDDEN when the user is not a team member", async () => {
     const prisma = { teamMembers: { findUnique: vi.fn().mockResolvedValue(null) } };
     await expect(
-      resolveTeamMembership(prisma as never, "u1", "t1", "viewer"),
+      resolveTeamMembership(prisma as never, "u1", "t1", "member"),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 });
@@ -155,7 +155,7 @@ describe("canSeeUserPii", () => {
   });
 
   it("returns true for self", async () => {
-    const ctx = buildContext({ id: "me", role: "viewer" });
+    const ctx = buildContext({ id: "me", role: "member" });
     expect(await canSeeUserPii(ctx, "me")).toBe(true);
   });
 
@@ -166,7 +166,7 @@ describe("canSeeUserPii", () => {
 
   it("returns true when caller and target share an organisation", async () => {
     const findFirst = vi.fn().mockResolvedValue({ id: "ou1" });
-    const ctx = buildContext({ id: "me", role: "viewer" }, {
+    const ctx = buildContext({ id: "me", role: "member" }, {
       organisationUsers: { findFirst },
     });
     expect(await canSeeUserPii(ctx, "colleague")).toBe(true);
@@ -174,7 +174,7 @@ describe("canSeeUserPii", () => {
 
   it("returns false when caller and target share no organisation", async () => {
     const findFirst = vi.fn().mockResolvedValue(null);
-    const ctx = buildContext({ id: "me", role: "viewer" }, {
+    const ctx = buildContext({ id: "me", role: "member" }, {
       organisationUsers: { findFirst },
     });
     expect(await canSeeUserPii(ctx, "stranger")).toBe(false);
@@ -182,7 +182,7 @@ describe("canSeeUserPii", () => {
 
   it("caches the result per request — a second call does not re-query", async () => {
     const findFirst = vi.fn().mockResolvedValue({ id: "ou1" });
-    const ctx = buildContext({ id: "me", role: "viewer" }, {
+    const ctx = buildContext({ id: "me", role: "member" }, {
       organisationUsers: { findFirst },
     });
     expect(await canSeeUserPii(ctx, "colleague")).toBe(true);
@@ -192,7 +192,7 @@ describe("canSeeUserPii", () => {
 });
 
 describe("requireNonWorker", () => {
-  it.each(["admin", "analyst", "viewer", "pending", "pipeline"])("admits role %s", (role) => {
+  it.each(["admin", "member", "pending", "pipeline"])("admits role %s", (role) => {
     const user = { id: "u1", role };
     expect(requireNonWorker(buildContext(user))).toBe(user);
   });
@@ -207,7 +207,7 @@ describe("requireNonWorker", () => {
 });
 
 describe("requireNonWorkerContentReader", () => {
-  it.each(["admin", "analyst", "viewer"])("admits the approved role %s", (role) => {
+  it.each(["admin", "member"])("admits the approved role %s", (role) => {
     const user = { id: "u1", role };
     expect(requireNonWorkerContentReader(buildContext(user))).toBe(user);
   });
@@ -247,15 +247,19 @@ describe("requireTeamContentWriter", () => {
     expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
   });
 
-  it("admits a global analyst without a teamId and without touching prisma", async () => {
-    const ctx = buildContext({ id: "an1", role: "analyst" }, noPrisma);
-    const result = await requireTeamContentWriter(ctx);
-    expect(result.via).toBe("global");
+  it("rejects a global member (even a former global analyst) with no teamId, without touching prisma", async () => {
+    // `analyst` is no longer a global role and carries no global-writer bypass;
+    // a former global analyst is now a plain global `member` and, with no teamId,
+    // is rejected before any prisma lookup.
+    const ctx = buildContext({ id: "an1", role: "member" }, noPrisma);
+    await expect(requireTeamContentWriter(ctx)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
     expect(noPrisma.teamMembers.findUnique).not.toHaveBeenCalled();
   });
 
-  it("rejects a viewer with no teamId", async () => {
-    const ctx = buildContext({ id: "v1", role: "viewer" }, noPrisma);
+  it("rejects a member with no teamId", async () => {
+    const ctx = buildContext({ id: "v1", role: "member" }, noPrisma);
     await expect(requireTeamContentWriter(ctx)).rejects.toMatchObject({
       extensions: { code: "FORBIDDEN" },
     });
@@ -277,10 +281,10 @@ describe("requireTeamContentWriter", () => {
     ).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
   });
 
-  it("admits a viewer who is team_admin on the supplied teamId", async () => {
+  it("admits a member who is team_admin on the supplied teamId", async () => {
     const findUnique = vi.fn().mockResolvedValue({ role: "team_admin" });
     const ctx = buildContext(
-      { id: "v1", role: "viewer" },
+      { id: "v1", role: "member" },
       { teamMembers: { findUnique } },
     );
     const result = await requireTeamContentWriter(ctx, "t1");
@@ -288,23 +292,25 @@ describe("requireTeamContentWriter", () => {
     expect(findUnique).toHaveBeenCalledOnce();
   });
 
-  it("admits a viewer who is field_coordinator on the supplied teamId", async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: "field_coordinator" });
+  it("admits a member who is a team analyst on the supplied teamId", async () => {
+    // A team `analyst` (the elevated team role) writes via their membership;
+    // there is no longer a global-analyst bypass.
+    const findUnique = vi.fn().mockResolvedValue({ role: "analyst" });
     const ctx = buildContext(
-      { id: "v1", role: "viewer" },
+      { id: "v1", role: "member" },
       { teamMembers: { findUnique } },
     );
     const result = await requireTeamContentWriter(ctx, "t1");
     expect(result.via).toBe("team");
   });
 
-  it("admits a viewer who is team_member on the supplied teamId", async () => {
+  it("admits a member who is team_member on the supplied teamId", async () => {
     // Team membership is treated as a proxy for "acts on behalf of this
-    // team" — a global viewer who's on a team can file content for it
+    // team" — a global member who's on a team can file content for it
     // regardless of intra-team seniority.
     const findUnique = vi.fn().mockResolvedValue({ role: "team_member" });
     const ctx = buildContext(
-      { id: "v1", role: "viewer" },
+      { id: "v1", role: "member" },
       { teamMembers: { findUnique } },
     );
     const result = await requireTeamContentWriter(ctx, "t1");
@@ -314,7 +320,7 @@ describe("requireTeamContentWriter", () => {
   it("rejects a caller who has no membership on the supplied teamId", async () => {
     const findUnique = vi.fn().mockResolvedValue(null);
     const ctx = buildContext(
-      { id: "v1", role: "viewer" },
+      { id: "v1", role: "member" },
       { teamMembers: { findUnique } },
     );
     await expect(
@@ -329,7 +335,7 @@ describe("canSeeUserPrivate", () => {
   });
 
   it("returns true for self", () => {
-    expect(canSeeUserPrivate(buildContext({ id: "me", role: "viewer" }), "me")).toBe(
+    expect(canSeeUserPrivate(buildContext({ id: "me", role: "member" }), "me")).toBe(
       true,
     );
   });
@@ -344,7 +350,7 @@ describe("canSeeUserPrivate", () => {
     // Unlike canSeeUserPii, an org-mate is NOT granted private-relation access;
     // this guard is synchronous and never consults the DB.
     expect(
-      canSeeUserPrivate(buildContext({ id: "me", role: "viewer" }), "colleague"),
+      canSeeUserPrivate(buildContext({ id: "me", role: "member" }), "colleague"),
     ).toBe(false);
   });
 });

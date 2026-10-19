@@ -81,7 +81,7 @@ async function run(user: { id: string; role: string } | null, variables: Record<
 
 describe("myTasks schema contract", () => {
   it("executes the document for the requester, scoped to them, with lastError present", async () => {
-    const { result, prisma } = await run({ id: "u-1", role: "viewer" }, {});
+    const { result, prisma } = await run({ id: "u-1", role: "member" }, {});
     expect(result.errors).toBeUndefined();
     expect(result.data?.myTasks).toEqual([
       expect.objectContaining({ id: "t-1", status: "FAILED", lastError: "attempt 3 failed", requesterId: "u-1" }),
@@ -92,7 +92,7 @@ describe("myTasks schema contract", () => {
   });
 
   it("passes an optional status filter and the page through", async () => {
-    const { result, prisma } = await run({ id: "u-1", role: "analyst" }, { status: "PENDING", limit: 10, offset: 20 });
+    const { result, prisma } = await run({ id: "u-1", role: "member" }, { status: "PENDING", limit: 10, offset: 20 });
     expect(result.errors).toBeUndefined();
     expect(prisma.task.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { requesterId: "u-1", status: "PENDING" }, take: 10, skip: 20 }),
@@ -100,7 +100,7 @@ describe("myTasks schema contract", () => {
   });
 
   it("rejects a status outside the enum at the schema", async () => {
-    const { result } = await run({ id: "u-1", role: "analyst" }, { status: "DONE" });
+    const { result } = await run({ id: "u-1", role: "member" }, { status: "DONE" });
     expect(result.errors?.[0]?.extensions?.code).toBe("BAD_USER_INPUT");
   });
 

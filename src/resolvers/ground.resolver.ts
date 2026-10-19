@@ -2,12 +2,13 @@
  * Resolvers for the ground intel staging tier.
  *
  * The whole tier is PRIVATE: the inbox queries + triage mutations require
- * `requireGroundInboxAccess` — a global admin/analyst, OR an
- * `emergency_response_manager` on any team (review actions for admins/analysts
- * additionally consult the source's own reviewerRoles). Viewers — who can read
- * signals/events — deliberately cannot see staged ground content: sender
- * names, unredacted-adjacent context, and unvetted claims live here. The
- * pipeline-facing contract surface stays gated on PIPELINE_ROLES.
+ * `requireGroundInboxAccess` — a global admin, OR an
+ * `emergency_response_manager` on any team (review actions for admins
+ * additionally consult the source's own reviewerRoles). Ordinary members —
+ * who can read signals/events — deliberately cannot see staged ground
+ * content: sender names, unredacted-adjacent context, and unvetted claims
+ * live here. (`analyst` is a TEAM role now and does not grant ground access.)
+ * The pipeline-facing contract surface stays gated on PIPELINE_ROLES.
  */
 
 import { GraphQLError } from "graphql";
@@ -411,7 +412,7 @@ export const groundResolvers = {
      * PIPELINE CONTRACT: minimal source-enumeration query for workers
      * that need to know WHICH sources to drain (e.g. the hotline
      * enrichment job) without the private-tier consent/policy fields
-     * the admin/analyst-only `groundSources` query returns.
+     * the inbox-access-gated `groundSources` query returns.
      */
     pipelineGroundSourceIds: async (
       _parent: unknown,

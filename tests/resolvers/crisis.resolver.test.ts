@@ -58,7 +58,11 @@ vi.mock("../../src/services/translation-queue.js", () => ({
 vi.mock("../../src/utils/geo-resolve.js", () => ({
   getLocationIdsWithDescendants: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("../../src/utils/location-scope.js", () => ({
+// Keep the real `getTeamScopeLocationIds` (used by the location-scoped analyst
+// guard) so the team-analyst paths exercise the actual scope expansion over a
+// mocked prisma + mocked geo helper; only the user-facing list filter is stubbed.
+vi.mock("../../src/utils/location-scope.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/utils/location-scope.js")>()),
   buildCrisisLocationFilterForUser: vi.fn().mockResolvedValue({ id: { in: ["c1"] } }),
 }));
 vi.mock("../../src/utils/activity-log.js", () => ({
@@ -70,6 +74,7 @@ vi.mock("../../src/services/s3.js", () => ({
 
 import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
 import { buildCrisisLocationFilterForUser } from "../../src/utils/location-scope.js";
+import { getLocationIdsWithDescendants } from "../../src/utils/geo-resolve.js";
 import { logActivity } from "../../src/utils/activity-log.js";
 import type { Context } from "../../src/context.js";
 
@@ -105,8 +110,9 @@ const {
 } = crisisResolvers.Mutation;
 
 const ADMIN = { id: "admin1", role: "admin" };
-const ANALYST = { id: "an1", role: "analyst" };
-const VIEWER = { id: "v1", role: "viewer" };
+// A former global `analyst` is now a plain global `member`; its elevated powers
+// are carried by a TEAM `analyst` membership (see the team-analyst cases below).
+const MEMBER = { id: "v1", role: "member" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -119,14 +125,14 @@ describe("Query.crisis", () => {
   it("returns the crisis for an authenticated caller", async () => {
     const row = { id: "c1" };
     const findUnique = vi.fn().mockResolvedValue(row);
-    const ctx = buildContext(VIEWER, { crises: { findUnique } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique } });
     expect(await crisis(null, { id: "c1" }, ctx)).toBe(row);
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "c1" } });
   });
 
   it("adds a translations include for a non-default locale", async () => {
     const findUnique = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, { crises: { findUnique } }, { locale: "ar" });
+    const ctx = buildContext(MEMBER, { crises: { findUnique } }, { locale: "ar" });
     await crisis(null, { id: "c1" }, ctx);
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "c1" },
@@ -135,7 +141,7 @@ describe("Query.crisis", () => {
   });
 
   it("throws NOT_FOUND when the crisis does not exist", async () => {
-    const ctx = buildContext(VIEWER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(crisis(null, { id: "missing" }, ctx)).rejects.toMatchObject({
       extensions: { code: "NOT_FOUND" },
     });
@@ -160,7 +166,7 @@ describe("Query.crises", () => {
 
   it("applies the scoped where clause for non-admins", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const ctx = buildContext(VIEWER, { crises: { findMany } });
+    const ctx = buildContext(MEMBER, { crises: { findMany } });
     await crises(null, {}, ctx);
     expect(buildCrisisLocationFilterForUser).toHaveBeenCalledWith(ctx.prisma, "v1");
     expect(findMany).toHaveBeenCalledWith({ where: { id: { in: ["c1"] } } });
@@ -175,12 +181,20 @@ describe("Query.crises", () => {
 // Mutation.createCrisisFromEvents
 // ---------------------------------------------------------------------------
 describe("Mutation.createCrisisFromEvents", () => {
-  function makeCtx(user: User, opts: { events?: Array<{ id: string }>; created?: { id: string; title?: string | null; severity?: number } } = {}) {
+  function makeCtx(
+    user: User,
+    opts: {
+      events?: Array<{ id: string }>;
+      created?: { id: string; title?: string | null; severity?: number };
+      membership?: { role: string } | null;
+    } = {},
+  ) {
     const events = opts.events ?? [{ id: "e1" }];
     const created = opts.created ?? { id: "c-new", title: null, severity: 3 };
     const createMany = vi.fn().mockResolvedValue({ count: events.length });
     const create = vi.fn().mockResolvedValue(created);
     const feedbackCreate = vi.fn().mockResolvedValue({ id: "fb1" });
+    const teamFindUnique = vi.fn().mockResolvedValue(opts.membership ?? null);
     const prisma = {
       events: {
         // findMany is called for validation, then for the population sum.
@@ -191,24 +205,54 @@ describe("Mutation.createCrisisFromEvents", () => {
         }),
       },
       locations: { findMany: vi.fn().mockResolvedValue([]) },
+      teamMembers: { findUnique: teamFindUnique },
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
         fn({ crises: { create }, eventCrises: { createMany }, userFeedbacks: { create: feedbackCreate } }),
       ),
     };
-    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate };
+    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate, teamFindUnique };
   }
 
-  it("rejects a viewer with FORBIDDEN", async () => {
-    const { ctx } = makeCtx(VIEWER);
+  it("rejects a global member with no team membership (requireTeamContentWriter, no teamId)", async () => {
+    const { ctx } = makeCtx(MEMBER);
     await expect(
       createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
-  it("allows an analyst", async () => {
-    const { ctx, create } = makeCtx(ANALYST);
+  it("allows a global admin unconditionally", async () => {
+    const { ctx, create } = makeCtx(ADMIN);
     await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
     expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("allows a global member who is a team analyst on the crisis's team", async () => {
+    // No global-analyst bypass anymore — an elevated team role writes via its
+    // membership on the supplied teamId.
+    const { ctx, create, teamFindUnique } = makeCtx(MEMBER, {
+      membership: { role: "analyst" },
+    });
+    await createCrisisFromEvents(
+      null,
+      { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
+      ctx,
+    );
+    expect(create).toHaveBeenCalledOnce();
+    expect(teamFindUnique).toHaveBeenCalledWith({
+      where: { teamId_userId: { teamId: "t1", userId: "v1" } },
+      select: { role: true },
+    });
+  });
+
+  it("rejects a member who supplies a teamId they have no membership on", async () => {
+    const { ctx } = makeCtx(MEMBER, { membership: null });
+    await expect(
+      createCrisisFromEvents(
+        null,
+        { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
   it("rejects an empty eventIds list with BAD_USER_INPUT", async () => {
@@ -281,8 +325,61 @@ describe("Mutation.createCrisisFromEvents", () => {
 // Mutation.addEventToCrisis
 // ---------------------------------------------------------------------------
 describe("Mutation.addEventToCrisis", () => {
-  it("rejects a viewer with FORBIDDEN", async () => {
-    const ctx = buildContext(VIEWER, {});
+  it("rejects a global member with no team-analyst scope (FORBIDDEN)", async () => {
+    // The location-scoped gate runs AFTER the crisis/event existence checks, so
+    // both must resolve before we reach the guard. With no analyst membership
+    // the caller is forbidden.
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
+      events: {
+        findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
+      },
+      eventCrises: { findMany: vi.fn().mockResolvedValue([]) },
+      teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await expect(
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("allows a team analyst whose team location scope covers the event", async () => {
+    const link = { id: "link1", crisisId: "c1", eventId: "e1" };
+    const create = vi.fn().mockResolvedValue(link);
+    const update = vi.fn().mockResolvedValue({ id: "c1" });
+    (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["L1"]);
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update },
+      events: {
+        findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
+        findMany: vi.fn().mockResolvedValue([{ populationAffected: 5n }]),
+      },
+      locations: { findMany: vi.fn().mockResolvedValue([]) },
+      // team analyst whose team is scoped to L1 (which covers the event's origin)
+      teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
+      teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "L1" }]) },
+      eventCrises: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create,
+        findMany: vi.fn().mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(select?.event ? [] : [{ eventId: "e1" }]),
+        ),
+      },
+    });
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a team analyst whose scope does NOT cover the event (FORBIDDEN)", async () => {
+    (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["OTHER"]);
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
+      events: {
+        findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
+      },
+      eventCrises: { findMany: vi.fn().mockResolvedValue([]) },
+      teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
+      teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "OTHER" }]) },
+    });
     await expect(
       addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
@@ -314,7 +411,12 @@ describe("Mutation.addEventToCrisis", () => {
     const ctx = buildContext(ADMIN, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }) },
-      eventCrises: { findFirst: vi.fn().mockResolvedValue(existing), create },
+      eventCrises: {
+        // crisisEventLocationIds (location gate) runs before the idempotency check.
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(existing),
+        create,
+      },
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(existing);
     expect(create).not.toHaveBeenCalled();
@@ -334,7 +436,11 @@ describe("Mutation.addEventToCrisis", () => {
       eventCrises: {
         findFirst: vi.fn().mockResolvedValue(null),
         create,
-        findMany: vi.fn().mockResolvedValue([{ eventId: "e1" }]),
+        // crisisEventLocationIds selects `event`; the post-link recompute selects
+        // `eventId`. Branch on the select shape so both calls get valid rows.
+        findMany: vi.fn().mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(select?.event ? [] : [{ eventId: "e1" }]),
+        ),
       },
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
@@ -348,10 +454,43 @@ describe("Mutation.addEventToCrisis", () => {
 // Mutation.removeEventFromCrisis
 // ---------------------------------------------------------------------------
 describe("Mutation.removeEventFromCrisis", () => {
-  it("rejects a viewer with FORBIDDEN", async () => {
+  it("rejects a global member with no team-analyst scope (FORBIDDEN)", async () => {
+    // Guard runs after the crisis existence check; with no analyst membership
+    // the non-admin caller is forbidden.
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
+      eventCrises: { findMany: vi.fn().mockResolvedValue([]) },
+      teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
+    });
     await expect(
-      removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, buildContext(VIEWER, {})),
+      removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("allows a team analyst whose team location scope covers a linked event", async () => {
+    const updated = { id: "c1", populationAffected: 7n };
+    const update = vi.fn().mockResolvedValue(updated);
+    const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
+    (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["L1"]);
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update, delete: vi.fn() },
+      events: { findMany: vi.fn().mockResolvedValue([{ populationAffected: 7n }]) },
+      locations: { findMany: vi.fn().mockResolvedValue([]) },
+      teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
+      teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "L1" }]) },
+      eventCrises: {
+        // crisisEventLocationIds → one linked event in the team's scope (L1)
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([{ event: { originId: "L1", destinationId: null, locationId: null } }])
+          .mockResolvedValue([{ eventId: "e2" }]),
+        findFirst: vi.fn().mockResolvedValue({ eventId: "e1", crisisId: "c1" }),
+        count: vi.fn().mockResolvedValue(2),
+        deleteMany,
+      },
+    });
+    expect(await removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(updated);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { crisisId: "c1", eventId: "e1" } });
   });
 
   it("throws NOT_FOUND when the crisis is missing", async () => {
@@ -364,7 +503,11 @@ describe("Mutation.removeEventFromCrisis", () => {
   it("throws NOT_FOUND when the event is not linked", async () => {
     const ctx = buildContext(ADMIN, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
-      eventCrises: { findFirst: vi.fn().mockResolvedValue(null) },
+      eventCrises: {
+        // crisisEventLocationIds (location gate) runs before the link lookup.
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
     });
     await expect(
       removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
@@ -377,6 +520,7 @@ describe("Mutation.removeEventFromCrisis", () => {
     const ctx = buildContext(ADMIN, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), delete: del },
       eventCrises: {
+        findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn().mockResolvedValue({ eventId: "e1", crisisId: "c1" }),
         count: vi.fn().mockResolvedValue(1),
         deleteMany,
@@ -400,7 +544,11 @@ describe("Mutation.removeEventFromCrisis", () => {
         findFirst: vi.fn().mockResolvedValue({ eventId: "e1", crisisId: "c1" }),
         count: vi.fn().mockResolvedValue(2),
         deleteMany,
-        findMany: vi.fn().mockResolvedValue([{ eventId: "e2" }]),
+        // crisisEventLocationIds selects `event`; the remaining-events recompute
+        // selects `eventId`. Branch so both calls return valid rows.
+        findMany: vi.fn().mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(select?.event ? [] : [{ eventId: "e2" }]),
+        ),
       },
     });
     expect(await removeEventFromCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(updated);
@@ -421,7 +569,7 @@ describe("Mutation.addCrisisAttachments", () => {
   });
 
   it("throws NOT_FOUND when the crisis is missing", async () => {
-    const ctx = buildContext(VIEWER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(
       addCrisisAttachments(null, { id: "c1", keys: ["k"] }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
@@ -429,7 +577,7 @@ describe("Mutation.addCrisisAttachments", () => {
 
   it("appends new keys, dedupes against existing, and skips empties", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ attachments: ["a", "b"] }), update },
     });
     await addCrisisAttachments(null, { id: "c1", keys: ["b", "c", "", "c"] }, ctx);
@@ -441,7 +589,7 @@ describe("Mutation.addCrisisAttachments", () => {
 
   it("handles a null existing attachments list", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ attachments: null }), update },
     });
     await addCrisisAttachments(null, { id: "c1", keys: ["x"] }, ctx);
@@ -460,7 +608,7 @@ describe("Mutation.removeCrisisAttachment", () => {
   });
 
   it("throws NOT_FOUND when the crisis is missing", async () => {
-    const ctx = buildContext(VIEWER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(
       removeCrisisAttachment(null, { id: "c1", key: "k" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
@@ -468,7 +616,7 @@ describe("Mutation.removeCrisisAttachment", () => {
 
   it("filters the key out of the list (idempotent on a missing key)", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ attachments: ["a", "b"] }), update },
     });
     await removeCrisisAttachment(null, { id: "c1", key: "a" }, ctx);
@@ -491,7 +639,7 @@ describe("Mutation.updateCrisisTitle", () => {
   });
 
   it("throws NOT_FOUND when the crisis is missing", async () => {
-    const ctx = buildContext(VIEWER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(
       updateCrisisTitle(null, { id: "c1", title: "T" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
@@ -504,7 +652,7 @@ describe("Mutation.updateCrisisTitle", () => {
     const update = vi.fn().mockReturnValue(updateCall);
     const create = vi.fn().mockReturnValue(createCall);
     const $transaction = vi.fn().mockResolvedValue([updated, { id: "fb1" }]);
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: "Old" }), update },
       userFeedbacks: { create },
       $transaction,
@@ -519,7 +667,7 @@ describe("Mutation.updateCrisisTitle", () => {
 
   it("renders (empty) sentinels for null old title / blank new title", async () => {
     const create = vi.fn().mockReturnValue({});
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: null }), update: vi.fn().mockReturnValue({}) },
       userFeedbacks: { create },
       $transaction: vi.fn().mockResolvedValue([{ id: "c1" }, {}]),
@@ -540,7 +688,7 @@ describe("Mutation.updateCrisisDescription", () => {
   });
 
   it("throws NOT_FOUND when the crisis is missing", async () => {
-    const ctx = buildContext(VIEWER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
+    const ctx = buildContext(MEMBER, { crises: { findUnique: vi.fn().mockResolvedValue(null) } });
     await expect(
       updateCrisisDescription(null, { id: "c1", description: "d" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
@@ -548,7 +696,7 @@ describe("Mutation.updateCrisisDescription", () => {
 
   it("merges the new description into existing JSON summary, preserving tldr", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: {
         findUnique: vi.fn().mockResolvedValue({
           id: "c1",
@@ -566,7 +714,7 @@ describe("Mutation.updateCrisisDescription", () => {
 
   it("promotes a legacy plain-string summary to the structured shape", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: {
         findUnique: vi.fn().mockResolvedValue({ id: "c1", summary: "just a plain string" }),
         update,
@@ -581,7 +729,7 @@ describe("Mutation.updateCrisisDescription", () => {
 
   it("defaults to the structured shape when summary is null", async () => {
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(VIEWER, {
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", summary: null }), update },
     });
     await updateCrisisDescription(null, { id: "c1", description: "new" }, ctx);
@@ -598,7 +746,7 @@ describe("Mutation.updateCrisisDescription", () => {
 
 describe("Crisis content edits are refused to unapproved callers", () => {
   // Title, description and attachments are open to any APPROVED user (admin,
-  // analyst, viewer — the app offers them on the crisis page). A fresh signup
+  // member — the app offers them on the crisis page). A fresh signup
   // is `pending` and must not be able to rewrite a crisis; the worker role
   // writes only Tasks. Both are refused before any database access.
   const edits: [string, (ctx: Context) => Promise<unknown>][] = [
@@ -625,8 +773,8 @@ describe("Crisis content edits are refused to unapproved callers", () => {
 
   // The other side of the contract: every approved role passes the guard and
   // reaches the crisis lookup (a missing crisis then answers NOT_FOUND), so a
-  // change that wrongly blocks admin, analyst or viewer fails here.
-  for (const [who, user] of [["admin", ADMIN], ["analyst", ANALYST], ["viewer", VIEWER]] as const) {
+  // change that wrongly blocks admin or member fails here.
+  for (const [who, user] of [["admin", ADMIN], ["member", MEMBER]] as const) {
     it.each(edits)(`%s admits ${who} through to the crisis lookup`, async (_name, edit) => {
       const findUnique = vi.fn().mockResolvedValue(null);
       await expect(edit(buildContext(user, { crises: { findUnique } }))).rejects.toMatchObject({
@@ -638,15 +786,13 @@ describe("Crisis content edits are refused to unapproved callers", () => {
 });
 
 describe("Mutation.deleteCrisis", () => {
-  it("rejects a viewer with FORBIDDEN", async () => {
+  it("rejects a non-admin member (even a team analyst) with FORBIDDEN (admin-only)", async () => {
+    // deleteCrisis is global-admin-only (requireRole(["admin"])); a team analyst
+    // membership does not help here, so a global member is rejected outright.
     await expect(
-      deleteCrisis(null, { id: "c1" }, buildContext(VIEWER, {})),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-  });
-
-  it("rejects an analyst with FORBIDDEN (admin-only)", async () => {
-    await expect(
-      deleteCrisis(null, { id: "c1" }, buildContext(ANALYST, {})),
+      deleteCrisis(null, { id: "c1" }, buildContext(MEMBER, {
+        teamMembers: { findUnique: vi.fn().mockResolvedValue({ role: "analyst" }) },
+      })),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -671,9 +817,11 @@ describe("Mutation.deleteCrisis", () => {
 // Mutation.setCrisisNeedsAnalysis
 // ---------------------------------------------------------------------------
 describe("Mutation.setCrisisNeedsAnalysis", () => {
-  it("rejects an analyst with FORBIDDEN (admin-only)", async () => {
+  it("rejects a non-admin member (even a team analyst) with FORBIDDEN (admin-only)", async () => {
     await expect(
-      setCrisisNeedsAnalysis(null, { id: "c1", generalSummary: [], sector: {} }, buildContext(ANALYST, {})),
+      setCrisisNeedsAnalysis(null, { id: "c1", generalSummary: [], sector: {} }, buildContext(MEMBER, {
+        teamMembers: { findUnique: vi.fn().mockResolvedValue({ role: "analyst" }) },
+      })),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -704,9 +852,11 @@ describe("Mutation.setCrisisNeedsAnalysis", () => {
 // Mutation.updateCrisisPopulation
 // ---------------------------------------------------------------------------
 describe("Mutation.updateCrisisPopulation", () => {
-  it("rejects an analyst with FORBIDDEN (admin-only)", async () => {
+  it("rejects a non-admin member (even a team analyst) with FORBIDDEN (admin-only)", async () => {
     await expect(
-      updateCrisisPopulation(null, { id: "c1", input: {} }, buildContext(ANALYST, {})),
+      updateCrisisPopulation(null, { id: "c1", input: {} }, buildContext(MEMBER, {
+        teamMembers: { findUnique: vi.fn().mockResolvedValue({ role: "analyst" }) },
+      })),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -780,7 +930,7 @@ const C = crisisResolvers.Crisis;
 
 describe("Crisis.title / summary / scenarios / needs (localization)", () => {
   it("returns the canonical column at the default locale", async () => {
-    const ctx = buildContext(VIEWER, {}, { locale: "en" });
+    const ctx = buildContext(MEMBER, {}, { locale: "en" });
     expect(await C.title({ id: "c1", title: "Canon" }, {}, ctx)).toBe("Canon");
     expect(await C.summary({ id: "c1", summary: "Sum" }, {}, ctx)).toBe("Sum");
     expect(await C.scenarios({ id: "c1", scenarios: { a: 1 } }, {}, ctx)).toEqual({ a: 1 });
@@ -788,13 +938,13 @@ describe("Crisis.title / summary / scenarios / needs (localization)", () => {
   });
 
   it("uses the translations overlay fast path for a non-default locale", async () => {
-    const ctx = buildContext(VIEWER, {}, { locale: "ar" });
+    const ctx = buildContext(MEMBER, {}, { locale: "ar" });
     const parent = { id: "c1", title: "Canon", translations: [{ data: { title: "مرحبا" } }] };
     expect(await C.title(parent, {}, ctx)).toBe("مرحبا");
   });
 
   it("falls back to the canonical column when a non-default locale has no overlay row", async () => {
-    const ctx = buildContext(VIEWER, {}, { locale: "ar" });
+    const ctx = buildContext(MEMBER, {}, { locale: "ar" });
     const parent = { id: "c1", title: "Canon", translations: [] as Array<{ data: unknown }> };
     expect(await C.title(parent, {}, ctx)).toBe("Canon");
   });
@@ -811,13 +961,13 @@ describe("Crisis.populationAffected / populationInArea", () => {
 
 describe("Crisis.generalLocation", () => {
   it("returns null when there is no locationId", () => {
-    const ctx = buildContext(VIEWER, { locations: { findUnique: vi.fn() } });
+    const ctx = buildContext(MEMBER, { locations: { findUnique: vi.fn() } });
     expect(C.generalLocation({ locationId: null }, {}, ctx)).toBeNull();
   });
 
   it("looks up the location when present", () => {
     const findUnique = vi.fn().mockReturnValue({ id: "loc1" });
-    const ctx = buildContext(VIEWER, { locations: { findUnique } });
+    const ctx = buildContext(MEMBER, { locations: { findUnique } });
     C.generalLocation({ locationId: "loc1" }, {}, ctx);
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "loc1" } });
   });
@@ -825,14 +975,14 @@ describe("Crisis.generalLocation", () => {
 
 describe("Crisis.events", () => {
   it("uses the deep-include fast path off the parent", async () => {
-    const ctx = buildContext(VIEWER, {});
+    const ctx = buildContext(MEMBER, {});
     const result = C.events({ id: "c1", eventCrises: [{ event: { id: "e1" } }, { event: { id: "e2" } }] }, {}, ctx);
     expect(result).toEqual([{ id: "e1" }, { id: "e2" }]);
   });
 
   it("lazily fetches links when the parent has no eventCrises", async () => {
     const findMany = vi.fn().mockResolvedValue([{ event: { id: "e1" } }]);
-    const ctx = buildContext(VIEWER, { eventCrises: { findMany } });
+    const ctx = buildContext(MEMBER, { eventCrises: { findMany } });
     const result = await C.events({ id: "c1" }, {}, ctx);
     expect(findMany).toHaveBeenCalledWith({ where: { crisisId: "c1" }, include: { event: true } });
     expect(result).toEqual([{ id: "e1" }]);

@@ -626,7 +626,7 @@ export const knowledgebaseResolvers = {
       },
       context: Context,
     ): Promise<SearchHit[]> => {
-      // Any authenticated content reader (admin/analyst/viewer); the KB is
+      // Any authenticated content reader (admin/member); the KB is
       // derived from public ReliefWeb reports so the read gate is loose.
       requireContentReader(context);
 
@@ -824,10 +824,10 @@ export const knowledgebaseResolvers = {
       },
       context: Context,
     ): Promise<KnowledgebaseIngestJob> => {
-      // Restricted to admin/analyst — every accepted upload spends
-      // LLM + embedding credits on the enrich chain. Viewers may
-      // trigger costly re-runs otherwise.
-      requireRole(context, ["admin", "analyst"]);
+      // Restricted to admin — every accepted upload spends LLM + embedding
+      // credits on the enrich chain, so this stays platform-admin-only
+      // (`analyst` is a TEAM role now and the KB ingest has no team scope).
+      requireRole(context, ["admin"]);
 
       const upload = await args.file;
       const filename = upload.filename ?? "unnamed";

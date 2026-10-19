@@ -1475,7 +1475,7 @@ export interface AdminMetrics {
     dau: number;
     mau: number;
     totalUsers: number;
-    usersByRole: { admin: number; analyst: number; viewer: number; pending: number };
+    usersByRole: { admin: number; member: number; pending: number };
   };
   content: {
     signals: number;
@@ -1980,8 +1980,7 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-transform: uppercase;
     }
     .badge-role-pending { background: #2a1f0a; color: var(--color-warning); }
-    .badge-role-viewer { background: #1c1f26; color: var(--color-muted); }
-    .badge-role-analyst { background: #0d2818; color: var(--color-success); }
+    .badge-role-member { background: #1c1f26; color: var(--color-muted); }
     .badge-role-admin { background: var(--color-accent-soft); color: var(--color-accent); }
     /* 6px radius — short .btn uses --radius (12px) which reads as a pill
        next to the 999px role badges. Keep this a rounded rectangle. */
@@ -2625,7 +2624,7 @@ function formatNumber(n: number): string {
 
 function teamRoleSelectOptions(selected: string): string {
   const canonical = canonicalTeamRole(selected);
-  return ["team_member", "field_coordinator", "emergency_response_manager", "team_admin"]
+  return ["team_member", "analyst", "emergency_response_manager", "team_admin"]
     .map(
       (r) => `<option value="${r}"${canonical === r ? " selected" : ""}>${r}</option>`,
     )
@@ -2633,7 +2632,7 @@ function teamRoleSelectOptions(selected: string): string {
 }
 
 function globalRoleSelectOptions(selected: string | null): string {
-  const current = (selected ?? "viewer").toLowerCase();
+  const current = (selected ?? "member").toLowerCase();
   return GLOBAL_ROLES.map(
     (r) => `<option value="${r}"${current === r ? " selected" : ""}>${r}</option>`,
   ).join("");
@@ -2659,15 +2658,13 @@ interface RenderAdminUsersOptions {
 }
 
 function roleBadge(role: string | null): string {
-  const r = (role ?? "viewer").toLowerCase();
+  const r = (role ?? "member").toLowerCase();
   const cls =
     r === "pending"
       ? "badge-role badge-role-pending"
       : r === "admin"
         ? "badge-role badge-role-admin"
-        : r === "analyst"
-          ? "badge-role badge-role-analyst"
-          : "badge-role badge-role-viewer";
+        : "badge-role badge-role-member";
   return `<span class="${cls}">${escapeHtml(r)}</span>`;
 }
 
@@ -2832,8 +2829,7 @@ export function renderAdminMetrics(opts: RenderAdminMetricsOptions): string {
   const usersBreakdown = `
     <div class="metric-breakdown">
       <span><strong>${formatNumber(engagement.usersByRole.admin)}</strong> admin</span>
-      <span><strong>${formatNumber(engagement.usersByRole.analyst)}</strong> analyst</span>
-      <span><strong>${formatNumber(engagement.usersByRole.viewer)}</strong> viewer</span>
+      <span><strong>${formatNumber(engagement.usersByRole.member)}</strong> member</span>
       <span><strong>${formatNumber(engagement.usersByRole.pending)}</strong> pending</span>
     </div>`;
 

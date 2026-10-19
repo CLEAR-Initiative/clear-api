@@ -38,7 +38,7 @@ export const auth = betterAuth({
     // Self-signup is open. New accounts land with `role = "pending"`
     // (see `user.additionalFields.role` below) and are gated out of
     // every content and sensitive-data resolver until an admin approves
-    // them via /portal/admin. Approval flips the role to `viewer`.
+    // them via /portal/admin. Approval flips the role to `member`.
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
@@ -107,7 +107,7 @@ export const auth = betterAuth({
         required: false,
         // New signups land as `pending` and are gated out of all
         // content + sensitive data until an admin approves them via
-        // /portal/admin. On approval the role flips to `viewer`, which
+        // /portal/admin. On approval the role flips to `member`, which
         // grants read access to signals/events/alerts/crises only.
         defaultValue: "pending",
         input: false,

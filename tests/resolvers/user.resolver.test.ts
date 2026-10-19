@@ -25,7 +25,7 @@ type UpdateFn = (args: { where: unknown; data: Record<string, unknown> }) => Pro
 function buildContext(update: UpdateFn): Context {
   return {
     prisma: { user: { update, findUnique: vi.fn() } },
-    user: { id: "u1", role: "viewer", isActive: true },
+    user: { id: "u1", role: "member", isActive: true },
     session: null,
     authMethod: "session",
   } as unknown as Context;
@@ -85,8 +85,8 @@ describe("updateUserRole — admin gate", () => {
     await expect(
       updateUserRole(
         undefined,
-        { userId: "u1", role: "analyst" },
-        adminContext({ user: { findUnique } }, { id: "u1", role: "viewer", isActive: true }),
+        { userId: "u1", role: "admin" },
+        adminContext({ user: { findUnique } }, { id: "u1", role: "member", isActive: true }),
       ),
     ).rejects.toThrow(/Insufficient permissions/);
     expect(findUnique).not.toHaveBeenCalled();
@@ -106,22 +106,22 @@ describe("updateUserRole — admin gate", () => {
     const findUnique = vi.fn().mockResolvedValue({
       id: "u1",
       email: "ok@example.com",
-      role: "viewer",
+      role: "member",
     });
     const update = vi.fn().mockResolvedValue({
       id: "u1",
       email: "ok@example.com",
-      role: "analyst",
+      role: "admin",
     });
     const result = await updateUserRole(
       undefined,
-      { userId: "u1", role: "analyst" },
+      { userId: "u1", role: "admin" },
       adminContext({ user: { findUnique, update, count: vi.fn() } }),
     );
     expect(update).toHaveBeenCalledWith({
       where: { id: "u1" },
-      data: { role: "analyst" },
+      data: { role: "admin" },
     });
-    expect(result).toMatchObject({ id: "u1", role: "analyst" });
+    expect(result).toMatchObject({ id: "u1", role: "admin" });
   });
 });

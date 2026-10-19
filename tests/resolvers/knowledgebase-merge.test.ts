@@ -70,7 +70,7 @@ function ctx(
       $queryRawUnsafe: queryRawUnsafe,
       disasterTypes: { findMany },
     } as unknown as Context["prisma"],
-    user: { id: "u", role: "viewer", isActive: true } as unknown,
+    user: { id: "u", role: "member", isActive: true } as unknown,
     session: {}, authMethod: "session",
   } as unknown as Context;
 }

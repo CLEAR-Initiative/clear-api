@@ -86,7 +86,7 @@ describe("GroundMessage translation schema contract", () => {
   it("requestGroundMessageTranslation queues an English translation", async () => {
     const result = await run(
       `mutation { requestGroundMessageTranslation(messageId: "m1", locale: "en") { locale status text } }`,
-      "analyst",
+      "admin",
     );
     expect(result.errors).toBeUndefined();
     expect(result.data?.requestGroundMessageTranslation).toEqual({
@@ -125,7 +125,7 @@ describe("GroundMessage translation schema contract", () => {
   it("a viewer cannot request a translation", async () => {
     const result = await run(
       `mutation { requestGroundMessageTranslation(messageId: "m1", locale: "en") { status } }`,
-      "viewer",
+      "member",
     );
     expect(result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
   });
