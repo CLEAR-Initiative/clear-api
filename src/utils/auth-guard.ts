@@ -130,7 +130,11 @@ export async function requireAdminOrTeamAnalystForLocations(
   context: Context,
   entityLocationIds: ReadonlyArray<string | null | undefined>,
 ): Promise<NonNullable<Context["user"]>> {
-  const user = requireNonWorker(context);
+  // requireNonWorkerContentReader admits only approved humans (admin / member) —
+  // a `pending` signup or a service role (worker/pipeline/agent) is rejected
+  // BEFORE any team-membership lookup, so a pending account that somehow holds a
+  // team `analyst` membership cannot reach these elevated writes.
+  const user = requireNonWorkerContentReader(context);
   if (isPlatformAdmin(user)) return user;
   if (await userIsTeamAnalystForLocations(context.prisma, user.id, entityLocationIds)) {
     return user;
@@ -150,7 +154,9 @@ export async function requireAdminOrTeamAnalyst(
   context: Context,
   teamId?: string | null,
 ): Promise<NonNullable<Context["user"]>> {
-  const user = requireNonWorker(context);
+  // Approved humans only (admin / member) — pending + service roles rejected
+  // before the membership lookup (see requireAdminOrTeamAnalystForLocations).
+  const user = requireNonWorkerContentReader(context);
   if (isPlatformAdmin(user)) return user;
   if (teamId) {
     const membership = await context.prisma.teamMembers.findUnique({

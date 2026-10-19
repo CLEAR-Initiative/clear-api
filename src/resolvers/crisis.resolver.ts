@@ -360,11 +360,18 @@ export const crisisResolvers = {
         });
       }
 
-      // Elevated gate, scoped to the crisis's location footprint: admin passes,
-      // else the caller must be a team analyst whose scope covers one of the
-      // crisis's existing linked events OR the event being added.
+      // Elevated gate — admin passes both checks. A team analyst must have
+      // authority over BOTH the existing crisis AND the event being added,
+      // checked SEPARATELY: a single combined-location check would let an
+      // analyst scoped to A attach an A-event to a crisis entirely in B (the
+      // A-event satisfies the OR), expand the crisis footprint into A, and then
+      // pass later remove/delete gates on that crisis. Checking each in its own
+      // scope closes that escalation.
+      await requireAdminOrTeamAnalystForLocations(
+        context,
+        await crisisEventLocationIds(context.prisma, crisisId),
+      );
       await requireAdminOrTeamAnalystForLocations(context, [
-        ...(await crisisEventLocationIds(context.prisma, crisisId)),
         event.originId,
         event.destinationId,
         event.locationId,

@@ -342,7 +342,7 @@ describe("Mutation.addEventToCrisis", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
-  it("allows a team analyst whose team location scope covers the event", async () => {
+  it("allows a team analyst whose scope covers BOTH the crisis footprint and the event", async () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
@@ -354,19 +354,56 @@ describe("Mutation.addEventToCrisis", () => {
         findMany: vi.fn().mockResolvedValue([{ populationAffected: 5n }]),
       },
       locations: { findMany: vi.fn().mockResolvedValue([]) },
-      // team analyst whose team is scoped to L1 (which covers the event's origin)
+      // team analyst whose team is scoped to L1 (covers both the crisis's
+      // existing footprint AND the event's origin)
       teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
       teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "L1" }]) },
       eventCrises: {
         findFirst: vi.fn().mockResolvedValue(null),
         create,
+        // select.event → crisisEventLocationIds: the crisis already has an event at L1.
         findMany: vi.fn().mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
-          Promise.resolve(select?.event ? [] : [{ eventId: "e1" }]),
+          Promise.resolve(
+            select?.event
+              ? [{ event: { originId: "L1", destinationId: null, locationId: null } }]
+              : [{ eventId: "e1" }],
+          ),
         ),
       },
     });
     expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects attaching an in-scope event to an OUT-OF-SCOPE crisis (no footprint escalation)", async () => {
+    // Security regression (Greptile P1): an analyst scoped to L1 must not add an
+    // L1 event to a crisis whose existing footprint is entirely elsewhere (L2) —
+    // doing so would expand the crisis into L1 and unlock later remove/delete.
+    const create = vi.fn();
+    (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockImplementation((_p: unknown, id: string) =>
+      Promise.resolve([id]),
+    );
+    const ctx = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }) },
+      events: {
+        findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
+      },
+      // analyst scoped only to L1
+      teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
+      teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "L1" }]) },
+      eventCrises: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create,
+        // The crisis's existing footprint is L2 — outside the analyst's scope.
+        findMany: vi.fn().mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(select?.event ? [{ event: { originId: "L2", destinationId: null, locationId: null } }] : []),
+        ),
+      },
+    });
+    await expect(
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("rejects a team analyst whose scope does NOT cover the event (FORBIDDEN)", async () => {
