@@ -885,8 +885,14 @@ async function seed() {
   console.log("Created 4 feature flags");
 
   // ─── Disaster Types ─────────────────────────────────────────────────────────
+  // NRC-irrelevant glide codes (disaster_types.nrc_relevant = false). Everything
+  // else is relevant. createAlert / escalateEvent reject an event whose types are
+  // ALL irrelevant, so this MUST be seeded or every promote/alert is blocked.
+  const NRC_IRRELEVANT_CODES = new Set([
+    "pa", "pg", "pw", "pf", "rg", "ph", "pt", "po", "pp", "rd", "fr", "ot",
+  ]);
   await prisma.disasterTypes.createMany({
-    data: [
+    data: ([
       { glideNumber: "et", disasterType: "extreme temperature", disasterClass: "" },
       { glideNumber: "cw", disasterType: "cold wave", disasterClass: "" },
       { glideNumber: "ht", disasterType: "heat wave", disasterClass: "" },
@@ -922,7 +928,7 @@ async function seed() {
       { glideNumber: "vc", disasterType: "violence against civilians", disasterClass: "conflict and violence" },
       { glideNumber: "fc", disasterType: "economic crisis", disasterClass: "" },
       { glideNumber: "fa", disasterType: "famine", disasterClass: "" },
-    ],
+    ] as const).map((d) => ({ ...d, nrcRelevant: !NRC_IRRELEVANT_CODES.has(d.glideNumber) })),
   });
 
   console.log("Created 35 disaster types");
