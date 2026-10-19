@@ -14,6 +14,7 @@ import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
+import { fanOutAlertWebhooks } from "../services/webhook/alert-fanout.js";
 import {
   severityToLabel,
   formatCount,
@@ -389,6 +390,23 @@ export const alertResolvers = {
             console.log("[createAlert] No users with email notifications enabled - skipping emails");
           }
         }
+      }
+
+      // Fan out to team-configured `clear_alert` webhooks alongside email.
+      // Fire-and-forget: webhook delivery (async, retried) must never block or
+      // fail alert creation. Matching + delivery live in the service.
+      try {
+        const webhookCount = await fanOutAlertWebhooks(
+          context.prisma,
+          { id: alert.id, status: alert.status, createdAt: alert.createdAt },
+          event,
+          env.FRONTEND_URL,
+        );
+        if (webhookCount > 0) {
+          console.log(`[createAlert] Dispatched ${webhookCount} alert webhook delivery(ies)`);
+        }
+      } catch (e) {
+        console.error("[createAlert] alert webhook fan-out failed (alert already created):", e);
       }
 
       return alert;

@@ -538,6 +538,11 @@ export const queryTypeDef = gql`
     """Recent delivery attempts for a subscription, newest first."""
     webhookDeliveries(subscriptionId: String!, limit: Int = 50): [WebhookDelivery!]!
 
+    # ─── Alert Webhooks (team-scoped clear_alert) ──────────────────────
+    """A team's clear_alert webhook subscriptions. Caller must be a team
+    admin, org admin, or platform admin for the team. Secrets are scrubbed."""
+    teamAlertWebhooks(teamId: String!): [WebhookSubscription!]!
+
     # ─── Ground intel staging tier (admin only) ────────────────
     """All ground sources (per-source policy records), newest first."""
     groundSources: [GroundSource!]!

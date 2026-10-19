@@ -345,6 +345,7 @@ model teams {
   defaultForUsers user[]            @relation("DefaultTeam")
   invitations     invitations[]
   invitationTeams invitationTeams[]
+  webhookSubscriptions WebhookSubscription[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -1342,29 +1343,49 @@ model eventsIndex {
   @@map("events_index")
 }
 
-/// Outbound webhook subscription. Configured by platform admins; every
-/// incoming GlitchTip alert is fanned out to every active subscription
-/// whose filters match. HMAC signing is opt-out (not currently exposed —
-/// every delivery is signed with the row's `secret`).
+/// Outbound webhook subscription. Two sources (see `source`):
+///   - `glitchtip` — platform-admin-configured; every incoming GlitchTip alert
+///     is fanned out to active subscriptions whose `eventTypeFilter` matches.
+///   - `clear_alert` — TEAM-configured (team_admin / org_admin); every PUBLISHED
+///     CLEAR alert whose event location falls in the owning team's location
+///     scope (and that passes the optional `alertTypeFilter` / `minSeverity`
+///     filters) is fanned out. See createAlert's fan-out + services/webhook.
+/// HMAC signing is always on — every delivery is signed with the row's `secret`.
 model WebhookSubscription {
   id        String @id @default(uuid())
+  /// Which trigger feeds this subscription: "glitchtip" (default, legacy) or
+  /// "clear_alert" (team alert webhooks). Discriminates fan-out + the filters
+  /// that apply.
+  source    String @default("glitchtip")
+  /// Owning team for a `clear_alert` subscription; null for platform-level
+  /// `glitchtip` subscriptions. Drives the location-scope match (teamLocations)
+  /// and who may manage the row.
+  teamId    String? @map("team_id")
+  team      teams?  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   /// Human-readable label shown in the admin UI. Not sent downstream.
   name      String
   /// Target URL. Must include scheme; https is enforced at write time.
   targetUrl String @map("target_url")
   /// HMAC-SHA256 key. Generated on create (32 random bytes, hex-encoded),
   /// rotatable via a dedicated mutation. Stored plaintext because the
-  /// signing worker needs it; scope of exposure is limited to platform
-  /// admins who created it and can already read it.
+  /// signing worker needs it; scope of exposure is limited to the admins /
+  /// team admins who created it and can already read it.
   secret    String
 
   /// Pause without deleting. `false` skips this subscription during fan-out.
   active Boolean @default(true)
 
-  /// Optional event-type allowlist. Empty array (default) = all types.
-  /// GlitchTip's alert payload carries an "event_type" field like
-  /// "issue.new", "issue.regression", "issue.resolved" — we match on that.
+  /// (glitchtip) Optional event-type allowlist. Empty array (default) = all
+  /// types. Matches GlitchTip's payload "event_type" (e.g. "issue.new").
   eventTypeFilter String[] @default([]) @map("event_type_filter")
+
+  /// (clear_alert) Optional glide-code allowlist on the alert's event types.
+  /// Empty array (default) = all types within the team's location scope.
+  alertTypeFilter String[] @default([]) @map("alert_type_filter")
+  /// (clear_alert) Optional minimum alert severity (1-5). Null = all
+  /// severities (incl. null-severity alerts). A set floor excludes
+  /// null-severity alerts.
+  minSeverity Int? @map("min_severity")
 
   /// User who created this subscription. Kept for audit; not FK-linked
   /// because the audit trail should survive user deletion.
@@ -1376,6 +1397,8 @@ model WebhookSubscription {
   deliveries WebhookDelivery[]
 
   @@index([active])
+  @@index([source, active])
+  @@index([teamId])
   @@map("webhook_subscriptions")
 }
 
