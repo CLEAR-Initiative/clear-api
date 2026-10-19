@@ -141,6 +141,8 @@ export function statusAfterChange(current: SignalStatusValue, linked: boolean): 
 }
 
 const CONTENT_UPDATE_MAX_ATTEMPTS = 4;
+/** Batch cap for requeueSignals - one updateMany per call. */
+const MAX_REQUEUE_IDS = 500;
 
 function signalKeyWhere(input: UpdateSignalContentInput) {
   if (input.id) return { id: input.id };
@@ -483,6 +485,28 @@ export const signalResolvers = {
         ),
       );
       return results.reduce((sum, r) => sum + r.count, 0);
+    },
+
+    requeueSignals: async (
+      _parent: unknown,
+      args: { ids: string[] },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      if (args.ids.length > MAX_REQUEUE_IDS) {
+        throw new GraphQLError(
+          `requeueSignals accepts at most ${MAX_REQUEUE_IDS} ids per call`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+      if (args.ids.length === 0) return 0;
+      // Still-grouped signals are left alone: pendingSignals would skip them
+      // anyway, and requeuing one that it didn't skip would group it twice.
+      const result = await context.prisma.signals.updateMany({
+        where: { id: { in: args.ids }, signalEvents: { none: {} } },
+        data: { status: "NEW", processedAt: null },
+      });
+      return result.count;
     },
 
     createManualSignal: async (
