@@ -664,11 +664,11 @@ export const signalResolvers = {
       args: { id: string; locationId: string },
       context: Context,
     ) => {
-      // Admin/pipeline only — invoked by the manual-signal processing task
-      // after the geoparser resolves a candidate and we've promoted it to
-      // an L4 via findOrCreateLandmarkL4. Sets `generalLocation` (the
-      // `location_id` column); leaves origin/destination alone.
-      requireRole(context, ["admin"]);
+      // Admin/pipeline only — the pipeline drain uses it to place push-feed
+      // signals (sudan-war-x) that arrive with no location, before grouping.
+      // Sets `generalLocation` (the `location_id` column); leaves
+      // origin/destination alone.
+      requireRole(context, ["admin", "pipeline"]);
 
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.id },
