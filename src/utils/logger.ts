@@ -7,26 +7,37 @@
  * Env vars:
  *   LOGTAIL_SOURCE_TOKEN  — Better Stack source token (required for prod logging)
  *   LOG_LEVEL             — pino log level (default: "info")
+ *   LOG_FORMAT            — "json" | "pretty". Default: pretty only on an
+ *                           interactive terminal outside production, JSON
+ *                           otherwise (containers, CI) so Vector can parse it.
  */
 
 import pino from "pino";
 
-const isProduction = process.env.NODE_ENV === "production";
 const level = process.env.LOG_LEVEL ?? "info";
+
+/** Pretty output is for humans at a terminal; everything else logs JSON. */
+export function usePrettyLogs(
+  env: { LOG_FORMAT?: string; NODE_ENV?: string },
+  isTTY: boolean,
+): boolean {
+  if (env.LOG_FORMAT) return env.LOG_FORMAT === "pretty";
+  return env.NODE_ENV !== "production" && isTTY;
+}
 
 function buildTransports(): pino.TransportMultiOptions | undefined {
   const targets: pino.TransportTargetOptions[] = [];
 
-  if (isProduction) {
+  if (usePrettyLogs(process.env, Boolean(process.stdout.isTTY))) {
     targets.push({
-      target: "pino/file",
-      options: { destination: 1 },
+      target: "pino-pretty",
+      options: { colorize: true, translateTime: "HH:MM:ss.l" },
       level,
     });
   } else {
     targets.push({
-      target: "pino-pretty",
-      options: { colorize: true, translateTime: "HH:MM:ss.l" },
+      target: "pino/file",
+      options: { destination: 1 },
       level,
     });
   }
