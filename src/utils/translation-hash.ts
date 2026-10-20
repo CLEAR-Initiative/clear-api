@@ -75,6 +75,7 @@ const HASH_FIELDS: Record<TranslatableEntityType, readonly string[]> = {
     "context_risks",
     "hazards_and_vulnerabilities",
     "displacement",
+    "humanitarian_access",
     "sectors",
     "changes",
     "scenarios",
