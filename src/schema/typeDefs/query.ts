@@ -47,7 +47,7 @@ export const queryTypeDef = gql`
     eventMembers(eventId: String!, first: Int): [Signal!]!
 
     """List events. Requires authentication. includeDummy defaults to false."""
-    events(teamId: String, includeDummy: Boolean): [Event!]!
+    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event
