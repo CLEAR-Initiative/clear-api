@@ -133,18 +133,45 @@ function optionalBigInt(value: string | null | undefined, field: string): bigint
 
 export const eventResolvers = {
   Query: {
-    events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
+    events: async (
+      _parent: unknown,
+      args: { teamId?: string; includeDummy?: boolean; lastSignalSince?: string; limit?: number },
+      context: Context,
+    ) => {
       requireContentReader(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
+      // Optional SERVER-SIDE bounding so a caller (e.g. the pipeline's grouping
+      // drain) can fetch only the recent window instead of the WHOLE events
+      // table. Returning every event + its translation includes on a table the
+      // drain grows continuously once ran clear-api to 6.2 GB and OOM-killed the
+      // host (2026-10-20). Both args are optional — omitted = the original full
+      // feed, so existing callers (clear-mvp) are unchanged.
+      const recentFilter =
+        args.lastSignalSince != null
+          ? { lastSignalCreatedAt: { gte: new Date(args.lastSignalSince) } }
+          : {};
+      // When a limit is given, take the NEWEST rows (bounded fetch must order).
+      const bound: { orderBy?: { lastSignalCreatedAt: "desc" }; take?: number } =
+        args.limit != null
+          ? { orderBy: { lastSignalCreatedAt: "desc" }, take: Math.min(Math.max(args.limit, 1), 5000) }
+          : {};
       const include = eventTranslationsInclude(context.locale);
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
-        return context.prisma.events.findMany({ where: dummyFilter, ...(include ? { include } : {}) });
+        return context.prisma.events.findMany({
+          where: { ...dummyFilter, ...recentFilter },
+          ...(include ? { include } : {}),
+          ...bound,
+        });
       }
       // teamId provided: apply that team's location filter as a view filter
       // (no membership check -  see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter }, ...(include ? { include } : {}) });
+      return context.prisma.events.findMany({
+        where: { ...filter, ...dummyFilter, ...recentFilter },
+        ...(include ? { include } : {}),
+        ...bound,
+      });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireContentReader(context);
