@@ -585,7 +585,62 @@ severity; TOPICAL (a strong free-text query — the chatbot case)
 interleaves by relevance, gating weak incidents. AUTO picks FRAME
 when the query is effectively empty/frame-only, else TOPICAL. Every
 hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [KnowledgebaseTier!]</code> — Which tiers to search. Default: both (the KB is always fresh). Pass
-[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
+[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span><span class="arg"><code>includeFigures: Boolean</code> — When true, append a band of the most relevant FIGURE hits (charts /
+maps / infographics) AFTER the normal text results — the RAG-with-figures
+case: a chatbot gets its answer context plus supporting visuals in one
+call. Figure hits carry `figureS3Key` / `figureImageUrl`, so split the
+band off by `figureS3Key != null`; their scores sit just below the text
+hits. These are IN ADDITION to `limit` (they don't displace text), and
+deduped against any figure that already ranked into the main results.
+No-op when `filters.figuresOnly` is set (that's already figures-only) or
+the report tier isn't searched. Default false.</span><span class="arg"><code>figureLimit: Int</code> — How many figures the `includeFigures` band may add (1–20). Default 6.</span></div></td>
+  </tr><tr>
+    <td><code>searchReports</code></td>
+    <td><code>[ReportHit!]!</code></td>
+    <td>Find whole REPORTS (not chunks) and get a download link — the Cap 3
+read path (&quot;fetch me the UNHCR report on X between these dates&quot;). Groups
+the knowledgebase by `reportId` and returns one `ReportHit` per report,
+each with a presigned PDF `downloadUrl`.
+
+Two modes, picked by whether `query` is a non-empty topical string:
+  - With a query: semantic retrieval over report chunks, grouped to the
+    best-matching chunk per report, ordered by that best similarity.
+  - Without a query: a filter/date listing ordered by `publishedAt`
+    descending (most recent first).
+
+`source` is a case-insensitive substring matched against the report
+title and source URL (e.g. &quot;UNHCR&quot;). `publishedRange` filters on the
+report's publication date (distinct from `filters.timeRange`, which is
+the chunk's extracted EVENT window). `filters` applies the same
+location / event-type / sector scoping as `searchKnowledgebase`.
+Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String</code> — Topical query. Omit or pass empty for a pure filter/date listing.</span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>publishedRange: DateRangeInput</code> — Filter on the report's PUBLICATION date (inclusive).</span><span class="arg"><code>source: String</code> — Case-insensitive substring on report title / source URL (e.g. a
+publisher like &quot;UNHCR&quot; or &quot;OCHA&quot;).</span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>searchReportsNaturalLanguage</code></td>
+    <td><code>NlReportSearch!</code></td>
+    <td>Natural-language front door to `searchReports` (the &quot;NL on top of
+structured&quot; layer). Parses a free-text question — e.g. &quot;fetch me the UNHCR
+report on flooding in Sudan between March and June 2024&quot; — into the
+structured arguments (`source`, publication-date window, country scope, and
+the residual topical query) and runs the same report search. Returns BOTH
+the parsed `interpreted` filters and the `reports`, so a caller can show
+how the question was understood and, if it's wrong, call `searchReports`
+directly with corrected arguments.
+
+Parsing is deterministic (no LLM): it recognises a curated set of
+publishers, common date phrasings, and country names from the locations
+table. Anything it doesn't recognise simply stays in the topical query,
+which still finds the report by content. Requires any authenticated content
+reader.<div class="field-args"><span class="arg"><code>question: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>reportFiguresPendingKbMerge</code></td>
+    <td><code>[ReportFigureForMerge!]!</code></td>
+    <td>Figures (from `report_figures`) whose report is in the knowledgebase but
+whose figure chunk isn't present yet — the work list for the figure→KB sync
+(clear-pipeline). Returns ALL figures for each report that needs syncing (not
+just the missing ones) so the caller can `figuresOnly`-upsert the complete
+set per report. Bounded by `limit` REPORTS (not figures), oldest report id
+first. admin/pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
     <td><code>knowledgebaseIngestJob</code></td>
     <td><code>KnowledgebaseIngestJob</code></td>
@@ -1395,7 +1450,13 @@ Runs inside one transaction — a failed insert rolls back the
 delete so a re-run can retry cleanly. Vector length is validated
 against the pgvector column dimension (1024) on the server;
 mismatched rows are rejected before the write hits Postgres.
-Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span></div></td>
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span><span class="arg"><code>figuresOnly: Boolean</code> — When true, delete only this report's FIGURE chunks before inserting,
+leaving its text chunks intact — the figure→KB sync uses this to attach
+figures to a report whose text was ingested in an earlier run. Every chunk
+must then be a figure chunk (figureS3Key set). Default false = replace all
+chunks for the report (text + figures), the original behaviour.</span><span class="arg"><code>teamId: ID</code> — Team-scoped upload attribution (Cap 1): stored on every chunk of the
+report so a team-scoped read can filter by it. Null for the weekly
+ReliefWeb ingest; set for a team member's manual upload.</span><span class="arg"><code>uploadedByUserId: ID</code> — clear-api user id of the uploader (provenance). Null for weekly ingest.</span></div></td>
   </tr><tr id="mutation-synceventcards">
     <td><code>syncEventCards</code></td>
     <td><code>SyncEventCardsResult!</code></td>
@@ -1510,10 +1571,16 @@ prefixed `manual:`) so re-uploading the same bytes is idempotent
 in place. To force a fresh row, tweak the file (any byte) or
 switch to a scripted upload that supplies its own report_id.
 
-Restricted to admin — the ingest costs LLM + embedding
-credits per document. When DAGSTER_URL is unset the mutation
-still stages the PDF in S3 but returns a UNKNOWN-status job with
-no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
+Team-scoped (Cap 1): a global admin, or any content-writer member of
+`teamId`, may upload — the ingest costs LLM + embedding credits per
+document, so it stays gated, but a team member can now upload on behalf
+of their team rather than it being admin-only. The uploader and (when
+given) the team are attributed onto the Dagster ingest run. Omit
+`teamId` only as a global admin; a non-admin must pass a `teamId` they
+belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
+S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
+of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>teamId: ID</code> — Team to attribute the upload to. Required for a non-admin uploader
+(must be a team they belong to); optional for a global admin.</span></div></td>
   </tr><tr id="mutation-creategroundsource">
     <td><code>createGroundSource</code></td>
     <td><code>GroundSource!</code></td>
@@ -3016,6 +3083,21 @@ embedding provider + model. Default true — mixing embedding
 spaces yields meaningless distances. Set false only when
 inspecting historical rows via BM25-only search (no vector
 step will be run for filtered-out rows).</td>
+  </tr><tr>
+    <td><code>figuresOnly</code></td>
+    <td><code>Boolean</code></td>
+    <td>Infographic search (Cap 2): keep only figure-transcription chunks
+(those with a `figureS3Key`). Combine with a topical `query` to find
+the charts/maps/tables most relevant to a question, then read
+`figureImageUrl` on each hit for the cropped image. Only affects the
+`report` tier — the `incident` tier has no figures. Default false.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>ID</code></td>
+    <td>Team-scoped reads (Cap 1): return only documents uploaded on behalf of
+this team (`team_id` match). Set only on team uploads, so this EXCLUDES the
+shared ReliefWeb corpus — use it to show a team just its own uploads.
+Report tier only. Omit to search everything the reader may see.</td>
   </tr></tbody></table><h3 id="type-localetranslationinput"><code>LocaleTranslationInput</code> <span class="type-badge">input</span></h3><p>Per-locale payload accepted by upsertTranslations. data mirrors the
 canonical entity's JSON shape exactly for the given locale — e.g. for
 a crisis it carries the localized title/summary/scenarios/needs with
@@ -5973,6 +6055,32 @@ Event, if any. Never crosses sources.</td>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-interpretedreportquery"><code>InterpretedReportQuery</code> <span class="type-badge">object</span></h3><p>How `searchReportsNaturalLanguage` parsed the question into the structured
+arguments it ran. Surfaced so a UI can show &quot;interpreted as …&quot; and let the
+user correct it (then call `searchReports` directly with the fix).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>topicalQuery</code></td>
+    <td><code>String!</code></td>
+    <td>Residual topical text used for the semantic step (empty → recency listing).</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String</code></td>
+    <td>Recognised publisher/source substring (e.g. &quot;UNHCR&quot;); null if none.</td>
+  </tr><tr>
+    <td><code>publishedFrom</code></td>
+    <td><code>DateTime</code></td>
+    <td>Parsed publication-date window (inclusive); null ends are open.</td>
+  </tr><tr>
+    <td><code>publishedTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String</code></td>
+    <td>A0 location resolved from a country named in the question; null if none.</td>
+  </tr><tr>
+    <td><code>countryName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -6153,6 +6261,14 @@ to the LLM call; plain Q&amp;A ignores it. Kept as a lightweight REFERENCE
     <td><code>figureKind</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>figureImageUrl</code></td>
+    <td><code>String</code></td>
+    <td>Presigned (1-hour) URL to the cropped figure image, for a figure hit;
+null for a text hit. Resolved lazily — only presigned when the field is
+actually selected, so ordinary text search never pays the S3 round-trip.
+This is the infographic-search (Cap 2) payload: pair it with
+`filters.figuresOnly: true`.</td>
   </tr></tbody></table><h3 id="type-knowledgebaseingestjob"><code>KnowledgebaseIngestJob</code> <span class="type-badge">object</span></h3><p>One Dagster run kicked off by `uploadKnowledgebaseDocument`.
 Returned by both the mutation (initial launch) and the polling
 query. `reportId` / `reportTitle` / `s3Key` are populated from
@@ -6303,6 +6419,16 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in at least once during the
 calendar month.</td>
+  </tr></tbody></table><h3 id="type-nlreportsearch"><code>NlReportSearch</code> <span class="type-badge">object</span></h3><p>Result of `searchReportsNaturalLanguage` — the parsed interpretation plus
+the matching reports, so the caller sees both the answer and how the question
+was understood.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>interpreted</code></td>
+    <td><code>InterpretedReportQuery!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reports</code></td>
+    <td><code>[ReportHit!]!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-nominatimcacheentry"><code>NominatimCacheEntry</code> <span class="type-badge">object</span></h3><p>A cached Nominatim-protocol geocoder response.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -6796,6 +6922,129 @@ not the publisher, so it is a label of last resort.</td>
     <td><code>extractedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-reportfigureformerge"><code>ReportFigureForMerge</code> <span class="type-badge">object</span></h3><p>One captured figure that belongs in the KB but isn't merged yet — the work
+item for the figure→KB sync. Report-level fields (title/url/pdf key/date) come
+from the report's existing knowledgebase rows; the rest from `report_figures`.
+`transcription` is the raw FigureTranscription object; the caller flattens +
+embeds it to build the figure chunk.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportS3Key</code></td>
+    <td><code>String!</code></td>
+    <td>The report PDF's S3 key (carried onto the figure chunk, same as text chunks).</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>ID</code></td>
+    <td>Team attribution from the report's KB rows, so the figure→KB sync stamps
+merged figures with the same team as the report's text. Null for the shared
+ReliefWeb corpus.</td>
+  </tr><tr>
+    <td><code>uploadedByUserId</code></td>
+    <td><code>ID</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String!</code></td>
+    <td>The cropped image's S3 key — becomes the chunk's `figureS3Key`.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-reporthit"><code>ReportHit</code> <span class="type-badge">object</span></h3><p>One report (not a chunk) matched by `searchReports` — the Cap 3 read
+model. Groups the knowledgebase by `reportId`: when a topical `query`
+is given, `score`/`snippet` come from the report's best-matching chunk;
+for a pure filter/date listing they're the report's head chunk and null
+score. `downloadUrl` is a presigned (1-hour) link to the full PDF.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Publication date — what date filters (`publishedRange`) and the
+recency listing order on.</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>S3 key of the source PDF (join/debug handle).</td>
+  </tr><tr>
+    <td><code>downloadUrl</code></td>
+    <td><code>String!</code></td>
+    <td>Presigned (1-hour) URL to download the full report PDF. Regenerated
+per request, so don't cache it past its expiry.</td>
+  </tr><tr>
+    <td><code>score</code></td>
+    <td><code>Float</code></td>
+    <td>Best chunk similarity for a topical query (larger = better); null for a
+pure filter/date listing (ordered by recency instead).</td>
+  </tr><tr>
+    <td><code>matchedChunks</code></td>
+    <td><code>Int!</code></td>
+    <td>How many of the report's chunks matched — a rough relevance-breadth
+signal. 1 for a pure recency listing (the head chunk).</td>
+  </tr><tr>
+    <td><code>snippet</code></td>
+    <td><code>String!</code></td>
+    <td>Excerpt from the best-matching chunk (topical) or the report's head
+chunk (listing) — a preview for the citation.</td>
   </tr></tbody></table><h3 id="type-rotatedevuserapikeyresult"><code>RotateDevUserApiKeyResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `rotateDevUserApiKey` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>

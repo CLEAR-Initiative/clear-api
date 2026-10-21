@@ -1272,6 +1272,16 @@ model knowledgebase {
   figureS3Key String? @map("figure_s3_key")
   figureKind  String? @map("figure_kind")
 
+  /// Team-scoped upload attribution (Cap 1). Set when a document was uploaded
+  /// on behalf of a team via `uploadKnowledgebaseDocument`; null for the weekly
+  /// ReliefWeb ingest (not team-owned). Carried on every chunk of the report
+  /// (report-level value denormalised per row, like `reportTitle`) so a
+  /// team-scoped read can filter by it. Not a Prisma relation (kept a plain
+  /// column) so the KB write path stays raw-SQL and self-contained.
+  teamId           String? @map("team_id")
+  /// clear-api user id of the uploader (provenance). Null for weekly ingest.
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   /// A given (report, chunk_index) pair is unique per re-ingest — the
@@ -1280,6 +1290,7 @@ model knowledgebase {
   @@unique([reportId, chunkIndex])
   @@index([reportId])
   @@index([embeddingModel])
+  @@index([teamId])
   @@index([locationIds], type: Gin)
   @@index([eventTypes], type: Gin)
   @@index([needSectors], type: Gin)

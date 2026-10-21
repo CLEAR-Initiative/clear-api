@@ -27,7 +27,7 @@ import { GraphQLError } from "graphql";
 import type { FileUpload } from "graphql-upload/processRequest.mjs";
 
 import type { Context } from "../context.js";
-import { requireContentReader, requireRole } from "../utils/auth-guard.js";
+import { requireContentReader, requireRole, requireTeamContentWriter } from "../utils/auth-guard.js";
 import {
   type IngestStatus,
   getRunStatus,
@@ -41,6 +41,7 @@ import {
   vectorLiteral,
 } from "../utils/embedding-client.js";
 import { env } from "../utils/env.js";
+import { interpretReportQuestion } from "../utils/report-query-nl.js";
 import {
   chunkIsAllNrcIrrelevant,
   nrcIrrelevantGlideCodes,
@@ -59,6 +60,12 @@ const RRF_K = 60;
 // higher blows fusion cost without lifting NDCG@10 in the ad-hoc
 // benchmarks Anthropic published for Contextual Retrieval.
 const CANDIDATES_PER_RETRIEVER = 50;
+
+// searchReports (Cap 3) groups chunk hits into distinct reports, so it needs a
+// wider candidate window than chunk search — enough nearest chunks that the
+// distinct-report set under them is well past `limit`. 300 covers ~15+ reports
+// even when one report dominates the nearest neighbours.
+const REPORT_CANDIDATE_CHUNKS = 300;
 
 // ─── ADR-0006 tiered-merge knobs (v1: fixed constants; v2: evidence fns) ────
 // TOPICAL mode only: an incident must clear this cosine-similarity floor to
@@ -132,6 +139,11 @@ const INCIDENT_SELECT = `
 const DAGSTER_TAG_REPORT_ID = "clear.report_id";
 const DAGSTER_TAG_REPORT_TITLE = "clear.report_title";
 const DAGSTER_TAG_S3_KEY = "clear.s3_key";
+// Attribution tags for a team-scoped upload (Cap 1): who uploaded and on behalf
+// of which team. Recorded on the ingest run so the provenance is auditable
+// without a schema change on `knowledgebase`.
+const DAGSTER_TAG_TEAM_ID = "clear.team_id";
+const DAGSTER_TAG_UPLOADED_BY = "clear.uploaded_by_user_id";
 
 // Dagster job name — must match the @job in
 // dagster-quickstart/src/dagster_quickstart/defs/knowledgebase/manual_ingest.py.
@@ -151,6 +163,73 @@ interface KnowledgebaseIngestJob {
   s3Key: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
+}
+
+/** Raw SQL row for `searchReports` — aliased to camelCase in the query. `score`
+ *  is null for the recency listing; `matchedChunks` is a bigint from COUNT in
+ *  the topical path (converted to number at the boundary). */
+interface ReportRow {
+  reportId: string;
+  reportTitle: string;
+  sourceUrl: string;
+  s3Key: string;
+  publishedAt: Date;
+  snippet: string;
+  score: number | null;
+  matchedChunks: number | bigint;
+}
+
+/** How `searchReportsNaturalLanguage` parsed the question into structured
+ *  arguments — surfaced so a caller can confirm or override the interpretation. */
+interface InterpretedReportQuery {
+  topicalQuery: string;
+  source: string | null;
+  publishedFrom: Date | null;
+  publishedTo: Date | null;
+  countryLocationId: string | null;
+  countryName: string | null;
+}
+
+/** `searchReports` result (Cap 3) — one report with a presigned download URL. */
+interface ReportHit {
+  reportId: string;
+  reportTitle: string;
+  sourceUrl: string;
+  publishedAt: Date;
+  s3Key: string;
+  downloadUrl: string;
+  score: number | null;
+  matchedChunks: number;
+  snippet: string;
+}
+
+/** One figure that belongs in the KB but hasn't been merged yet — the work item
+ *  the figure→KB sync (clear-pipeline) consumes. Report-level fields come from
+ *  the report's existing `knowledgebase` rows; the figure fields from
+ *  `report_figures`. Matches the `ReportFigureForMerge` GraphQL type one-to-one,
+ *  so the raw-SQL row is returned unchanged. */
+interface ReportFigureForMerge {
+  reportId: string;
+  reportTitle: string;
+  sourceUrl: string;
+  reportS3Key: string;
+  publishedAt: Date;
+  /** Team attribution carried from the report's KB rows so the figure→KB sync
+   *  stamps merged figures with the same team as the report's text (null for the
+   *  shared ReliefWeb corpus). */
+  teamId: string | null;
+  uploadedByUserId: string | null;
+  figureS3Key: string;
+  figureKind: string;
+  pageNumber: number;
+  title: string | null;
+  transcription: unknown;
+  locationIds: string[];
+  locationPcodes: string[];
+  eventTypes: string[];
+  needSectors: string[];
+  timeRangeStart: Date | null;
+  timeRangeEnd: Date | null;
 }
 
 // Lazy S3 client — same auth pattern the /upload route uses. Kept
@@ -212,6 +291,17 @@ interface UpsertKnowledgebaseArgs {
   s3Key: string;
   publishedAt: Date;
   chunks: KnowledgebaseChunkInput[];
+  /** When true, delete only this report's FIGURE chunks (figure_s3_key IS NOT
+   *  NULL) before inserting, leaving its text chunks intact. Lets the figure→KB
+   *  sync (clear-pipeline) attach figures to a report whose text was ingested in
+   *  an earlier run, without the normal delete-all wiping that text. Default
+   *  false = the original replace-all-for-report behaviour. */
+  figuresOnly?: boolean | null;
+  /** Team-scoped upload attribution (Cap 1). Stored on every chunk of the
+   *  report so a team-scoped read can filter by it. Null for the weekly
+   *  ReliefWeb ingest (not team-owned). */
+  teamId?: string | null;
+  uploadedByUserId?: string | null;
 }
 
 
@@ -222,6 +312,16 @@ interface KnowledgebaseFilters {
   needSectors?: string[] | null;
   timeRange?: { from?: Date | null; to?: Date | null } | null;
   currentEmbeddingModelOnly?: boolean | null;
+  /** When true, restrict retrieval to figure-transcription chunks
+   *  (`figure_s3_key IS NOT NULL`) — the infographic search (Cap 2). Only
+   *  meaningful on the report tier; the incident tier has no figure column so
+   *  the condition is skipped there. */
+  figuresOnly?: boolean | null;
+  /** Restrict to rows attributed to this team (Cap 1 team-scoped reads). Matches
+   *  `team_id`, which is set only on team-uploaded documents — so this filter
+   *  returns ONLY that team's uploads, never the shared ReliefWeb corpus. Report
+   *  tier only (the incident tier has no team column). */
+  teamId?: string | null;
 }
 
 interface KnowledgebaseHitRow {
@@ -262,11 +362,16 @@ interface KnowledgebaseHitRow {
 export function buildFilterClause(
   filters: KnowledgebaseFilters | null | undefined,
   params: unknown[],
-  opts?: { hasNeedSectors?: boolean },
+  opts?: { hasNeedSectors?: boolean; hasFigureColumn?: boolean; hasTeamColumn?: boolean },
 ): string {
   // The incident tier (`events_index`) has no `need_sectors` column, so the
   // caller passes hasNeedSectors:false to skip that one condition (ADR-0006).
   const hasNeedSectors = opts?.hasNeedSectors ?? true;
+  // Same story for `figure_s3_key` and `team_id`: both exist only on the report
+  // tier (`knowledgebase`), so their conditions are skipped on tiers without
+  // the column.
+  const hasFigureColumn = opts?.hasFigureColumn ?? true;
+  const hasTeamColumn = opts?.hasTeamColumn ?? true;
   const conditions: string[] = [];
 
   const currentEmbeddingModelOnly = filters?.currentEmbeddingModelOnly ?? true;
@@ -316,6 +421,16 @@ export function buildFilterClause(
   if (filters?.timeRange?.to) {
     params.push(filters.timeRange.to);
     conditions.push(`("time_range_start" IS NULL OR "time_range_start" <= $${params.length})`);
+  }
+  // Infographic search (Cap 2): keep only figure-transcription chunks. Static
+  // condition (no param). Skipped on tiers without the column.
+  if (hasFigureColumn && filters?.figuresOnly) {
+    conditions.push(`"figure_s3_key" IS NOT NULL`);
+  }
+  // Team-scoped reads (Cap 1): only this team's uploads.
+  if (hasTeamColumn && filters?.teamId) {
+    params.push(filters.teamId);
+    conditions.push(`"team_id" = $${params.length}`);
   }
 
   return conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -378,8 +493,15 @@ async function hybridRetrieveTier(
   filters: KnowledgebaseFilters | null | undefined,
   hasNeedSectors: boolean,
 ): Promise<RankedHit[]> {
+  // Only the report tier (`knowledgebase`) carries `figure_s3_key`; gate the
+  // figuresOnly restriction on the table so it never hits the incident tier.
+  const hasReportTierCols = table === "knowledgebase";
   const denseParams: unknown[] = [];
-  const denseWhere = buildFilterClause(filters, denseParams, { hasNeedSectors });
+  const denseWhere = buildFilterClause(filters, denseParams, {
+    hasNeedSectors,
+    hasFigureColumn: hasReportTierCols,
+    hasTeamColumn: hasReportTierCols,
+  });
   const vecPos = denseParams.length + 1;
   const denseSql = `
     SELECT ${select}, ("embedding" <=> $${vecPos}::vector(1024)) AS "_dist"
@@ -391,7 +513,11 @@ async function hybridRetrieveTier(
   denseParams.push(vecLiteral, CANDIDATES_PER_RETRIEVER);
 
   const sparseParams: unknown[] = [];
-  const sparseWhere = buildFilterClause(filters, sparseParams, { hasNeedSectors });
+  const sparseWhere = buildFilterClause(filters, sparseParams, {
+    hasNeedSectors,
+    hasFigureColumn: hasReportTierCols,
+    hasTeamColumn: hasReportTierCols,
+  });
   const sparseSql = `
     SELECT ${select}
     FROM "${table}"
@@ -437,7 +563,12 @@ async function recencyRetrieveTier(
 ): Promise<KnowledgebaseHitRow[]> {
   if (limit <= 0) return [];
   const params: unknown[] = [];
-  const where = buildFilterClause(filters, params, { hasNeedSectors });
+  const hasReportTierCols = table === "knowledgebase";
+  const where = buildFilterClause(filters, params, {
+    hasNeedSectors,
+    hasFigureColumn: hasReportTierCols,
+    hasTeamColumn: hasReportTierCols,
+  });
   const sql = `SELECT ${select} FROM "${table}" ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1}`;
   params.push(limit);
   return prisma.$queryRawUnsafe<KnowledgebaseHitRow[]>(sql, ...params);
@@ -556,6 +687,137 @@ async function mergeFrame(
   return out.slice(0, limit);
 }
 
+/** Core of `searchReports` (Cap 3), factored out so the natural-language
+ *  entry point (`searchReportsNaturalLanguage`) can reuse the exact same
+ *  retrieval after parsing a question into structured arguments. Assumes the
+ *  caller has already gated access. `limit` is pre-clamped. */
+async function executeReportSearch(
+  prisma: Context["prisma"],
+  args: {
+    query?: string | null;
+    filters?: KnowledgebaseFilters | null;
+    publishedRange?: { from?: Date | null; to?: Date | null } | null;
+    source?: string | null;
+    limit: number;
+  },
+): Promise<ReportHit[]> {
+  const q = (args.query ?? "").trim();
+  const limit = args.limit;
+
+  // Shared filters (location / event / sector / time / embedding-model pin),
+  // then the report-level extras (publication date window + source match).
+  const params: unknown[] = [];
+  let where = buildFilterClause(args.filters, params, {
+    hasNeedSectors: true,
+    hasFigureColumn: true,
+    hasTeamColumn: true,
+  });
+  const extra: string[] = [];
+  if (args.publishedRange?.from) {
+    params.push(args.publishedRange.from);
+    extra.push(`"published_at" >= $${params.length}`);
+  }
+  if (args.publishedRange?.to) {
+    params.push(args.publishedRange.to);
+    extra.push(`"published_at" <= $${params.length}`);
+  }
+  const source = args.source?.trim();
+  if (source) {
+    params.push(`%${source}%`);
+    const p = params.length;
+    extra.push(`("report_title" ILIKE $${p} OR "source_url" ILIKE $${p})`);
+  }
+  if (extra.length > 0) {
+    where = where ? `${where} AND ${extra.join(" AND ")}` : `WHERE ${extra.join(" AND ")}`;
+  }
+
+  let rows: ReportRow[];
+  if (q === "") {
+    // Listing mode: distinct reports by filter/date, newest first. DISTINCT ON
+    // needs report_id leading in ORDER BY, so pick the head chunk (lowest
+    // chunk_index) as the snippet, then reorder the distinct set by recency.
+    params.push(limit);
+    const sql = `
+      SELECT "report_id" AS "reportId", "report_title" AS "reportTitle",
+             "source_url" AS "sourceUrl", "s3_key" AS "s3Key",
+             "published_at" AS "publishedAt", "chunk_text" AS "snippet",
+             NULL::float8 AS "score", 1::int AS "matchedChunks"
+      FROM (
+        SELECT DISTINCT ON ("report_id")
+          "report_id", "report_title", "source_url", "s3_key",
+          "published_at", "chunk_text"
+        FROM "knowledgebase"
+        ${where}
+        ORDER BY "report_id", "chunk_index" ASC
+      ) t
+      ORDER BY "published_at" DESC
+      LIMIT $${params.length}
+    `;
+    rows = await prisma.$queryRawUnsafe<ReportRow[]>(sql, ...params);
+  } else {
+    // Topical mode: nearest report chunks → best (closest) chunk per report,
+    // ordered by that best similarity. matchedChunks counts how many of the
+    // report's chunks fell inside the candidate window (relevance breadth).
+    const vec = vectorLiteral(await embedQuery(q));
+    params.push(vec);
+    const vecPos = params.length;
+    params.push(REPORT_CANDIDATE_CHUNKS);
+    const candPos = params.length;
+    params.push(limit);
+    const limitPos = params.length;
+    const sql = `
+      WITH scoped AS (
+        SELECT "report_id", "report_title", "source_url", "s3_key",
+               "published_at", "chunk_text",
+               ("embedding" <=> $${vecPos}::vector(1024)) AS dist
+        FROM "knowledgebase"
+        ${where}
+        ORDER BY "embedding" <=> $${vecPos}::vector(1024)
+        LIMIT $${candPos}
+      ),
+      counted AS (
+        SELECT *, COUNT(*) OVER (PARTITION BY "report_id") AS matched_chunks
+        FROM scoped
+      ),
+      best AS (
+        SELECT DISTINCT ON ("report_id")
+          "report_id" AS "reportId", "report_title" AS "reportTitle",
+          "source_url" AS "sourceUrl", "s3_key" AS "s3Key",
+          "published_at" AS "publishedAt", "chunk_text" AS "snippet",
+          dist, matched_chunks
+        FROM counted
+        ORDER BY "report_id", dist ASC
+      )
+      SELECT "reportId", "reportTitle", "sourceUrl", "s3Key", "publishedAt",
+             "snippet",
+             (1 - dist)::float8 AS "score",
+             matched_chunks::int AS "matchedChunks"
+      FROM best
+      ORDER BY dist ASC
+      LIMIT $${limitPos}
+    `;
+    rows = await prisma.$queryRawUnsafe<ReportRow[]>(sql, ...params);
+  }
+
+  if (rows.length === 0) return [];
+
+  // Presign all PDF keys in one batch so the download link is ready on the hit
+  // without a follow-up call.
+  const { getPresignedUrls } = await import("../services/s3.js");
+  const downloadUrls = await getPresignedUrls(rows.map((r) => r.s3Key));
+  return rows.map((r, i) => ({
+    reportId: r.reportId,
+    reportTitle: r.reportTitle,
+    sourceUrl: r.sourceUrl,
+    publishedAt: r.publishedAt,
+    s3Key: r.s3Key,
+    downloadUrl: downloadUrls[i]!,
+    score: r.score,
+    matchedChunks: Number(r.matchedChunks),
+    snippet: r.snippet,
+  }));
+}
+
 export const knowledgebaseResolvers = {
   Query: {
     resolveKnowledgebaseLocation: async (
@@ -623,6 +885,8 @@ export const knowledgebaseResolvers = {
         limit?: number | null;
         tiers?: string[] | null;
         mode?: "AUTO" | "FRAME" | "TOPICAL" | null;
+        includeFigures?: boolean | null;
+        figureLimit?: number | null;
       },
       context: Context,
     ): Promise<SearchHit[]> => {
@@ -671,11 +935,200 @@ export const knowledgebaseResolvers = {
         nrcIrrelevantGlideCodes(context.prisma),
       ]);
 
-      if (mode === "FRAME") {
-        return mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide);
+      // TOPICAL needs the query embedding; FRAME doesn't. Compute it once so
+      // the optional figures band below can reuse it.
+      const vecLiteral = mode === "FRAME" ? "" : vectorLiteral(await embedQuery(q));
+      const baseHits = mode === "FRAME"
+        ? await mergeFrame(context.prisma, q, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide)
+        : await mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide);
+
+      // `includeFigures`: append a guaranteed band of the most relevant FIGURE
+      // hits after the RAG results, so a chatbot/answer consumer reliably gets
+      // supporting infographics even when text chunks fill the main `limit`.
+      // (Figures can already interleave into the main results on their own
+      // relevance; this guarantees a few regardless.) Each figure hit carries
+      // `figureS3Key`/`figureImageUrl`, so the caller splits the band off by
+      // `figureS3Key != null`. No-op when the search is already figures-only, or
+      // when the report tier isn't being searched (figures live only there).
+      if (!args.includeFigures || args.filters?.figuresOnly || !wantReport) {
+        return baseHits;
       }
-      const vecLiteral = vectorLiteral(await embedQuery(q));
-      return mergeTopical(context.prisma, q, vecLiteral, args.filters, limit, wantReport, wantIncident, irrelevantLevel2, irrelevantGlide);
+      const figureLimit = Math.min(Math.max(args.figureLimit ?? 6, 1), 20);
+      const figureFilters: KnowledgebaseFilters = { ...(args.filters ?? {}), figuresOnly: true };
+      let figureRows: KnowledgebaseHitRow[];
+      if (mode === "FRAME") {
+        figureRows = await recencyRetrieveTier(
+          context.prisma, "knowledgebase", REPORT_SELECT,
+          `"published_at" DESC NULLS LAST`, figureFilters, true, figureLimit,
+        );
+      } else {
+        const ranked = await hybridRetrieveTier(
+          context.prisma, "knowledgebase", REPORT_SELECT, vecLiteral, q, figureFilters, true,
+        );
+        figureRows = ranked.slice(0, figureLimit).map((r) => r.row);
+      }
+      // Dedup against figures that already surfaced in the main band, and stamp
+      // synthetic scores strictly below the lowest RAG score so a consumer that
+      // re-sorts by score keeps text first, figures second (in their own order).
+      const seen = new Set(baseHits.map((h) => h.id));
+      const floor = baseHits.length ? Math.min(...baseHits.map((h) => h.score)) : 1;
+      const figureHits = figureRows
+        .filter((r) => !seen.has(r.id))
+        .map((r, i) => toHit(r, floor * Math.pow(0.9, i + 1)));
+      return [...baseHits, ...figureHits];
+    },
+
+    searchReports: async (
+      _parent: unknown,
+      args: {
+        query?: string | null;
+        filters?: KnowledgebaseFilters | null;
+        publishedRange?: { from?: Date | null; to?: Date | null } | null;
+        source?: string | null;
+        limit?: number | null;
+      },
+      context: Context,
+    ): Promise<ReportHit[]> => {
+      // Same read gate as searchKnowledgebase — the KB is derived from public
+      // ReliefWeb reports, so any authenticated content reader may list them.
+      requireContentReader(context);
+      return executeReportSearch(context.prisma, {
+        query: args.query,
+        filters: args.filters,
+        publishedRange: args.publishedRange,
+        source: args.source,
+        limit: Math.min(Math.max(args.limit ?? 20, 1), 100),
+      });
+    },
+
+    searchReportsNaturalLanguage: async (
+      _parent: unknown,
+      args: { question: string; limit?: number | null },
+      context: Context,
+    ): Promise<{ interpreted: InterpretedReportQuery; reports: ReportHit[] }> => {
+      requireContentReader(context);
+
+      const question = args.question ?? "";
+      const parsed = interpretReportQuestion(question);
+
+      // Resolve a country mentioned in the question against the A0 locations —
+      // the one structured dimension the pure parser can't do without the DB.
+      // Longest matching country name wins (so "Nigeria" beats "Niger").
+      let countryLocationId: string | null = null;
+      let countryName: string | null = null;
+      const lowerQ = question.toLowerCase();
+      if (lowerQ.trim()) {
+        const countries = await context.prisma.$queryRaw<Array<{ id: string; name: string }>>`
+          SELECT id, name FROM "locations" WHERE level = 0
+        `;
+        for (const c of countries) {
+          const name = c.name?.trim();
+          if (!name) continue;
+          const re = new RegExp(`\\b${name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+          if (re.test(lowerQ) && (!countryName || name.length > countryName.length)) {
+            countryLocationId = c.id;
+            countryName = name;
+          }
+        }
+      }
+
+      const reports = await executeReportSearch(context.prisma, {
+        query: parsed.topicalQuery,
+        filters: countryLocationId ? { countryLocationId } : null,
+        publishedRange: { from: parsed.publishedFrom, to: parsed.publishedTo },
+        source: parsed.source,
+        limit: Math.min(Math.max(args.limit ?? 20, 1), 100),
+      });
+
+      return {
+        interpreted: {
+          topicalQuery: parsed.topicalQuery,
+          source: parsed.source,
+          publishedFrom: parsed.publishedFrom,
+          publishedTo: parsed.publishedTo,
+          countryLocationId,
+          countryName,
+        },
+        reports,
+      };
+    },
+
+    reportFiguresPendingKbMerge: async (
+      _parent: unknown,
+      args: { limit?: number | null },
+      context: Context,
+    ): Promise<ReportFigureForMerge[]> => {
+      // Pipeline-only work queue for the figure→KB sync; carries report text and
+      // provenance, so gate it the same as the other ingest-side resolvers.
+      requireRole(context, ["admin", "pipeline"]);
+
+      // Bound by REPORTS (not figures) — the sync upserts one report at a time,
+      // so a report with many figures is still one unit of work. Clamp to a sane
+      // range so a runaway caller can't pull the whole table.
+      const limit = Math.min(Math.max(args.limit ?? 50, 1), 500);
+
+      // A report is "pending" when it has KB text rows AND at least one
+      // `report_figures` row whose crop isn't yet present as a `figure_s3_key`
+      // in the KB. We then return EVERY figure for those reports (not just the
+      // unmerged ones): the figure-scoped upsert deletes-then-inserts all figure
+      // rows for a report, so the sync must resend the full figure set or it
+      // would drop already-merged figures. Report-level fields come from a
+      // DISTINCT ON over the report's KB rows (lowest chunk_index = the text
+      // head), so title/url/pdf-key/date match what text chunks carry.
+      const rows = await context.prisma.$queryRaw<ReportFigureForMerge[]>`
+        WITH pending_reports AS (
+          SELECT rf."report_id" AS report_id
+          FROM "report_figures" rf
+          WHERE EXISTS (
+              SELECT 1 FROM "knowledgebase" k
+              WHERE k."report_id" = rf."report_id"
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM "knowledgebase" k2
+              WHERE k2."report_id" = rf."report_id"
+                AND k2."figure_s3_key" = rf."s3_key"
+            )
+          GROUP BY rf."report_id"
+          ORDER BY rf."report_id"
+          LIMIT ${limit}
+        ),
+        kb_report AS (
+          SELECT DISTINCT ON (k."report_id")
+            k."report_id"            AS report_id,
+            k."report_title"         AS report_title,
+            k."source_url"           AS source_url,
+            k."s3_key"               AS s3_key,
+            k."published_at"         AS published_at,
+            k."team_id"              AS team_id,
+            k."uploaded_by_user_id"  AS uploaded_by_user_id
+          FROM "knowledgebase" k
+          JOIN pending_reports p ON p.report_id = k."report_id"
+          ORDER BY k."report_id", k."chunk_index"
+        )
+        SELECT
+          rf."report_id"        AS "reportId",
+          kr.report_title       AS "reportTitle",
+          kr.source_url         AS "sourceUrl",
+          kr.s3_key             AS "reportS3Key",
+          kr.published_at       AS "publishedAt",
+          kr.team_id            AS "teamId",
+          kr.uploaded_by_user_id AS "uploadedByUserId",
+          rf."s3_key"           AS "figureS3Key",
+          rf."kind"             AS "figureKind",
+          rf."page_number"      AS "pageNumber",
+          rf."title"            AS "title",
+          rf."transcription"    AS "transcription",
+          rf."location_ids"     AS "locationIds",
+          rf."location_pcodes"  AS "locationPcodes",
+          rf."event_types"      AS "eventTypes",
+          rf."need_sectors"     AS "needSectors",
+          rf."time_range_start" AS "timeRangeStart",
+          rf."time_range_end"   AS "timeRangeEnd"
+        FROM "report_figures" rf
+        JOIN kb_report kr ON kr.report_id = rf."report_id"
+        ORDER BY rf."report_id", rf."page_number"
+      `;
+      return rows;
     },
 
     knowledgebaseIngestJob: async (
@@ -740,9 +1193,21 @@ export const knowledgebaseResolvers = {
         }
       }
 
+      // Figure-scoped sync deletes only this report's figure rows so a figure
+      // merge can't wipe text chunks ingested in an earlier run; the default
+      // replaces every chunk for the report (text + figures) as before.
+      if (args.figuresOnly && args.chunks.some((c) => !c.figureS3Key)) {
+        throw new GraphQLError(
+          "upsertKnowledgebaseChunks: figuresOnly=true requires every chunk to be a figure chunk (figureS3Key set)",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
+
       return context.prisma.$transaction(async (tx) => {
         const deleteResult = await tx.$executeRawUnsafe(
-          `DELETE FROM "knowledgebase" WHERE "report_id" = $1`,
+          args.figuresOnly
+            ? `DELETE FROM "knowledgebase" WHERE "report_id" = $1 AND "figure_s3_key" IS NOT NULL`
+            : `DELETE FROM "knowledgebase" WHERE "report_id" = $1`,
           args.reportId,
         );
 
@@ -751,8 +1216,14 @@ export const knowledgebaseResolvers = {
         // pooled connection across the whole DELETE + N INSERTs (up to the
         // 60s transaction timeout); batching returns the connection to the
         // pool far sooner, which is what keeps a concurrent pipeline run from
-        // starving the pool. 22 params/row × KB_MAX_CHUNKS_PER_REPORT stays
+        // starving the pool. 24 params/row × KB_MAX_CHUNKS_PER_REPORT stays
         // well under Postgres's 65535-parameter cap.
+        //
+        // team_id / uploaded_by_user_id are report-level (same for every chunk),
+        // denormalised per row like report_title/source_url. Null for the weekly
+        // ReliefWeb ingest; set for a team-scoped manual upload.
+        const teamId = args.teamId ?? null;
+        const uploadedByUserId = args.uploadedByUserId ?? null;
         const rows: string[] = [];
         const params: unknown[] = [];
         let p = 1;
@@ -761,7 +1232,8 @@ export const knowledgebaseResolvers = {
             `(gen_random_uuid()::text, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, ` +
               `$${p++}, $${p++}, $${p++}::vector(1024), $${p++}::text[], $${p++}::text[], ` +
-              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[], $${p++}, $${p++})`,
+              `$${p++}, $${p++}, $${p++}::text[], $${p++}::text[], $${p++}, $${p++}, ` +
+              `$${p++}, $${p++})`,
           );
           params.push(
             args.reportId,
@@ -786,6 +1258,8 @@ export const knowledgebaseResolvers = {
             chunk.needSectors,
             chunk.figureS3Key ?? null,
             chunk.figureKind ?? null,
+            teamId,
+            uploadedByUserId,
           );
         }
 
@@ -800,7 +1274,8 @@ export const knowledgebaseResolvers = {
               "location_ids", "location_pcodes",
               "time_range_start", "time_range_end",
               "event_types", "need_sectors",
-              "figure_s3_key", "figure_kind"
+              "figure_s3_key", "figure_kind",
+              "team_id", "uploaded_by_user_id"
             ) VALUES ${rows.join(", ")}
           `,
           ...params,
@@ -821,13 +1296,16 @@ export const knowledgebaseResolvers = {
         title: string;
         sourceUrl?: string | null;
         publishedAt: Date;
+        teamId?: string | null;
       },
       context: Context,
     ): Promise<KnowledgebaseIngestJob> => {
-      // Restricted to admin — every accepted upload spends LLM + embedding
-      // credits on the enrich chain, so this stays platform-admin-only
-      // (`analyst` is a TEAM role now and the KB ingest has no team scope).
-      requireRole(context, ["admin"]);
+      // Team-scoped write (Cap 1): a global admin, or any content-writer member
+      // of `teamId`, may upload. Each accepted upload spends LLM + embedding
+      // credits on the enrich chain, so it's gated — but no longer admin-only:
+      // a team member uploads on behalf of their team. `user` is the uploader,
+      // attributed onto the ingest run below.
+      const { user } = await requireTeamContentWriter(context, args.teamId);
 
       const upload = await args.file;
       const filename = upload.filename ?? "unnamed";
@@ -900,6 +1378,9 @@ export const knowledgebaseResolvers = {
               report_title: args.title,
               source_url: args.sourceUrl ?? "",
               published_at: publishedAtIso,
+              // Attribution carried into the ingest op (optional config fields).
+              team_id: args.teamId ?? "",
+              uploaded_by_user_id: user.id,
             },
           },
         },
@@ -908,6 +1389,9 @@ export const knowledgebaseResolvers = {
         [DAGSTER_TAG_REPORT_ID]: reportId,
         [DAGSTER_TAG_REPORT_TITLE]: args.title,
         [DAGSTER_TAG_S3_KEY]: s3Key,
+        [DAGSTER_TAG_UPLOADED_BY]: user.id,
+        // Only tag a real team — an admin upload has no team scope.
+        ...(args.teamId ? { [DAGSTER_TAG_TEAM_ID]: args.teamId } : {}),
       };
 
       try {
@@ -933,6 +1417,17 @@ export const knowledgebaseResolvers = {
           { extensions: { code: "INTERNAL_SERVER_ERROR" } },
         );
       }
+    },
+  },
+
+  KnowledgebaseHit: {
+    /** Presign the cropped figure image on demand — only when the field is
+     *  selected (infographic search, Cap 2). Null for a text hit. Kept off the
+     *  row shape so ordinary text search never pays the S3 round-trip. */
+    figureImageUrl: async (parent: SearchHit): Promise<string | null> => {
+      if (!parent.figureS3Key) return null;
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return getPresignedUrl(parent.figureS3Key);
     },
   },
 };

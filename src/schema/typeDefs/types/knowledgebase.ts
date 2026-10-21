@@ -124,6 +124,12 @@ export const knowledgebaseTypeDef = gql`
     (no bytes) so retrieval never pays S3 cost."""
     figureS3Key: String
     figureKind: String
+    """Presigned (1-hour) URL to the cropped figure image, for a figure hit;
+    null for a text hit. Resolved lazily — only presigned when the field is
+    actually selected, so ordinary text search never pays the S3 round-trip.
+    This is the infographic-search (Cap 2) payload: pair it with
+    \`filters.figuresOnly: true\`."""
+    figureImageUrl: String
   }
 
   """Half-open date window (from inclusive, to exclusive) used to
@@ -195,6 +201,37 @@ export const knowledgebaseTypeDef = gql`
     endedAt: DateTime
   }
 
+  """One captured figure that belongs in the KB but isn't merged yet — the work
+  item for the figure→KB sync. Report-level fields (title/url/pdf key/date) come
+  from the report's existing knowledgebase rows; the rest from \`report_figures\`.
+  \`transcription\` is the raw FigureTranscription object; the caller flattens +
+  embeds it to build the figure chunk."""
+  type ReportFigureForMerge {
+    reportId: String!
+    reportTitle: String!
+    sourceUrl: String!
+    """The report PDF's S3 key (carried onto the figure chunk, same as text chunks)."""
+    reportS3Key: String!
+    publishedAt: DateTime!
+    """Team attribution from the report's KB rows, so the figure→KB sync stamps
+    merged figures with the same team as the report's text. Null for the shared
+    ReliefWeb corpus."""
+    teamId: ID
+    uploadedByUserId: ID
+    """The cropped image's S3 key — becomes the chunk's \`figureS3Key\`."""
+    figureS3Key: String!
+    figureKind: String!
+    pageNumber: Int!
+    title: String
+    transcription: JSON
+    locationIds: [String!]!
+    locationPcodes: [String!]!
+    eventTypes: [String!]!
+    needSectors: [String!]!
+    timeRangeStart: DateTime
+    timeRangeEnd: DateTime
+  }
+
   """Optional filters applied BEFORE the retrieval step — array
   filters use overlap semantics (any-of), the time range uses
   inclusive intersection. Leave a field null to skip that filter."""
@@ -220,5 +257,68 @@ export const knowledgebaseTypeDef = gql`
     inspecting historical rows via BM25-only search (no vector
     step will be run for filtered-out rows)."""
     currentEmbeddingModelOnly: Boolean = true
+    """Infographic search (Cap 2): keep only figure-transcription chunks
+    (those with a \`figureS3Key\`). Combine with a topical \`query\` to find
+    the charts/maps/tables most relevant to a question, then read
+    \`figureImageUrl\` on each hit for the cropped image. Only affects the
+    \`report\` tier — the \`incident\` tier has no figures. Default false."""
+    figuresOnly: Boolean = false
+    """Team-scoped reads (Cap 1): return only documents uploaded on behalf of
+    this team (\`team_id\` match). Set only on team uploads, so this EXCLUDES the
+    shared ReliefWeb corpus — use it to show a team just its own uploads.
+    Report tier only. Omit to search everything the reader may see."""
+    teamId: ID
+  }
+
+  """One report (not a chunk) matched by \`searchReports\` — the Cap 3 read
+  model. Groups the knowledgebase by \`reportId\`: when a topical \`query\`
+  is given, \`score\`/\`snippet\` come from the report's best-matching chunk;
+  for a pure filter/date listing they're the report's head chunk and null
+  score. \`downloadUrl\` is a presigned (1-hour) link to the full PDF."""
+  type ReportHit {
+    reportId: String!
+    reportTitle: String!
+    sourceUrl: String!
+    """Publication date — what date filters (\`publishedRange\`) and the
+    recency listing order on."""
+    publishedAt: DateTime!
+    """S3 key of the source PDF (join/debug handle)."""
+    s3Key: String!
+    """Presigned (1-hour) URL to download the full report PDF. Regenerated
+    per request, so don't cache it past its expiry."""
+    downloadUrl: String!
+    """Best chunk similarity for a topical query (larger = better); null for a
+    pure filter/date listing (ordered by recency instead)."""
+    score: Float
+    """How many of the report's chunks matched — a rough relevance-breadth
+    signal. 1 for a pure recency listing (the head chunk)."""
+    matchedChunks: Int!
+    """Excerpt from the best-matching chunk (topical) or the report's head
+    chunk (listing) — a preview for the citation."""
+    snippet: String!
+  }
+
+  """How \`searchReportsNaturalLanguage\` parsed the question into the structured
+  arguments it ran. Surfaced so a UI can show "interpreted as …" and let the
+  user correct it (then call \`searchReports\` directly with the fix)."""
+  type InterpretedReportQuery {
+    """Residual topical text used for the semantic step (empty → recency listing)."""
+    topicalQuery: String!
+    """Recognised publisher/source substring (e.g. "UNHCR"); null if none."""
+    source: String
+    """Parsed publication-date window (inclusive); null ends are open."""
+    publishedFrom: DateTime
+    publishedTo: DateTime
+    """A0 location resolved from a country named in the question; null if none."""
+    countryLocationId: String
+    countryName: String
+  }
+
+  """Result of \`searchReportsNaturalLanguage\` — the parsed interpretation plus
+  the matching reports, so the caller sees both the answer and how the question
+  was understood."""
+  type NlReportSearch {
+    interpreted: InterpretedReportQuery!
+    reports: [ReportHit!]!
   }
 `;

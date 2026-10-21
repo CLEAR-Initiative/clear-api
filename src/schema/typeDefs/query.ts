@@ -364,7 +364,72 @@ export const queryTypeDef = gql`
       [report] to get the pre-ADR-0006 report-only behaviour."""
       tiers: [KnowledgebaseTier!]
       mode: KnowledgebaseSearchMode = AUTO
+      """When true, append a band of the most relevant FIGURE hits (charts /
+      maps / infographics) AFTER the normal text results — the RAG-with-figures
+      case: a chatbot gets its answer context plus supporting visuals in one
+      call. Figure hits carry \`figureS3Key\` / \`figureImageUrl\`, so split the
+      band off by \`figureS3Key != null\`; their scores sit just below the text
+      hits. These are IN ADDITION to \`limit\` (they don't displace text), and
+      deduped against any figure that already ranked into the main results.
+      No-op when \`filters.figuresOnly\` is set (that's already figures-only) or
+      the report tier isn't searched. Default false."""
+      includeFigures: Boolean = false
+      """How many figures the \`includeFigures\` band may add (1–20). Default 6."""
+      figureLimit: Int = 6
     ): [KnowledgebaseHit!]!
+
+    """Find whole REPORTS (not chunks) and get a download link — the Cap 3
+    read path ("fetch me the UNHCR report on X between these dates"). Groups
+    the knowledgebase by \`reportId\` and returns one \`ReportHit\` per report,
+    each with a presigned PDF \`downloadUrl\`.
+
+    Two modes, picked by whether \`query\` is a non-empty topical string:
+      - With a query: semantic retrieval over report chunks, grouped to the
+        best-matching chunk per report, ordered by that best similarity.
+      - Without a query: a filter/date listing ordered by \`publishedAt\`
+        descending (most recent first).
+
+    \`source\` is a case-insensitive substring matched against the report
+    title and source URL (e.g. "UNHCR"). \`publishedRange\` filters on the
+    report's publication date (distinct from \`filters.timeRange\`, which is
+    the chunk's extracted EVENT window). \`filters\` applies the same
+    location / event-type / sector scoping as \`searchKnowledgebase\`.
+    Requires any authenticated content reader."""
+    searchReports(
+      """Topical query. Omit or pass empty for a pure filter/date listing."""
+      query: String
+      filters: KnowledgebaseFilters
+      """Filter on the report's PUBLICATION date (inclusive)."""
+      publishedRange: DateRangeInput
+      """Case-insensitive substring on report title / source URL (e.g. a
+      publisher like "UNHCR" or "OCHA")."""
+      source: String
+      limit: Int = 20
+    ): [ReportHit!]!
+
+    """Natural-language front door to \`searchReports\` (the "NL on top of
+    structured" layer). Parses a free-text question — e.g. "fetch me the UNHCR
+    report on flooding in Sudan between March and June 2024" — into the
+    structured arguments (\`source\`, publication-date window, country scope, and
+    the residual topical query) and runs the same report search. Returns BOTH
+    the parsed \`interpreted\` filters and the \`reports\`, so a caller can show
+    how the question was understood and, if it's wrong, call \`searchReports\`
+    directly with corrected arguments.
+
+    Parsing is deterministic (no LLM): it recognises a curated set of
+    publishers, common date phrasings, and country names from the locations
+    table. Anything it doesn't recognise simply stays in the topical query,
+    which still finds the report by content. Requires any authenticated content
+    reader."""
+    searchReportsNaturalLanguage(question: String!, limit: Int = 20): NlReportSearch!
+
+    """Figures (from \`report_figures\`) whose report is in the knowledgebase but
+    whose figure chunk isn't present yet — the work list for the figure→KB sync
+    (clear-pipeline). Returns ALL figures for each report that needs syncing (not
+    just the missing ones) so the caller can \`figuresOnly\`-upsert the complete
+    set per report. Bounded by \`limit\` REPORTS (not figures), oldest report id
+    first. admin/pipeline only."""
+    reportFiguresPendingKbMerge(limit: Int = 50): [ReportFigureForMerge!]!
 
     """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.
     Returns null when the runId doesn't exist on this Dagster instance
