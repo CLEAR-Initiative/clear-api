@@ -94,6 +94,21 @@ function parseDates(lower: string): DateParse {
     };
   }
 
+  // between/from <month> and/to <month> <year>  (shared year, stated once after
+  // the second month — e.g. "between March and June 2024"). Must come after the
+  // two-year form above so an explicit second year still wins.
+  m = lower.match(
+    new RegExp(`(?:between|from)\\s+${MONTH_RE}\\s+(?:and|to|-|–|until|through)\\s+${MONTH_RE}\\s+(\\d{4})`),
+  );
+  if (m) {
+    const y = Number(m[3]);
+    return {
+      from: startOfMonthUTC(y, MONTHS[m[1]!]!),
+      to: endOfMonthUTC(y, MONTHS[m[2]!]!),
+      matched: [m[0]!],
+    };
+  }
+
   // between/from <year> and/to <year>
   m = lower.match(/(?:between|from)\s+(\d{4})\s+(?:and|to|-|–|until|through)\s+(\d{4})/);
   if (m) {
@@ -155,10 +170,15 @@ export function interpretReportQuestion(question: string): InterpretedReportQuer
   const original = question.trim();
   const lower = original.toLowerCase();
 
-  // Source: first recognised publisher (longest-first list).
+  // Source: first recognised publisher (longest-first list). All-caps acronyms
+  // (WHO, CARE, IPC, DRC, …) are matched CASE-SENSITIVELY against the original
+  // text, because several double as ordinary English words — "people who need
+  // shelter" or "who we care for" must not be read as the WHO / CARE publishers.
+  // Distinctive mixed-case names (Oxfam, Mercy Corps, …) stay case-insensitive.
   let source: string | null = null;
   for (const s of KNOWN_SOURCES) {
-    const re = new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    const isAcronym = /^[A-Z][A-Z\s]*$/.test(s);
+    const re = new RegExp(`\\b${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, isAcronym ? "" : "i");
     if (re.test(original)) {
       source = s;
       break;

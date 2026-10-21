@@ -6947,6 +6947,16 @@ embeds it to build the figure chunk.</p><table class="ref-table"><thead><tr><th>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>ID</code></td>
+    <td>Team attribution from the report's KB rows, so the figure→KB sync stamps
+merged figures with the same team as the report's text. Null for the shared
+ReliefWeb corpus.</td>
+  </tr><tr>
+    <td><code>uploadedByUserId</code></td>
+    <td><code>ID</code></td>
+    <td>—</td>
+  </tr><tr>
     <td><code>figureS3Key</code></td>
     <td><code>String!</code></td>
     <td>The cropped image's S3 key — becomes the chunk's `figureS3Key`.</td>

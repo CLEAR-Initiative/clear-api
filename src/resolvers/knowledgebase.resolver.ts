@@ -214,6 +214,11 @@ interface ReportFigureForMerge {
   sourceUrl: string;
   reportS3Key: string;
   publishedAt: Date;
+  /** Team attribution carried from the report's KB rows so the figure→KB sync
+   *  stamps merged figures with the same team as the report's text (null for the
+   *  shared ReliefWeb corpus). */
+  teamId: string | null;
+  uploadedByUserId: string | null;
   figureS3Key: string;
   figureKind: string;
   pageNumber: number;
@@ -1089,11 +1094,13 @@ export const knowledgebaseResolvers = {
         ),
         kb_report AS (
           SELECT DISTINCT ON (k."report_id")
-            k."report_id"    AS report_id,
-            k."report_title" AS report_title,
-            k."source_url"   AS source_url,
-            k."s3_key"       AS s3_key,
-            k."published_at" AS published_at
+            k."report_id"            AS report_id,
+            k."report_title"         AS report_title,
+            k."source_url"           AS source_url,
+            k."s3_key"               AS s3_key,
+            k."published_at"         AS published_at,
+            k."team_id"              AS team_id,
+            k."uploaded_by_user_id"  AS uploaded_by_user_id
           FROM "knowledgebase" k
           JOIN pending_reports p ON p.report_id = k."report_id"
           ORDER BY k."report_id", k."chunk_index"
@@ -1104,6 +1111,8 @@ export const knowledgebaseResolvers = {
           kr.source_url         AS "sourceUrl",
           kr.s3_key             AS "reportS3Key",
           kr.published_at       AS "publishedAt",
+          kr.team_id            AS "teamId",
+          kr.uploaded_by_user_id AS "uploadedByUserId",
           rf."s3_key"           AS "figureS3Key",
           rf."kind"             AS "figureKind",
           rf."page_number"      AS "pageNumber",

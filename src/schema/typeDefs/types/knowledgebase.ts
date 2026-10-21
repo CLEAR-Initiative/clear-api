@@ -213,6 +213,11 @@ export const knowledgebaseTypeDef = gql`
     """The report PDF's S3 key (carried onto the figure chunk, same as text chunks)."""
     reportS3Key: String!
     publishedAt: DateTime!
+    """Team attribution from the report's KB rows, so the figure→KB sync stamps
+    merged figures with the same team as the report's text. Null for the shared
+    ReliefWeb corpus."""
+    teamId: ID
+    uploadedByUserId: ID
     """The cropped image's S3 key — becomes the chunk's \`figureS3Key\`."""
     figureS3Key: String!
     figureKind: String!
