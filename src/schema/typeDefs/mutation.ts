@@ -501,6 +501,18 @@ export const mutationTypeDef = gql`
       s3Key: String!
       publishedAt: DateTime!
       chunks: [KnowledgebaseChunkInput!]!
+      """When true, delete only this report's FIGURE chunks before inserting,
+      leaving its text chunks intact — the figure→KB sync uses this to attach
+      figures to a report whose text was ingested in an earlier run. Every chunk
+      must then be a figure chunk (figureS3Key set). Default false = replace all
+      chunks for the report (text + figures), the original behaviour."""
+      figuresOnly: Boolean = false
+      """Team-scoped upload attribution (Cap 1): stored on every chunk of the
+      report so a team-scoped read can filter by it. Null for the weekly
+      ReliefWeb ingest; set for a team member's manual upload."""
+      teamId: ID
+      """clear-api user id of the uploader (provenance). Null for weekly ingest."""
+      uploadedByUserId: ID
     ): UpsertKnowledgebaseResult!
 
     """Synthesise, embed, and upsert incident-tier "event cards" into
@@ -607,15 +619,23 @@ export const mutationTypeDef = gql`
     in place. To force a fresh row, tweak the file (any byte) or
     switch to a scripted upload that supplies its own report_id.
 
-    Restricted to admin — the ingest costs LLM + embedding
-    credits per document. When DAGSTER_URL is unset the mutation
-    still stages the PDF in S3 but returns a UNKNOWN-status job with
-    no runId — useful for offline dev of the upload path."""
+    Team-scoped (Cap 1): a global admin, or any content-writer member of
+    \`teamId\`, may upload — the ingest costs LLM + embedding credits per
+    document, so it stays gated, but a team member can now upload on behalf
+    of their team rather than it being admin-only. The uploader and (when
+    given) the team are attributed onto the Dagster ingest run. Omit
+    \`teamId\` only as a global admin; a non-admin must pass a \`teamId\` they
+    belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
+    S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
+    of the upload path."""
     uploadKnowledgebaseDocument(
       file: Upload!
       title: String!
       sourceUrl: String
       publishedAt: DateTime!
+      """Team to attribute the upload to. Required for a non-admin uploader
+      (must be a team they belong to); optional for a global admin."""
+      teamId: ID
     ): KnowledgebaseIngestJob!
 
     # ─── Ground intel staging tier ─────────────────────────────────────
