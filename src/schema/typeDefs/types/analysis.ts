@@ -105,16 +105,26 @@ export const analysisTypeDef = gql`
     reason: String
   }
 
-  """Latest-evidence watermark for a frame (ADR-0008), over the \`knowledgebase\`
-  retrieval corpus the analysis is generated from. The drain compares
-  \`latestEvidenceAt\` to the live analysis's \`generatedAt\` to decide whether
-  anything new warrants a regeneration."""
+  """Latest-evidence watermark for a frame (ADR-0008), over BOTH retrieval tiers
+  the analysis is generated from — the \`knowledgebase\` report tier AND the
+  \`events_index\` incident tier. The drain compares \`latestEvidenceAt\` to the
+  live analysis's \`generatedAt\` to decide whether anything new warrants a
+  regeneration. The per-tier fields let a selective regenerator tell whether the
+  change came from new reports, new events, or both (#1067)."""
   type FrameEvidenceWatermark {
-    """Max ingestion time (\`created_at\`) across knowledgebase rows matching the
-    frame, or null when the frame has no evidence yet."""
+    """Max ingestion time (\`created_at\`) across BOTH tiers matching the frame —
+    the later of the report and event watermarks — or null when the frame has no
+    evidence yet. This is the combined signal the regeneration gate keys off, so
+    a new event now advances it just like a new report."""
     latestEvidenceAt: DateTime
-    """Count of knowledgebase rows matching the frame."""
+    """Combined count across both tiers."""
     evidenceCount: Int!
+    """Report tier (\`knowledgebase\`) only: max \`created_at\` and row count."""
+    reportsLatestEvidenceAt: DateTime
+    reportsCount: Int!
+    """Incident tier (\`events_index\`) only: max \`created_at\` and row count."""
+    eventsLatestEvidenceAt: DateTime
+    eventsCount: Int!
   }
 
   """A subscription that keeps one frame's analysis current on a cadence
