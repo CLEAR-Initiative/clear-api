@@ -309,28 +309,69 @@ export const analysisResolvers = {
     },
 
     // Freshness watermark for a frame (ADR-0008): the newest ingestion time +
-    // count over the `knowledgebase` corpus the analysis is generated from.
-    // Reuses the KB search's exact filter (incl. single-location → subtree
-    // expansion) so "new evidence" means what retrieval would actually see. The
-    // drain compares `latestEvidenceAt` to the live analysis's `generatedAt`.
+    // count over the corpus the analysis is generated from. Scans BOTH retrieval
+    // tiers — the `knowledgebase` report tier AND the `events_index` incident
+    // tier — because the analysis RAG reads both; watching only reports (the
+    // original behaviour) missed new events entirely (#1067). Reuses the KB
+    // search's exact filter (incl. single-location → subtree expansion) so "new
+    // evidence" means what retrieval would actually see. `events_index` has no
+    // need_sectors/figure/team columns, so those filter arms are disabled for it.
     frameEvidenceWatermark: async (
       _parent: unknown,
       args: { frame: FrameInput },
       context: Context,
-    ): Promise<{ latestEvidenceAt: Date | null; evidenceCount: number }> => {
+    ): Promise<{
+      latestEvidenceAt: Date | null;
+      evidenceCount: number;
+      reportsLatestEvidenceAt: Date | null;
+      reportsCount: number;
+      eventsLatestEvidenceAt: Date | null;
+      eventsCount: number;
+    }> => {
       requireRole(context, ["admin", "pipeline"]);
-      const params: unknown[] = [];
-      const whereClause = buildFilterClause(frameToKbFilters(args.frame), params);
-      const sql =
+      const filters = frameToKbFilters(args.frame);
+
+      const reportParams: unknown[] = [];
+      const reportWhere = buildFilterClause(filters, reportParams);
+      const reportSql =
         `SELECT MAX("created_at") AS "latestEvidenceAt", ` +
-        `COUNT(*)::int AS "evidenceCount" FROM "knowledgebase" ${whereClause}`;
-      const rows = await context.prisma.$queryRawUnsafe<
-        { latestEvidenceAt: Date | null; evidenceCount: number }[]
-      >(sql, ...params);
-      const row = rows[0];
+        `COUNT(*)::int AS "evidenceCount" FROM "knowledgebase" ${reportWhere}`;
+
+      const eventParams: unknown[] = [];
+      const eventWhere = buildFilterClause(filters, eventParams, {
+        hasNeedSectors: false,
+        hasFigureColumn: false,
+        hasTeamColumn: false,
+      });
+      const eventSql =
+        `SELECT MAX("created_at") AS "latestEvidenceAt", ` +
+        `COUNT(*)::int AS "evidenceCount" FROM "events_index" ${eventWhere}`;
+
+      const [reportRows, eventRows] = await Promise.all([
+        context.prisma.$queryRawUnsafe<{ latestEvidenceAt: Date | null; evidenceCount: number }[]>(
+          reportSql, ...reportParams,
+        ),
+        context.prisma.$queryRawUnsafe<{ latestEvidenceAt: Date | null; evidenceCount: number }[]>(
+          eventSql, ...eventParams,
+        ),
+      ]);
+
+      const reportsAt = reportRows[0]?.latestEvidenceAt ?? null;
+      const eventsAt = eventRows[0]?.latestEvidenceAt ?? null;
+      const reportsCount = Number(reportRows[0]?.evidenceCount ?? 0);
+      const eventsCount = Number(eventRows[0]?.evidenceCount ?? 0);
+      // Combined watermark = the later of the two (the gate fires if EITHER tier
+      // advanced past the analysis's generatedAt).
+      const combinedAt =
+        reportsAt && eventsAt ? (reportsAt > eventsAt ? reportsAt : eventsAt) : (reportsAt ?? eventsAt);
+
       return {
-        latestEvidenceAt: row?.latestEvidenceAt ?? null,
-        evidenceCount: Number(row?.evidenceCount ?? 0),
+        latestEvidenceAt: combinedAt,
+        evidenceCount: reportsCount + eventsCount,
+        reportsLatestEvidenceAt: reportsAt,
+        reportsCount,
+        eventsLatestEvidenceAt: eventsAt,
+        eventsCount,
       };
     },
   },

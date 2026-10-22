@@ -5513,18 +5513,38 @@ Null when the call aborted without producing a row.</td>
     <td><code>String</code></td>
     <td>Set to 'different_a2' when the candidate and source coords resolve to
 different containing A2s. Null on success.</td>
-  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over the `knowledgebase`
-retrieval corpus the analysis is generated from. The drain compares
-`latestEvidenceAt` to the live analysis's `generatedAt` to decide whether
-anything new warrants a regeneration.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over BOTH retrieval tiers
+the analysis is generated from — the `knowledgebase` report tier AND the
+`events_index` incident tier. The drain compares `latestEvidenceAt` to the
+live analysis's `generatedAt` to decide whether anything new warrants a
+regeneration. The per-tier fields let a selective regenerator tell whether the
+change came from new reports, new events, or both (#1067).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>latestEvidenceAt</code></td>
     <td><code>DateTime</code></td>
-    <td>Max ingestion time (`created_at`) across knowledgebase rows matching the
-frame, or null when the frame has no evidence yet.</td>
+    <td>Max ingestion time (`created_at`) across BOTH tiers matching the frame —
+the later of the report and event watermarks — or null when the frame has no
+evidence yet. This is the combined signal the regeneration gate keys off, so
+a new event now advances it just like a new report.</td>
   </tr><tr>
     <td><code>evidenceCount</code></td>
     <td><code>Int!</code></td>
-    <td>Count of knowledgebase rows matching the frame.</td>
+    <td>Combined count across both tiers.</td>
+  </tr><tr>
+    <td><code>reportsLatestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Report tier (`knowledgebase`) only: max `created_at` and row count.</td>
+  </tr><tr>
+    <td><code>reportsCount</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventsLatestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Incident tier (`events_index`) only: max `created_at` and row count.</td>
+  </tr><tr>
+    <td><code>eventsCount</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A GeoNames gazetteer match for a place name. Coordinates come straight
 from GeoNames — callers still validate them (e.g. the same-A2 check
 against a signal's source coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
