@@ -223,19 +223,36 @@ describe("analysis resolver", () => {
         analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(viewer)),
       ).rejects.toThrow(/insufficient permissions/i);
     });
-    it("returns max created_at + count; single-location frame expands to subtree", async () => {
-      const latest = new Date("2026-05-01");
-      const prisma = makePrisma({
-        $queryRawUnsafe: vi.fn(async () => [{ latestEvidenceAt: latest, evidenceCount: 7 }]),
-      });
+    it("returns max created_at + count across both tiers; single-location frame expands to subtree", async () => {
+      // Two-tier watermark (#1067): the resolver queries knowledgebase (reports)
+      // then events_index (events). Return a report tier (count 7) and an event
+      // tier (count 3, later timestamp) so we can assert the combine.
+      const reportsAt = new Date("2026-05-01");
+      const eventsAt = new Date("2026-06-10");
+      const queryRaw = vi
+        .fn()
+        .mockResolvedValueOnce([{ latestEvidenceAt: reportsAt, evidenceCount: 7 }])
+        .mockResolvedValueOnce([{ latestEvidenceAt: eventsAt, evidenceCount: 3 }]);
+      const prisma = makePrisma({ $queryRawUnsafe: queryRaw });
       const res = await analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(pipeline, prisma));
-      expect(res).toEqual({ latestEvidenceAt: latest, evidenceCount: 7 });
-      const sql = (prisma.$queryRawUnsafe as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-      expect(sql).toContain('FROM "knowledgebase"');
-      expect(sql).toContain("ancestor_ids"); // single A0 → subtree expansion
-      // Freshness counts all ingestion regardless of embedding model — so the
-      // query must NOT depend on EMBEDDING_* config (no embedding_provider filter).
-      expect(sql).not.toContain("embedding_provider");
+      // Combined = the later timestamp + summed count; per-tier breakdown preserved.
+      expect(res).toEqual({
+        latestEvidenceAt: eventsAt,
+        evidenceCount: 10,
+        reportsLatestEvidenceAt: reportsAt,
+        reportsCount: 7,
+        eventsLatestEvidenceAt: eventsAt,
+        eventsCount: 3,
+      });
+      const reportSql = queryRaw.mock.calls[0][0] as string;
+      const eventSql = queryRaw.mock.calls[1][0] as string;
+      expect(reportSql).toContain('FROM "knowledgebase"');
+      expect(eventSql).toContain('FROM "events_index"');
+      expect(reportSql).toContain("ancestor_ids"); // single A0 → subtree expansion
+      // Freshness counts all ingestion regardless of embedding model — so neither
+      // query depends on EMBEDDING_* config (no embedding_provider filter).
+      expect(reportSql).not.toContain("embedding_provider");
+      expect(eventSql).not.toContain("embedding_provider");
     });
   });
 
