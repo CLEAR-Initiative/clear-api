@@ -514,7 +514,18 @@ async function seed() {
     },
   });
 
-  console.log("Created 6 data sources + 1 manual source + 1 push feed");
+  // INSO security newsletters, read by clear-pipeline's gx from the newsletter
+  // mailbox (IMAP), so no baseUrl. Name must match `INSO_SOURCE_NAME`. Ungraded.
+  await prisma.dataSources.create({
+    data: {
+      name: "inso",
+      type: "email",
+      isActive: true,
+      infoUrl: "https://ngosafety.org/",
+    },
+  });
+
+  console.log("Created 7 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
