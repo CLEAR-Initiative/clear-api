@@ -74,8 +74,10 @@ export const queryTypeDef = gql`
     existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
 
     """Events awaiting an alert (severity >= minSeverity AND no alert row yet AND
-    a signal within the last \`maxAgeHours\`), oldest-first by the event's
-    earliest-signal timestamp — the Dagster alert-stage queue. \`first\` caps the
+    a signal within the last \`maxAgeHours\` AND at least one NRC-relevant type —
+    events whose types are all out-of-interest never alert, so they are not
+    queued), oldest-first by the event's earliest-signal timestamp — the Dagster
+    alert-stage queue. \`first\` caps the
     batch (default 100, max 500); \`minSeverity\` floors the severity (default 4);
     \`maxAgeHours\` bounds staleness on the latest signal's real-world time so the
     historical backlog / backdated backfill never alerts (default 48; 0 disables).

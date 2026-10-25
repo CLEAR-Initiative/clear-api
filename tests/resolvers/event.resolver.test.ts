@@ -16,6 +16,9 @@
  *                           branch (team filter merge), locale include omission.
  *   Query.eventsByLocation— auth gate, descendant expansion + OR filter shape.
  *   Query.event           — auth gate, findUnique by id.
+ *   Query.eventsPendingAlert — NRC gate mirrors createAlert: all-irrelevant
+ *                           types dropped, mixed / no types kept, `first`
+ *                           honoured by re-fetching past dropped rows.
  *   Mutation.createEvent  — requireRole gate; lat/lng → point location branch;
  *                           signalIds → single/multi point resolution branch;
  *                           BigInt population conversion + undefined defaults;
@@ -138,7 +141,7 @@ const noTeamScope = () => ({
   teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
 });
 
-const { events, eventsByLocation, event } = eventResolvers.Query;
+const { events, eventsByLocation, event, eventsPendingAlert } = eventResolvers.Query;
 const { createEvent, updateEvent, deleteEvent, escalateEvent } = eventResolvers.Mutation;
 
 beforeEach(() => {
@@ -232,6 +235,78 @@ describe("Query.event", () => {
     const ctx = buildContext(MEMBER, { events: { findUnique } });
     await expect(event(null, { id: "e1" }, ctx)).resolves.toBe(row);
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "e1" } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Query.eventsPendingAlert — the Dagster alert-stage queue
+// ---------------------------------------------------------------------------
+describe("Query.eventsPendingAlert", () => {
+  // disaster_types: "eq" and "fl" are NRC-relevant, "ot" is not. The resolver
+  // loads the relevant set once per call via disasterTypes.findMany.
+  const disasterTypes = () => ({
+    findMany: vi.fn().mockResolvedValue([{ glideNumber: "eq" }, { glideNumber: "fl" }]),
+  });
+  const now = new Date("2026-10-25T00:00:00Z");
+
+  /** events.findMany stub that serves `queue` in order, honouring skip/take. */
+  function queued(queue: Array<{ id: string; types: string[] }>) {
+    return vi.fn(async ({ skip = 0, take }: { skip?: number; take: number }) =>
+      queue.slice(skip, skip + take).map((e) => ({ ...e, severity: 5, firstSignalCreatedAt: now })),
+    );
+  }
+
+  it("does NOT return an event whose types are all NRC-irrelevant (createAlert would skip it → it must not loop)", async () => {
+    const findMany = queued([{ id: "e-ot", types: ["ot"] }]);
+    const ctx = buildContext(ADMIN, { events: { findMany }, disasterTypes: disasterTypes() });
+    const out = await eventsPendingAlert(null, {}, ctx);
+    expect(out).toEqual([]);
+  });
+
+  it("returns an event with mixed types (one relevant type is enough to alert)", async () => {
+    const findMany = queued([{ id: "e-mixed", types: ["ot", "EQ"] }]); // upper-case: match is case-insensitive
+    const ctx = buildContext(ADMIN, { events: { findMany }, disasterTypes: disasterTypes() });
+    const out = await eventsPendingAlert(null, {}, ctx);
+    expect(out.map((e) => e.id)).toEqual(["e-mixed"]);
+  });
+
+  it("returns an event with no types (no NRC signal → createAlert does not skip it)", async () => {
+    const findMany = queued([{ id: "e-untyped", types: [] }]);
+    const ctx = buildContext(ADMIN, { events: { findMany }, disasterTypes: disasterTypes() });
+    const out = await eventsPendingAlert(null, {}, ctx);
+    expect(out.map((e) => e.id)).toEqual(["e-untyped"]);
+  });
+
+  it("keeps `first` honest: re-fetches past dropped rows until the batch is full or the queue is exhausted", async () => {
+    const findMany = queued([
+      { id: "a", types: ["ot"] },
+      { id: "b", types: ["ot"] },
+      { id: "c", types: ["fl"] },
+      { id: "d", types: ["ot"] },
+      { id: "e", types: ["eq"] },
+      { id: "f", types: ["fl"] },
+    ]);
+    const ctx = buildContext(ADMIN, { events: { findMany }, disasterTypes: disasterTypes() });
+    const out = await eventsPendingAlert(null, { first: 2 }, ctx);
+    expect(out.map((e) => e.id)).toEqual(["c", "e"]); // oldest-first, irrelevant rows skipped
+    // page 1 [a,b] → 0 kept; page 2 [c,d] → 1; page 3 [e,f] → full. No 4th page.
+    expect(findMany).toHaveBeenCalledTimes(3);
+    expect(findMany.mock.calls.map((c) => c[0].skip)).toEqual([undefined, 2, 4]);
+  });
+
+  it("stops at the end of the queue when fewer than `first` relevant events exist", async () => {
+    const findMany = queued([{ id: "a", types: ["ot"] }, { id: "b", types: ["eq"] }]);
+    const ctx = buildContext(ADMIN, { events: { findMany }, disasterTypes: disasterTypes() });
+    const out = await eventsPendingAlert(null, { first: 5 }, ctx);
+    expect(out.map((e) => e.id)).toEqual(["b"]);
+    expect(findMany).toHaveBeenCalledTimes(1); // short page = exhausted
+  });
+
+  it("rejects a member (admin/pipeline only)", async () => {
+    const findMany = vi.fn();
+    const ctx = buildContext(MEMBER, { events: { findMany }, disasterTypes: disasterTypes() });
+    await expect(eventsPendingAlert(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findMany).not.toHaveBeenCalled();
   });
 });
 
