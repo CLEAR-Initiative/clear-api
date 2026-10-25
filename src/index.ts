@@ -31,6 +31,7 @@ import { webhooksRouter } from "./routes/webhooks.js";
 import { hotlineWebhookRouter } from "./routes/hotline-webhook.js";
 import { logieRouter } from "./routes/logie.js";
 import { usgsRouter } from "./routes/usgs.js";
+import { healthRouter } from "./routes/health.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 
 const app = express();
@@ -113,10 +114,11 @@ app.use(
 app.use("/api/logie", logieRouter);
 app.use("/api/usgs", usgsRouter);
 
-// Health check
-app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
-});
+// Health probes. `/health` is liveness only (the compose healthcheck in
+// clear-infra hits it — keep it independent of the DB so an outage doesn't
+// restart-loop the API); `/health/ready` adds a 2s `SELECT 1` and 503s when
+// Postgres is unreachable. See routes/health.ts.
+app.use("/health", healthRouter);
 
 // GraphQL (with multipart upload support)
 app.use(
