@@ -306,6 +306,24 @@ const data = await fetch('/graphql', {
 });</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
       </div>
 
+      <div id="section-health">
+        <h2 id="health">Health &amp; Readiness</h2>
+        <p>Two unauthenticated probes tell you whether the API is up and whether it can reach its database. They answer different questions &mdash; pick the one that matches what you are monitoring.</p>
+
+        <h3><code>GET /health</code> &mdash; liveness</h3>
+        <p>Returns <code>200 {"status":"ok"}</code> whenever the process is running and serving requests. It checks nothing else, so it stays green during a database outage. This is the probe the container orchestrator uses to decide whether to restart the API; tying it to the database would restart-loop a healthy process while the fault lies elsewhere.</p>
+        <pre><code>curl -i https://api.clearinitiative.io/health</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+        <h3><code>GET /health/ready</code> &mdash; readiness</h3>
+        <p>Runs <code>SELECT 1</code> against Postgres with a two-second timeout. Returns <code>200</code> when the database answers, <code>503</code> when it does not:</p>
+        <pre><code>// 200 — ready to serve DB-backed queries
+{"status":"ok","db":"ok"}
+
+// 503 — process is up, database is not
+{"status":"degraded","db":"unreachable","error":"database probe timed out after 2000ms"}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>Point uptime monitors and integration health checks at this one. If <code>/health</code> is 200 and <code>/health/ready</code> is 503, the API is reachable and the database is the problem &mdash; not the other way round. The <code>error</code> field carries the driver message with connection details redacted.</p>
+      </div>
+
       <div id="section-reference">
         ${renderOperationSection("Queries", "queries", schema.queries)}
         ${renderOperationSection("Mutations", "mutations", schema.mutations, "mutation")}
