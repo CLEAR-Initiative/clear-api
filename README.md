@@ -129,6 +129,7 @@ crisis-edit mutations (title, description, delete, attachments) only require
 | `LOCATIONIQ_API_KEY` | LocationIQ key used by the pipeline geocoder; cached in `nominatim_cache` | _(optional)_        |
 | `S3_*`               | AWS credentials + bucket + region for media / attachment storage     | _(optional)_            |
 | `SENTRY_DSN`         | Error reporting                                                      | _(optional)_            |
+| `SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced (0 to 1)                             | `0`                     |
 | `TASK_LEASE_MINUTES` | Minutes a claimed Task stays leased; a heartbeat extends by the same (ADR-0010) | `15`         |
 | `TASK_MAX_ATTEMPTS`  | Claims a Task may take before it is FAILED                           | `3`                     |
 | `TASK_CLAIM_MAX`     | Most Tasks one `claimTasks` call may lease                           | `10`                    |
