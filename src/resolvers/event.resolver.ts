@@ -8,7 +8,7 @@ import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithD
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
-import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
+import { anyTypeNrcRelevant, eventIsAllNrcIrrelevant, nrcRelevantGlideCodes } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -190,10 +190,10 @@ export const eventResolvers = {
     },
     // The Dagster alert-stage queue: events that need an alert but don't have
     // one yet — severity at or above `minSeverity` (default 4) AND no alert row
-    // (`alerts: { none: {} }`). Ordered oldest-first by the event's
-    // earliest-signal timestamp so the alert worker drains in ingestion order.
-    // `first` caps the batch (default 100, clamped to [1, 500]). Admin/pipeline
-    // only.
+    // (`alerts: { none: {} }`) AND at least one NRC-relevant type. Ordered
+    // oldest-first by the event's earliest-signal timestamp so the alert worker
+    // drains in ingestion order. `first` caps the batch (default 100, clamped
+    // to [1, 500]). Admin/pipeline only.
     eventsPendingAlert: async (
       _parent: unknown,
       args: {
@@ -221,17 +221,56 @@ export const eventResolvers = {
             }
           : {};
       const include = eventTranslationsInclude(context.locale);
-      return context.prisma.events.findMany({
-        where: {
-          severity: { gte: minSeverity },
-          alerts: { none: {} },
-          isDummy: false,
-          ...recentOnly,
-        },
-        orderBy: { firstSignalCreatedAt: "asc" },
-        take,
-        ...(include ? { include } : {}),
-      });
+      const where = {
+        severity: { gte: minSeverity },
+        alerts: { none: {} },
+        isDummy: false,
+        ...recentOnly,
+      };
+
+      // NRC-relevance gate, mirroring createAlert: an event whose types are ALL
+      // out-of-interest (disaster_types.nrc_relevant = false, or unknown) never
+      // gets an alert row, so it must not be queued either — otherwise it is
+      // re-sent to createAlert on every drain, forever (the Oct-2026 hot loop:
+      // ~2,500 skipped createAlert calls/hour for the same ~10 "ot" events).
+      // Filtered in memory rather than in SQL because the match must be
+      // case-insensitive (`events.types` may hold "FL", glide_number is "fl")
+      // and Prisma's scalar-list filters are not. Pages are re-fetched until
+      // `first` is honoured or the queue is exhausted, so a run of irrelevant
+      // events can't starve the batch. A page cap bounds the scan when
+      // `maxAgeHours: 0` exposes the whole backlog.
+      const relevantCodes = await nrcRelevantGlideCodes(context.prisma);
+      const MAX_PAGES = 10;
+      type Row = Awaited<ReturnType<typeof context.prisma.events.findMany>>[number];
+      const out: Row[] = [];
+      const seen = new Set<string>();
+      let skipped = 0;
+      for (let page = 0; page < MAX_PAGES && out.length < take; page++) {
+        const skip = page * take;
+        const rows: Row[] = await context.prisma.events.findMany({
+          where,
+          orderBy: [{ firstSignalCreatedAt: "asc" }, { id: "asc" }],
+          take,
+          ...(skip > 0 ? { skip } : {}),
+          ...(include ? { include } : {}),
+        });
+        for (const e of rows) {
+          if (seen.has(e.id)) continue; // offset pagination can repeat a row if the queue shifts between pages
+          seen.add(e.id);
+          if (eventIsAllNrcIrrelevant(e.types, relevantCodes)) {
+            skipped++;
+            continue;
+          }
+          if (out.length < take) out.push(e);
+        }
+        if (rows.length < take) break; // queue exhausted
+      }
+      if (skipped > 0) {
+        console.log(
+          `[eventsPendingAlert] skipped ${skipped} event(s) whose types are all NRC-irrelevant — they will never alert and are not queued`,
+        );
+      }
+      return out;
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireContentReader(context);

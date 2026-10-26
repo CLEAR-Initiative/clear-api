@@ -14,7 +14,9 @@ import {
   anyTypeNrcRelevant,
   nrcIrrelevantLevel2,
   nrcIrrelevantGlideCodes,
+  nrcRelevantGlideCodes,
   chunkIsAllNrcIrrelevant,
+  eventIsAllNrcIrrelevant,
 } from "../../src/utils/nrc-relevance.js";
 
 type DtRow = { level2: string | null; nrcRelevant: boolean; glideNumber?: string };
@@ -152,5 +154,59 @@ describe("chunkIsAllNrcIrrelevant", () => {
 
   it("normalizes case / whitespace before matching", () => {
     expect(chunkIsAllNrcIrrelevant([" Fire ", "OTHER"], irrelevant)).toBe(true);
+  });
+});
+
+describe("nrcRelevantGlideCodes", () => {
+  it("returns the lowercased glide codes tagged nrc_relevant = true", async () => {
+    const set = await nrcRelevantGlideCodes(fakePrisma(ROWS));
+    expect([...set].sort()).toEqual(["ac", "eq"]);
+  });
+
+  it("lowercases / trims and drops blank codes", async () => {
+    const rows: DtRow[] = [
+      { glideNumber: " FL ", level2: "flood", nrcRelevant: true },
+      { glideNumber: "", level2: "x", nrcRelevant: true },
+      { glideNumber: "ot", level2: "other", nrcRelevant: false },
+    ];
+    expect([...(await nrcRelevantGlideCodes(fakePrisma(rows)))]).toEqual(["fl"]);
+  });
+});
+
+describe("eventIsAllNrcIrrelevant", () => {
+  const relevant = new Set(["eq", "ac"]);
+
+  it("is true when none of the event's types is relevant", () => {
+    expect(eventIsAllNrcIrrelevant(["ot"], relevant)).toBe(true);
+    expect(eventIsAllNrcIrrelevant(["ot", "fr"], relevant)).toBe(true);
+  });
+
+  it("is false when at least one type is relevant (mixed types still alert)", () => {
+    expect(eventIsAllNrcIrrelevant(["ot", "eq"], relevant)).toBe(false);
+  });
+
+  it("is false for empty / null / undefined (no NRC signal → not skipped)", () => {
+    expect(eventIsAllNrcIrrelevant([], relevant)).toBe(false);
+    expect(eventIsAllNrcIrrelevant(null, relevant)).toBe(false);
+    expect(eventIsAllNrcIrrelevant(undefined, relevant)).toBe(false);
+  });
+
+  it("treats a code unknown to disaster_types as irrelevant, like anyTypeNrcRelevant", async () => {
+    expect(eventIsAllNrcIrrelevant(["zz"], relevant)).toBe(true);
+    expect(await anyTypeNrcRelevant(fakePrisma(ROWS), ["zz"])).toBe(false);
+  });
+
+  it("matches case-insensitively (events.types may be upper-case)", () => {
+    expect(eventIsAllNrcIrrelevant(["OT"], relevant)).toBe(true);
+    expect(eventIsAllNrcIrrelevant(["OT", " Eq "], relevant)).toBe(false);
+  });
+
+  it("agrees with anyTypeNrcRelevant on every shape (the two gates must never diverge)", async () => {
+    const prisma = fakePrisma(ROWS);
+    const set = await nrcRelevantGlideCodes(prisma);
+    for (const types of [["ot"], ["ot", "eq"], ["EQ"], [], ["zz"], ["pa", "fr"]]) {
+      const skipByCreateAlert = types.length > 0 && !(await anyTypeNrcRelevant(prisma, types));
+      expect(eventIsAllNrcIrrelevant(types, set)).toBe(skipByCreateAlert);
+    }
   });
 });

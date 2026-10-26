@@ -56,6 +56,41 @@ export async function nrcIrrelevantGlideCodes(prisma: PrismaLike): Promise<Set<s
 }
 
 /**
+ * Lowercased glide codes (level_3) that ARE NRC-relevant
+ * (`disaster_types.nrc_relevant = true`). The set-based counterpart of
+ * {@link anyTypeNrcRelevant} for callers that classify many events per request
+ * (e.g. the alert queue) and must reach the SAME verdict as `createAlert`
+ * without a query per event — pair with {@link eventIsAllNrcIrrelevant}.
+ */
+export async function nrcRelevantGlideCodes(prisma: PrismaLike): Promise<Set<string>> {
+  const rows = await prisma.disasterTypes.findMany({
+    where: { nrcRelevant: true },
+    select: { glideNumber: true },
+  });
+  const out = new Set<string>();
+  for (const r of rows) {
+    const code = (r.glideNumber ?? "").trim().toLowerCase();
+    if (code) out.add(code);
+  }
+  return out;
+}
+
+/**
+ * Pure form of `!anyTypeNrcRelevant`: true iff the event HAS types and none of
+ * them is in `relevantCodes` (from {@link nrcRelevantGlideCodes}). Such an event
+ * is never alerted. An event with no types carries no NRC signal → false. A code
+ * unknown to `disaster_types` counts as irrelevant, exactly as it does in
+ * `anyTypeNrcRelevant`, so the two gates always agree. Case-insensitive.
+ */
+export function eventIsAllNrcIrrelevant(
+  types: readonly string[] | null | undefined,
+  relevantCodes: Set<string>,
+): boolean {
+  if (!types || types.length === 0) return false;
+  return !types.some((t) => relevantCodes.has((t ?? "").trim().toLowerCase()));
+}
+
+/**
  * Lowercased level_2 slugs that are ENTIRELY NRC-irrelevant — i.e. no glide code
  * under that level_2 group is relevant. Knowledgebase chunks tag `event_types`
  * as level_2 slugs (classify.level2_values == disaster_types.level_2), so a chunk
