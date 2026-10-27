@@ -1297,6 +1297,7 @@ export const knowledgebaseResolvers = {
         sourceUrl?: string | null;
         publishedAt: Date;
         teamId?: string | null;
+        analysisAutomationId?: string | null;
       },
       context: Context,
     ): Promise<KnowledgebaseIngestJob> => {
@@ -1305,7 +1306,30 @@ export const knowledgebaseResolvers = {
       // credits on the enrich chain, so it's gated — but no longer admin-only:
       // a team member uploads on behalf of their team. `user` is the uploader,
       // attributed onto the ingest run below.
-      const { user } = await requireTeamContentWriter(context, args.teamId);
+      const { user, via } = await requireTeamContentWriter(context, args.teamId);
+
+      // When attaching to an automation, validate ownership BEFORE spending any
+      // S3/Dagster work: the automation must exist, and a team writer may only
+      // attach to their own team's automation. System-owned automations
+      // (teamId null) are admin-only.
+      if (args.analysisAutomationId) {
+        const automation = await context.prisma.analysisAutomation.findUnique({
+          where: { id: args.analysisAutomationId },
+          select: { teamId: true },
+        });
+        if (!automation) {
+          throw new GraphQLError(
+            `uploadKnowledgebaseDocument: analysis automation ${args.analysisAutomationId} not found`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+        if (via === "team" && automation.teamId !== args.teamId) {
+          throw new GraphQLError(
+            "uploadKnowledgebaseDocument: analysis automation belongs to a different team",
+            { extensions: { code: "FORBIDDEN" } },
+          );
+        }
+      }
 
       const upload = await args.file;
       const filename = upload.filename ?? "unnamed";
@@ -1350,6 +1374,29 @@ export const knowledgebaseResolvers = {
           ContentType: "application/pdf",
         }),
       );
+
+      // Record the upload against the automation's reference set once the bytes
+      // are safely in S3 (done here so BOTH the offline and the launched paths
+      // persist it). Content-addressed: re-uploading the same file to the same
+      // automation updates the name in place rather than duplicating the row.
+      if (args.analysisAutomationId) {
+        await context.prisma.analysisAutomationDocument.upsert({
+          where: {
+            analysisAutomationId_reportId: {
+              analysisAutomationId: args.analysisAutomationId,
+              reportId,
+            },
+          },
+          create: {
+            analysisAutomationId: args.analysisAutomationId,
+            fileName: filename,
+            reportId,
+            s3Key,
+            uploadedByUserId: user.id,
+          },
+          update: { fileName: filename, s3Key, uploadedByUserId: user.id },
+        });
+      }
 
       // When DAGSTER_URL is unset (dev-only offline case), stage the
       // upload and return a synthetic UNKNOWN-status job. The client

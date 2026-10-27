@@ -986,9 +986,10 @@ model userComments {
   id     String @id @default(cuid())
   userId String @map("user_id")
 
-  eventId  String? @map("event_id")
-  signalId String? @map("signal_id")
-  crisisId String? @map("crisis_id")
+  eventId              String? @map("event_id")
+  signalId             String? @map("signal_id")
+  crisisId             String? @map("crisis_id")
+  analysisAutomationId String? @map("analysis_automation_id")
 
   comment            String  @map("text")
   isCommentReply     Boolean @map("is_comment_reply")
@@ -997,16 +998,18 @@ model userComments {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user   user     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  signal signals? @relation(fields: [signalId], references: [id], onDelete: Cascade)
-  event  events?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  crisis crises?  @relation(fields: [crisisId], references: [id], onDelete: Cascade)
+  user               user                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal             signals?            @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  event              events?             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  crisis             crises?             @relation(fields: [crisisId], references: [id], onDelete: Cascade)
+  analysisAutomation analysisAutomation? @relation(fields: [analysisAutomationId], references: [id], onDelete: Cascade)
 
   commentTags commentTags[]
 
   @@index([userId])
   @@index([eventId])
   @@index([signalId])
+  @@index([analysisAutomationId])
   @@map("user_comments")
 }
 
@@ -1920,6 +1923,11 @@ model analysis {
 model analysisAutomation {
   id String @id @default(cuid())
 
+  /// Human-friendly label for this automation and the analysis it produces
+  /// (e.g. "Sudan displacement — weekly"). Optional: system-owned rows and
+  /// existing automations may leave it null.
+  title String?
+
   /// Frame (canonicalised on write) — the `analysis` frame columns minus
   /// `windowEnd` (automation is always rolling to present).
   locationIds String[] @map("location_ids")
@@ -1943,6 +1951,18 @@ model analysisAutomation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// Threaded discussion for this automation — reuses the shared
+  /// `user_comments` table (via userComments.analysisAutomationId) rather than
+  /// a dedicated comments table, so replies and tags work exactly as they do
+  /// on events/signals/crises.
+  userComments userComments[]
+
+  /// Reference documents a user has attached to this automation. The files
+  /// themselves are ingested into the knowledgebase via
+  /// `uploadKnowledgebaseDocument`; each row here records the uploaded name
+  /// plus the KB `reportId`/`s3Key` it produced.
+  documents analysisAutomationDocument[]
+
   /// One subscription per (frame, owner) — a re-subscribe updates the
   /// cadence rather than duplicating. Enforced by a partial unique index in
   /// the migration SQL (NULLS NOT DISTINCT so array/owner columns compare by
@@ -1951,6 +1971,38 @@ model analysisAutomation {
   @@index([nextRunAt])
   @@index([locationIds], type: Gin)
   @@map("analysis_automations")
+}
+
+/// A reference document attached to an automation. The file is uploaded
+/// through `uploadKnowledgebaseDocument` (staged in S3 + ingested into the KB
+/// by Dagster); this row records the uploaded file name against the automation
+/// and the content-addressed `reportId` / `s3Key` the upload produced, so the
+/// KB report it became can always be found again.
+model analysisAutomationDocument {
+  id                   String @id @default(cuid())
+  analysisAutomationId String @map("analysis_automation_id")
+
+  /// The uploaded file's original name (e.g. "sudan-dtm-round-42.pdf").
+  fileName String @map("file_name")
+
+  /// Ties back to the knowledgebase: the `manual:<sha>` report id and the S3
+  /// object the upload produced (see uploadKnowledgebaseDocument).
+  reportId String @map("report_id")
+  s3Key    String @map("s3_key")
+
+  /// Uploader (Better Auth user id), for attribution; kept as a plain column —
+  /// authoritative attribution also lives on the Dagster ingest run.
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  analysisAutomation analysisAutomation @relation(fields: [analysisAutomationId], references: [id], onDelete: Cascade)
+
+  /// Content-addressed re-uploads of the same file to the same automation
+  /// update the existing row rather than duplicating it.
+  @@unique([analysisAutomationId, reportId])
+  @@index([analysisAutomationId])
+  @@map("analysis_automation_documents")
 }
 
 enum AnalysisRequestStatus {

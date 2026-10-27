@@ -636,6 +636,12 @@ export const mutationTypeDef = gql`
       """Team to attribute the upload to. Required for a non-admin uploader
       (must be a team they belong to); optional for a global admin."""
       teamId: ID
+      """Optionally attach this upload to an analysis automation. The file is
+      ingested into the knowledgebase exactly as a normal upload; in addition
+      its name (with the resulting \`reportId\`/\`s3Key\`) is recorded against
+      the automation as a document in its reference set. The automation must
+      belong to \`teamId\` (or be system-owned and uploaded by an admin)."""
+      analysisAutomationId: ID
     ): KnowledgebaseIngestJob!
 
     # ─── Ground intel staging tier ─────────────────────────────────────
