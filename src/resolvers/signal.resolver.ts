@@ -109,14 +109,15 @@ interface UpdateSignalContentInput {
   description?: string | null;
   severity?: number;
   casualties?: number;
-  /** Structured event attributes from the shared event-classification LLM.
-   *  Absent leaves the stored value unchanged; countryIds replaces the set. */
-  startDate?: string;
-  startDateAccuracy?: DateAccuracy;
-  endDate?: string;
-  endDateAccuracy?: DateAccuracy;
-  magnitude?: number;
-  magnitudeUnit?: string;
+  /** Structured event attributes from the event-extraction LLM. Absent
+   *  (undefined) leaves the stored value unchanged; an explicit null clears a
+   *  nullable field; countryIds replaces the set ([] clears it). */
+  startDate?: string | null;
+  startDateAccuracy?: DateAccuracy | null;
+  endDate?: string | null;
+  endDateAccuracy?: DateAccuracy | null;
+  magnitude?: number | null;
+  magnitudeUnit?: string | null;
   actors?: string[];
   countryIds?: string[];
   originId?: string;
@@ -126,6 +127,35 @@ interface UpdateSignalContentInput {
   lng?: number;
   geoparsedData?: Record<string, unknown>;
   pointName?: string;
+}
+
+/** Date column from an ISO string, keeping absent (undefined) and cleared
+ *  (null) distinct — an explicit null clears, an omitted field is untouched. */
+function dateOrKeep(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined || value === null) return value;
+  return new Date(value);
+}
+
+/** `countryIds` must reference admin-0 (country) locations; throws BAD_USER_INPUT
+ *  otherwise so a state/city/point can't be attached as a "country". */
+async function assertCountryLocations(
+  prisma: Context["prisma"],
+  ids: string[] | null | undefined,
+): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const unique = [...new Set(ids)];
+  const rows = await prisma.locations.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, level: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r.level]));
+  const bad = unique.filter((id) => byId.get(id) !== 0);
+  if (bad.length > 0) {
+    throw new GraphQLError(
+      `countryIds must be admin-0 (country) locations; not a country (or not found): ${bad.join(", ")}`,
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
 }
 
 /** Resolve a signal's locationId: pass through an explicit id, or fall back
@@ -380,6 +410,7 @@ export const signalResolvers = {
         input.destinationId,
         input.locationId,
       ]);
+      await assertCountryLocations(context.prisma, input.countryIds);
 
       // Idempotent ingestion: if an externalId is provided and a signal
       // already exists for (sourceId, externalId), return it as-is. This
@@ -761,6 +792,7 @@ export const signalResolvers = {
     ) => {
       requireRole(context, ["admin", "pipeline"]);
       const { input } = args;
+      await assertCountryLocations(context.prisma, input.countryIds);
       const where = signalKeyWhere(input);
 
       // Resolved at most once: a retry must not create a second point location.
@@ -805,12 +837,13 @@ export const signalResolvers = {
             description: input.description,
             severity: input.severity,
             casualties: input.casualties,
-            startDate: input.startDate ? new Date(input.startDate) : undefined,
-            startDateAccuracy: input.startDateAccuracy ?? undefined,
-            endDate: input.endDate ? new Date(input.endDate) : undefined,
-            endDateAccuracy: input.endDateAccuracy ?? undefined,
-            magnitude: input.magnitude ?? undefined,
-            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            // Preserve explicit null (clear) vs absent (leave) for each field.
+            startDate: dateOrKeep(input.startDate),
+            startDateAccuracy: input.startDateAccuracy,
+            endDate: dateOrKeep(input.endDate),
+            endDateAccuracy: input.endDateAccuracy,
+            magnitude: input.magnitude,
+            magnitudeUnit: input.magnitudeUnit,
             actors: input.actors ?? undefined,
             originId: input.originId,
             destinationId: input.destinationId,
@@ -840,19 +873,26 @@ export const signalResolvers = {
 
         // Compare-and-set: if the drain linked or marked the row meanwhile,
         // the computed status is stale, so loop and re-read.
-        const result = await context.prisma.signals.updateMany({
-          where: { id: existing.id, revision: existing.revision, status: existing.status },
-          data,
-        });
-        if (result.count === 1) {
-          // Countries is an m2m relation (not settable via updateMany), so
-          // replace the set in a follow-up update when the caller sent it.
-          if (input.countryIds) {
-            await context.prisma.signals.update({
+        const result = await context.prisma.$transaction(async (tx) => {
+          const r = await tx.signals.updateMany({
+            where: { id: existing.id, revision: existing.revision, status: existing.status },
+            data,
+          });
+          // Countries is an m2m relation (not settable via updateMany). Replace
+          // it in the SAME transaction, gated on the revision-checked content
+          // write applying: an overlapping older update then can't write stale
+          // countries after a newer revision commits, and a failed country write
+          // rolls the content write back (so a retry — with a now-matching hash —
+          // isn't a silent no-op that drops the countries).
+          if (r.count === 1 && input.countryIds != null) {
+            await tx.signals.update({
               where: { id: existing.id },
               data: { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } },
             });
           }
+          return r;
+        });
+        if (result.count === 1) {
           return context.prisma.signals.findUnique({ where: { id: existing.id } });
         }
       }

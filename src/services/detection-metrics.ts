@@ -32,6 +32,7 @@ import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 export const EXCLUSION_REASONS = [
   "NO_INGESTED_SIGNAL",
   "NO_ONSET",
+  "COARSE_ONSET",
   "DATE_ONLY_FIRST_SIGNAL",
   "BEFORE_ONSET",
 ] as const;
@@ -51,6 +52,9 @@ const WEEK_MS = 7 * DAY_MS;
 export interface DetectionEventRow {
   /** Onset; null when none was resolved. */
   startedAt: Date | null;
+  /** Precision of `startedAt`. A coarse onset (WEEK/MONTH/YEAR) can't give a
+   *  meaningful whole-day delay, so it's excluded. Null = legacy/day-precise. */
+  startedAtAccuracy?: "DAY" | "WEEK" | "MONTH" | "YEAR" | null;
   /** `publishedAt` of its earliest live ingested Signal; null when it has none. */
   firstIngestedAt: Date | null;
   /**
@@ -148,6 +152,12 @@ export function resolveRange(input: DetectionMetricsInput, now: Date): { from: D
 export function classify(row: DetectionEventRow): Classification {
   if (!row.firstIngestedAt) return { counted: false, reason: "NO_INGESTED_SIGNAL" };
   if (!row.startedAt) return { counted: false, reason: "NO_ONSET" };
+  // A week/month/year-only onset would produce a spuriously precise day delay
+  // (e.g. an October-only onset stored as Oct 1). Legacy rows (null accuracy)
+  // stay day-precise, as before.
+  if (row.startedAtAccuracy && row.startedAtAccuracy !== "DAY") {
+    return { counted: false, reason: "COARSE_ONSET" };
+  }
   if (row.firstIngestedAt.getTime() % DAY_MS === 0) return { counted: false, reason: "DATE_ONLY_FIRST_SIGNAL" };
   const days = utcDay(row.firstIngestedAt) - utcDay(row.startedAt);
   if (days < 0) return { counted: false, reason: "BEFORE_ONSET" };
@@ -253,7 +263,8 @@ export async function fetchDetectionEvents(
         AND NOT s."isDummy"
       GROUP BY se."event_id"
     )
-    SELECT e."started_at" AS "startedAt", fi."at" AS "firstIngestedAt",
+    SELECT e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+      fi."at" AS "firstIngestedAt",
       COALESCE(fi."at", e."first_signal_created_at") AS "inRangeAt"
     FROM "events" e
     LEFT JOIN first_ingested fi ON fi."event_id" = e."id"

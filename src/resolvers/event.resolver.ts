@@ -95,10 +95,10 @@ interface UpdateEventInput {
   lastSignalCreatedAt?: string;
   startedAt?: string;
   endedAt?: string | null;
-  startedAtAccuracy?: DateAccuracy;
-  endedAtAccuracy?: DateAccuracy;
-  magnitude?: number;
-  magnitudeUnit?: string;
+  startedAtAccuracy?: DateAccuracy | null;
+  endedAtAccuracy?: DateAccuracy | null;
+  magnitude?: number | null;
+  magnitudeUnit?: string | null;
   actors?: string[];
   countryIds?: string[];
   originId?: string;
@@ -124,6 +124,15 @@ interface EventAggregatesInput {
   title?: string | null;
   description?: string | null;
   rewriteMembersHash?: string | null;
+  // Absolute writes from the pipeline recompute: null/[] clears a fact no live
+  // member supports any more.
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy | null;
+  endedAtAccuracy?: DateAccuracy | null;
+  magnitude?: number | null;
+  magnitudeUnit?: string | null;
+  actors?: string[] | null;
+  countryIds?: string[] | null;
 }
 
 /** BigInt column from its decimal-string input, keeping absent (undefined)
@@ -145,6 +154,36 @@ function bigIntOrKeep(value: string | null | undefined, field: string): bigint |
 function optionalBigInt(value: string | null | undefined, field: string): bigint | undefined {
   const trimmed = value?.trim().replace(/^\+/, "");
   return bigIntOrKeep(trimmed ? trimmed : undefined, field) ?? undefined;
+}
+
+/** Date column from an ISO string, keeping absent (undefined) and cleared
+ *  (null) distinct — so an explicit null clears, an omitted field is untouched. */
+function dateOrKeep(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined || value === null) return value;
+  return new Date(value);
+}
+
+/** `countryIds` must reference admin-0 (country) locations. Throws BAD_USER_INPUT
+ *  if any id is missing or sits at another level, so a state/city/point can't be
+ *  attached as a "country". No-op for an empty/undefined list. */
+async function assertCountryLocations(
+  prisma: Context["prisma"],
+  ids: string[] | null | undefined,
+): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const unique = [...new Set(ids)];
+  const rows = await prisma.locations.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, level: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r.level]));
+  const bad = unique.filter((id) => byId.get(id) !== 0);
+  if (bad.length > 0) {
+    throw new GraphQLError(
+      `countryIds must be admin-0 (country) locations; not a country (or not found): ${bad.join(", ")}`,
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
 }
 
 export const eventResolvers = {
@@ -316,6 +355,7 @@ export const eventResolvers = {
       // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      await assertCountryLocations(context.prisma, input.countryIds);
       // Validated before any write (point location, event row).
       const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
       const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
@@ -476,6 +516,7 @@ export const eventResolvers = {
     ) => {
       requireRole(context, ["admin", "pipeline"]);
       const { id, input, members } = args;
+      await assertCountryLocations(context.prisma, input.countryIds);
       const data = {
         severity: input.severity,
         casualties: input.casualties,
@@ -485,6 +526,16 @@ export const eventResolvers = {
         title: input.title,
         description: input.description,
         rewriteMembersHash: input.rewriteMembersHash,
+        // Absolute aggregate writes — null/[] clears a withdrawn fact.
+        endedAt: dateOrKeep(input.endedAt),
+        startedAtAccuracy: input.startedAtAccuracy,
+        endedAtAccuracy: input.endedAtAccuracy,
+        magnitude: input.magnitude,
+        magnitudeUnit: input.magnitudeUnit,
+        actors: input.actors ?? undefined,
+        ...(input.countryIds != null
+          ? { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } }
+          : {}),
       };
       const sent = new Map(members.map((m) => [m.id, m.revision]));
       // Would otherwise read as stale and be silently dropped.
@@ -552,6 +603,7 @@ export const eventResolvers = {
         existing.destinationId,
         existing.locationId,
       ]);
+      await assertCountryLocations(context.prisma, input.countryIds);
 
       // Update signal links -  ADDITIVE + IDEMPOTENT semantics. Passing
       // signalIds appends them to the event; already-linked signals are
@@ -618,16 +670,16 @@ export const eventResolvers = {
             validTo:
               input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
             startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
-            // null clears the end date ("ongoing"); omitted leaves it untouched.
-            endedAt:
-              input.endedAt === null ? null : input.endedAt ? new Date(input.endedAt) : undefined,
-            startedAtAccuracy: input.startedAtAccuracy ?? undefined,
-            endedAtAccuracy: input.endedAtAccuracy ?? undefined,
-            magnitude: input.magnitude ?? undefined,
-            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            // null clears; omitted leaves untouched. Same for the accuracy +
+            // magnitude fields — pass null through so a correction can clear them.
+            endedAt: dateOrKeep(input.endedAt),
+            startedAtAccuracy: input.startedAtAccuracy,
+            endedAtAccuracy: input.endedAtAccuracy,
+            magnitude: input.magnitude,
+            magnitudeUnit: input.magnitudeUnit,
             actors: input.actors ?? undefined,
             // Provided (even empty) → replace the country set; omitted → leave as-is.
-            ...(input.countryIds
+            ...(input.countryIds != null
               ? { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } }
               : {}),
             originId: input.originId,

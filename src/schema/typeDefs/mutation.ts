@@ -934,6 +934,15 @@ export const mutationTypeDef = gql`
     title: String
     description: String
     rewriteMembersHash: String
+    """Structured event attributes, aggregated from the live members. Absolute:
+    an explicit null / empty list clears a fact no live member supports."""
+    endedAt: String
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    magnitude: Float
+    magnitudeUnit: String
+    actors: [String!]
+    countryIds: [String!]
   }
 
   input UpdateSignalContentInput {

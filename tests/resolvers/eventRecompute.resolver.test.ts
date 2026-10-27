@@ -243,8 +243,9 @@ describe("setEventAggregates", () => {
     expect(p.events.update).toHaveBeenCalledTimes(1);
     expect(dataOf(p).data).not.toHaveProperty("validTo");
     expect(Object.keys(dataOf(p).data).sort()).toEqual([
-      "casualties", "description", "populationAffected", "populationDisplaced",
-      "rank", "rewriteMembersHash", "severity", "title",
+      "actors", "casualties", "description", "endedAt", "endedAtAccuracy",
+      "magnitude", "magnitudeUnit", "populationAffected", "populationDisplaced",
+      "rank", "rewriteMembersHash", "severity", "startedAtAccuracy", "title",
     ]);
   });
 });
