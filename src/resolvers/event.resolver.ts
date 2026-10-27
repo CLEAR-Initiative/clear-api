@@ -45,6 +45,8 @@ import {
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 
+type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
+
 interface CreateEventInput {
   title?: string;
   description?: string;
@@ -54,6 +56,13 @@ interface CreateEventInput {
   firstSignalCreatedAt: string;
   lastSignalCreatedAt: string;
   startedAt?: string;
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy;
+  endedAtAccuracy?: DateAccuracy;
+  magnitude?: number;
+  magnitudeUnit?: string;
+  actors?: string[];
+  countryIds?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -85,6 +94,13 @@ interface UpdateEventInput {
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
   startedAt?: string;
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy;
+  endedAtAccuracy?: DateAccuracy;
+  magnitude?: number;
+  magnitudeUnit?: string;
+  actors?: string[];
+  countryIds?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -396,6 +412,15 @@ export const eventResolvers = {
           firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
           startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+          endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
+          startedAtAccuracy: input.startedAtAccuracy ?? undefined,
+          endedAtAccuracy: input.endedAtAccuracy ?? undefined,
+          magnitude: input.magnitude ?? undefined,
+          magnitudeUnit: input.magnitudeUnit ?? undefined,
+          actors: input.actors ?? undefined,
+          ...(input.countryIds && input.countryIds.length > 0
+            ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
+            : {}),
           originId,
           destinationId,
           locationId,
@@ -593,6 +618,18 @@ export const eventResolvers = {
             validTo:
               input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
             startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            // null clears the end date ("ongoing"); omitted leaves it untouched.
+            endedAt:
+              input.endedAt === null ? null : input.endedAt ? new Date(input.endedAt) : undefined,
+            startedAtAccuracy: input.startedAtAccuracy ?? undefined,
+            endedAtAccuracy: input.endedAtAccuracy ?? undefined,
+            magnitude: input.magnitude ?? undefined,
+            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            actors: input.actors ?? undefined,
+            // Provided (even empty) → replace the country set; omitted → leave as-is.
+            ...(input.countryIds
+              ? { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } }
+              : {}),
             originId: input.originId,
             destinationId: input.destinationId,
             locationId: input.locationId,
@@ -1073,6 +1110,21 @@ export const eventResolvers = {
     ) => {
       if (parent.representativePoint !== undefined) return parent.representativePoint;
       return context.representativePointLoader.load(parent.id);
+    },
+    countries: (
+      parent: { id: string; countries?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      // Fast path: preloaded via a deep include. Otherwise walk the m2m,
+      // carrying the viewer's locale for translated location names.
+      if (parent.countries !== undefined) return parent.countries;
+      const include = context.locale === DEFAULT_LOCALE
+        ? undefined
+        : { translations: { where: { locale: context.locale } } };
+      return context.prisma.events
+        .findUnique({ where: { id: parent.id } })
+        .countries(include ? { include } : undefined);
     },
     alerts: (
       parent: { id: string; alerts?: unknown[] },

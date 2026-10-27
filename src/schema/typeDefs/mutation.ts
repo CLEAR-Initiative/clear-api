@@ -879,6 +879,19 @@ export const mutationTypeDef = gql`
     severity: Int
     """Reported casualties for the signal."""
     casualties: Int
+    """Structured event attributes extracted by the shared event-classification
+    LLM. Dates are ISO-8601; accuracy is one of DAY/WEEK/MONTH/YEAR."""
+    startDate: String
+    startDateAccuracy: DateAccuracy
+    endDate: String
+    endDateAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"). Null for non-disaster signals."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors. Omitted/empty for non-conflict signals."""
+    actors: [String!]
+    """Admin-0 location ids the extracted event touches (countries relation)."""
+    countryIds: [String!]
     """Media URLs (source URLs for images, videos, etc.)."""
     media: [String!]
     originId: String
@@ -944,6 +957,18 @@ export const mutationTypeDef = gql`
     description: String
     severity: Int
     casualties: Int
+    """Structured event attributes extracted by the shared event-classification
+    LLM. Absent fields leave the stored value unchanged; dates are ISO-8601."""
+    startDate: String
+    startDateAccuracy: DateAccuracy
+    endDate: String
+    endDateAccuracy: DateAccuracy
+    magnitude: Float
+    magnitudeUnit: String
+    actors: [String!]
+    """Admin-0 location ids the extracted event touches (countries relation).
+    When provided, replaces the signal's country set."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -967,6 +992,20 @@ export const mutationTypeDef = gql`
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601; null/omitted when no onset could be resolved."""
     startedAt: String
+    """ISO-8601 event end (the onset's close), distinct from validTo.
+    Null/omitted when no end is known ("ongoing")."""
+    endedAt: String
+    """Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR)."""
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"), aggregated from
+    member signals. Null for non-disaster events."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors aggregated from member signals."""
+    actors: [String!]
+    """Admin-0 location ids the event touches (countries relation)."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -1009,6 +1048,21 @@ export const mutationTypeDef = gql`
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
     startedAt: String
+    """ISO-8601 event end. Pass \`null\` to clear ("ongoing"); omit to leave
+    unchanged. The pipeline keeps the LATEST end across an event's signals."""
+    endedAt: String
+    """Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR)."""
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit, aggregated from member signals."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors aggregated from member signals. Replaces the set
+    when provided; omit to leave unchanged."""
+    actors: [String!]
+    """Admin-0 location ids the event touches (countries relation). Replaces
+    the set when provided; omit to leave unchanged."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String

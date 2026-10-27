@@ -41,6 +41,8 @@ interface CreateManualSignalInput {
   teamId?: string;
 }
 
+type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
+
 interface CreateSignalInput {
   sourceId: string;
   /** Stable upstream id for idempotent ingestion. If set and a row with
@@ -61,6 +63,16 @@ interface CreateSignalInput {
   severity?: number;
   /** Reported casualties (e.g. ACLED `fatalities`, parsed from Dataminr text). */
   casualties?: number;
+  /** Structured event attributes from the shared event-classification LLM. */
+  startDate?: string;
+  startDateAccuracy?: DateAccuracy;
+  endDate?: string;
+  endDateAccuracy?: DateAccuracy;
+  magnitude?: number;
+  magnitudeUnit?: string;
+  actors?: string[];
+  /** Admin-0 location ids the extracted event touches (countries relation). */
+  countryIds?: string[];
   /** Media URLs from source (stored directly, no S3 upload) */
   media?: string[];
   originId?: string;
@@ -97,6 +109,16 @@ interface UpdateSignalContentInput {
   description?: string | null;
   severity?: number;
   casualties?: number;
+  /** Structured event attributes from the shared event-classification LLM.
+   *  Absent leaves the stored value unchanged; countryIds replaces the set. */
+  startDate?: string;
+  startDateAccuracy?: DateAccuracy;
+  endDate?: string;
+  endDateAccuracy?: DateAccuracy;
+  magnitude?: number;
+  magnitudeUnit?: string;
+  actors?: string[];
+  countryIds?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -402,6 +424,16 @@ export const signalResolvers = {
             description: input.description,
             severity: input.severity,
             casualties: input.casualties,
+            startDate: input.startDate ? new Date(input.startDate) : undefined,
+            startDateAccuracy: input.startDateAccuracy ?? undefined,
+            endDate: input.endDate ? new Date(input.endDate) : undefined,
+            endDateAccuracy: input.endDateAccuracy ?? undefined,
+            magnitude: input.magnitude ?? undefined,
+            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            actors: input.actors ?? undefined,
+            ...(input.countryIds && input.countryIds.length > 0
+              ? { countries: { connect: input.countryIds.map((cid) => ({ id: cid })) } }
+              : {}),
             media: input.media ?? [],
             originId: input.originId,
             destinationId: input.destinationId,
@@ -773,6 +805,13 @@ export const signalResolvers = {
             description: input.description,
             severity: input.severity,
             casualties: input.casualties,
+            startDate: input.startDate ? new Date(input.startDate) : undefined,
+            startDateAccuracy: input.startDateAccuracy ?? undefined,
+            endDate: input.endDate ? new Date(input.endDate) : undefined,
+            endDateAccuracy: input.endDateAccuracy ?? undefined,
+            magnitude: input.magnitude ?? undefined,
+            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            actors: input.actors ?? undefined,
             originId: input.originId,
             destinationId: input.destinationId,
             locationId: resolvedLocationId,
@@ -806,6 +845,14 @@ export const signalResolvers = {
           data,
         });
         if (result.count === 1) {
+          // Countries is an m2m relation (not settable via updateMany), so
+          // replace the set in a follow-up update when the caller sent it.
+          if (input.countryIds) {
+            await context.prisma.signals.update({
+              where: { id: existing.id },
+              data: { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } },
+            });
+          }
           return context.prisma.signals.findUnique({ where: { id: existing.id } });
         }
       }
@@ -937,6 +984,15 @@ export const signalResolvers = {
       if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
+    },
+    countries: (
+      parent: { id: string; countries?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path: preloaded via a deep include. Otherwise walk the m2m.
+      if (parent.countries !== undefined) return parent.countries;
+      return prisma.signals.findUnique({ where: { id: parent.id } }).countries();
     },
     events: (
       parent: { id: string; signalEvents?: Array<{ event: unknown }> },
