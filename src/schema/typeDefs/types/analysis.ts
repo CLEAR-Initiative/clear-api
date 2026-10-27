@@ -137,6 +137,8 @@ export const analysisTypeDef = gql`
     eventTypes: [String!]!
     needSectors: [String!]!
     windowStart: DateTime!
+    """Display name chosen by the team. Null means the area list is the name."""
+    title: String
     cadence: String!
     teamId: String
     createdByUserId: String
@@ -145,6 +147,20 @@ export const analysisTypeDef = gql`
     nextRunAt: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!
+    """Shared discussion. Every reader of this analysis sees every comment."""
+    comments: [UserComment!]!
+    """PDFs attached as evidence for this analysis."""
+    documents: [AnalysisAutomationDocument!]!
+  }
+
+  type AnalysisAutomationDocument {
+    id: String!
+    fileName: String!
+    reportId: String!
+    s3Key: String!
+    createdAt: DateTime!
+    """Short-lived link for preview. Null when the file cannot be signed."""
+    url: String
   }
 
   input CreateAnalysisAutomationInput {
@@ -156,11 +172,15 @@ export const analysisTypeDef = gql`
     cadence: String!
     """Owning team. Omit for a system-owned automation (admin only)."""
     teamId: String
+    """Display name. Blank clears it. At most 120 characters."""
+    title: String
   }
 
   input UpdateAnalysisAutomationInput {
     cadence: String
     enabled: Boolean
+    """Display name. Blank clears it back to the area list. Omit to leave it."""
+    title: String
   }
 
   enum AnalysisRequestStatus {

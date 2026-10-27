@@ -528,6 +528,11 @@ export const queryTypeDef = gql`
     reader."""
     analysisAutomations(teamId: String, enabledOnly: Boolean): [AnalysisAutomation!]!
 
+    """One analysis automation, for its title, discussion, and evidence.
+    A content reader on the owning team, or any content reader for a
+    system-owned automation. Null when the id is unknown."""
+    analysisAutomation(id: String!): AnalysisAutomation
+
     """Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
     requests, so the generation sensor can pick them up. Admin / pipeline only."""
     pendingAnalyses(limit: Int): [AnalysisRequest!]!

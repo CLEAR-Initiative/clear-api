@@ -1,6 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireNonWorker } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireNonWorker, resolveTeamMembership } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -17,6 +17,7 @@ interface AddCommentInput {
   eventId?: string;
   signalId?: string;
   crisisId?: string;
+  analysisAutomationId?: string;
   comment: string;
   tagUserIds?: string[];
 }
@@ -25,15 +26,16 @@ function exactlyOneTarget(
   eventId: string | undefined,
   signalId: string | undefined,
   crisisId: string | undefined,
+  analysisAutomationId?: string,
 ): void {
-  const provided = [eventId, signalId, crisisId].filter(Boolean).length;
+  const provided = [eventId, signalId, crisisId, analysisAutomationId].filter(Boolean).length;
   if (provided === 0) {
-    throw new GraphQLError("Provide one of eventId, signalId, or crisisId", {
+    throw new GraphQLError("Provide one of eventId, signalId, crisisId, or analysisAutomationId", {
       extensions: { code: "BAD_USER_INPUT" },
     });
   }
   if (provided > 1) {
-    throw new GraphQLError("Provide only one of eventId, signalId, or crisisId", {
+    throw new GraphQLError("Provide only one of eventId, signalId, crisisId, or analysisAutomationId", {
       extensions: { code: "BAD_USER_INPUT" },
     });
   }
@@ -124,9 +126,22 @@ export const feedbackResolvers = {
       context: Context,
     ) => {
       const user = requireNonWorker(context);
-      const { eventId, signalId, crisisId, comment, tagUserIds } = args.input;
+      const { eventId, signalId, crisisId, analysisAutomationId, comment, tagUserIds } = args.input;
 
-      exactlyOneTarget(eventId, signalId, crisisId);
+      exactlyOneTarget(eventId, signalId, crisisId, analysisAutomationId);
+
+      if (analysisAutomationId) {
+        const automation = await context.prisma.analysisAutomation.findUnique({
+          where: { id: analysisAutomationId },
+          select: { teamId: true },
+        });
+        if (!automation) {
+          throw new GraphQLError("Analysis automation not found", { extensions: { code: "NOT_FOUND" } });
+        }
+        if (automation.teamId) {
+          await resolveTeamMembership(context.prisma, user.id, automation.teamId, user.role);
+        }
+      }
 
       const created = await context.prisma.userComments.create({
         data: {
@@ -134,6 +149,7 @@ export const feedbackResolvers = {
           eventId: eventId ?? null,
           signalId: signalId ?? null,
           crisisId: crisisId ?? null,
+          analysisAutomationId: analysisAutomationId ?? null,
           comment,
           isCommentReply: false,
         },
@@ -175,6 +191,7 @@ export const feedbackResolvers = {
           eventId: parentComment.eventId,
           signalId: parentComment.signalId,
           crisisId: parentComment.crisisId,
+          analysisAutomationId: parentComment.analysisAutomationId ?? null,
           comment,
           isCommentReply: true,
           repliedToCommentId,

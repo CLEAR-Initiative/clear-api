@@ -1168,10 +1168,12 @@ export const mutationTypeDef = gql`
   }
 
   input AddCommentInput {
-    """Provide exactly one of eventId, signalId, or crisisId."""
+    """Provide exactly one of eventId, signalId, crisisId, or analysisAutomationId."""
     eventId: String
     signalId: String
     crisisId: String
+    """Discussion on an analysis automation. Shared with everyone who can read it."""
+    analysisAutomationId: String
     comment: String!
     """User IDs to tag in the comment."""
     tagUserIds: [String!]

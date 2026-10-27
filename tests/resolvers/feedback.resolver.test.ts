@@ -271,6 +271,7 @@ describe("Mutation.addComment", () => {
       eventId: null,
       signalId: "s1",
       crisisId: null,
+      analysisAutomationId: null,
       comment: "hello",
       isCommentReply: false,
     });
@@ -358,6 +359,7 @@ describe("Mutation.replyToComment", () => {
       eventId: "e1",
       signalId: null,
       crisisId: null,
+      analysisAutomationId: null,
       comment: "re",
       isCommentReply: true,
       repliedToCommentId: "c1",

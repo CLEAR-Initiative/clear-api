@@ -108,11 +108,27 @@ interface CreateAnalysisAutomationInput {
   windowStart: Date;
   cadence: string;
   teamId?: string | null;
+  title?: string | null;
 }
 
 interface UpdateAnalysisAutomationInput {
   cadence?: string | null;
   enabled?: boolean | null;
+  title?: string | null;
+}
+
+const TITLE_MAX = 120;
+
+/** Blank becomes null. A title longer than TITLE_MAX is rejected. */
+function cleanTitle(title: string | null | undefined): string | null {
+  const value = title?.trim() ?? "";
+  if (!value) return null;
+  if (value.length > TITLE_MAX) {
+    throw new GraphQLError(`Analysis title must be ${TITLE_MAX} characters or fewer`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return value;
 }
 
 /** Cadence → milliseconds until the next run. Unknown cadences fall back to
@@ -205,6 +221,30 @@ export const analysisResolvers = {
     },
   },
 
+  AnalysisAutomation: {
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      requireContentReader(ctx);
+      return ctx.prisma.userComments.findMany({
+        where: { analysisAutomationId: parent.id },
+        orderBy: { createdAt: "asc" },
+      });
+    },
+    documents: async (parent: { id: string }, _args: unknown, ctx: Context) => {
+      requireContentReader(ctx);
+      const rows = await ctx.prisma.analysisAutomationDocument.findMany({
+        where: { analysisAutomationId: parent.id },
+        orderBy: { createdAt: "desc" },
+      });
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return Promise.all(
+        rows.map(async (row) => ({
+          ...row,
+          url: await getPresignedUrl(row.s3Key).catch(() => null),
+        })),
+      );
+    },
+  },
+
   Query: {
     // One current analysis for a frame. Bitemporal: returns the row whose
     // validity window covers `asOf` (default now). Schema version pinned if
@@ -270,6 +310,20 @@ export const analysisResolvers = {
         },
         orderBy: { createdAt: "desc" },
       });
+    },
+
+    analysisAutomation: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const row = await context.prisma.analysisAutomation.findUnique({ where: { id: args.id } });
+      if (!row) return null;
+      if (row.teamId && !isPlatformAdmin(user)) {
+        await resolveTeamMembership(context.prisma, user.id, row.teamId, user.role);
+      }
+      return row;
     },
 
     // Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand requests. The
@@ -508,6 +562,7 @@ export const analysisResolvers = {
         cadence: input.cadence,
         teamId: input.teamId ?? null,
         createdByUserId: context.user?.id ?? null,
+        title: cleanTitle(input.title),
       };
       try {
         return await context.prisma.analysisAutomation.create({ data });
@@ -529,7 +584,11 @@ export const analysisResolvers = {
           if (existing) {
             return context.prisma.analysisAutomation.update({
               where: { id: existing.id },
-              data: { cadence: data.cadence, enabled: true },
+              data: {
+                cadence: data.cadence,
+                enabled: true,
+                ...(input.title !== undefined ? { title: data.title } : {}),
+              },
             });
           }
         }
@@ -550,6 +609,7 @@ export const analysisResolvers = {
         data: {
           ...(input.cadence != null ? { cadence: input.cadence } : {}),
           ...(input.enabled != null ? { enabled: input.enabled } : {}),
+          ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
         },
       });
     },
