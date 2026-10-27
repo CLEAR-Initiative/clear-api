@@ -10,6 +10,8 @@ export const detectionMetricsTypeDef = gql`
     NO_INGESTED_SIGNAL
     """The Event has no onset date to measure from."""
     NO_ONSET
+    """The onset is only known to a week/month/year (coarse startedAtAccuracy), so a whole-day delay would be spuriously precise."""
+    COARSE_ONSET
     """The first ingested Signal has a date but no time of day (published at exactly UTC midnight)."""
     DATE_ONLY_FIRST_SIGNAL
     """The first ingested Signal is dated before the onset day: a data error."""

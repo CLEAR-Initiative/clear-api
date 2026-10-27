@@ -92,8 +92,19 @@ function makeStore(rows: Row[], links: Record<string, number> = {}) {
           return { count: 1 };
         },
       ),
+      // Used by the countries (m2m) write inside the revision-gated transaction.
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const r = state.rows.get(args.where.id);
+        if (r) Object.assign(r, args.data);
+        return r ?? null;
+      }),
     },
-    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    // Supports both the callback form ($transaction(fn)) and the array form.
+    $transaction: vi.fn(async (arg: unknown) =>
+      typeof arg === "function"
+        ? (arg as (tx: unknown) => unknown)(prisma)
+        : Promise.all(arg as Promise<unknown>[]),
+    ),
   };
   return { state, prisma };
 }

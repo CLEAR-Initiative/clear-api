@@ -72,6 +72,16 @@ enum CrisisEnrichmentStatus {
   ENRICHED
 }
 
+/// Precision of an extracted start/end date — how finely the pipeline's LLM
+/// could pin the real-world onset/close. "DAY" = exact date; coarser values
+/// mean the date is only known to the week/month/year it falls in.
+enum DateAccuracy {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
 // ─── Auth (Better Auth) ────────────────────────────────────────────────────
 
 model user {
@@ -484,11 +494,13 @@ model locations {
   signalOrigins      signals[] @relation("SignalOrigin")
   signalDestinations signals[] @relation("SignalDestination")
   signalLocations    signals[] @relation("SignalLocation")
+  signalCountries    signals[] @relation("SignalCountries")
 
   // Reverse relations for event
   eventOrigins           events[]                 @relation("EventOrigin")
   eventDestinations      events[]                 @relation("EventDestination")
   eventLocations         events[]                 @relation("EventLocation")
+  eventCountries         events[]                 @relation("EventCountries")
 
   // Reverse relation for ground thread drafts
   groundThreadDrafts groundThreads[] @relation("GroundThreadDraftLocation")
@@ -641,6 +653,25 @@ model signals {
   /// `fatalities` field directly, and parsed from raw text for Dataminr
   /// (regex: "X killed", "X dead", "X fatalities", etc.).
   casualties  Int?
+
+  /// Structured event attributes extracted from this signal by the shared
+  /// event-classification LLM (shared-event-classification-v1). Per-signal
+  /// provenance — the event-level aggregates live on `events`. Dates carry an
+  /// accuracy so a month/year-only onset isn't mistaken for an exact day.
+  startDate         DateTime?     @map("start_date")
+  startDateAccuracy DateAccuracy? @map("start_date_accuracy")
+  endDate           DateTime?     @map("end_date")
+  endDateAccuracy   DateAccuracy? @map("end_date_accuracy")
+  /// Natural-hazard magnitude + its unit (e.g. 6.4 "Mw", 120 "km/h"). Null for
+  /// non-disaster signals.
+  magnitude         Float?
+  magnitudeUnit     String?       @map("magnitude_unit")
+  /// Named actors for a conflict event (armed groups, forces). Empty for
+  /// non-conflict signals.
+  actors            String[]
+  /// Countries the extracted event touches, resolved to admin-0 `locations`
+  /// (reuses the locations relation rather than a free-text country list).
+  countries         locations[]   @relation("SignalCountries")
   /// Glide code the pipeline grouped this signal with (its first disaster
   /// type). Lets an event recompute reproduce grouping's per-signal stats
   /// fallback. Null for signals grouped before this column, or never grouped.
@@ -750,6 +781,20 @@ model events {
   /// from the signal text by the pipeline (regex → LLM fallback); null when no
   /// onset could be resolved.
   startedAt            DateTime? @map("started_at")
+  /// When the real-world event actually ENDED (its close) — distinct from
+  /// validTo (the visibility/expiry window). Null = ongoing / no known end.
+  endedAt              DateTime? @map("ended_at")
+  /// Precision of startedAt / endedAt from the shared event-classification LLM
+  /// (DAY = exact; coarser = only known to that week/month/year).
+  startedAtAccuracy    DateAccuracy? @map("started_at_accuracy")
+  endedAtAccuracy      DateAccuracy? @map("ended_at_accuracy")
+  /// Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"), aggregated from the
+  /// member signals. Null for non-disaster events.
+  magnitude            Float?
+  magnitudeUnit        String?   @map("magnitude_unit")
+  /// Named conflict actors aggregated across the member signals. Empty for
+  /// non-conflict events.
+  actors               String[]
   isDummy              Boolean  @default(false)
 
   originId       String?    @map("origin_id")
@@ -760,6 +805,10 @@ model events {
 
   locationId      String?    @map("location_id") // In case of events without origin or destination
   generalLocation locations? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
+
+  /// Countries the event touches, resolved to admin-0 `locations` (reuses the
+  /// locations relation rather than a free-text list). Aggregated from members.
+  countries locations[] @relation("EventCountries")
 
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities

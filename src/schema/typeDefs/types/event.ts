@@ -1,6 +1,16 @@
 import { gql } from "graphql-tag";
 
 export const eventTypeDef = gql`
+  """Precision of an extracted start/end date — how finely the pipeline's LLM
+  could pin the real-world onset/close. DAY = exact; coarser values mean the
+  date is only known to that week/month/year."""
+  enum DateAccuracy {
+    DAY
+    WEEK
+    MONTH
+    YEAR
+  }
+
   """An event grouping related signals into a coherent narrative."""
   type Event {
     id: String!
@@ -17,6 +27,23 @@ export const eventTypeDef = gql`
     signal text, distinct from \`validFrom\`/\`firstSignalCreatedAt\` (record +
     signal-collection times). Null when no onset could be resolved."""
     startedAt: DateTime
+    """When the real-world event actually ENDED (its close), distinct from
+    \`validTo\` (the visibility/expiry window). Null = ongoing / no known end."""
+    endedAt: DateTime
+    """Precision of \`startedAt\` (DAY = exact day; coarser = week/month/year)."""
+    startedAtAccuracy: DateAccuracy
+    """Precision of \`endedAt\`."""
+    endedAtAccuracy: DateAccuracy
+    """Natural-hazard magnitude (e.g. 6.4), aggregated from member signals.
+    Null for non-disaster events."""
+    magnitude: Float
+    """Unit for \`magnitude\` (e.g. "Mw", "km/h"). Null when no magnitude."""
+    magnitudeUnit: String
+    """Named conflict actors aggregated across member signals. Empty for
+    non-conflict events."""
+    actors: [String!]!
+    """Countries the event touches, resolved to admin-0 locations."""
+    countries: [Location!]!
     """Origin location of the event."""
     originLocation: Location
     """Destination location of the event."""

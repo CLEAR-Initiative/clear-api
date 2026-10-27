@@ -135,6 +135,7 @@ describeIfDb("time to detection against the real schema", () => {
     expect(m.exclusions).toEqual([
       { reason: "NO_INGESTED_SIGNAL", count: 2 },
       { reason: "NO_ONSET", count: 1 },
+      { reason: "COARSE_ONSET", count: 0 },
       { reason: "DATE_ONLY_FIRST_SIGNAL", count: 1 },
       { reason: "BEFORE_ONSET", count: 1 },
     ]);

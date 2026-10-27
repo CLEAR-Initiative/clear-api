@@ -41,7 +41,7 @@ function mockPrisma() {
     id: "sig-1", sourceId: "src-1", externalId: "ext-1", contentHash: "old-hash",
     lastRevisedAt: null, retracted: false, revision: 0, rawS3Key: null, status: "NEW",
   };
-  return {
+  const prisma: Record<string, unknown> = {
     signals: {
       findUnique: vi.fn(async (args: { include?: unknown }) => ({
         ...stored, ...(args.include ? { _count: { signalEvents: 0 } } : {}),
@@ -54,8 +54,16 @@ function mockPrisma() {
         }
         return { count: 1 };
       }),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(stored, data);
+        return stored;
+      }),
     },
+    $transaction: vi.fn(async (arg: unknown) =>
+      typeof arg === "function" ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as Promise<unknown>[]),
+    ),
   };
+  return prisma;
 }
 
 function buildContext(prisma: unknown, user: { id: string; role: string }): Context {

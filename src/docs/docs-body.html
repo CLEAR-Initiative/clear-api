@@ -1859,8 +1859,10 @@ discarded.<div class="field-args"><span class="arg"><code>id: String!</code></sp
 accepts or rejects each case; a rejected one stays, so its URL is never
 proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
-ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
-Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-dateaccuracy"><code>DateAccuracy</code> <span class="type-badge">enum</span></h3><p>Precision of an extracted start/end date — how finely the pipeline's LLM
+could pin the real-world onset/close. DAY = exact; coarser values mean the
+date is only known to that week/month/year.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr><tr><td><code>YEAR</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
+Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>COARSE_ONSET</code></td><td>The onset is only known to a week/month/year (coarse startedAtAccuracy), so a whole-day delay would be spuriously precise.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
 beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>event_caused</code></td><td>—</td></tr><tr><td><code>pre_existing</code></td><td>—</td></tr><tr><td><code>combined</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemethod"><code>EstimateMethod</code> <span class="type-badge">enum</span></h3><p>How a figure was arrived at (the Domain Ontology's Estimate methods).
 `not_documented` when the method is unknown, e.g. figures backfilled from
 the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
@@ -2357,6 +2359,36 @@ Ignored for platform-level callers.</td>
     <td>When the real-world event started (onset), parsed from signal text.
 ISO-8601; null/omitted when no onset could be resolved.</td>
   </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>ISO-8601 event end (the onset's close), distinct from validTo.
+Null/omitted when no end is known (&quot;ongoing&quot;).</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit (e.g. 6.4 &quot;Mw&quot;), aggregated from
+member signals. Null for non-disaster events.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors aggregated from member signals.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the event touches (countries relation).</td>
+  </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -2628,6 +2660,39 @@ for sources not yet landing in the lake.</td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal.</td>
   </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes extracted by the shared event-classification
+LLM. Dates are ISO-8601; accuracy is one of DAY/WEEK/MONTH/YEAR.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit (e.g. 6.4 &quot;Mw&quot;). Null for non-disaster signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors. Omitted/empty for non-conflict signals.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the extracted event touches (countries relation).</td>
+  </tr><tr>
     <td><code>media</code></td>
     <td><code>[String!]</code></td>
     <td>Media URLs (source URLs for images, videos, etc.).</td>
@@ -2797,6 +2862,35 @@ left unchanged; explicit nulls clear them.</p><table class="ref-table"><thead><t
   </tr><tr>
     <td><code>rewriteMembersHash</code></td>
     <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes, aggregated from the live members. Absolute:
+an explicit null / empty list clears a fact no live member supports.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventspageinput"><code>EventsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
@@ -3524,6 +3618,37 @@ ignored, so an out-of-order signal can't pull it back.</td>
     <td>When the real-world event started (onset), parsed from signal text.
 ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>ISO-8601 event end. Pass `null` to clear (&quot;ongoing&quot;); omit to leave
+unchanged. The pipeline keeps the LATEST end across an event's signals.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit, aggregated from member signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors aggregated from member signals. Replaces the set
+when provided; omit to leave unchanged.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the event touches (countries relation). Replaces
+the set when provided; omit to leave unchanged.</td>
+  </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -3709,6 +3834,40 @@ leaves it unchanged; a change alone is metadata-only (no revision bump).</td>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes extracted by the shared event-classification
+LLM. Absent fields leave the stored value unchanged; dates are ISO-8601.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the extracted event touches (countries relation).
+When provided, replaces the signal's country set.</td>
   </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
@@ -5333,6 +5492,37 @@ under, e.g. `0.3.0`.</td>
     <td>When the real-world event actually STARTED (its onset) — parsed from the
 signal text, distinct from `validFrom`/`firstSignalCreatedAt` (record +
 signal-collection times). Null when no onset could be resolved.</td>
+  </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the real-world event actually ENDED (its close), distinct from
+`validTo` (the visibility/expiry window). Null = ongoing / no known end.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `startedAt` (DAY = exact day; coarser = week/month/year).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `endedAt`.</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude (e.g. 6.4), aggregated from member signals.
+Null for non-disaster events.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>Unit for `magnitude` (e.g. &quot;Mw&quot;, &quot;km/h&quot;). Null when no magnitude.</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Named conflict actors aggregated across member signals. Empty for
+non-conflict events.</td>
+  </tr><tr>
+    <td><code>countries</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Countries the event touches, resolved to admin-0 locations.</td>
   </tr><tr>
     <td><code>originLocation</code></td>
     <td><code>Location</code></td>
@@ -7178,6 +7368,40 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
 field; for Dataminr, parsed from raw text via regex.</td>
+  </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>DateTime</code></td>
+    <td>Real-world event onset extracted from this signal by the shared
+event-classification LLM. Null when no onset was resolved.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `startDate` (DAY = exact day; coarser = week/month/year).</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>DateTime</code></td>
+    <td>Real-world event close extracted from this signal. Null = ongoing/unknown.</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `endDate`.</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude (e.g. 6.4). Null for non-disaster signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>Unit for `magnitude` (e.g. &quot;Mw&quot;, &quot;km/h&quot;). Null when no magnitude.</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Named conflict actors extracted from this signal. Empty for
+non-conflict signals.</td>
+  </tr><tr>
+    <td><code>countries</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Countries the extracted event touches, resolved to admin-0 locations.</td>
   </tr><tr>
     <td><code>glideCode</code></td>
     <td><code>String</code></td>
