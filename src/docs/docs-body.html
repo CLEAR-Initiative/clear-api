@@ -1600,7 +1600,11 @@ given) the team are attributed onto the Dagster ingest run. Omit
 belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
 S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
 of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>teamId: ID</code> — Team to attribute the upload to. Required for a non-admin uploader
-(must be a team they belong to); optional for a global admin.</span></div></td>
+(must be a team they belong to); optional for a global admin.</span><span class="arg"><code>analysisAutomationId: ID</code> — Optionally attach this upload to an analysis automation. The file is
+ingested into the knowledgebase exactly as a normal upload; in addition
+its name (with the resulting `reportId`/`s3Key`) is recorded against
+the automation as a document in its reference set. The automation must
+belong to `teamId` (or be system-owned and uploaded by an admin).</span></div></td>
   </tr><tr id="mutation-creategroundsource">
     <td><code>createGroundSource</code></td>
     <td><code>GroundSource!</code></td>
