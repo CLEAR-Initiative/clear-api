@@ -873,25 +873,34 @@ export const signalResolvers = {
 
         // Compare-and-set: if the drain linked or marked the row meanwhile,
         // the computed status is stale, so loop and re-read.
-        const result = await context.prisma.$transaction(async (tx) => {
-          const r = await tx.signals.updateMany({
-            where: { id: existing.id, revision: existing.revision, status: existing.status },
-            data,
-          });
-          // Countries is an m2m relation (not settable via updateMany). Replace
-          // it in the SAME transaction, gated on the revision-checked content
-          // write applying: an overlapping older update then can't write stale
-          // countries after a newer revision commits, and a failed country write
-          // rolls the content write back (so a retry — with a now-matching hash —
-          // isn't a silent no-op that drops the countries).
-          if (r.count === 1 && input.countryIds != null) {
-            await tx.signals.update({
-              where: { id: existing.id },
-              data: { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } },
-            });
-          }
-          return r;
-        });
+        //
+        // Countries is an m2m relation (not settable via updateMany). When the
+        // caller sends it, the content updateMany + the countries set run in ONE
+        // transaction so an overlapping older update can't land stale countries
+        // after a newer revision commits, and a failed country write rolls the
+        // content write back (no silent no-op on a hash-matching retry). When no
+        // countries are sent (the common path, incl. the drain), the plain
+        // updateMany keeps the compare-and-set exactly as before.
+        const countryIds = input.countryIds;
+        const result =
+          countryIds != null
+            ? await context.prisma.$transaction(async (tx) => {
+                const r = await tx.signals.updateMany({
+                  where: { id: existing.id, revision: existing.revision, status: existing.status },
+                  data,
+                });
+                if (r.count === 1) {
+                  await tx.signals.update({
+                    where: { id: existing.id },
+                    data: { countries: { set: countryIds.map((cid) => ({ id: cid })) } },
+                  });
+                }
+                return r;
+              })
+            : await context.prisma.signals.updateMany({
+                where: { id: existing.id, revision: existing.revision, status: existing.status },
+                data,
+              });
         if (result.count === 1) {
           return context.prisma.signals.findUnique({ where: { id: existing.id } });
         }
