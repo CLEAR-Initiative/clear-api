@@ -2,17 +2,25 @@
 
 > **Important**: Read `CLAUDE.md` for full project context, especially the **Database Architecture** section before making any database or Prisma changes.
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **[Exponential](https://www.exponential.im)** for issue tracking (workspace `clear`, product `clear`). Full conventions — ticket types, statuses, triage mapping, feature/PRD flow — live in [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+
+The `.beads/` directory is a leftover from the previous tracker (beads / `bd`). It is unmaintained — don't file or update work there.
 
 ## Quick Reference
 
+Agents must call the CLI with their own service-account home (`<agent>` is `claude` or `codex`). Without the `HOME=` prefix the call authenticates as James's personal account and every write is misattributed to him.
+
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+HOME=~/.config/agent-homes/<agent> exponential auth whoami                                    # Verify identity before writing
+HOME=~/.config/agent-homes/<agent> exponential tickets list --product clear --status READY_TO_PLAN  # Find available work
+HOME=~/.config/agent-homes/<agent> exponential tickets get <ticket-cuid>                      # View ticket details
+HOME=~/.config/agent-homes/<agent> exponential tickets update --id <ticket-cuid> --status IN_PROGRESS  # Claim work
+HOME=~/.config/agent-homes/<agent> exponential tickets update --id <ticket-cuid> --status QA  # Hand off for review
 ```
+
+`/start-ticket` and `/ship-ticket` bookend work on a ticket.
+
+When mentioning a ticket in chat, commits, PR bodies, or docs, deep-link it: `https://www.exponential.im/w/clear/products/clear/tickets/<number>`, where `<number>` is the ticket's `number` field (not its cuid). Never link to the bare `.../tickets` list page.
 
 ## Landing the Plane (Session Completion)
 
@@ -20,13 +28,12 @@ bd sync               # Sync with git
 
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
+1. **File tickets for remaining work** - Create Exponential tickets for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
+3. **Update ticket status** - Move finished work to `QA`, update in-progress tickets
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -39,4 +46,3 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-
