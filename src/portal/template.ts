@@ -1113,19 +1113,92 @@ export function safePortalNext(raw?: string | null): string {
   return `${pathname}${search}${hash}`;
 }
 
+/** Contribution areas, in the order the Welcome page form lists them. */
+const CONTRIBUTION_AREAS = [
+  "Frontend",
+  "API",
+  "Data pipeline and LLMs",
+  "Data and domain expertise",
+  "Docs",
+] as const;
+
+/**
+ * The pitch beside Create Account: what CLEAR is, where a contributor can
+ * help, and what happens after sign-up. Copy is borrowed from the home
+ * page hero and the Welcome page so the three stay in step; styling uses
+ * the same marketing theme and hero classes as the home page.
+ */
+function renderContributorPitch(): string {
+  return `<section class="pitch" aria-labelledby="pitch-title">
+    <span class="pill"><span class="dot"></span> Contribute &middot; Alpha &middot; Live in Sudan</span>
+    <h2 id="pitch-title">Help build the <span class="accent">humanitarian data commons.</span></h2>
+    <p class="lead"><strong>CLEAR</strong> is NRC&rsquo;s open early-warning platform: verified crisis signals, events, and alerts behind one GraphQL API. We&rsquo;re looking for contributors.</p>
+    <p class="eyebrow">Where you can help</p>
+    <ul class="pitch-areas">
+      ${CONTRIBUTION_AREAS.map((a) => `<li>${a}</li>`).join("")}
+    </ul>
+    <p class="eyebrow">What happens next</p>
+    <ol class="pitch-steps">
+      <li><span class="n">1</span><span>Create your account. It takes a minute.</span></li>
+      <li><span class="n">2</span><span>Tell us what you&rsquo;d like to work on.</span></li>
+      <li><span class="n">3</span><span>A maintainer gets in touch, and you&rsquo;ll get an email when your API access is approved.</span></li>
+    </ol>
+    <p class="pitch-foot">Open source &middot; MIT &middot; <a href="https://github.com/CLEAR-Initiative" target="_blank" rel="noopener noreferrer">github.com/CLEAR-Initiative</a></p>
+  </section>`;
+}
+
+function renderContributorPitchStyles(): string {
+  return `<style>
+    /* Contributor pitch: same tokens and hero styling as the home page. */
+    body { padding: 2rem; }
+    .auth-layout { display: grid; grid-template-columns: minmax(0, 30rem) 380px; gap: 4rem; align-items: center; max-width: 100%; }
+    .auth-layout:not([data-form="register"]) { grid-template-columns: 380px; }
+    .auth-layout:not([data-form="register"]) .pitch { display: none; }
+    .auth-layout .card { max-width: 100%; }
+    .pill { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-muted); border: 1px solid var(--color-border); border-radius: 999px; padding: 0.35rem 0.8rem; }
+    .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 3px rgba(242,97,42,0.18); }
+    .pitch h2 { font-size: 2.4rem; font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; margin: 1.25rem 0 1.1rem; }
+    .pitch h2 .accent { color: var(--color-accent); }
+    .pitch .lead { font-size: 1rem; line-height: 1.6; color: var(--color-muted); margin-bottom: 1.75rem; }
+    .pitch .lead strong { color: var(--color-text); font-weight: 600; }
+    .pitch .eyebrow { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-label); margin-bottom: 0.7rem; }
+    .pitch-areas { list-style: none; display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 1.6rem; }
+    .pitch-areas li { font-size: 0.8rem; color: var(--color-text); border: 1px solid var(--color-border-2); border-radius: 999px; padding: 0.25rem 0.75rem; }
+    .pitch-steps { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.6rem; }
+    .pitch-steps li { display: flex; gap: 0.75rem; align-items: baseline; font-size: 0.9rem; line-height: 1.5; color: var(--color-muted); }
+    .pitch-steps .n { flex: 0 0 1.5rem; height: 1.5rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-accent); background: var(--color-accent-soft); border: 1px solid rgba(242,97,42,0.35); transform: translateY(-0.1rem); }
+    .pitch-foot { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-label); }
+    .pitch-foot a { color: var(--color-muted); }
+    .pitch-foot a:hover { color: var(--color-accent); }
+    @media (max-width: 900px) {
+      body { align-items: flex-start; padding: 1.5rem 1rem 2.5rem; }
+      .auth-layout, .auth-layout:not([data-form="register"]) { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; width: 100%; max-width: 30rem; }
+      .auth-layout:not([data-form="register"]) { margin-top: 15vh; }
+      .pitch h2 { font-size: 1.85rem; margin: 1rem 0 0.75rem; }
+      .pitch .lead { font-size: 0.92rem; margin-bottom: 1.25rem; }
+      .pitch-steps { margin-bottom: 0; }
+      .pitch-foot { display: none; }
+      .auth-layout .card { width: 100%; padding: 1.5rem; }
+    }
+  </style>`;
+}
+
 export function renderLoginPage(opts?: { next?: string }): string {
   const nextJson = JSON.stringify(safePortalNext(opts?.next));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   ${renderAuthPageHead({ title: "Developer Portal &mdash; Create Account" })}
+  ${renderContributorPitchStyles()}
 </head>
 <body>
+  <div class="auth-layout" id="auth-layout" data-form="register">
+  ${renderContributorPitch()}
   <div class="card">
     <!-- Register first — first-time visitors need an account more often than a sign-in. -->
     <div id="register-form">
-      <h1>Create Account</h1>
-      <p>Sign up to get started with the API.</p>
+      <h1>Join as a contributor</h1>
+      <p>Free and open source. API access follows once you're approved.</p>
       <label for="register-name">Name</label>
       <input type="text" id="register-name" autocomplete="name" placeholder="Your name">
       <label for="register-email">Email</label>
@@ -1162,10 +1235,13 @@ export function renderLoginPage(opts?: { next?: string }): string {
       <div class="toggle"><a href="#" onclick="showForm('signin'); return false;">Back to sign in</a></div>
     </div>
   </div>
+  </div>
   <script>
     var LOGIN_NEXT = ${nextJson};
 
     function showForm(name) {
+      // The contributor pitch only sits beside Create Account.
+      document.getElementById('auth-layout').setAttribute('data-form', name);
       ['signin', 'register', 'forgot'].forEach(function (form) {
         document.getElementById(form + '-form').style.display = form === name ? 'block' : 'none';
       });
