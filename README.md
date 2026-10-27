@@ -15,20 +15,22 @@ flowchart LR
     P["clear-pipeline<br/>(Python, Dagster)<br/>ingest + LLM classification<br/>ReliefWeb PDFs to knowledge base"]
     A["clear-api<br/>(this repo)<br/>GraphQL + PostgreSQL/PostGIS"]
     M["clear-mvp<br/>(Next.js)<br/>web app for NRC teams"]
-    P -- "GraphQL mutations" --> A
+    P -- "GraphQL mutations,<br/>REST ingest routes" --> A
     M -- "GraphQL queries and mutations" --> A
 ```
 
 | Repo | Role |
 | --- | --- |
-| [clear-pipeline](https://github.com/CLEAR-Initiative/clear-pipeline) | Ingests signals (Dataminr and other sources), classifies them with LLMs, and turns ReliefWeb PDFs into knowledge-base entries. Writes everything through this API. |
+| [clear-pipeline](https://github.com/CLEAR-Initiative/clear-pipeline) | Ingests signals (Dataminr and other sources), classifies them with LLMs, and turns ReliefWeb PDFs into knowledge-base entries. Writes everything through this API (GraphQL mutations and REST ingest routes). |
 | **clear-api** (this repo) | The single source of truth. Owns the database schema (`prisma/schema.prisma`), authentication, and the GraphQL API. |
 | [clear-mvp](https://github.com/CLEAR-Initiative/clear-mvp) | The web application used by NRC teams in Sudan, Afghanistan and Venezuela. Reads and writes through this API. |
 
 Two rules follow from this:
 
-- **Pipelines never write to the database directly.** Every write goes through a GraphQL mutation,
-  authenticated as a service user (see [Service users](#service-users)).
+- **Pipelines never write to the database directly.** Every write goes through this API, as a
+  GraphQL mutation or through one of the REST ingest and upload routes under `/api` (for example
+  `/api/x/ingest`, `/api/ground/ingest`, `/api/upload`), authenticated as a service user (see
+  [Service users](#service-users)). Check `src/routes/` before adding a mutation for bulk ingest.
 - **`prisma/schema.prisma` is the domain schema.** A change to what CLEAR stores starts here, with a
   Prisma migration.
 
@@ -102,10 +104,12 @@ The server listens on `http://localhost:4000`:
 | `/portal` | Developer Portal: API keys, account, and the admin console at `/portal/admin` |
 | `/health`, `/health/ready` | Liveness, and readiness (checks Postgres) |
 
-`bun run seed` loads locations, disaster types, data sources, demo organisations and demo accounts,
-including a global admin from `ADMIN_EMAIL` / `ADMIN_PASSWORD`. It **deletes existing signals,
-events, alerts, organisations and related rows first** (users, sessions and API keys are kept), so
-run it only on a local database. `bun run prisma/seed.ts --locations` seeds locations alone.
+`bun run seed` loads sample locations, disaster types, data sources, demo organisations and demo
+accounts, including a global admin from `ADMIN_EMAIL` / `ADMIN_PASSWORD`. It **deletes existing
+locations, signals, events, alerts, organisations and related rows first** (users, sessions and API
+keys are kept), so run it only on a disposable local database. `bun run prisma/seed.ts --locations`
+also **deletes all existing locations** and replaces them with the sample set; it does not top up a
+populated database.
 
 New sign-ups land with role `pending` and see nothing until an admin approves them at
 `/portal/admin`.
