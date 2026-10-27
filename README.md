@@ -111,8 +111,9 @@ keys are kept), so run it only on a disposable local database. `bun run prisma/s
 also **deletes all existing locations** and replaces them with the sample set; it does not top up a
 populated database.
 
-New sign-ups land with role `pending` and see nothing until an admin approves them at
-`/portal/admin`.
+New sign-ups land with role `pending` on the Welcome page (`/portal/welcome`), where they can tell
+us about themselves; API keys stay locked until an admin approves them at `/portal/admin`. Set
+`SIGNUP_NOTIFY_EMAILS` to have maintainers emailed about each sign-up.
 
 ### Test
 

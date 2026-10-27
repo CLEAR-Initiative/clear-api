@@ -89,6 +89,80 @@ describe("Portal Shell", () => {
       expect(html).toMatch(/href="\/portal#api-keys"/);
     });
 
+    describe("Welcome item", () => {
+      const menuOf = (html: string) =>
+        html.match(/Menu<\/div>([\s\S]*?)<div class="nav-section">Resources/)![1];
+
+      it.each(["portal", "docs", "admin", "welcome"] as const)(
+        "is first in Menu for signed-in users on the %s surface",
+        (surface) => {
+          for (const role of ["pending", "member", "admin"]) {
+            const menu = menuOf(
+              renderPortalShell({ surface, account: { email: "a@b.dev", role } }),
+            );
+            const welcome = menu.indexOf('href="/portal/welcome"');
+            expect(welcome).toBeGreaterThan(-1);
+            expect(welcome).toBeLessThan(menu.indexOf("Getting Started"));
+          }
+        },
+      );
+
+      it.each(["portal", "docs"] as const)("is hidden from anonymous visitors (%s)", (surface) => {
+        const html = renderPortalShell({ surface, account: null });
+        expect(html).not.toContain("/portal/welcome");
+        expect(html).not.toContain(">Welcome<");
+      });
+
+      it("is marked current on the Welcome page", () => {
+        const html = renderPortalShell({
+          surface: "welcome",
+          account: { email: "a@b.dev", role: "pending" },
+          activeHref: "/portal/welcome",
+        });
+        expect(html).toMatch(/href="\/portal\/welcome" class="nav-item nav-item--link active"[^>]*aria-current="page"/);
+      });
+    });
+
+    describe("pending approval", () => {
+      it.each(["portal", "welcome"] as const)(
+        "locks API Keys and Usage Analytics but keeps them visible (%s)",
+        (surface) => {
+          const html = renderPortalShell({
+            surface,
+            account: { email: "a@b.dev", role: "pending" },
+          });
+          const locked = html.match(/<div class="nav-item nav-item--locked"[\s\S]*?<\/div>/g) ?? [];
+          expect(locked).toHaveLength(2);
+          expect(locked[0]).toContain("API Keys");
+          expect(locked[1]).toContain("Usage Analytics");
+          for (const item of locked) {
+            expect(item).toContain('aria-disabled="true"');
+            expect(item).toContain("Available once your account is approved");
+          }
+          // Not reachable as a tab or link
+          expect(html).not.toContain('data-tab="api-keys"');
+          expect(html).not.toContain('href="/portal#api-keys"');
+          expect(html).not.toContain('data-tab="usage-analytics"');
+          expect(html).not.toContain('href="/portal#usage-analytics"');
+        },
+      );
+
+      it("leaves the public items as they are for anonymous visitors", () => {
+        const pending = renderPortalShell({ surface: "welcome", account: { email: "a@b.dev", role: "pending" } });
+        for (const href of ['href="/portal#getting-started"', 'href="/portal#reference"', 'href="/docs"', 'href="/graphql"']) {
+          expect(pending).toContain(href);
+        }
+      });
+
+      it("does not lock anything for approved users or anonymous visitors", () => {
+        for (const account of [null, { email: "a@b.dev", role: "member" }]) {
+          const html = renderPortalShell({ surface: "docs", account });
+          expect(html).not.toContain("nav-item--locked");
+          expect(html).toContain('href="/portal#api-keys"');
+        }
+      });
+    });
+
     it("renders mobile drawer controls", () => {
       const html = renderPortalShell({
         surface: "docs",

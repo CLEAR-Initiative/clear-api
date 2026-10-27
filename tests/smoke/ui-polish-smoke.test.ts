@@ -20,8 +20,8 @@ import {
   renderLoginPage,
   renderPortal,
   renderResetPasswordPage,
-  renderWaitingForApproval,
 } from "../../src/portal/template.js";
+import { renderWelcomePage, welcomeFormValues } from "../../src/portal/welcome.js";
 
 function cssBlock(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -162,14 +162,20 @@ describe("UI polish smoke", () => {
       expect(html).toContain('href="/portal"');
     });
 
-    it("pending-approval page can sign out", () => {
-      const html = renderWaitingForApproval({ userEmail: "new@example.com" });
+    it("pending Welcome page sits in the portal shell and can sign out", () => {
+      const html = renderWelcomePage({
+        account: { email: "new@example.com", role: "pending" },
+        name: "Ada",
+        values: welcomeFormValues("Ada", null),
+        hasProfile: false,
+      });
       assertSharedChrome(html);
       expect(html).toContain("new@example.com");
       expect(html).toContain("/api/auth/sign-out");
-      expect(html).toContain("Sign out");
-      expect(html).toContain('class="docs-link"');
+      expect(html).toContain("Sign Out");
       expect(html).toContain('href="/docs"');
+      expect(html).toContain("toggleSidebar");
+      expect(html).toContain("Welcome to CLEAR, Ada.");
     });
 
     it("anonymous portal keeps public tabs and a sign-in CTA", () => {

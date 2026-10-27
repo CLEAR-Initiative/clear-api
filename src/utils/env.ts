@@ -30,7 +30,7 @@ const optionalUrl = () =>
  * with no way for the recipient to guess the working URL.
  *
  * Normalising here rather than at each call site means a stray path
- * can't reach `buildResetUrl`, `portalLoginUrl`, or Better Auth's own
+ * can't reach `buildResetUrl`, `portalWelcomeUrl`, or Better Auth's own
  * `baseURL`. The warning keeps the bad value visible so it still gets
  * fixed at source.
  *
@@ -144,6 +144,15 @@ const envSchema = z.object({
   /** Collection id holding admin-approved contacts. The approval action
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
+
+  // ─── Developer sign-up notifications ─────────────────────────────
+  /** Comma-separated addresses told about every new Developer Portal
+   *  sign-up, and again when that Developer first fills in the Welcome
+   *  page. Empty (the default) sends nothing. */
+  SIGNUP_NOTIFY_EMAILS: z
+    .string()
+    .default("")
+    .transform((s) => [...new Set(s.split(",").map((e) => e.trim()).filter(Boolean))]),
 
   // Buttondown newsletter — optional; powers the subscriber count on
   // `/portal/admin`. Absent in dev → dashboard shows "not configured".

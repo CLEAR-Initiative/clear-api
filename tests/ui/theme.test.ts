@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { renderAuthPageStyles, renderWaitingPageStyles } from "../../src/ui/auth-page.js";
+import { renderAuthPageStyles } from "../../src/ui/auth-page.js";
 import {
   renderThemeRoot,
   THEMES,
 } from "../../src/ui/theme.js";
-import { renderLoginPage, renderWaitingForApproval } from "../../src/portal/template.js";
+import { renderLoginPage } from "../../src/portal/template.js";
 import { renderPortalShellStyles } from "../../src/portal/shell.js";
 import { renderHomePage } from "../../src/home/template.js";
 
@@ -29,16 +29,12 @@ describe("shared UI themes", () => {
 });
 
 describe("auth + home surfaces consume the shared theme", () => {
-  it("login and waiting use marketing tokens, not hardcoded accent hex in CSS", () => {
+  it("login uses marketing tokens, not hardcoded accent hex in CSS", () => {
     const login = renderLoginPage();
-    const waiting = renderWaitingForApproval({ userEmail: "a@b.dev" });
     const authCss = renderAuthPageStyles();
-    const waitingCss = renderWaitingPageStyles();
 
     expect(authCss).toContain("--color-accent: #f2612a");
     expect(login).toContain("var(--color-accent)");
-    expect(waitingCss).toContain("--color-accent: #f2612a");
-    expect(waiting).toContain("var(--color-warning)");
     expect(login).not.toMatch(/input:focus \{[^}]*#f2612a/);
   });
 

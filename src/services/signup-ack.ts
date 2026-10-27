@@ -9,9 +9,10 @@ import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "./messaging/index.js";
 
 /** `env.BETTER_AUTH_URL` is normalised to a bare origin on load, so this
- *  concatenation can't inherit a stray path and 404. */
-export function portalLoginUrl(): string {
-  return `${env.BETTER_AUTH_URL}/portal/login`;
+ *  concatenation can't inherit a stray path and 404. A signed-out visitor
+ *  is bounced through /portal/login and lands back here. */
+export function portalWelcomeUrl(): string {
+  return `${env.BETTER_AUTH_URL}/portal/welcome`;
 }
 
 export async function sendSignupAcknowledgement(input: {
@@ -20,7 +21,7 @@ export async function sendSignupAcknowledgement(input: {
 }): Promise<void> {
   const content = templates.signupAcknowledgement(
     input.name ?? "",
-    portalLoginUrl(),
+    portalWelcomeUrl(),
   );
 
   try {

@@ -47,20 +47,3 @@ export function renderAuthPageHead(opts: {
   ${renderFontLinks()}
   ${renderAuthPageStyles({ prose: opts.prose })}`;
 }
-
-export function renderWaitingPageStyles(): string {
-  return `<style>
-    ${renderThemeRoot("marketing")}
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font); background: var(--color-bg); color: var(--color-text); line-height: 1.6; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-    .card { max-width: 480px; width: 100%; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 2.5rem; text-align: center; }
-    .badge { display: inline-block; padding: 0.3rem 0.75rem; border-radius: 999px; background: #2a1f0a; color: var(--color-warning); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 1.25rem; }
-    h1 { font-size: 1.4rem; margin-bottom: 0.75rem; }
-    p { color: var(--color-muted); font-size: 0.95rem; margin-bottom: 1rem; }
-    .email { color: var(--color-text); font-weight: 500; }
-    .signout { margin-top: 1.5rem; display: inline-block; color: var(--color-muted); font-size: 0.85rem; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: var(--font); }
-    .signout:hover { color: var(--color-text); }
-    .docs-link { color: var(--color-accent); text-decoration: underline; }
-    .docs-link:hover { color: var(--color-text); }
-  </style>`;
-}

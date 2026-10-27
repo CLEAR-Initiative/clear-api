@@ -515,45 +515,161 @@ If you did not request this, you can safely ignore this email. Your password wil
 
 /**
  * Acknowledgement sent immediately after self-signup on the Developer
- * Portal. CLEAR-branded (not Exponential). Access stays locked until an
- * admin approves the account.
+ * Portal. CLEAR-branded (not Exponential). Wording mirrors the Portal's
+ * Welcome page (`/portal/welcome`), which is where the CTA lands: API
+ * access stays locked until an admin approves the account.
  */
 export function signupAcknowledgement(
   userName: string,
-  portalLoginUrl: string,
+  welcomeUrl: string,
 ): EmailContent {
   const displayName = userName?.trim() || "there";
+  const safeName = escapeHtml(displayName);
 
   return {
-    subject: "Thanks — we've received your CLEAR API signup",
+    subject: "Welcome to CLEAR — your API access is requested",
 
     textBody: `Hi ${displayName},
 
-Thanks for signing up for the CLEAR API. We've received your details and an administrator will review your access shortly. You'll get another email when your account is approved.
+Welcome to CLEAR. We've automatically requested API key access for your account. You'll get an email as soon as it's approved.
 
-You can sign in at ${portalLoginUrl}, but API data stays locked until approval.
+The CLEAR maintainer has been told you've signed up and will get in touch about contributing.
+
+In the meantime, tell us a bit about yourself, and especially what kind of contribution you'd like to make. It helps us point you at the right work:
+
+${welcomeUrl}
 
 Best,
 The CLEAR team`,
 
     htmlBody: wrapHtml(
-      "Signup received",
+      "Welcome to CLEAR",
       `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
-        Hi ${displayName},
+        Hi ${safeName},
       </p>
       <p style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5;">
-        Thanks for signing up for the CLEAR API. We've received your details and an administrator will review your access shortly. You'll get another email when your account is approved.
+        Welcome to CLEAR. We've automatically requested API key access for your account. You'll get an email as soon as it's approved.
+      </p>
+      <p style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5;">
+        The CLEAR maintainer has been told you've signed up and will get in touch about contributing.
       </p>
       <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
-        You can sign in now, but API data stays locked until approval.
+        In the meantime, tell us a bit about yourself, and especially what kind of contribution you'd like to make. It helps us point you at the right work.
       </p>
-      ${ctaButton("Sign in to the Developer Portal", portalLoginUrl)}
+      ${ctaButton("Tell us about yourself", welcomeUrl)}
       <p style="margin: 0; font-size: 12px; color: #737373; word-break: break-all; line-height: 1.4;">
-        ${portalLoginUrl}
+        ${welcomeUrl}
       </p>
       <p style="margin: 24px 0 0; font-size: 15px; color: #171717; line-height: 1.5;">
         Best,<br />The CLEAR team
       </p>`,
+    ),
+  };
+}
+
+/** Strip CR/LF so a user-supplied name can't fold into a new mail header. */
+function headerSafe(text: string): string {
+  return text.replace(/[\r\n]+/g, " ").trim();
+}
+
+/**
+ * Tells CLEAR maintainers (`SIGNUP_NOTIFY_EMAILS`) that someone has just
+ * registered on the Developer Portal, with a link to the admin Users tab
+ * where they approve them.
+ */
+export function maintainerSignupNotification(
+  userName: string,
+  userEmail: string,
+  adminUsersUrl: string,
+): EmailContent {
+  const name = headerSafe(userName) || "(no name)";
+  const email = headerSafe(userEmail);
+
+  return {
+    subject: `New developer sign-up: ${name} <${email}>`,
+
+    textBody: `${name} <${email}> just signed up on the CLEAR Developer Portal. Their account is pending approval.
+
+Review and approve them here:
+${adminUsersUrl}
+
+You'll get a second email if they tell us about themselves on the Welcome page.`,
+
+    htmlBody: wrapHtml(
+      "New developer sign-up",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        <strong>${escapeHtml(name)}</strong> &lt;${escapeHtml(email)}&gt; just signed up on the CLEAR Developer Portal. Their account is pending approval.
+      </p>
+      ${ctaButton("Review pending users", adminUsersUrl)}
+      <p style="margin: 0; font-size: 12px; color: #737373; line-height: 1.5;">
+        You'll get a second email if they tell us about themselves on the Welcome page.
+      </p>`,
+    ),
+  };
+}
+
+/** Profile fields a Developer submits on the Portal Welcome page. */
+export interface DeveloperProfileDetails {
+  personalWebsite: string | null;
+  organisation: string | null;
+  organisationWebsite: string | null;
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  contributionInterest: string | null;
+}
+
+const PROFILE_DETAIL_LABELS: Array<[keyof DeveloperProfileDetails, string]> = [
+  ["organisation", "Organisation"],
+  ["organisationWebsite", "Organisation website"],
+  ["personalWebsite", "Personal website"],
+  ["linkedinUrl", "LinkedIn"],
+  ["githubUrl", "GitHub"],
+  ["contributionInterest", "Would like to contribute"],
+];
+
+/**
+ * Sent to `SIGNUP_NOTIFY_EMAILS` the first time a Developer submits the
+ * Welcome page form. Every value is user-supplied, so the HTML body
+ * escapes all of it and never turns a value into a link.
+ */
+export function maintainerProfileNotification(
+  userName: string,
+  userEmail: string,
+  profile: DeveloperProfileDetails,
+  adminUsersUrl: string,
+): EmailContent {
+  const name = headerSafe(userName) || "(no name)";
+  const email = headerSafe(userEmail);
+  const rows = PROFILE_DETAIL_LABELS.map(
+    ([key, label]) => [label, profile[key]?.trim() || "—"] as const,
+  );
+
+  return {
+    subject: `Developer details: ${name} <${email}>`,
+
+    textBody: `${name} <${email}> filled in their Welcome page on the CLEAR Developer Portal.
+
+${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
+
+Review them here:
+${adminUsersUrl}`,
+
+    htmlBody: wrapHtml(
+      "Developer details",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        <strong>${escapeHtml(name)}</strong> &lt;${escapeHtml(email)}&gt; filled in their Welcome page on the CLEAR Developer Portal.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin: 0 0 24px; font-size: 14px; line-height: 1.5;">
+        ${rows
+          .map(
+            ([label, value]) => `<tr>
+          <td style="padding: 6px 12px 6px 0; color: #737373; vertical-align: top; white-space: nowrap;">${escapeHtml(label)}</td>
+          <td style="padding: 6px 0; color: #171717; word-break: break-word; white-space: pre-wrap;">${escapeHtml(value)}</td>
+        </tr>`,
+          )
+          .join("")}
+      </table>
+      ${ctaButton("Review pending users", adminUsersUrl)}`,
     ),
   };
 }

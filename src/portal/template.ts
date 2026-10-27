@@ -5,7 +5,7 @@ import {
   renderPortalToast,
   type PortalShellOptions,
 } from "./shell.js";
-import { renderAuthPageHead, renderWaitingPageStyles } from "../ui/auth-page.js";
+import { renderAuthPageHead } from "../ui/auth-page.js";
 import { renderFontLinks } from "../ui/theme.js";
 import { renderIconLinks } from "../ui/icons.js";
 import {
@@ -1269,7 +1269,9 @@ export function renderLoginPage(opts?: { next?: string }): string {
           body: JSON.stringify({ name: name, email: email, password: password }),
         });
         if (res.ok) {
-          window.location.href = LOGIN_NEXT;
+          // New accounts are always pending approval; their first stop is
+          // the Welcome page, whatever page sent them to sign-in.
+          window.location.href = '/portal/welcome';
         } else {
           var err = {};
           try { err = await res.json(); } catch(e) {}
@@ -2145,6 +2147,18 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-decoration: none;
       border-color: var(--color-accent);
     }
+    a.users-profile-link {
+      color: var(--color-accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      word-break: break-word;
+    }
+    .users-profile-interest {
+      display: block;
+      font-weight: 400;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
     .swipe-delete {
       --swipe-delete-tab-width: 4.5rem;
       --swipe-delete-gap: 10px;
@@ -2645,6 +2659,57 @@ export interface AdminUserRow {
   role: string | null;
   createdAt: Date;
   organisations: { id: string; name: string }[];
+  /** What they told us on the Welcome page; null until they submit it. */
+  profile?: AdminUserProfile | null;
+}
+
+export interface AdminUserProfile {
+  personalWebsite: string | null;
+  organisation: string | null;
+  organisationWebsite: string | null;
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  contributionInterest: string | null;
+}
+
+/** External link from user-supplied data. Only http(s) becomes a link. */
+function externalLink(url: string, label: string): string {
+  if (!/^https?:\/\//i.test(url)) return escapeHtml(url);
+  return `<a class="users-profile-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+}
+
+/**
+ * Welcome page answers for a pending sign-up, so whoever approves can see
+ * who they are. Every value is user-supplied: all of it is escaped.
+ */
+function renderUserProfileStats(
+  profile: AdminUserProfile | null | undefined,
+  stat: (label: string, value: string, extraClass?: string) => string,
+): string {
+  const muted = (text: string) => `<span style="color:var(--color-muted);">${escapeHtml(text)}</span>`;
+  if (!profile) {
+    return stat("Profile", muted("Not filled in yet"), " users-stat--row");
+  }
+  const affiliation = profile.organisation
+    ? profile.organisationWebsite
+      ? externalLink(profile.organisationWebsite, profile.organisation)
+      : escapeHtml(profile.organisation)
+    : profile.organisationWebsite
+      ? externalLink(profile.organisationWebsite, profile.organisationWebsite)
+      : muted("—");
+  const links = [
+    profile.personalWebsite ? externalLink(profile.personalWebsite, "Website") : "",
+    profile.linkedinUrl ? externalLink(profile.linkedinUrl, "LinkedIn") : "",
+    profile.githubUrl ? externalLink(profile.githubUrl, "GitHub") : "",
+  ].filter(Boolean);
+  const interest = profile.contributionInterest
+    ? `<span class="users-profile-interest">${escapeHtml(profile.contributionInterest)}</span>`
+    : muted("—");
+  return [
+    stat("Affiliation", affiliation),
+    stat("Links", links.length ? `<span class="users-org-list">${links.join("")}</span>` : muted("—")),
+    stat("Would like to contribute", interest, " users-stat--row"),
+  ].join("");
 }
 
 interface RenderAdminUsersOptions {
@@ -2728,6 +2793,7 @@ export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
             ${stat("Organisation", orgs, " users-stat--row")}
             ${stat("Role", roleControl)}
             ${stat("Signed up", escapeHtml(u.createdAt.toISOString().slice(0, 10)))}
+            ${u.role === "pending" ? renderUserProfileStats(u.profile, stat) : ""}
           </div>
           ${action}
         </article>`;
@@ -3393,59 +3459,6 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
     backLink: { href: "/portal/admin?tab=organisations", label: "← All organisations" },
     headingAlign: "end",
   });
-}
-
-// ─── Waiting-for-approval screen ──────────────────────────────────────────
-
-export interface WaitingForApprovalOptions {
-  userEmail: string;
-}
-
-/**
- * What a pending user sees when they hit /portal after signing up.
- * No tabs, no API key UI — just a confirmation that the account
- * exists and an admin will reach out by email once they're approved.
- */
-export function renderWaitingForApproval(opts: WaitingForApprovalOptions): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pending approval · CLEAR API</title>
-  ${renderIconLinks()}
-  ${renderFontLinks({ mono: false })}
-  ${renderWaitingPageStyles()}
-</head>
-<body>
-  <div class="card">
-    <div class="badge">Pending approval</div>
-    <h1>Thanks for registering</h1>
-    <p>You're signed in as <span class="email">${escapeHtml(opts.userEmail)}</span>. An admin will review your application and reach out by email once approved. You'll be able to access the developer dashboard at that point.</p>
-    <p style="font-size: 0.85rem;">No action needed from you for now. In the meantime, you can explore the <a class="docs-link" href="/docs">API documentation</a>.</p>
-    <button type="button" class="signout" onclick="signOut()">Sign out</button>
-  </div>
-  <script>
-    // Better Auth's /api/auth/sign-out endpoint clears the session cookie
-    // and responds with JSON. A plain HTML form POST would leave the
-    // browser sitting on that JSON page; instead we fetch it from JS
-    // then redirect back to /portal, which renders the login page now
-    // that the session is gone. Mirrors the signOut() helper on the
-    // main developer portal.
-    async function signOut() {
-      try {
-        await fetch('/api/auth/sign-out', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-      } catch (e) {}
-      window.location.href = '/portal';
-    }
-  </script>
-</body>
-</html>`;
 }
 
 // ─── Webhooks tab ──────────────────────────────────────────────────────
