@@ -33,6 +33,11 @@ import {
   sendPasswordResetEmail,
 } from "../services/password-reset.js";
 import { fetchNewsletterSubscriberCount } from "../services/buttondown.js";
+import {
+  parseProfileForm,
+  saveDeveloperProfile,
+} from "../services/developer-profile.js";
+import { notifyMaintainersOfProfile } from "../services/signup-notify.js";
 import { env } from "../utils/env.js";
 import { updateUserGlobalRole } from "../services/update-user-role.js";
 import { attemptDelivery, MAX_ATTEMPTS } from "../services/webhook/deliver.js";
@@ -45,7 +50,6 @@ import {
   renderAdminMetrics,
   renderAdminOrganisations,
   renderAdminOrgDetail,
-  renderWaitingForApproval,
   renderAdminWebhooksList,
   renderAdminWebhookNew,
   renderAdminWebhookDetail,
@@ -55,6 +59,7 @@ import {
   type AdminWebhookRow,
   type AdminWebhookDelivery,
 } from "./template.js";
+import { renderWelcomePage, welcomeFormValues } from "./welcome.js";
 
 export const portalRouter = Router();
 
@@ -102,15 +107,105 @@ portalRouter.get("/", async (req, res) => {
     return;
   }
 
+  // Pending sign-ups can't use API Keys yet; their home is the Welcome page.
   if (user.role === "pending") {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(renderWaitingForApproval({ userEmail: user.email }));
+    res.redirect(303, "/portal/welcome");
     return;
   }
 
   // Render portal for all authenticated users (admins can navigate to /portal/admin via sidebar)
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(renderPortal({ userEmail: user.email, userRole: user.role }));
+});
+
+// ─── /portal/welcome — post-signup Welcome page + profile form ─────────────
+//
+// Any signed-in user; anonymous visitors go through sign-in and back.
+// The POST relies on the same protection as the /portal/admin form posts:
+// Better Auth's session cookie is SameSite=Lax, so a cross-site form post
+// arrives without a session and is bounced to sign-in.
+
+const WELCOME_LOGIN_REDIRECT = `/portal/login?next=${encodeURIComponent("/portal/welcome")}`;
+
+async function loadWelcomeState(userId: string) {
+  // Read the name from the DB, not the session: Better Auth's cookie
+  // cache can serve a pre-edit name for up to five minutes.
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, developerProfile: true },
+  });
+  return { name: row?.name ?? "", profile: row?.developerProfile ?? null };
+}
+
+portalRouter.get("/welcome", async (req, res) => {
+  const user = await currentUser(req);
+  if (!user) {
+    res.redirect(303, WELCOME_LOGIN_REDIRECT);
+    return;
+  }
+  const { name, profile } = await loadWelcomeState(user.id);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(
+    renderWelcomePage({
+      account: { email: user.email, role: user.role },
+      name,
+      values: welcomeFormValues(name, profile),
+      hasProfile: profile !== null,
+      flash: parseFlash(req),
+    }),
+  );
+});
+
+portalRouter.post("/welcome", urlencoded, async (req, res) => {
+  const user = await currentUser(req);
+  if (!user) {
+    res.redirect(303, WELCOME_LOGIN_REDIRECT);
+    return;
+  }
+
+  const parsed = parseProfileForm(req.body);
+  if (!parsed.ok) {
+    const { name, profile } = await loadWelcomeState(user.id);
+    res.status(400).setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(
+      renderWelcomePage({
+        account: { email: user.email, role: user.role },
+        name,
+        values: parsed.values,
+        hasProfile: profile !== null,
+        errors: parsed.errors,
+        flash: { kind: "error", message: "Check the highlighted fields and try again." },
+      }),
+    );
+    return;
+  }
+
+  let firstSubmission: boolean;
+  try {
+    ({ firstSubmission } = await saveDeveloperProfile(prisma, user.id, parsed.value));
+  } catch (err) {
+    console.error("[PORTAL] welcome profile save failed:", portalActionError(err));
+    const params = new URLSearchParams({
+      flash: "error",
+      msg: "Could not save your details. Please try again.",
+    });
+    res.redirect(303, `/portal/welcome?${params.toString()}`);
+    return;
+  }
+
+  if (firstSubmission) {
+    // Best-effort and not awaited: a slow mail server shouldn't hold up
+    // the redirect. Later edits deliberately don't email anyone.
+    const { name, ...details } = parsed.value;
+    void notifyMaintainersOfProfile({ name, email: user.email }, details).catch((err) =>
+      console.error("[PORTAL] profile notification failed:", portalActionError(err)),
+    );
+  }
+
+  const params = new URLSearchParams({ flash: "success", msg: "Thanks! Your details are saved." });
+  res.redirect(303, `/portal/welcome?${params.toString()}`);
 });
 
 // ─── Password reset — unauthenticated by design ───────────────────────────
@@ -294,6 +389,16 @@ portalRouter.get("/admin", async (req, res) => {
         organisations: {
           select: { organisation: { select: { id: true, name: true } } },
         },
+        developerProfile: {
+          select: {
+            personalWebsite: true,
+            organisation: true,
+            organisationWebsite: true,
+            linkedinUrl: true,
+            githubUrl: true,
+            contributionInterest: true,
+          },
+        },
       },
     });
     const users: AdminUserRow[] = rows
@@ -307,6 +412,7 @@ portalRouter.get("/admin", async (req, res) => {
           id: m.organisation.id,
           name: m.organisation.name,
         })),
+        profile: u.developerProfile,
       }))
       .sort((a, b) => {
         const ap = a.role === "pending" ? 0 : 1;

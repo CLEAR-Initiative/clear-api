@@ -44,6 +44,7 @@ export const PORTAL_SVGS = {
   doc: '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2.625 0C1.176 0 0 1.176 0 2.625v8.75C0 12.824 1.176 14 2.625 14h8.75c.484 0 .875-.391.875-.875a.875.875 0 0 0-.875-.875V10.5c.484 0 .875-.391.875-.875V.875A.875.875 0 0 0 11.375 0H2.625Zm0 10.5h7v1.75H2.625a.875.875 0 0 1-.875-.875c0-.484.391-.875.875-.875ZM3.5 3.938c0-.24.197-.438.438-.438h5.25a.438.438 0 0 1 0 .875h-5.25a.438.438 0 0 1-.438-.437Zm0 1.312a.438.438 0 0 0 0 .875h5.25a.438.438 0 0 0 0-.875h-5.25Z"/></svg>',
   chart:
     '<svg class="nav-icon-img" viewBox="0 0 12.25 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.375 2.188C4.375 1.463 4.963.875 5.688.875h.875C7.287.875 7.875 1.463 7.875 2.188v9.625c0 .725-.588 1.312-1.313 1.312h-.875c-.725 0-1.312-.587-1.312-1.312V2.188ZM0 7.438C0 6.713.588 6.125 1.313 6.125h.875C2.912 6.125 3.5 6.713 3.5 7.438v4.375c0 .725-.588 1.312-1.313 1.312h-.875C.588 13.125 0 12.537 0 11.812V7.438Zm10.063 2.625h.875c.725 0 1.312.588 1.312 1.313v4.375c0 .725-.587 1.312-1.312 1.312h-.875c-.725 0-1.313-.587-1.313-1.312V3.938c0-.725.588-1.313 1.313-1.313Z"/></svg>',
+  user: '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 7a3.25 3.25 0 1 0 0-6.5A3.25 3.25 0 0 0 7 7Zm-5.75 6c0-2.9 2.57-4.75 5.75-4.75S12.75 10.1 12.75 13a.75.75 0 0 1-.75.75H2a.75.75 0 0 1-.75-.75Z"/></svg>',
   sandbox:
     '<svg class="nav-icon-img" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M1 1h12v12H1V1Zm1.5 1.5v9h9v-9h-9Z" clip-rule="evenodd"/></svg>',
   signout:
@@ -93,12 +94,26 @@ function portalNavButton(tab: string, label: string, icon: keyof typeof PORTAL_S
 function portalNavLink(href: string, label: string, icon: keyof typeof PORTAL_SVGS, isActive = false, openInNewTab = false): string {
   const targetAttr = openInNewTab ? ' target="_blank" rel="noopener noreferrer"' : '';
   const activeClass = isActive ? ' active' : '';
-  return `<a href="${href}" class="nav-item nav-item--link${activeClass}" title="${escapeHtml(label)}"${targetAttr}>${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
+  const currentAttr = isActive ? ' aria-current="page"' : '';
+  return `<a href="${href}" class="nav-item nav-item--link${activeClass}" title="${escapeHtml(label)}"${currentAttr}${targetAttr}>${PORTAL_SVGS[icon]}<span class="nav-label">${escapeHtml(label)}</span></a>`;
+}
+
+export const LOCKED_NAV_HINT = "Available once your account is approved";
+
+/**
+ * A nav entry a pending Developer can see but not open yet (API Keys,
+ * Usage Analytics). Not a link or button, so there is nothing to click
+ * or tab to; the hint shows as a second line when the sidebar is
+ * expanded and as the tooltip when it is collapsed.
+ */
+function portalNavLocked(label: string, icon: keyof typeof PORTAL_SVGS): string {
+  const title = `${label}: ${LOCKED_NAV_HINT}`;
+  return `<div class="nav-item nav-item--locked" aria-disabled="true" title="${escapeHtml(title)}">${PORTAL_SVGS[icon]}<span class="nav-label"><span class="nav-label-text">${escapeHtml(label)}</span><span class="nav-hint">Available once approved</span></span><span class="nav-lock" aria-hidden="true">${PORTAL_SVGS.lock}</span><span class="visually-hidden">(${escapeHtml(LOCKED_NAV_HINT)})</span></div>`;
 }
 
 export interface PortalShellOptions {
-  /** Which surface is using the shell: portal (tab buttons), docs/admin (links) */
-  surface: "portal" | "docs" | "admin";
+  /** Which surface is using the shell: portal (tab buttons), docs/admin/welcome (links) */
+  surface: "portal" | "docs" | "admin" | "welcome";
   /** Account info (email + role); null for anonymous */
   account: { email: string; role?: string | null } | null;
   /** Optional href to mark as active (for docs/admin link highlighting) */
@@ -328,6 +343,45 @@ ${renderThemeCustomProperties("portal")}
       opacity: 0;
       pointer-events: none;
       position: absolute;
+    }
+    /* Locked (pending approval): visible, not interactive. */
+    .nav-item--locked,
+    .nav-item--locked:hover {
+      cursor: not-allowed;
+      background: transparent;
+      color: var(--color-label);
+    }
+    .nav-item--locked .nav-icon-img { opacity: 0.6; }
+    .nav-item--locked .nav-label {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.3;
+      min-width: 0;
+    }
+    .nav-hint {
+      font-size: 11px;
+      color: var(--color-section);
+    }
+    .nav-lock {
+      margin-left: auto;
+      display: flex;
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+    .nav-lock .nav-icon-img { width: 11px; height: 11px; }
+    .portal-shell.sidebar-collapsed .nav-lock {
+      /* Corner badge on the icon, so the rail still reads as locked. */
+      position: absolute;
+      left: 22px;
+      top: 6px;
+      margin: 0;
+    }
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px; height: 1px;
+      padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0);
+      white-space: nowrap; border: 0;
     }
     .sidebar-footer {
       padding: 16px 20px 6px;
@@ -637,6 +691,10 @@ ${renderThemeCustomProperties("portal")}
         justify-content: flex-start;
         padding: 10px 12px;
       }
+      .portal-shell.sidebar-collapsed .nav-lock {
+        position: static;
+        margin-left: auto;
+      }
       .portal-shell.sidebar-collapsed .signout-btn {
         padding: 8px 12px;
         width: auto;
@@ -833,20 +891,32 @@ export function renderPortalShellScript(): string {
 export function renderPortalShell(opts: PortalShellOptions): string {
   const { surface, account, activeHref, adminTab, pendingCount = 0 } = opts;
   const isAdmin = account?.role === "admin";
-  
+  // Pending sign-ups see API Keys and Usage Analytics, locked, so they
+  // know what approval unlocks. Anonymous visitors keep the normal items
+  // (which bounce through sign-in).
+  const isPending = account?.role === "pending";
+
   // Determine nav rendering mode
   const useButtons = surface === "portal";
-  
+
+  // Welcome is its own page (/portal/welcome), so it is a link in both
+  // nav variants. Signed-in only: it edits the account's profile.
+  const welcomeNav = account
+    ? portalNavLink("/portal/welcome", "Welcome", "user", activeHref === "/portal/welcome")
+    : "";
+
   // Build nav (Menu + Resources)
   const menuNav = useButtons ? `
     <div class="nav-section">Menu</div>
+    ${welcomeNav}
     ${portalNavButton("getting-started", "Getting Started", "rocket")}
-    ${portalNavButton("api-keys", "API Keys", "key")}
+    ${isPending ? portalNavLocked("API Keys", "key") : portalNavButton("api-keys", "API Keys", "key")}
     ${portalNavButton("authentication", "Authentication", "lock")}
   ` : `
     <div class="nav-section">Menu</div>
+    ${welcomeNav}
     ${portalNavLink("/portal#getting-started", "Getting Started", "rocket", activeHref === "/portal#getting-started")}
-    ${portalNavLink("/portal#api-keys", "API Keys", "key", activeHref === "/portal#api-keys")}
+    ${isPending ? portalNavLocked("API Keys", "key") : portalNavLink("/portal#api-keys", "API Keys", "key", activeHref === "/portal#api-keys")}
     ${portalNavLink("/portal#authentication", "Authentication", "lock", activeHref === "/portal#authentication")}
   `;
 
@@ -855,13 +925,13 @@ export function renderPortalShell(opts: PortalShellOptions): string {
     ${portalNavButton("reference", "API Reference", "doc")}
     ${portalNavLink("/docs", "API Docs", "doc", activeHref === "/docs")}
     ${portalNavLink("/graphql", "Sandbox", "sandbox", false, true)}
-    ${portalNavButton("usage-analytics", "Usage Analytics", "chart")}
+    ${isPending ? portalNavLocked("Usage Analytics", "chart") : portalNavButton("usage-analytics", "Usage Analytics", "chart")}
   ` : `
     <div class="nav-section">Resources</div>
     ${portalNavLink("/portal#reference", "API Reference", "doc", activeHref === "/portal#reference")}
     ${portalNavLink("/docs", "API Docs", "doc", activeHref === "/docs")}
     ${portalNavLink("/graphql", "Sandbox", "sandbox", false, true)}
-    ${portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart", activeHref === "/portal#usage-analytics")}
+    ${isPending ? portalNavLocked("Usage Analytics", "chart") : portalNavLink("/portal#usage-analytics", "Usage Analytics", "chart", activeHref === "/portal#usage-analytics")}
   `;
 
   const adminSubLink = (

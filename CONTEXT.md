@@ -10,6 +10,14 @@ GraphQL API and developer-facing surfaces for CLEAR — humanitarian signals, ev
 The app at `/portal` where a **Developer** reads Getting Started / API Reference publicly, and manages API keys, auth guidance, and account access when signed in.
 _Avoid_: dashboard, console (unless referring to browser console)
 
+**Welcome page**:
+The **Developer Portal** page at `/portal/welcome` where a newly signed-up **Developer** lands while pending approval: what happens next, plus a **Developer profile** form. Every signed-in **Developer** can return to it from the Welcome nav item.
+_Avoid_: waiting page, pending screen, onboarding wizard
+
+**Developer profile**:
+What a **Developer** tells us on the **Welcome page**: affiliation, links, and the kind of contribution they'd like to make. Shown to admins on pending sign-ups; the first submission is emailed to the maintainers.
+_Avoid_: user profile (the **Account** owns name and email)
+
 **API Docs**:
 The documentation surface at `/docs` — public to read, visually aligned with the **Developer Portal**.
 _Avoid_: documentation site, docs app (as a separate product)

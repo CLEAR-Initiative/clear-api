@@ -135,7 +135,7 @@ export function renderHomePage(): string {
       <a href="/graphql" target="_blank" rel="noopener noreferrer">Sandbox</a>
       <a href="/portal">Portal</a>
       <a href="/portal/login" class="nav-signin">Sign in</a>
-      <a href="/portal" class="nav-cta">Get an API key</a>
+      <a href="/portal/login?next=%2Fportal%2Fwelcome" class="nav-cta">Contribute now</a>
     </div>
   </nav>
 
@@ -146,7 +146,8 @@ export function renderHomePage(): string {
         <h1>Build on the<br><span class="accent">humanitarian data commons.</span></h1>
         <p class="lead"><strong>CLEAR API</strong> is the developer interface to the CLEAR data commons &mdash; one GraphQL endpoint for verified crisis <strong>signals</strong>, <strong>events</strong>, <strong>alerts</strong>, and the geography they happen in. Built and operated by NRC.</p>
         <div class="hero-actions">
-          <a href="/docs#guide" class="btn btn-primary">Read the Guide &rarr;</a>
+          <a href="/portal/login?next=%2Fportal%2Fwelcome" class="btn btn-primary">Contribute now &rarr;</a>
+          <a href="/docs#guide" class="btn btn-outline">Read the Guide</a>
           <a href="/graphql" class="btn btn-outline" target="_blank" rel="noopener noreferrer">Open the Sandbox</a>
         </div>
         <p class="terminal-hint"><span class="prompt">$</span> curl https://api.clearinitiative.io/graphql</p>

@@ -5,17 +5,34 @@ describe("signupAcknowledgement", () => {
   it("is CLEAR-branded and never mentions Exponential", () => {
     const mail = signupAcknowledgement(
       "James",
-      "https://api.clearinitiative.io/portal/login",
+      "https://api.clearinitiative.io/portal/welcome",
     );
 
-    expect(mail.subject).toContain("CLEAR API");
+    expect(mail.subject).toContain("CLEAR");
     expect(mail.textBody).toContain("Hi James");
     expect(mail.textBody).toContain("The CLEAR team");
-    expect(mail.textBody).toContain("https://api.clearinitiative.io/portal/login");
+    expect(mail.textBody).toContain("https://api.clearinitiative.io/portal/welcome");
+    expect(mail.htmlBody).toContain('href="https://api.clearinitiative.io/portal/welcome"');
     expect(mail.htmlBody).toContain("The CLEAR team");
     expect(mail.textBody).not.toMatch(/Exponential/i);
     expect(mail.htmlBody).not.toMatch(/Exponential/i);
     expect(mail.subject).not.toMatch(/Exponential/i);
+  });
+
+  it("matches the Welcome page wording", () => {
+    const mail = signupAcknowledgement("Ada", "https://x.test/portal/welcome");
+    for (const body of [mail.textBody, mail.htmlBody]) {
+      expect(body).toContain("automatically requested API key access");
+      expect(body).toContain("You'll get an email as soon as it's approved");
+      expect(body).toContain("will get in touch about contributing");
+      expect(body).toContain("what kind of contribution you'd like to make");
+    }
+  });
+
+  it("escapes the registrant's name in the HTML body", () => {
+    const mail = signupAcknowledgement("<img src=x onerror=alert(1)>", "https://x.test/portal/welcome");
+    expect(mail.htmlBody).not.toContain("<img src=x");
+    expect(mail.htmlBody).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
 });
 
