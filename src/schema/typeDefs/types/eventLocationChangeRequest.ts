@@ -23,6 +23,9 @@ export const eventLocationChangeRequestTypeDef = gql`
     proposedLng: Float!
     """Display name of the proposed place, e.g. a village from the geocoder."""
     proposedName: String!
+    """The existing admin area the proposed point falls in (district, else
+    state, else country): where the new point location would be placed."""
+    proposedPlacement: Location
     """The Event's location when the request was filed."""
     previousLocation: Location
     """The point location the Event was moved to (set on accept)."""

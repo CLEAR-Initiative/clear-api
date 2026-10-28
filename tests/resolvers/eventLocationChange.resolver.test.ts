@@ -295,3 +295,14 @@ describe("Mutation.decideEventLocationChange", () => {
     expect(eventsUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe("EventLocationChangeRequest.proposedPlacement", () => {
+  const { proposedPlacement } = eventLocationChangeResolvers.EventLocationChangeRequest;
+
+  it("resolves the admin area the proposed point falls in", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ id: "A2-haya", name: "Haya" });
+    const ctx = buildContext(MEMBER, { locations: { findUnique } });
+    await expect(proposedPlacement({ proposedLat: 18.3, proposedLng: 36.4 }, {}, ctx)).resolves.toMatchObject({ id: "A2-haya" });
+    expect(resolveLatLngToLocation).toHaveBeenCalledWith(ctx.prisma, 18.3, 36.4);
+  });
+});

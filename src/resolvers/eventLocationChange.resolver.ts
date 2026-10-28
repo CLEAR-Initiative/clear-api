@@ -296,6 +296,14 @@ export const eventLocationChangeResolvers = {
       prisma.events.findUnique({ where: { id: parent.eventId } }),
     team: (parent: { teamId: string }, _args: unknown, { prisma }: Context) =>
       prisma.teams.findUnique({ where: { id: parent.teamId } }),
+    proposedPlacement: async (
+      parent: { proposedLat: number; proposedLng: number },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      const placed = await resolveLatLngToLocation(prisma, parent.proposedLat, parent.proposedLng);
+      return placed ? prisma.locations.findUnique({ where: { id: placed.id } }) : null;
+    },
     previousLocation: (parent: { previousLocationId: string | null }, _args: unknown, { prisma }: Context) =>
       parent.previousLocationId
         ? prisma.locations.findUnique({ where: { id: parent.previousLocationId } })
