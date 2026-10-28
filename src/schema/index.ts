@@ -7,6 +7,7 @@ import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { detectionMetricsTypeDef } from "./typeDefs/types/detectionMetrics.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
+import { eventLocationChangeRequestTypeDef } from "./typeDefs/types/eventLocationChangeRequest.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
 import { estimateTypeDef } from "./typeDefs/types/estimate.js";
 import { dataSourceTypeDef } from "./typeDefs/types/dataSource.js";
@@ -49,6 +50,7 @@ export const typeDefs = [
   detectionMetricsTypeDef,
   signalTypeDef,
   signalLocationChallengeTypeDef,
+  eventLocationChangeRequestTypeDef,
   eventTypeDef,
   estimateTypeDef,
   dataSourceTypeDef,

@@ -43,7 +43,12 @@ export type ActivityAction =
   | "task.requested"
   | "task.cancelled"
   | "impact_prior.decided"
-  | "case_proposal.decided";
+  | "case_proposal.decided"
+  // Event location change requests: an analyst/ERM proposed a new place for
+  // an Event on behalf of their team; that team's admin accepted or rejected it.
+  | "event.location_change.propose"
+  | "event.location_change.accept"
+  | "event.location_change.reject";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter

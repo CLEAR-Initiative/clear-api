@@ -30,6 +30,16 @@ export const queryTypeDef = gql`
     like signals when teamId is given; status defaults to "consideration"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
 
+    """Event location change requests filed for a team, newest first; status
+    defaults to "pending". Auth: that team's team_admin, or a platform admin."""
+    eventLocationChangeRequests(teamId: String!, status: String): [EventLocationChangeRequest!]!
+
+    """The most specific existing admin area (district, else state, else
+    country) that contains a point, i.e. where a point location for it would be
+    placed. Creates nothing. Null when the point is outside every loaded area.
+    Auth: any approved user."""
+    locationPlacement(lat: Float!, lng: Float!): Location
+
     """Signals awaiting their first grouping (status = NEW, not retracted, not
     yet linked to any event), oldest-first — the Dagster event-driven drain.
     \`source\` filters by DataSource name (e.g. "dataminr"); \`first\` caps the

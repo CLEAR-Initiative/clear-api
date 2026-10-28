@@ -350,13 +350,14 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation         organisations         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  organisation         organisations                 @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   members              teamMembers[]
   locations            teamLocations[]
-  defaultForUsers      user[]                @relation("DefaultTeam")
+  defaultForUsers      user[]                        @relation("DefaultTeam")
   invitations          invitations[]
   invitationTeams      invitationTeams[]
   webhookSubscriptions WebhookSubscription[]
+  locationChanges      eventLocationChangeRequests[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -502,6 +503,10 @@ model locations {
   eventDestinations events[] @relation("EventDestination")
   eventLocations    events[] @relation("EventLocation")
   eventCountries    events[] @relation("EventCountries")
+
+  // Reverse relations for event location change requests
+  eventLocationChangesFrom eventLocationChangeRequests[] @relation("EventLocationChangePrevious")
+  eventLocationChangesTo   eventLocationChangeRequests[] @relation("EventLocationChangeApplied")
 
   // Reverse relation for ground thread drafts
   groundThreadDrafts groundThreads[] @relation("GroundThreadDraftLocation")
@@ -764,6 +769,49 @@ model signalLocationChallenges {
   @@map("signal_location_challenges")
 }
 
+/// An analyst's or ERM's proposal to move an Event to a new place, filed on
+/// behalf of one team and decided by that team's admin. The proposed place is
+/// any point (a geocoder hit): accepting creates or reuses a level-4 point
+/// location for it under the admin area that contains it, so a village CLEAR
+/// has no entry for yet gets one. Only the Event moves; its signals do not.
+model eventLocationChangeRequests {
+  id      String @id @default(cuid())
+  eventId String @map("event_id")
+  event   events @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  /// The team the request was filed for; only its team_admin (or a platform
+  /// admin) decides it.
+  teamId  String @map("team_id")
+  team    teams  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  /// Auth user id of whoever proposed the change.
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// "pending" | "accepted" | "rejected".
+  status String  @default("pending")
+  note   String?
+
+  proposedLat  Float  @map("proposed_lat")
+  proposedLng  Float  @map("proposed_lng")
+  proposedName String @map("proposed_name")
+
+  /// The Event's generalLocation when the request was filed (null if none).
+  previousLocationId String?    @map("previous_location_id")
+  previousLocation   locations? @relation("EventLocationChangePrevious", fields: [previousLocationId], references: [id], onDelete: SetNull)
+  /// The point location the Event was moved to, set on accept.
+  appliedLocationId  String?    @map("applied_location_id")
+  appliedLocation    locations? @relation("EventLocationChangeApplied", fields: [appliedLocationId], references: [id], onDelete: SetNull)
+
+  decidedBy    String?   @map("decided_by")
+  decidedAt    DateTime? @map("decided_at")
+  decisionNote String?   @map("decision_note")
+
+  @@index([teamId, status, createdAt])
+  @@index([eventId])
+  @@map("event_location_change_requests")
+}
+
 model events {
   id                  String  @id @default(cuid())
   title               String?
@@ -813,7 +861,7 @@ model events {
 
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
-  populationAffected    BigInt?                 @map("population_affected")
+  populationAffected    BigInt?                       @map("population_affected")
   /// Population displaced by this event. Resolution order in the pipeline
   /// (`_resolve_population_displaced`, clear-context-pipeline providers/event.py):
   /// (1) a source-specific reduction over that source's linked signals, when
@@ -823,7 +871,7 @@ model events {
   /// (3) a hardcoded default. No IOM DTM step — deliberately excluded, since
   /// DTM figures are district-wide/event-agnostic and would misattribute a
   /// whole district's total to one event.
-  populationDisplaced   BigInt?                 @map("population_displaced")
+  populationDisplaced   BigInt?                       @map("population_displaced")
   /// Aggregated casualties for this event (sum across constituent signals).
   casualties            Int?
   /// Figures for this Event in the Domain Ontology's shape. The three loose
@@ -834,7 +882,7 @@ model events {
   rank                  Float
   /// Hash of the live (non-retracted) member signal ids at the last LLM
   /// rewrite. Lets the recompute skip the rewrite when membership is unchanged.
-  rewriteMembersHash    String?                 @map("rewrite_members_hash")
+  rewriteMembersHash    String?                       @map("rewrite_members_hash")
   alerts                alerts[]
   userFeedbacks         userFeedbacks[]
   userComments          userComments[]
@@ -844,9 +892,10 @@ model events {
   translations          translations[]
   impactPriors          impactPrior[]
   /// Web cases proposed while enriching this Event (V4).
-  caseProposals         caseProposal[]          @relation("CaseProposalEvent")
+  caseProposals         caseProposal[]                @relation("CaseProposalEvent")
   /// Web cases a Worker matched to this (historical) Event.
-  matchedCaseProposals  caseProposal[]          @relation("CaseProposalMatchedEvent")
+  matchedCaseProposals  caseProposal[]                @relation("CaseProposalMatchedEvent")
+  locationChanges       eventLocationChangeRequests[]
 }
 
 model disasterTypes {

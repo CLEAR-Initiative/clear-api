@@ -196,6 +196,20 @@ export const mutationTypeDef = gql`
     does NOT accept/reject and does NOT mutate the Signal's geometry."""
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
 
+    """Propose moving an Event to a new place on behalf of a team. Auth: an
+    analyst or emergency_response_manager of that team (or a platform admin),
+    and the Event must be within the team's location scope. The point must fall
+    inside a loaded admin area. Replaces the team's open request for the Event
+    if there is one. Changes nothing on the Event until accepted."""
+    proposeEventLocationChange(input: ProposeEventLocationChangeInput!): EventLocationChangeRequest!
+
+    """Accept or reject a pending Event location change request. Auth: a
+    team_admin of the request's team, or a platform admin. Accepting creates or
+    reuses a level-4 point location for the proposed place, sets it as the
+    Event's location (clearing origin/destination) and sets the Event's
+    countries to that point's country. Only the Event moves, not its signals."""
+    decideEventLocationChange(id: String!, accept: Boolean!, note: String): EventLocationChangeRequest!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!

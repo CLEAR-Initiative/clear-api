@@ -252,6 +252,18 @@ const data = await fetch('/graphql', {
     <td>Open Signal Location challenges (for map dual-pin rendering). Team-scoped
 like signals when teamId is given; status defaults to &quot;consideration&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
   </tr><tr>
+    <td><code>eventLocationChangeRequests</code></td>
+    <td><code>[EventLocationChangeRequest!]!</code></td>
+    <td>Event location change requests filed for a team, newest first; status
+defaults to &quot;pending&quot;. Auth: that team's team_admin, or a platform admin.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>status: String</code></span></div></td>
+  </tr><tr>
+    <td><code>locationPlacement</code></td>
+    <td><code>Location</code></td>
+    <td>The most specific existing admin area (district, else state, else
+country) that contains a point, i.e. where a point location for it would be
+placed. Creates nothing. Null when the point is outside every loaded area.
+Auth: any approved user.<div class="field-args"><span class="arg"><code>lat: Float!</code></span><span class="arg"><code>lng: Float!</code></span></div></td>
+  </tr><tr>
     <td><code>pendingSignals</code></td>
     <td><code>[Signal!]!</code></td>
     <td>Signals awaiting their first grouping (status = NEW, not retracted, not
@@ -1124,6 +1136,22 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!<
     <td>Create or replace the open (consideration) Location challenge for a Signal.
 Auth: any approved logged-in team member who can view the Signal. Queue only —
 does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="field-args"><span class="arg"><code>input: SubmitSignalLocationChallengeInput!</code></span></div></td>
+  </tr><tr id="mutation-proposeeventlocationchange">
+    <td><code>proposeEventLocationChange</code></td>
+    <td><code>EventLocationChangeRequest!</code></td>
+    <td>Propose moving an Event to a new place on behalf of a team. Auth: an
+analyst or emergency_response_manager of that team (or a platform admin),
+and the Event must be within the team's location scope. The point must fall
+inside a loaded admin area. Replaces the team's open request for the Event
+if there is one. Changes nothing on the Event until accepted.<div class="field-args"><span class="arg"><code>input: ProposeEventLocationChangeInput!</code></span></div></td>
+  </tr><tr id="mutation-decideeventlocationchange">
+    <td><code>decideEventLocationChange</code></td>
+    <td><code>EventLocationChangeRequest!</code></td>
+    <td>Accept or reject a pending Event location change request. Auth: a
+team_admin of the request's team, or a platform admin. Accepting creates or
+reuses a level-4 point location for the proposed place, sets it as the
+Event's location (clearing origin/destination) and sets the Event's
+countries to that point's country. Only the Event moves, not its signals.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>accept: Boolean!</code></span><span class="arg"><code>note: String</code></span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -3246,6 +3274,30 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>sourceHashes</code></td>
     <td><code>JSON!</code></td>
     <td>Per-field SHA-256 hashes of the canonical English source used to produce `data`. Stored so the pipeline can detect which canonical field changed and re-translate only that field on the next pass.</td>
+  </tr></tbody></table><h3 id="type-proposeeventlocationchangeinput"><code>ProposeEventLocationChangeInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String!</code></td>
+    <td>The proposer's team; they must be its analyst or emergency_response_manager.</td>
+  </tr><tr>
+    <td><code>lat</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lng</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Display name of the proposed place (required, at most 200 characters).</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -5733,6 +5785,88 @@ evidence first. Follows the Event's visibility. `horizonYears`
   </tr><tr>
     <td><code>validTo</code></td>
     <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-eventlocationchangerequest"><code>EventLocationChangeRequest</code> <span class="type-badge">object</span></h3><p>A proposal to move an Event to a new place, filed by a team analyst or
+emergency_response_manager on behalf of their team and decided by that team's
+team_admin. The proposed place is any point (a geocoder hit), not limited to
+CLEAR's locations: accepting creates or reuses a level-4 point location for it
+under the admin area that contains it, then sets it as the Event's location.
+Only the Event moves; its signals keep their own locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>Event!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String!</code></td>
+    <td>The team the request was filed for. Only its team_admin (or a platform
+admin) decides it.</td>
+  </tr><tr>
+    <td><code>team</code></td>
+    <td><code>Team!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;pending&quot;, &quot;accepted&quot; or &quot;rejected&quot;.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>Why the proposer thinks the current location is wrong.</td>
+  </tr><tr>
+    <td><code>proposedLat</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedLng</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>proposedName</code></td>
+    <td><code>String!</code></td>
+    <td>Display name of the proposed place, e.g. a village from the geocoder.</td>
+  </tr><tr>
+    <td><code>previousLocation</code></td>
+    <td><code>Location</code></td>
+    <td>The Event's location when the request was filed.</td>
+  </tr><tr>
+    <td><code>appliedLocation</code></td>
+    <td><code>Location</code></td>
+    <td>The point location the Event was moved to (set on accept).</td>
+  </tr><tr>
+    <td><code>createdBy</code></td>
+    <td><code>String!</code></td>
+    <td>Auth user id of the proposer.</td>
+  </tr><tr>
+    <td><code>createdByName</code></td>
+    <td><code>String</code></td>
+    <td>Display name of the proposer.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of whoever accepted or rejected it.</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decisionNote</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventspage"><code>EventsPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>items</code></td>
