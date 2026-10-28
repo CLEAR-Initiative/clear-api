@@ -1437,7 +1437,7 @@ describe("pipelineGroundSourceIds", () => {
 
 describe("ground inbox team scoping", () => {
   const ERM: User = { id: "erm1", role: "member" };
-  const { groundSources, groundThreads, groundThread } = groundResolvers.Query;
+  const { groundSources, groundThreads, groundThread, groundMessages } = groundResolvers.Query;
   /** The ERM is on team-sudan, which owns src-sudan; src-chad is another team's. */
   const scope = {
     teamMembers: { findMany: async () => [{ teamId: "team-sudan" }] },
@@ -1467,6 +1467,31 @@ describe("ground inbox team scoping", () => {
         },
       }),
     );
+  });
+
+  it("returns no messages from another team's source, asked for by source or by thread", async () => {
+    // In-memory groundMessages honouring the where shapes the resolver builds,
+    // so dropping the scope condition would return src-chad's message.
+    const rows = [
+      { id: "m-sudan", groundSourceId: "src-sudan", threadId: "t-sudan" },
+      { id: "m-chad", groundSourceId: "src-chad", threadId: "t-chad" },
+    ];
+    type Cond = { groundSourceId?: string | { in: string[] }; threadId?: string; AND?: Cond[] };
+    const matches = (row: (typeof rows)[number], c: Cond): boolean =>
+      (c.AND ?? []).every((sub) => matches(row, sub)) &&
+      (c.groundSourceId === undefined ||
+        (typeof c.groundSourceId === "string"
+          ? row.groundSourceId === c.groundSourceId
+          : c.groundSourceId.in.includes(row.groundSourceId))) &&
+      (c.threadId === undefined || row.threadId === c.threadId);
+    const findMany = vi.fn(async ({ where }: { where: Cond }) => rows.filter((row) => matches(row, where)));
+    const ctx = buildContext(ERM, { ...scope, groundMessages: { findMany } });
+    const ids = async (args: { groundSourceId?: string; threadId?: string }) =>
+      ((await groundMessages(null, args, ctx)) as { id: string }[]).map((m) => m.id);
+
+    await expect(ids({ groundSourceId: "src-chad" })).resolves.toEqual([]);
+    await expect(ids({ threadId: "t-chad" })).resolves.toEqual([]);
+    await expect(ids({})).resolves.toEqual(["m-sudan"]);
   });
 
   it("leaves an admin's thread list unfiltered", async () => {
