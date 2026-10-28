@@ -3,9 +3,9 @@
  *
  * The whole tier is PRIVATE: the inbox queries + triage mutations require
  * `requireGroundInboxAccess` — a global admin, OR an
- * `emergency_response_manager` on any team, who sees only the sources
- * assigned to their ERM teams (review actions for admins additionally
- * consult the source's own reviewerRoles). Ordinary members —
+ * `emergency_response_manager` or `team_admin` on any team, who sees only
+ * the sources assigned to those teams (review actions for admins
+ * additionally consult the source's own reviewerRoles). Ordinary members —
  * who can read signals/events — deliberately cannot see staged ground
  * content: sender names, unredacted-adjacent context, and unvetted claims
  * live here. (`analyst` is a TEAM role now and does not grant ground access.)
@@ -649,7 +649,7 @@ export const groundResolvers = {
     ) => {
       // Coarse gate first (viewers/pending never reach the queue), then
       // the per-source reviewerRoles policy record decides.
-      const { user, isErm, sourceIds } = await requireGroundInboxAccess(context);
+      const { user, canTriage, sourceIds } = await requireGroundInboxAccess(context);
 
       const thread = await context.prisma.groundThreads.findUnique({
         where: { id: args.id },
@@ -662,10 +662,10 @@ export const groundResolvers = {
       }
       assertGroundSourceInScope(sourceIds, thread.groundSourceId, "Ground thread not found");
 
-      // An emergency_response_manager may triage any source in their scope
-      // (the sources assigned to their ERM teams). Admins/analysts still
+      // An emergency_response_manager or team_admin may triage any source in
+      // their scope (the sources assigned to those teams). Admins still
       // answer to the source's own reviewerRoles policy.
-      if (!isErm && !canReviewSource(user, thread.source.reviewerRoles)) {
+      if (!canTriage && !canReviewSource(user, thread.source.reviewerRoles)) {
         throw new GraphQLError(
           `Reviewing this source requires one of: ${thread.source.reviewerRoles.join(", ")}`,
           { extensions: { code: "FORBIDDEN" } },

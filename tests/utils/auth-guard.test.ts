@@ -13,6 +13,7 @@ import {
   requireAuth,
   requireContentReader,
   requireNonWorker,
+  requireGroundInboxAccess,
   requireNonWorkerContentReader,
   requireRole,
   requireTeamContentWriter,
@@ -359,57 +360,70 @@ describe("canSeeUserPrivate", () => {
 });
 
 describe("requireGroundInboxAccess", () => {
-  function prismaWith(ermTeamIds: string[], sourceIds: string[]) {
-    const teamMembers = { findMany: vi.fn(async () => ermTeamIds.map((teamId) => ({ teamId }))) };
+  /** The user holds `memberships` ({ role, teamId }); the guard's
+   *  `role: { in: [...] }` filter is honoured. `sourceIds` is what the
+   *  groundSources lookup returns for the matching teams. */
+  function prismaWith(memberships: { role: string; teamId: string }[], sourceIds: string[]) {
+    const teamMembers = {
+      findMany: vi.fn(async (args: { where: { role: { in: string[] } } }) =>
+        memberships.filter((m) => args.where.role.in.includes(m.role)).map(({ teamId }) => ({ teamId })),
+      ),
+    };
     const groundSources = { findMany: vi.fn(async () => sourceIds.map((id) => ({ id }))) };
     return { teamMembers, groundSources };
   }
 
-  it("gives a platform admin every source, without a lookup", async () => {
+  it("gives a platform admin every source, without a lookup; the source policy still applies", async () => {
     const prisma = prismaWith([], []);
     const access = await requireGroundInboxAccess(buildContext({ id: "a", role: "admin" }, prisma));
-    expect(access).toMatchObject({ isErm: false, sourceIds: null });
+    expect(access).toMatchObject({ canTriage: false, sourceIds: null });
     expect(prisma.teamMembers.findMany).not.toHaveBeenCalled();
   });
 
-  it("gives an ERM only the sources assigned to their ERM teams", async () => {
-    const prisma = prismaWith(["team-sudan"], ["src-sudan"]);
-    const access = await requireGroundInboxAccess(buildContext({ id: "e", role: "member" }, prisma));
-    expect(access).toMatchObject({ isErm: true, sourceIds: ["src-sudan"] });
-    expect(prisma.teamMembers.findMany).toHaveBeenCalledWith({
-      where: { userId: "e", role: "emergency_response_manager" },
-      select: { teamId: true },
-    });
-    expect(prisma.groundSources.findMany).toHaveBeenCalledWith({
-      where: { teamId: { in: ["team-sudan"] } },
-      select: { id: true },
-    });
-  });
+  it.each(["emergency_response_manager", "team_admin"])(
+    "gives a %s, as a triager, only the sources assigned to that team",
+    async (role) => {
+      const prisma = prismaWith([{ role: "team_member", teamId: "team-chad" }, { role, teamId: "team-sudan" }], ["src-sudan"]);
+      const access = await requireGroundInboxAccess(buildContext({ id: "e", role: "member" }, prisma));
+      expect(access).toMatchObject({ canTriage: true, sourceIds: ["src-sudan"] });
+      expect(prisma.groundSources.findMany).toHaveBeenCalledWith({
+        where: { teamId: { in: ["team-sudan"] } },
+        select: { id: true },
+      });
+    },
+  );
 
-  it("admits an ERM whose teams have no source yet, with nothing to see", async () => {
+  it("admits a triager whose teams have no source yet, with nothing to see", async () => {
     const access = await requireGroundInboxAccess(
-      buildContext({ id: "e", role: "member" }, prismaWith(["team-new"], [])),
+      buildContext({ id: "e", role: "member" }, prismaWith([{ role: "team_admin", teamId: "team-new" }], [])),
     );
-    expect(access).toMatchObject({ isErm: true, sourceIds: [] });
+    expect(access).toMatchObject({ canTriage: true, sourceIds: [] });
   });
 
-  it("rejects a member who is not an ERM on any team", async () => {
-    await expect(
-      requireGroundInboxAccess(buildContext({ id: "m", role: "member" }, prismaWith([], ["src-sudan"]))),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-  });
+  it.each([[[]], [["analyst"]], [["team_member"]], [["analyst", "team_member"]]])(
+    "rejects a member with team roles %j with FORBIDDEN",
+    async (roles) => {
+      const memberships = (roles as string[]).map((role) => ({ role, teamId: "team-sudan" }));
+      await expect(
+        requireGroundInboxAccess(buildContext({ id: "m", role: "member" }, prismaWith(memberships, ["src-sudan"]))),
+      ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    },
+  );
 
-  it.each(["pending", "worker", "pipeline"])("rejects the %s role without a lookup", async (role) => {
-    const prisma = prismaWith(["team-sudan"], ["src-sudan"]);
-    await expect(requireGroundInboxAccess(buildContext({ id: "x", role }, prisma))).rejects.toMatchObject({
-      extensions: { code: "FORBIDDEN" },
-    });
-    expect(prisma.teamMembers.findMany).not.toHaveBeenCalled();
-  });
+  it.each(["pending", "worker", "pipeline"])(
+    "rejects the %s role without a lookup, even holding a team_admin membership",
+    async (role) => {
+      const prisma = prismaWith([{ role: "team_admin", teamId: "team-sudan" }], ["src-sudan"]);
+      await expect(requireGroundInboxAccess(buildContext({ id: "x", role }, prisma))).rejects.toMatchObject({
+        extensions: { code: "FORBIDDEN" },
+      });
+      expect(prisma.teamMembers.findMany).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("groundSourceScope / assertGroundSourceInScope", () => {
-  it("filters nothing for an admin and limits an ERM to their sources", () => {
+  it("filters nothing for an admin and limits a triager to their sources", () => {
     expect(groundSourceScope(null)).toEqual({});
     expect(groundSourceScope(["src-sudan"])).toEqual({ groundSourceId: { in: ["src-sudan"] } });
   });

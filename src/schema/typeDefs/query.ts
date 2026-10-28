@@ -615,7 +615,7 @@ export const queryTypeDef = gql`
     admin, org admin, or platform admin for the team. Secrets are scrubbed."""
     teamAlertWebhooks(teamId: String!): [WebhookSubscription!]!
 
-    # ─── Ground intel staging tier (admin only) ────────────────
+    # ─── Ground intel staging tier (admin, ERM or team admin) ──
     """All ground sources (per-source policy records), newest first."""
     groundSources: [GroundSource!]!
 
@@ -706,14 +706,15 @@ export const queryTypeDef = gql`
     V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
     computed, see \`Event.computedImpactPriors\`) and none can be decided.
     An \`accepted\` one follows the Event's visibility; a \`proposed\` one
-    is visible to its requester and to deciders (admins and analysts); a
+    is visible to its requester and to deciders (admins, and the Task team's
+    analysts and team admins); a
     \`rejected\` one to deciders only."""
     eventImpactPriors(eventId: String!): [ImpactPrior!]!
 
     """The Inbox's per-case Review items (V4): CaseProposals in one state
     across every Event, newest first — \`proposed\` by default. Platform
-    admins and analysts only, so the list is exactly what the caller may
-    decide."""
+    admins (every team), and team analysts and team admins (their own teams'
+    Tasks only), so the list is exactly what the caller may decide."""
     caseProposals(state: CaseProposalState = proposed, limit: Int = 50, offset: Int = 0): [CaseProposal!]!
 
     """Web cases proposed for an Event, newest first. Same visibility as

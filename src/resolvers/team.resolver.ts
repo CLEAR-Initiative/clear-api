@@ -1,6 +1,11 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireAuth, requireNonWorker } from "../utils/auth-guard.js";
+import {
+  isPlatformAdmin,
+  requireAuth,
+  requireNonWorker,
+  TEAM_ADMIN_ROLES,
+} from "../utils/auth-guard.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
 // Valid team-member roles. Legacy values (lead/viewer) fold into
@@ -14,9 +19,6 @@ const TEAM_MEMBER_ROLES = [
   "team_member",
 ] as const;
 type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
-
-// Roles with admin-level privileges over a team.
-const TEAM_ADMIN_ROLES: ReadonlySet<string> = new Set(["team_admin"]);
 
 function assertTeamMemberRole(role: string): TeamMemberRole {
   if (!TEAM_MEMBER_ROLES.includes(role as TeamMemberRole)) {
