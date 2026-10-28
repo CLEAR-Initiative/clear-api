@@ -1143,14 +1143,17 @@ does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="fie
     <td>Propose moving an Event to a new place on behalf of a team. Auth: an
 analyst or emergency_response_manager of that team (or a platform admin),
 and the Event must be within the team's location scope. The point must fall
-inside a loaded admin area. Replaces the team's open request for the Event
-if there is one. Changes nothing on the Event until accepted.<div class="field-args"><span class="arg"><code>input: ProposeEventLocationChangeInput!</code></span></div></td>
+inside a loaded admin area and, unless a platform admin proposes, inside
+the team's location scope too: moving an Event beyond it is for a platform
+admin. Replaces the team's open request for the Event if there is one.
+Changes nothing on the Event until accepted.<div class="field-args"><span class="arg"><code>input: ProposeEventLocationChangeInput!</code></span></div></td>
   </tr><tr id="mutation-decideeventlocationchange">
     <td><code>decideEventLocationChange</code></td>
     <td><code>EventLocationChangeRequest!</code></td>
     <td>Accept or reject a pending Event location change request. Auth: a
 team_admin of the request's team, or a platform admin; accepting also
-needs the Event to still be within the team's location scope. Accepting
+needs the Event to still be within the team's location scope, and the
+proposed place too unless a platform admin decides. Accepting
 creates or reuses a named level-4 point location (landmark-geocoded) for
 the proposed place under the admin area that contains it, sets it as the
 Event's location (clearing origin/destination) and sets the Event's
@@ -5791,9 +5794,10 @@ evidence first. Follows the Event's visibility. `horizonYears`
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventlocationchangerequest"><code>EventLocationChangeRequest</code> <span class="type-badge">object</span></h3><p>A proposal to move an Event to a new place, filed by a team analyst or
 emergency_response_manager on behalf of their team and decided by that team's
-team_admin. The proposed place is any point (a geocoder hit), not limited to
-CLEAR's locations: accepting creates or reuses a level-4 point location for it
-under the admin area that contains it, then sets it as the Event's location.
+team_admin. The proposed place is any point (a geocoder hit) within the team's
+area, not limited to CLEAR's locations: accepting creates or reuses a level-4
+point location for it under the admin area that contains it, then sets it as
+the Event's location. A move beyond the team's area is for a platform admin.
 Only the Event moves; its signals keep their own locations.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>ID!</code></td>

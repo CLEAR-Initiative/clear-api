@@ -61,8 +61,8 @@ beforeEach(() => {
 });
 
 describe("Mutation.proposeEventLocationChange", () => {
-  function proposeCtx(role: string | null, extra: Record<string, unknown> = {}) {
-    return buildContext(MEMBER, {
+  function proposeCtx(role: string | null, extra: Record<string, unknown> = {}, user: User = MEMBER) {
+    return buildContext(user, {
       teamMembers: membership(role),
       events: { findUnique: vi.fn().mockResolvedValue(EVENT) },
       eventLocationChangeRequests: {
@@ -177,10 +177,29 @@ describe("Mutation.proposeEventLocationChange", () => {
   });
 
   it("accepts an event inside the team's scope", async () => {
-    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old"]);
+    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old", "A2-haya"]);
     await expect(
       proposeEventLocationChange(null, { input: proposal }, proposeCtx("analyst")),
     ).resolves.toMatchObject({ status: "pending" });
+  });
+
+  it("rejects a place outside the team's area", async () => {
+    // The Event (A2-old) is the team's, the proposed place (A2-haya) is not.
+    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old"]);
+    const ctx = proposeCtx("analyst");
+    await expect(
+      proposeEventLocationChange(null, { input: proposal }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const requests = (ctx.prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+      .eventLocationChangeRequests;
+    expect(requests.create).not.toHaveBeenCalled();
+  });
+
+  it("lets a platform admin propose a place outside the team's area", async () => {
+    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old"]);
+    await expect(
+      proposeEventLocationChange(null, { input: proposal }, proposeCtx(null, {}, ADMIN)),
+    ).resolves.toMatchObject({ status: "pending", createdBy: "u-admin" });
   });
 
   it("rejects a point outside every loaded area", async () => {
@@ -350,6 +369,36 @@ describe("Mutation.decideEventLocationChange", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
+    expect(eventsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a team_admin a place outside the team's area, creating nothing", async () => {
+    // The Event is the team's (A2-old), the proposed place (A2-haya) is not.
+    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old"]);
+    const { ctx, updateMany, eventsUpdate } = decideCtx(MEMBER, "team_admin");
+    await expect(
+      decideEventLocationChange(null, { id: "R1", accept: true }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(eventsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("lets a platform admin accept a place outside the team's area", async () => {
+    getTeamScopeLocationIds.mockResolvedValue(["A0-sudan", "A2-old"]);
+    findOrCreateLandmarkL4.mockResolvedValue({ locationId: "A4-village", reused: false, pointType: "landmark-geocoded", abortedReason: null });
+    const { ctx, eventsUpdate } = decideCtx(ADMIN, null);
+    await decideEventLocationChange(null, { id: "R1", accept: true }, ctx);
+    expect(eventsUpdate).toHaveBeenCalled();
+  });
+
+  it("refuses to accept a place no longer inside any loaded area", async () => {
+    resolveLatLngToLocation.mockResolvedValue(null);
+    const { ctx, eventsUpdate } = decideCtx(ADMIN, null);
+    await expect(
+      decideEventLocationChange(null, { id: "R1", accept: true }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
     expect(eventsUpdate).not.toHaveBeenCalled();
   });
 

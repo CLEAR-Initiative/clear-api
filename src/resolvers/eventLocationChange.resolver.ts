@@ -69,24 +69,45 @@ async function requireTeamDecider(context: Context, teamId: string) {
   });
 }
 
-/** Whether the team works on the Event. A team with no scope is global
- *  monitoring; an Event with no location at all is open to any team. */
-async function eventInTeamScope(
-  context: Context,
-  teamId: string,
-  event: { originId: string | null; destinationId: string | null; locationId: string | null },
-): Promise<boolean> {
+/** The team's area as a test on location ids: its scope locations and
+ *  everything under them. A team with no scope is global monitoring and
+ *  covers every place. */
+async function teamArea(context: Context, teamId: string): Promise<(locationId: string) => boolean> {
   const scope = await getTeamScopeLocationIds(context.prisma, teamId);
+  if (!scope) return () => true;
+  const ids = new Set(scope);
+  return (locationId) => ids.has(locationId);
+}
+
+/** Whether the team works on the Event: one of its locations is in the
+ *  team's area. An Event with no location at all is open to any team. */
+function eventInArea(
+  inArea: (locationId: string) => boolean,
+  event: { originId: string | null; destinationId: string | null; locationId: string | null },
+): boolean {
   const eventLocs = [event.originId, event.destinationId, event.locationId].filter(
     (x): x is string => Boolean(x),
   );
-  return !scope || eventLocs.length === 0 || eventLocs.some((id) => scope.includes(id));
+  return eventLocs.length === 0 || eventLocs.some(inArea);
 }
 
 function outsideTeamScope(): GraphQLError {
   return new GraphQLError("This event is outside the team's location scope", {
     extensions: { code: "FORBIDDEN" },
   });
+}
+
+/** A team moves its Events only within its own area; moving one beyond it
+ *  (into another country, say) is for a platform admin. */
+function placeOutsideTeamArea(): GraphQLError {
+  return new GraphQLError(
+    "The proposed place is outside the team's area; a platform admin can move the event there",
+    { extensions: { code: "FORBIDDEN" } },
+  );
+}
+
+function placeOutsideCoverage(): GraphQLError {
+  return badInput("The proposed place is outside the areas CLEAR covers.");
 }
 
 /** Country (level 0) of a location: itself, or the level-0 row among its ancestors. */
@@ -166,13 +187,14 @@ export const eventLocationChangeResolvers = {
         throw new GraphQLError("Event not found", { extensions: { code: "NOT_FOUND" } });
       }
 
-      if (!(await eventInTeamScope(context, input.teamId, event))) throw outsideTeamScope();
+      const inArea = await teamArea(context, input.teamId);
+      if (!eventInArea(inArea, event)) throw outsideTeamScope();
 
       // Fail now rather than on accept: a point outside every loaded admin
       // area would leave the Event with no country and no district.
-      if (!(await resolveLatLngToLocation(context.prisma, input.lat, input.lng))) {
-        throw badInput("The proposed place is outside the areas CLEAR covers.");
-      }
+      const placement = await resolveLatLngToLocation(context.prisma, input.lat, input.lng);
+      if (!placement) throw placeOutsideCoverage();
+      if (!isPlatformAdmin(user) && !inArea(placement.id)) throw placeOutsideTeamArea();
 
       const fields = {
         createdBy: user.id,
@@ -285,7 +307,18 @@ export const eventLocationChangeResolvers = {
       }
       // The team may have lost the Event since the request was filed (its
       // scope changed, or another team's request moved the Event away).
-      if (!(await eventInTeamScope(context, request.teamId, event))) throw outsideTeamScope();
+      const inArea = await teamArea(context, request.teamId);
+      if (!eventInArea(inArea, event)) throw outsideTeamScope();
+      // The place must still be covered, and in the team's area unless a
+      // platform admin decides (a platform admin may have filed a cross-border
+      // move for the team).
+      const placement = await resolveLatLngToLocation(
+        context.prisma,
+        request.proposedLat,
+        request.proposedLng,
+      );
+      if (!placement) throw placeOutsideCoverage();
+      if (!isPlatformAdmin(user) && !inArea(placement.id)) throw placeOutsideTeamArea();
 
       // Reuse a same-name point within 100 m in the same district, else create
       // one under the containing admin area. Tagged landmark-geocoded so the

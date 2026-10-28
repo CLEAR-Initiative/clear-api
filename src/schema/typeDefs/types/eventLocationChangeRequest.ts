@@ -3,9 +3,10 @@ import { gql } from "graphql-tag";
 export const eventLocationChangeRequestTypeDef = gql`
   """A proposal to move an Event to a new place, filed by a team analyst or
   emergency_response_manager on behalf of their team and decided by that team's
-  team_admin. The proposed place is any point (a geocoder hit), not limited to
-  CLEAR's locations: accepting creates or reuses a level-4 point location for it
-  under the admin area that contains it, then sets it as the Event's location.
+  team_admin. The proposed place is any point (a geocoder hit) within the team's
+  area, not limited to CLEAR's locations: accepting creates or reuses a level-4
+  point location for it under the admin area that contains it, then sets it as
+  the Event's location. A move beyond the team's area is for a platform admin.
   Only the Event moves; its signals keep their own locations."""
   type EventLocationChangeRequest {
     id: ID!

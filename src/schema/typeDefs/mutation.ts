@@ -199,13 +199,16 @@ export const mutationTypeDef = gql`
     """Propose moving an Event to a new place on behalf of a team. Auth: an
     analyst or emergency_response_manager of that team (or a platform admin),
     and the Event must be within the team's location scope. The point must fall
-    inside a loaded admin area. Replaces the team's open request for the Event
-    if there is one. Changes nothing on the Event until accepted."""
+    inside a loaded admin area and, unless a platform admin proposes, inside
+    the team's location scope too: moving an Event beyond it is for a platform
+    admin. Replaces the team's open request for the Event if there is one.
+    Changes nothing on the Event until accepted."""
     proposeEventLocationChange(input: ProposeEventLocationChangeInput!): EventLocationChangeRequest!
 
     """Accept or reject a pending Event location change request. Auth: a
     team_admin of the request's team, or a platform admin; accepting also
-    needs the Event to still be within the team's location scope. Accepting
+    needs the Event to still be within the team's location scope, and the
+    proposed place too unless a platform admin decides. Accepting
     creates or reuses a named level-4 point location (landmark-geocoded) for
     the proposed place under the admin area that contains it, sets it as the
     Event's location (clearing origin/destination) and sets the Event's
