@@ -6,14 +6,14 @@ import {
   requireNonWorkerContentReader,
 } from "../utils/auth-guard.js";
 import { getTeamScopeLocationIds } from "../utils/location-scope.js";
-import { createPointLocation, resolveLatLngToLocation } from "../utils/geo-resolve.js";
+import { findOrCreateLandmarkL4, resolveLatLngToLocation } from "../utils/geo-resolve.js";
 import { logActivity } from "../utils/activity-log.js";
 
 // ─── Event location change requests ──────────────────────────────────────────
 // An analyst or ERM proposes a new place for an Event on behalf of their team;
 // that team's team_admin accepts or rejects it. The place is any point (a
-// geocoder hit): on accept it becomes a level-4 point location under the admin
-// area that contains it. Only the Event moves; its signals do not.
+// geocoder hit): on accept it becomes a named level-4 point location under the
+// admin area that contains it. Only the Event moves; its signals do not.
 
 const PENDING = "pending";
 const PROPOSER_ROLES: ReadonlySet<string> = new Set(["analyst", "emergency_response_manager"]);
@@ -234,21 +234,29 @@ export const eventLocationChangeResolvers = {
         return context.prisma.eventLocationChangeRequests.findUnique({ where: { id: request.id } });
       }
 
-      // Create (or reuse within 100 m) the point under its containing admin
-      // area. Outside the transaction: it is idempotent, and an orphan point
-      // from a lost race is harmless and reused next time.
-      const point = await createPointLocation(
-        context.prisma,
-        request.proposedLat,
-        request.proposedLng,
-        request.proposedName,
-      );
-      const countryId = await countryOf(context, point.id);
+      // Reuse a same-name point within 100 m in the same district, else create
+      // one under the containing admin area. Tagged landmark-geocoded so the
+      // app shows its own name (a village), not its district's. Outside the
+      // transaction: it is idempotent, and a point left by a lost race is
+      // reused next time.
+      const point = await findOrCreateLandmarkL4(context.prisma, {
+        name: request.proposedName,
+        lat: request.proposedLat,
+        lng: request.proposedLng,
+        kind: "admin",
+      });
+      if (!point.locationId) {
+        throw new GraphQLError("The proposed place could not be placed", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
+      }
+      const pointId = point.locationId;
+      const countryId = await countryOf(context, pointId);
 
       await context.prisma.$transaction(async (tx) => {
         const { count } = await tx.eventLocationChangeRequests.updateMany({
           where: { id: request.id, status: PENDING },
-          data: { status: "accepted", appliedLocationId: point.id, ...decided },
+          data: { status: "accepted", appliedLocationId: pointId, ...decided },
         });
         if (count === 0) {
           throw new GraphQLError("This request was decided in the meantime", {
@@ -260,7 +268,7 @@ export const eventLocationChangeResolvers = {
         await tx.events.update({
           where: { id: request.eventId },
           data: {
-            locationId: point.id,
+            locationId: pointId,
             originId: null,
             destinationId: null,
             ...(countryId ? { countries: { set: [{ id: countryId }] } } : {}),
@@ -276,7 +284,7 @@ export const eventLocationChangeResolvers = {
         metadata: {
           requestId: request.id,
           previousLocationId: request.previousLocationId,
-          appliedLocationId: point.id,
+          appliedLocationId: pointId,
         },
       });
       return context.prisma.eventLocationChangeRequests.findUnique({ where: { id: request.id } });

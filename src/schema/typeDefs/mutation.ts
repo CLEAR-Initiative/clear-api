@@ -205,7 +205,8 @@ export const mutationTypeDef = gql`
 
     """Accept or reject a pending Event location change request. Auth: a
     team_admin of the request's team, or a platform admin. Accepting creates or
-    reuses a level-4 point location for the proposed place, sets it as the
+    reuses a named level-4 point location (landmark-geocoded) for the proposed
+    place under the admin area that contains it, sets it as the
     Event's location (clearing origin/destination) and sets the Event's
     countries to that point's country. Only the Event moves, not its signals."""
     decideEventLocationChange(id: String!, accept: Boolean!, note: String): EventLocationChangeRequest!

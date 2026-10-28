@@ -12,9 +12,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "../../src/context.js";
 
 const resolveLatLngToLocation = vi.fn();
-const createPointLocation = vi.fn();
+const findOrCreateLandmarkL4 = vi.fn();
 const getTeamScopeLocationIds = vi.fn();
-vi.mock("../../src/utils/geo-resolve.js", () => ({ resolveLatLngToLocation, createPointLocation }));
+vi.mock("../../src/utils/geo-resolve.js", () => ({ resolveLatLngToLocation, findOrCreateLandmarkL4 }));
 vi.mock("../../src/utils/location-scope.js", () => ({ getTeamScopeLocationIds }));
 vi.mock("../../src/utils/activity-log.js", () => ({ logActivity: vi.fn() }));
 
@@ -186,7 +186,7 @@ describe("Query.locationPlacement", () => {
     const findUnique = vi.fn().mockResolvedValue({ id: "A2-haya", name: "Haya" });
     const ctx = buildContext(MEMBER, { locations: { findUnique } });
     await expect(locationPlacement(null, { lat: 18.3, lng: 36.4 }, ctx)).resolves.toMatchObject({ id: "A2-haya" });
-    expect(createPointLocation).not.toHaveBeenCalled();
+    expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
   });
 
   it("returns null outside every loaded area", async () => {
@@ -254,15 +254,15 @@ describe("Mutation.decideEventLocationChange", () => {
       where: { id: "R1", status: "pending" },
       data: expect.objectContaining({ status: "rejected", decidedBy: "u1", decisionNote: "not convinced" }),
     });
-    expect(createPointLocation).not.toHaveBeenCalled();
+    expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
     expect(eventsUpdate).not.toHaveBeenCalled();
   });
 
   it("on accept, moves the Event to a created-or-reused point and sets its country", async () => {
-    createPointLocation.mockResolvedValue({ id: "A4-village", name: "Village X", level: 4 });
+    findOrCreateLandmarkL4.mockResolvedValue({ locationId: "A4-village", reused: false, pointType: "landmark-geocoded", abortedReason: null });
     const { ctx, updateMany, eventsUpdate } = decideCtx(MEMBER, "team_admin");
     await decideEventLocationChange(null, { id: "R1", accept: true }, ctx);
-    expect(createPointLocation).toHaveBeenCalledWith(ctx.prisma, 18.3, 36.4, "Village X");
+    expect(findOrCreateLandmarkL4).toHaveBeenCalledWith(ctx.prisma, { name: "Village X", lat: 18.3, lng: 36.4, kind: "admin" });
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "R1", status: "pending" },
       data: expect.objectContaining({ status: "accepted", appliedLocationId: "A4-village", decidedBy: "u1" }),
@@ -279,14 +279,14 @@ describe("Mutation.decideEventLocationChange", () => {
   });
 
   it("lets a platform admin decide without a team membership", async () => {
-    createPointLocation.mockResolvedValue({ id: "A4-village", name: "Village X", level: 4 });
+    findOrCreateLandmarkL4.mockResolvedValue({ locationId: "A4-village", reused: false, pointType: "landmark-geocoded", abortedReason: null });
     const { ctx, eventsUpdate } = decideCtx(ADMIN, null);
     await decideEventLocationChange(null, { id: "R1", accept: true }, ctx);
     expect(eventsUpdate).toHaveBeenCalled();
   });
 
   it("fails if another decision won the race", async () => {
-    createPointLocation.mockResolvedValue({ id: "A4-village", name: "Village X", level: 4 });
+    findOrCreateLandmarkL4.mockResolvedValue({ locationId: "A4-village", reused: false, pointType: "landmark-geocoded", abortedReason: null });
     const { ctx, updateMany, eventsUpdate } = decideCtx(MEMBER, "team_admin");
     updateMany.mockResolvedValue({ count: 0 });
     await expect(
