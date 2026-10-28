@@ -27,7 +27,7 @@ import {
   requireNonWorker,
   requireRole,
   resolveTeamMembership,
-  TEAM_ANALYST_ROLE,
+  TEAM_ANALYST_ROLES,
 } from "../utils/auth-guard.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { deepMergeTranslation } from "../utils/translation-merge.js";
@@ -172,9 +172,9 @@ async function requireAutomationTeamAccess(
     where: { teamId_userId: { teamId, userId: user.id } },
     select: { role: true },
   });
-  if (membership?.role !== TEAM_ANALYST_ROLE) {
+  if (!membership || !TEAM_ANALYST_ROLES.includes(membership.role)) {
     throw new GraphQLError(
-      "Requires a team analyst on this automation's team, or global admin",
+      "Requires a team analyst on this automation's team (or an emergency response manager), or global admin",
       { extensions: { code: "FORBIDDEN" } },
     );
   }

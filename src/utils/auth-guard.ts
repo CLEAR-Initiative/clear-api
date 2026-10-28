@@ -102,6 +102,14 @@ export const TEAM_ADMIN_ROLES: ReadonlySet<string> = new Set([TEAM_ADMIN_ROLE]);
  *  fall within the team's location scope. A TEAM value of `teamMembers.role`. */
 export const TEAM_ANALYST_ROLE = "analyst";
 
+/** Team roles that carry the elevated, location-scoped "analysis" powers: the
+ *  `analyst` role, plus `emergency_response_manager`, which is granted the full
+ *  analysis permission set ON TOP OF its own (manage team analyses/automations,
+ *  promote alerts, decide tasks / case proposals, act on events / alerts /
+ *  crises within the team's scope). Every analyst-power gate checks membership
+ *  against THIS set, not the single role, so the two roles stay in step. */
+export const TEAM_ANALYST_ROLES: readonly string[] = ["analyst", "emergency_response_manager"];
+
 /**
  * True when the user is a team `analyst` on at least one team whose location
  * scope covers one of `locationIds`. A team with NO location bindings is
@@ -115,7 +123,7 @@ export async function userIsTeamAnalystForLocations(
   locationIds: ReadonlyArray<string | null | undefined>,
 ): Promise<boolean> {
   const memberships = await prisma.teamMembers.findMany({
-    where: { userId, role: TEAM_ANALYST_ROLE },
+    where: { userId, role: { in: [...TEAM_ANALYST_ROLES] } },
     select: { teamId: true },
   });
   if (memberships.length === 0) return false;
@@ -149,7 +157,7 @@ export async function requireAdminOrTeamAnalystForLocations(
     return user;
   }
   throw new GraphQLError(
-    "Requires global admin, or a team analyst within the target's location scope",
+    "Requires global admin, or a team analyst / emergency response manager within the target's location scope",
     { extensions: { code: "FORBIDDEN" } },
   );
 }
@@ -172,9 +180,9 @@ export async function requireAdminOrTeamAnalyst(
       where: { teamId_userId: { teamId, userId: user.id } },
       select: { role: true },
     });
-    if (membership?.role === TEAM_ANALYST_ROLE) return user;
+    if (membership && TEAM_ANALYST_ROLES.includes(membership.role)) return user;
   }
-  throw new GraphQLError("Requires global admin, or team analyst on this team", {
+  throw new GraphQLError("Requires global admin, or team analyst / emergency response manager on this team", {
     extensions: { code: "FORBIDDEN" },
   });
 }
