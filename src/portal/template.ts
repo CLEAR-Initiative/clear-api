@@ -26,6 +26,12 @@ export interface PortalOptions {
 /** Portal tabs readable without a session. Auth-only tabs redirect to sign-in. */
 export const PORTAL_PUBLIC_TABS = ["getting-started", "reference"] as const;
 
+/**
+ * Tabs a pending sign-up can open. Any other hash, or none, sends them to
+ * the Welcome page — client-side, because only the browser sees the hash.
+ */
+export const PORTAL_PENDING_TABS = [...PORTAL_PUBLIC_TABS, "authentication"] as const;
+
 const PORTAL_SVGS = {
   modalClose:
     '<svg width="15" height="20" viewBox="0 0 15 20" aria-hidden="true"><path fill="currentColor" d="M2.5 2.5 12.5 12.5M12.5 2.5 2.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -43,6 +49,7 @@ const PORTAL_SVGS = {
 
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   const authed = Boolean(userEmail);
+  const pending = authed && userRole === "pending";
   const shellOpts: PortalShellOptions = {
     surface: "portal",
     account: authed ? { email: userEmail!, role: userRole } : null,
@@ -54,6 +61,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Portal</title>
+  ${pending ? `<script>if (${JSON.stringify(PORTAL_PENDING_TABS)}.indexOf(location.hash.slice(1)) === -1) location.replace('/portal/welcome');</script>` : ""}
   ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
   ${renderFontLinks()}
@@ -699,8 +707,13 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- Tab routing ---
     var PORTAL_AUTHED = ${authed ? "true" : "false"};
     var PORTAL_PUBLIC_TABS = ${JSON.stringify(PORTAL_PUBLIC_TABS)};
+    var PORTAL_PENDING_TABS = ${pending ? JSON.stringify(PORTAL_PENDING_TABS) : "null"};
 
     function showTab(name) {
+      if (PORTAL_PENDING_TABS && PORTAL_PENDING_TABS.indexOf(name) === -1) {
+        window.location.href = '/portal/welcome';
+        return;
+      }
       if (!PORTAL_AUTHED && PORTAL_PUBLIC_TABS.indexOf(name) === -1) {
         var next = '/portal#' + name;
         window.location.href = '/portal/login?next=' + encodeURIComponent(next);

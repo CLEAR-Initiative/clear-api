@@ -107,13 +107,9 @@ portalRouter.get("/", async (req, res) => {
     return;
   }
 
-  // Pending sign-ups can't use API Keys yet; their home is the Welcome page.
-  if (user.role === "pending") {
-    res.redirect(303, "/portal/welcome");
-    return;
-  }
-
-  // Render portal for all authenticated users (admins can navigate to /portal/admin via sidebar)
+  // Every signed-in user gets the portal (admins reach /portal/admin from the
+  // sidebar). Pending sign-ups get it too so the docs tabs open; the page
+  // itself sends a bare /portal, or a locked tab, to the Welcome page.
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(renderPortal({ userEmail: user.email, userRole: user.role }));
 });
@@ -132,9 +128,19 @@ async function loadWelcomeState(userId: string) {
   // cache can serve a pre-edit name for up to five minutes.
   const row = await prisma.user.findUnique({
     where: { id: userId },
-    select: { name: true, developerProfile: true },
+    select: {
+      name: true,
+      developerProfile: true,
+      // Revoked keys count: the steps are one-way milestones.
+      apiKeys: { select: { lastUsedAt: true } },
+    },
   });
-  return { name: row?.name ?? "", profile: row?.developerProfile ?? null };
+  const keys = row?.apiKeys ?? [];
+  return {
+    name: row?.name ?? "",
+    profile: row?.developerProfile ?? null,
+    apiKeys: { created: keys.length > 0, used: keys.some((k) => k.lastUsedAt !== null) },
+  };
 }
 
 portalRouter.get("/welcome", async (req, res) => {
@@ -143,7 +149,7 @@ portalRouter.get("/welcome", async (req, res) => {
     res.redirect(303, WELCOME_LOGIN_REDIRECT);
     return;
   }
-  const { name, profile } = await loadWelcomeState(user.id);
+  const { name, profile, apiKeys } = await loadWelcomeState(user.id);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.send(
@@ -152,6 +158,7 @@ portalRouter.get("/welcome", async (req, res) => {
       name,
       values: welcomeFormValues(name, profile),
       hasProfile: profile !== null,
+      apiKeys,
       flash: parseFlash(req),
     }),
   );
@@ -166,7 +173,7 @@ portalRouter.post("/welcome", urlencoded, async (req, res) => {
 
   const parsed = parseProfileForm(req.body);
   if (!parsed.ok) {
-    const { name, profile } = await loadWelcomeState(user.id);
+    const { name, profile, apiKeys } = await loadWelcomeState(user.id);
     res.status(400).setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.send(
@@ -175,6 +182,7 @@ portalRouter.post("/welcome", urlencoded, async (req, res) => {
         name,
         values: parsed.values,
         hasProfile: profile !== null,
+        apiKeys,
         errors: parsed.errors,
         flash: { kind: "error", message: "Check the highlighted fields and try again." },
       }),
