@@ -73,15 +73,18 @@ afterAll(async () => {
 
 const pendingUser = { id: "u-1", email: "ada@example.org", role: "pending", name: "Ada" };
 
-/** Simulates the DB: a user row plus an optional saved profile. */
+/** Simulates the DB: a user row plus an optional saved profile and keys. */
 let savedProfile: Record<string, string | null> | null;
+let savedKeys: { lastUsedAt: Date | null }[];
 
 beforeEach(() => {
   savedProfile = null;
+  savedKeys = [];
   getSessionMock.mockReset().mockResolvedValue({ user: pendingUser });
   userFindUnique.mockReset().mockImplementation(async () => ({
     name: "Ada",
     developerProfile: savedProfile,
+    apiKeys: savedKeys,
   }));
   userUpdate.mockReset().mockResolvedValue({});
   profileFindUnique.mockReset().mockImplementation(async () => (savedProfile ? { id: "p1" } : null));
@@ -107,17 +110,24 @@ function post(body: Record<string, string>) {
 }
 
 describe("GET /portal", () => {
-  it("sends a pending user to the Welcome page", async () => {
+  it("renders for a pending user, who is sent on to Welcome unless the hash is a docs tab", async () => {
     const res = await fetch(`${base}/portal`, { redirect: "manual" });
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/portal/welcome");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      `<script>if (["getting-started","reference","authentication"].indexOf(location.hash.slice(1)) === -1) location.replace('/portal/welcome');</script>`,
+    );
+    expect(html).toContain('var PORTAL_PENDING_TABS = ["getting-started","reference","authentication"];');
   });
 
   it("still renders the portal for approved users", async () => {
     getSessionMock.mockResolvedValue({ user: { ...pendingUser, role: "member" } });
     const res = await fetch(`${base}/portal`, { redirect: "manual" });
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('href="/portal/welcome"');
+    const html = await res.text();
+    expect(html).toContain('href="/portal/welcome"');
+    expect(html).not.toContain("location.replace('/portal/welcome')");
+    expect(html).toContain("var PORTAL_PENDING_TABS = null;");
   });
 });
 
@@ -156,6 +166,60 @@ describe("GET /portal/welcome", () => {
     expect(html).toMatch(/name="githubUrl"[^>]*value="https:\/\/github.com\/ada"/);
     expect(html).toContain(">Data pipeline</textarea>");
     expect(html).toContain("Save changes");
+  });
+
+  it("shows a new sign-up their progress, with the profile as the next step", async () => {
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html).toContain("Next: tell us about yourself");
+    expect(html).toContain("1 of 5 done");
+    expect(html).toMatch(/data-step="profile" aria-current="step"/);
+    expect(html).toMatch(/class="welcome-step welcome-step--locked" data-step="approval"/);
+    expect(html).toContain('id="about-you"');
+  });
+
+  it("tells a pending developer with a profile that it's over to us", async () => {
+    savedProfile = { organisation: "NRC" };
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html).toContain("Over to us: we&#39;re reviewing your account");
+    expect(html).toMatch(/class="welcome-step welcome-step--waiting" data-step="approval"/);
+    expect(html).not.toContain('aria-current="step"');
+  });
+
+  it("moves an approved developer on to their first request once they have a key", async () => {
+    getSessionMock.mockResolvedValue({ user: { ...pendingUser, role: "member" } });
+    savedProfile = { organisation: "NRC" };
+    savedKeys = [{ lastUsedAt: null }];
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html).toContain("4 of 5 done");
+    expect(html).toMatch(/data-step="firstRequest" aria-current="step"/);
+
+    savedKeys = [{ lastUsedAt: new Date() }];
+    const done = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(done).toContain("You&#39;re all set");
+    expect(done).toContain("5 of 5 done");
+  });
+
+  it("gives a new sign-up things to do while they wait, after the form", async () => {
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html).toContain("While you wait");
+    expect(html).toContain("CONTRIBUTING.md#explore-on-your-own-no-account-needed");
+    expect(html).toContain('href="/portal#reference"');
+    for (const repo of ["clear-api", "clear-pipeline", "clear-mvp"]) {
+      expect(html).toContain(`href="https://github.com/CLEAR-Initiative/${repo}"`);
+    }
+    expect(html.indexOf('id="about-you"')).toBeLessThan(html.indexOf("While you wait"));
+  });
+
+  it("moves the waiting panel above the form once the profile is saved", async () => {
+    savedProfile = { organisation: "NRC" };
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html.indexOf("While you wait")).toBeLessThan(html.indexOf('id="about-you"'));
+  });
+
+  it("drops the waiting panel once approved", async () => {
+    getSessionMock.mockResolvedValue({ user: { ...pendingUser, role: "member" } });
+    const html = await (await fetch(`${base}/portal/welcome`)).text();
+    expect(html).not.toContain("While you wait");
   });
 
   it("shows the success toast after a save", async () => {
