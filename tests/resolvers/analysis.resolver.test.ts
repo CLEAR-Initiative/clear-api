@@ -48,6 +48,8 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   const MEMBERSHIPS: Record<string, Record<string, string>> = {
     "u-analyst": { "team-a": "analyst" },
     "u-viewer": { "team-a": "team_member" },
+    // An emergency_response_manager is granted the analyst permission set too.
+    "u-erm": { "team-a": "emergency_response_manager" },
   };
   const teamMembers = {
     findUnique: vi.fn(async ({ where }: { where: { teamId_userId: { teamId: string; userId: string } } }) => {
@@ -407,6 +409,13 @@ describe("analysis resolver", () => {
       it("member analyst can create for their team", async () => {
         const prisma = makePrisma();
         const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(analyst, prisma));
+        expect(res.teamId).toBe("team-a");
+      });
+
+      it("emergency response manager can create for their team (granted the analyst permission set)", async () => {
+        const prisma = makePrisma();
+        const erm = { id: "u-erm", role: "member" };
+        const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(erm, prisma));
         expect(res.teamId).toBe("team-a");
       });
 
