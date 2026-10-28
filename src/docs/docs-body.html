@@ -3703,9 +3703,10 @@ the set when provided; omit to leave unchanged.</td>
     <td><code>Float</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
-left unchanged; transportId is immutable (it is the identity that
-externalIds are minted against). The merged row is re-validated: group
-kinds must end up with a complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+left unchanged, except teamId, where null unassigns the team;
+transportId is immutable (it is the identity that externalIds are minted
+against). The merged row is re-validated: group kinds must end up with a
+complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -3737,6 +3738,11 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td><code>retentionRule</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Assign the source to a team, whose emergency response managers then
+see and triage its threads. Null unassigns it (platform admins only).</td>
   </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
     <td><code>Int</code></td>
@@ -6130,6 +6136,11 @@ resources only&quot;). Ingest policy is judged against this record.</td>
     <td><code>retentionRule</code></td>
     <td><code>String</code></td>
     <td>Free-text retention rule; enforcement is operational in V1.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>The team whose emergency response managers triage this source. Null:
+no team yet, so only platform admins see its threads.</td>
   </tr><tr>
     <td><code>isActive</code></td>
     <td><code>Boolean!</code></td>

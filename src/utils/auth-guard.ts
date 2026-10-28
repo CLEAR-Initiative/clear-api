@@ -280,24 +280,18 @@ export async function resolveTeamMembership(
  *  (a value of `teamMembers.role`), distinct from the global admin/member roles. */
 export const EMERGENCY_RESPONSE_MANAGER = "emergency_response_manager";
 
-/** True when the user is an active `emergency_response_manager` on any team. */
-export async function isEmergencyResponseManager(
-  prisma: PrismaClient,
-  userId: string,
-): Promise<boolean> {
-  const membership = await prisma.teamMembers.findFirst({
-    where: { userId, role: EMERGENCY_RESPONSE_MANAGER },
-    select: { id: true },
-  });
-  return membership !== null;
-}
-
 /**
- * Ground-intel inbox access gate. Admits a global `admin` (who sees everything)
- * OR an `emergency_response_manager` on any team. Returns the user plus `isErm`
- * so callers can branch review rights — admins keep the per-source
- * `reviewerRoles` policy; an ERM may triage. (Phase 2 will scope an ERM to the
- * hotline numbers their team subscribes to.)
+ * Ground-intel inbox access gate. Admits a global `admin` OR an
+ * `emergency_response_manager` on any team, and returns which ground sources
+ * the caller may see:
+ *
+ *   - admin: `sourceIds: null`, every source.
+ *   - ERM: the sources assigned to the teams where they are an ERM
+ *     (`groundSources.teamId`). A source with no team is admins-only.
+ *
+ * Callers filter lists with `groundSourceScope` and check single items with
+ * `assertGroundSourceInScope`. `isErm` lets them branch review rights: admins
+ * keep the per-source `reviewerRoles` policy; an ERM may triage.
  *
  * `analyst` is no longer a global role and does NOT grant ground-inbox access:
  * ground triage is the ERM's team-scoped job. A team analyst's elevated powers
@@ -305,21 +299,54 @@ export async function isEmergencyResponseManager(
  */
 export async function requireGroundInboxAccess(
   context: Context,
-): Promise<{ user: ReturnType<typeof requireAuth>; isErm: boolean }> {
+): Promise<{ user: ReturnType<typeof requireAuth>; isErm: boolean; sourceIds: string[] | null }> {
   const user = requireAuth(context);
   if (isPlatformAdmin(user)) {
-    return { user, isErm: false };
+    return { user, isErm: false, sourceIds: null };
   }
   // An ERM carries the global `member` role plus the emergency_response_manager
-  // TEAM role. Only check team membership for members — service roles
+  // TEAM role. Only check team membership for members: service roles
   // (worker/pipeline/agent) and pending users can't be ERMs and are rejected
   // without a DB lookup (keeps a service-role rejection free of DB touches).
-  if (user.role === "member" && (await isEmergencyResponseManager(context.prisma, user.id))) {
-    return { user, isErm: true };
+  if (user.role === "member") {
+    const ermTeamIds = (
+      await context.prisma.teamMembers.findMany({
+        where: { userId: user.id, role: EMERGENCY_RESPONSE_MANAGER },
+        select: { teamId: true },
+      })
+    ).map((m) => m.teamId);
+    if (ermTeamIds.length > 0) {
+      const sources = await context.prisma.groundSources.findMany({
+        where: { teamId: { in: ermTeamIds } },
+        select: { id: true },
+      });
+      return { user, isErm: true, sourceIds: sources.map((source) => source.id) };
+    }
   }
   throw new GraphQLError("Insufficient permissions", {
     extensions: { code: "FORBIDDEN" },
   });
+}
+
+/** Prisma `where` fragment limiting ground rows (threads, messages) to the
+ *  caller's sources from `requireGroundInboxAccess`. Empty for an admin. */
+export function groundSourceScope(
+  sourceIds: string[] | null,
+): { groundSourceId?: { in: string[] } } {
+  return sourceIds === null ? {} : { groundSourceId: { in: sourceIds } };
+}
+
+/** Rejects a ground item whose source is outside the caller's scope. Throws
+ *  NOT_FOUND rather than FORBIDDEN so another team's threads don't reveal
+ *  that they exist. */
+export function assertGroundSourceInScope(
+  sourceIds: string[] | null,
+  groundSourceId: string,
+  notFoundMessage: string,
+): void {
+  if (sourceIds !== null && !sourceIds.includes(groundSourceId)) {
+    throw new GraphQLError(notFoundMessage, { extensions: { code: "NOT_FOUND" } });
+  }
 }
 
 /**

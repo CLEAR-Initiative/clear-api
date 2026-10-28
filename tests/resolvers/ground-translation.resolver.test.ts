@@ -25,7 +25,7 @@ type User = { id: string; role: string } | null;
 const ADMIN: User = { id: "admin1", role: "admin" };
 // The ground inbox is admin-or-ERM now (analyst no longer grants ground access).
 // This caller is a global `member` carrying the emergency_response_manager TEAM
-// role (the stub's teamMembers.findFirst returns an ERM row for id "a1").
+// role on team-1, which owns the message's source (see the stub below).
 const ERM: User = { id: "a1", role: "member" };
 const PIPELINE: User = { id: "machine", role: "pipeline" };
 // A plain global member with no ERM membership.
@@ -47,7 +47,10 @@ function stub(opts: {
   const order: string[] = [];
   const prisma = {
     groundMessages: {
-      findUnique: vi.fn(async () => (opts.message === undefined ? MESSAGE : opts.message)),
+      findUnique: vi.fn(async () => {
+        const message = opts.message === undefined ? MESSAGE : opts.message;
+        return message && { groundSourceId: "src-1", ...message };
+      }),
     },
     translationQueue: {
       findUnique: vi.fn(async () => {
@@ -63,9 +66,11 @@ function stub(opts: {
       }),
     },
     teamMembers: {
-      // The inbox gate asks "is this user an ERM?" — only id "a1" is one here.
-      findFirst: vi.fn(async ({ where }: { where: { userId: string } }) => (where.userId === "a1" ? { id: "tm-erm" } : null)),
+      // The inbox gate asks for the user's ERM teams: only id "a1" has one.
+      findMany: vi.fn(async ({ where }: { where: { userId: string } }) => (where.userId === "a1" ? [{ teamId: "team-1" }] : [])),
     },
+    // team-1's sources: the one every message here comes from.
+    groundSources: { findMany: vi.fn(async () => [{ id: "src-1" }]) },
   };
   return { prisma, order };
 }

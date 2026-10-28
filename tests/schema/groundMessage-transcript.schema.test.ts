@@ -68,7 +68,7 @@ function buildContext(role: string | null): Context {
       groundMessages: { findMany },
       groundThreads: { findUnique: vi.fn(async () => ({ id: "t1", groundSourceId: "gs_1" })) },
       // Inbox gate checks for an ERM team membership when the caller is a viewer.
-      teamMembers: { findFirst: vi.fn(async () => null) },
+      teamMembers: { findMany: vi.fn(async () => []) },
     },
     user: role ? { id: "u1", role } : null,
     session: null,

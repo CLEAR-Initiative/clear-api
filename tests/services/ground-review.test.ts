@@ -111,6 +111,8 @@ interface StubThread {
   id: string;
   reviewState: string;
   source: { reviewerRoles: string[] };
+  /** Defaults to src-1, the ERM's team source. */
+  groundSourceId?: string;
 }
 
 function buildContext(
@@ -128,14 +130,16 @@ function buildContext(
         knownLocationIds.includes(args.where.id) ? { id: args.where.id } : null,
     },
     groundThreads: {
-      findUnique: async () => thread,
+      // Every thread here comes from src-1, the ERM's team source.
+      findUnique: async () => thread && { groundSourceId: "src-1", ...thread },
       update: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
         updates.push(args);
         return { ...thread, ...args.data };
       },
     },
     // Inbox gate checks for an ERM team membership when the caller is a member.
-    teamMembers: { findFirst: async () => (isErm ? { id: "tm-erm" } : null) },
+    teamMembers: { findMany: async () => (isErm ? [{ teamId: "team-1" }] : []) },
+    groundSources: { findMany: async () => [{ id: "src-1" }] },
   };
   const context = {
     prisma,
@@ -224,6 +228,15 @@ describe("reviewGroundThread resolver", () => {
     expect(result.reviewedBy).toBe("u1");
     expect(result.reviewNote).toBe("looks credible");
     expect(updates).toHaveLength(1);
+  });
+
+  it("answers NOT_FOUND to an ERM for another team's thread, without touching it", async () => {
+    const other = { ...thread, groundSourceId: "src-other-team" };
+    const { context, updates } = buildContext({ id: "u1", role: "member" }, other, [], true);
+    await expect(
+      reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    expect(updates).toHaveLength(0);
   });
 
   it("rejects a plain member (no admin, no ERM team role) before touching the thread", async () => {
