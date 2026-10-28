@@ -1,10 +1,11 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireNonWorkerContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
+import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
@@ -207,34 +208,6 @@ function signalKeyWhere(input: UpdateSignalContentInput) {
   );
 }
 
-// ─── Signal Location challenge (Location trust v1, clear-mvp #314) ───────────
-// v1 has exactly one open state; a resubmit updates the single open row per
-// signal (enforced by @@unique([signalId, status])).
-const OPEN_CHALLENGE_STATUS = "consideration";
-const CHALLENGE_NOTE_MAX = 2000;
-const CHALLENGE_NAME_MAX = 500;
-
-interface SubmitLocationChallengeInput {
-  signalId: string;
-  note?: string | null;
-  proposedLng?: number | null;
-  proposedLat?: number | null;
-  proposedName?: string | null;
-}
-
-/** Trim to null (empty → null); reject when over `max`. */
-function trimChallengeText(value: string | null | undefined, max: number, field: string): string | null {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.length > max) {
-    throw new GraphQLError(`${field} must be at most ${max} characters.`, {
-      extensions: { code: "BAD_USER_INPUT" },
-    });
-  }
-  return trimmed;
-}
-
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
@@ -298,25 +271,6 @@ export const signalResolvers = {
       return context.prisma.signals.findUnique({
         where: { id: args.id },
         include,
-      });
-    },
-
-    signalLocationChallenges: async (
-      _parent: unknown,
-      args: { teamId?: string | null; status?: string | null },
-      context: Context,
-    ) => {
-      requireContentReader(context);
-      const status = args.status ?? OPEN_CHALLENGE_STATUS;
-      // Team scope is a view filter (like `signals`): challenges whose Signal
-      // falls within the team's locations. No teamId = global feed; a team with
-      // no scope locations = no filter.
-      const signalFilter = args.teamId
-        ? await buildLocationFilterForTeam(context.prisma, args.teamId)
-        : undefined;
-      return context.prisma.signalLocationChallenges.findMany({
-        where: { status, ...(signalFilter ? { signal: signalFilter } : {}) },
-        orderBy: { createdAt: "desc" },
       });
     },
 
@@ -819,9 +773,12 @@ export const signalResolvers = {
           return existing;
         }
 
+        // A person corrected this signal's location (a decided Location
+        // challenge), so the source's location and countries no longer apply.
+        const corrected = existing.locationCorrectedAt != null;
         const data: Record<string, unknown> = {};
         if (contentChanged) {
-          if (!locationResolved) {
+          if (!corrected && !locationResolved) {
             resolvedLocationId = await resolveLocationId(context, {
               locationId: input.locationId,
               lat: input.lat,
@@ -845,9 +802,13 @@ export const signalResolvers = {
             magnitude: input.magnitude,
             magnitudeUnit: input.magnitudeUnit,
             actors: input.actors ?? undefined,
-            originId: input.originId,
-            destinationId: input.destinationId,
-            locationId: resolvedLocationId,
+            ...(corrected
+              ? {}
+              : {
+                  originId: input.originId,
+                  destinationId: input.destinationId,
+                  locationId: resolvedLocationId,
+                }),
             geoparsedData: input.geoparsedData as InputJsonValue | undefined,
             contentHash: input.contentHash,
           });
@@ -881,12 +842,24 @@ export const signalResolvers = {
         // content write back (no silent no-op on a hash-matching retry). When no
         // countries are sent (the common path, incl. the drain), the plain
         // updateMany keeps the compare-and-set exactly as before.
-        const countryIds = input.countryIds;
+        //
+        // A source location or countries are only written while no correction
+        // is: one landing after the read fails the compare-and-set, and the
+        // retry keeps the corrected ones. Countries go with any effective
+        // update, a retraction-only or key-only one too.
+        const countryIds = corrected ? undefined : input.countryIds;
+        const writesLocation = !corrected && (contentChanged || countryIds != null);
+        const casWhere = {
+          id: existing.id,
+          revision: existing.revision,
+          status: existing.status,
+          ...(writesLocation ? { locationCorrectedAt: null } : {}),
+        };
         const result =
           countryIds != null
             ? await context.prisma.$transaction(async (tx) => {
                 const r = await tx.signals.updateMany({
-                  where: { id: existing.id, revision: existing.revision, status: existing.status },
+                  where: casWhere,
                   data,
                 });
                 if (r.count === 1) {
@@ -898,7 +871,7 @@ export const signalResolvers = {
                 return r;
               })
             : await context.prisma.signals.updateMany({
-                where: { id: existing.id, revision: existing.revision, status: existing.status },
+                where: casWhere,
                 data,
               });
         if (result.count === 1) {
@@ -930,60 +903,6 @@ export const signalResolvers = {
 
       await context.prisma.signals.delete({ where: { id: args.id } });
       return true;
-    },
-
-    submitSignalLocationChallenge: async (
-      _parent: unknown,
-      { input }: { input: SubmitLocationChallengeInput },
-      context: Context,
-    ) => {
-      const user = requireNonWorkerContentReader(context);
-
-      // 1. Signal must exist. (Team scope is a view filter, not a hard access
-      //    gate here — mirrors the signal(id) / signals queries.)
-      const signal = await context.prisma.signals.findUnique({
-        where: { id: input.signalId },
-        select: { id: true },
-      });
-      if (!signal) {
-        throw new GraphQLError(`Signal ${input.signalId} not found.`, {
-          extensions: { code: "NOT_FOUND" },
-        });
-      }
-
-      // 2. Point pair: both set or both omitted; validate ranges when present.
-      const hasLng = input.proposedLng != null;
-      const hasLat = input.proposedLat != null;
-      if (hasLng !== hasLat) {
-        throw new GraphQLError(
-          "proposedLng and proposedLat must both be set, or both omitted.",
-          { extensions: { code: "BAD_USER_INPUT" } },
-        );
-      }
-      const proposedLng = hasLng ? input.proposedLng! : null;
-      const proposedLat = hasLat ? input.proposedLat! : null;
-      if (proposedLng !== null && (!Number.isFinite(proposedLng) || proposedLng < -180 || proposedLng > 180)) {
-        throw new GraphQLError("proposedLng must be a finite number in [-180, 180].", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
-      }
-      if (proposedLat !== null && (!Number.isFinite(proposedLat) || proposedLat < -90 || proposedLat > 90)) {
-        throw new GraphQLError("proposedLat must be a finite number in [-90, 90].", {
-          extensions: { code: "BAD_USER_INPUT" },
-        });
-      }
-
-      const note = trimChallengeText(input.note, CHALLENGE_NOTE_MAX, "note");
-      const proposedName = trimChallengeText(input.proposedName, CHALLENGE_NAME_MAX, "proposedName");
-
-      // 3. Upsert the single open row for this signal — resubmit replaces it.
-      //    Never writes into the signal's own origin/destination/location.
-      const fields = { createdBy: user.id, note, proposedLng, proposedLat, proposedName };
-      return context.prisma.signalLocationChallenges.upsert({
-        where: { signalId_status: { signalId: input.signalId, status: OPEN_CHALLENGE_STATUS } },
-        create: { signalId: input.signalId, status: OPEN_CHALLENGE_STATUS, ...fields },
-        update: fields,
-      });
     },
   },
   Signal: {
@@ -1114,9 +1033,5 @@ export const signalResolvers = {
         where: { signalId: parent.id, status: OPEN_CHALLENGE_STATUS },
       });
     },
-  },
-  SignalLocationChallenge: {
-    hasProposedPoint: (parent: { proposedLng: number | null; proposedLat: number | null }) =>
-      parent.proposedLng != null && parent.proposedLat != null,
   },
 };

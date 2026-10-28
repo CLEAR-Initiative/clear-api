@@ -72,7 +72,10 @@ function makeStore(rows: Row[], links: Record<string, number> = {}) {
         return copy;
       }),
       updateMany: vi.fn(
-        async (args: { where: { id: string; revision?: number; status?: string }; data: Record<string, unknown> }) => {
+        async (args: {
+          where: { id: string; revision?: number; status?: string; locationCorrectedAt?: null };
+          data: Record<string, unknown>;
+        }) => {
           if (!state.firstDone) {
             state.firstDone = true;
             state.beforeFirstUpdateMany?.();
@@ -82,6 +85,7 @@ function makeStore(rows: Row[], links: Record<string, number> = {}) {
           if (!r) return { count: 0 };
           if (args.where.revision !== undefined && r.revision !== args.where.revision) return { count: 0 };
           if (args.where.status !== undefined && r.status !== args.where.status) return { count: 0 };
+          if (args.where.locationCorrectedAt === null && r.locationCorrectedAt != null) return { count: 0 };
           for (const [k, v] of Object.entries(args.data)) {
             if (v && typeof v === "object" && "increment" in (v as object)) {
               (r as Record<string, unknown>)[k] = (r[k] as number) + (v as { increment: number }).increment;
@@ -390,9 +394,11 @@ describe("updateSignalContent rawS3Key", () => {
 // ─── Transition table (API-U-22..26) ─────────────────────────────────────────
 
 describe("updateSignalContent status transitions", () => {
+  // A content write carries the source's location, so its compare-and-set
+  // also requires that no location correction landed meanwhile.
   const triggers = [
-    ["content change", { contentHash: "h1" }],
-    ["retraction-only", { contentHash: "h0", retracted: true }],
+    ["content change", { contentHash: "h1" }, { locationCorrectedAt: null }],
+    ["retraction-only", { contentHash: "h0", retracted: true }, {}],
   ] as const;
 
   // [stored status, linked count, expected written status (undefined = key absent)]
@@ -407,12 +413,12 @@ describe("updateSignalContent status transitions", () => {
     ["FAILED", 1, undefined],
   ];
 
-  describe.each(triggers)("%s", (_name, trig) => {
+  describe.each(triggers)("%s", (_name, trig, casExtra) => {
     it.each(table)("stored %s, %i link(s) -> %s", async (status, nLinks, expected) => {
       const { prisma, state } = makeStore([baseRow({ status, revision: 7 })], { s1: nLinks });
       await update(null, { input: { id: "s1", rawData: {}, ...trig } as never }, ctx(prisma));
       const { where, data } = written(prisma);
-      expect(where).toEqual({ id: "s1", revision: 7, status });
+      expect(where).toEqual({ id: "s1", revision: 7, status, ...casExtra });
       if (expected === undefined) {
         expect(data).not.toHaveProperty("status");
         expect(state.rows.get("s1")!.status).toBe(status);
@@ -474,9 +480,9 @@ describe("updateSignalContent concurrency", () => {
 
     expect(attemptReads(prisma)).toHaveLength(2);
     expect(prisma.signals.updateMany).toHaveBeenCalledTimes(2);
-    expect(written(prisma, 0).where).toEqual({ id: "s1", revision: 0, status: "NEW" });
+    expect(written(prisma, 0).where).toEqual({ id: "s1", revision: 0, status: "NEW", locationCorrectedAt: null });
     expect(written(prisma, 0).data).not.toHaveProperty("status");
-    expect(written(prisma, 1).where).toEqual({ id: "s1", revision: 0, status: "PROCESSED" });
+    expect(written(prisma, 1).where).toEqual({ id: "s1", revision: 0, status: "PROCESSED", locationCorrectedAt: null });
     expect(written(prisma, 1).data.status).toBe("NEEDS_RECOMPUTE");
     expect(state.rows.get("s1")).toMatchObject({ status: "NEEDS_RECOMPUTE", revision: 1, contentHash: "h1" });
     expect(out).toMatchObject({ status: "NEEDS_RECOMPUTE", revision: 1 });
@@ -620,5 +626,86 @@ describe("updateSignalContent location + return", () => {
     expect(last).toEqual({ where: { id: "s1" } });
     expect(out).not.toHaveProperty("_count");
     expect(out).toMatchObject({ contentHash: "h1", title: "t", revision: 4 });
+  });
+});
+
+// ─── A corrected location (a decided Location challenge, #836) ───────────────
+
+describe("updateSignalContent keeps a corrected location", () => {
+  const corrected = {
+    locationId: "loc-corrected",
+    originId: null,
+    destinationId: null,
+    locationCorrectedAt: new Date("2026-10-28T12:00:00Z"),
+  };
+
+  it("a source revision writes its content but not its location or countries", async () => {
+    const { prisma, state } = makeStore([baseRow(corrected)]);
+    Object.assign(prisma, {
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "c-source", level: 0 }]) },
+    });
+    await update(
+      null,
+      {
+        input: {
+          id: "s1", contentHash: "h1", rawData: {}, title: "revised",
+          locationId: "loc-source", originId: "loc-origin", lat: 1, lng: 2, countryIds: ["c-source"],
+        },
+      },
+      ctx(prisma),
+    );
+    const { where, data } = written(prisma);
+    expect(where).toEqual({ id: "s1", revision: 3, status: "PROCESSED" });
+    expect(data).toMatchObject({ title: "revised", contentHash: "h1" });
+    expect(data).not.toHaveProperty("locationId");
+    expect(data).not.toHaveProperty("originId");
+    expect(data).not.toHaveProperty("destinationId");
+    expect(createPointLocation).not.toHaveBeenCalled();
+    // No countries set: they follow the corrected location.
+    expect(prisma.signals.update).not.toHaveBeenCalled();
+    expect(state.rows.get("s1")).toMatchObject({ locationId: "loc-corrected", title: "revised", revision: 4 });
+  });
+
+  it("a correction landing between the read and the write is kept", async () => {
+    const { prisma, state } = makeStore([baseRow({ locationId: "loc-source-old" })]);
+    state.beforeFirstUpdateMany = () => {
+      Object.assign(state.rows.get("s1")!, corrected);
+    };
+    await update(
+      null,
+      { input: { id: "s1", contentHash: "h1", rawData: {}, title: "revised", locationId: "loc-source" } },
+      ctx(prisma),
+    );
+    expect(prisma.signals.updateMany).toHaveBeenCalledTimes(2);
+    expect(written(prisma, 0).where).toMatchObject({ locationCorrectedAt: null });
+    expect(written(prisma, 1).data).not.toHaveProperty("locationId");
+    expect(state.rows.get("s1")).toMatchObject({ locationId: "loc-corrected", title: "revised", revision: 4 });
+  });
+
+  it("a retraction carrying countries doesn't overwrite a correction that lands meanwhile", async () => {
+    // Countries go with any effective update, so this write is guarded too.
+    const { prisma, state } = makeStore([baseRow({ locationId: "loc-source-old" })]);
+    Object.assign(prisma, {
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "c-source", level: 0 }]) },
+    });
+    state.beforeFirstUpdateMany = () => {
+      Object.assign(state.rows.get("s1")!, corrected);
+    };
+    await update(
+      null,
+      { input: { id: "s1", contentHash: "h0", retracted: true, countryIds: ["c-source"] } } as never,
+      ctx(prisma),
+    );
+    expect(written(prisma, 0).where).toMatchObject({ locationCorrectedAt: null });
+    expect(prisma.signals.updateMany).toHaveBeenCalledTimes(2);
+    // The retry sees the correction: retraction written, countries left alone.
+    expect(prisma.signals.update).not.toHaveBeenCalled();
+    expect(state.rows.get("s1")).toMatchObject({ retracted: true, locationId: "loc-corrected" });
+  });
+
+  it("a retraction of a corrected signal still lands", async () => {
+    const { prisma, state } = makeStore([baseRow(corrected)]);
+    await update(null, { input: { id: "s1", contentHash: "h0", retracted: true } as never }, ctx(prisma));
+    expect(state.rows.get("s1")).toMatchObject({ retracted: true, locationId: "loc-corrected" });
   });
 });

@@ -191,10 +191,30 @@ export const mutationTypeDef = gql`
     Admin/pipeline only."""
     setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
 
-    """Create or replace the open (consideration) Location challenge for a Signal.
-    Auth: any approved logged-in team member who can view the Signal. Queue only —
-    does NOT accept/reject and does NOT mutate the Signal's geometry."""
+    """File a Location challenge on a Signal for a team, with an optional
+    corrected point. Auth: an analyst on that team, or a platform admin; the
+    Signal must be within the team's area. Supersedes the Signal's open
+    challenge, if any. Never changes the Signal: a decision does."""
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
+
+    """Decide an open Location challenge. Auth: the team_admin of the team it
+    was filed for, or a platform admin, but never whoever filed it. ACCEPT
+    writes the proposed point onto the Signal; CORRECT writes \`point\`
+    instead; DECLINE leaves the Signal as it is. A written point becomes the
+    Signal's general location (a reused or new level-4 point under the admin
+    area containing it; origin and destination are cleared, countries follow),
+    and later source revisions keep it. Writing needs the Signal still within
+    the team's area, and the point inside the areas CLEAR covers and, unless
+    a platform admin decides, within the team's area. CONFLICT when the
+    challenge is no longer open."""
+    decideSignalLocationChallenge(
+      """The challenge to decide."""
+      id: String!
+      """ACCEPT, CORRECT or DECLINE."""
+      decision: SignalLocationChallengeDecision!
+      """The point to write: required with CORRECT, refused otherwise."""
+      point: LocationChallengePointInput
+    ): SignalLocationChallenge!
 
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""

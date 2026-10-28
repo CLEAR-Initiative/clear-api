@@ -24,16 +24,8 @@ export async function resolveLatLngToLocation(
   lng: number,
 ): Promise<ResolvedLocation | null> {
   // Phase 1: smallest admin polygon (A2 > A1 > A0) that contains the point.
-  const containRows = await prisma.$queryRaw<ResolvedLocation[]>`
-    SELECT id, name, level
-    FROM "locations"
-    WHERE "geometry" IS NOT NULL
-      AND level < 4
-      AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
-    ORDER BY level DESC
-    LIMIT 1
-  `;
-  if (containRows.length > 0) return containRows[0]!;
+  const contained = await resolveContainingAdminArea(prisma, lat, lng);
+  if (contained) return contained;
 
   // Phase 2: nearest admin polygon within 50km (handles points just outside
   // any polygon — coastal/border slivers in OCHA boundary data).
@@ -47,6 +39,30 @@ export async function resolveLatLngToLocation(
     LIMIT 1
   `;
   return nearbyRows[0] ?? null;
+}
+
+/**
+ * The smallest admin area (A2 > A1 > A0) whose polygon contains the point, or
+ * null. Containment only: unlike `resolveLatLngToLocation` there is no
+ * nearest-area fallback, so a point just across a border into a country with
+ * no loaded areas is not attributed to its neighbour. Level-4 rows are
+ * excluded, as there.
+ */
+export async function resolveContainingAdminArea(
+  prisma: PrismaClient,
+  lat: number,
+  lng: number,
+): Promise<ResolvedLocation | null> {
+  const rows = await prisma.$queryRaw<ResolvedLocation[]>`
+    SELECT id, name, level
+    FROM "locations"
+    WHERE "geometry" IS NOT NULL
+      AND level < 4
+      AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
+    ORDER BY level DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
 }
 
 /**
@@ -253,6 +269,11 @@ export async function findOrCreateLandmarkL4(
     kind: "landmark" | "admin";
     sourceLat?: number | null;
     sourceLng?: number | null;
+    /** Reuse only points under this location instead of the candidate's
+     *  district: the area a caller already checked the place against. Without
+     *  it, a place where no district is loaded could reuse a point anywhere,
+     *  across a border too. */
+    withinId?: string | null;
   },
 ): Promise<FindOrCreateLandmarkL4Result> {
   const { name, lat, lng, kind } = args;
@@ -261,6 +282,7 @@ export async function findOrCreateLandmarkL4(
   // A2 id specifically for the reuse scope; resolveLatLngToLocation may
   // return A1/A0 if the point is outside any A2.
   const candidateA2 = await resolveContainingA2(prisma, lat, lng);
+  const reuseScope = args.withinId ?? candidateA2;
 
   // Same-A2 safety check against the source coords, if provided.
   if (args.sourceLat != null && args.sourceLng != null) {
@@ -275,17 +297,18 @@ export async function findOrCreateLandmarkL4(
     }
   }
 
-  // Reuse scope: when we know the candidate's A2, restrict the search to
-  // A4s whose parent chain contains it. When A2 is unknown (point falls
-  // outside any A2 polygon), search country-wide — rare path, and the
-  // Nominatim country-code filter already keeps us in the right country.
+  // Reuse scope: the caller's `withinId` when given, else the candidate's
+  // A2; restrict the search to A4s whose parent chain contains it. When
+  // neither is known (point falls outside any A2 polygon), search
+  // country-wide: a rare path, and the Nominatim country-code filter
+  // already keeps us in the right country.
   if (kind === "landmark") {
     const existing = await prisma.$queryRaw<{ id: string; point_type: string | null }[]>`
       SELECT id, point_type
       FROM "locations"
       WHERE level = 4
         AND LOWER(name) = LOWER(${name})
-        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+        ${reuseScope ? Prisma.sql`AND ${reuseScope} = ANY("ancestor_ids")` : Prisma.empty}
       LIMIT 1
     `;
     if (existing.length > 0) {
@@ -316,7 +339,7 @@ export async function findOrCreateLandmarkL4(
           ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
           ${ADMIN_REUSE_RADIUS_M}
         )
-        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+        ${reuseScope ? Prisma.sql`AND ${reuseScope} = ANY("ancestor_ids")` : Prisma.empty}
       ORDER BY ST_Distance(
         "geometry"::geography,
         ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography

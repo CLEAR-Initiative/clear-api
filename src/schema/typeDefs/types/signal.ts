@@ -91,5 +91,9 @@ export const signalTypeDef = gql`
     comments: [UserComment!]!
     """Open Location challenge for this signal, if any (null when none)."""
     locationChallenge: SignalLocationChallenge
+    """When a decided Location challenge last wrote this signal's location (a
+    person corrected it); null when the location is the source's. Source
+    revisions keep a corrected location."""
+    locationCorrectedAt: DateTime
   }
 `;

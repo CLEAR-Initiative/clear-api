@@ -350,14 +350,15 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation         organisations         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  members              teamMembers[]
-  locations            teamLocations[]
-  defaultForUsers      user[]                @relation("DefaultTeam")
-  invitations          invitations[]
-  invitationTeams      invitationTeams[]
-  webhookSubscriptions WebhookSubscription[]
-  groundSources        groundSources[]
+  organisation             organisations              @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members                  teamMembers[]
+  locations                teamLocations[]
+  defaultForUsers          user[]                     @relation("DefaultTeam")
+  invitations              invitations[]
+  invitationTeams          invitationTeams[]
+  webhookSubscriptions     WebhookSubscription[]
+  groundSources            groundSources[]
+  signalLocationChallenges signalLocationChallenges[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -497,6 +498,10 @@ model locations {
   signalDestinations signals[] @relation("SignalDestination")
   signalLocations    signals[] @relation("SignalLocation")
   signalCountries    signals[] @relation("SignalCountries")
+
+  // Reverse relations for Location challenges
+  challengePreviousLocations signalLocationChallenges[] @relation("ChallengePreviousLocation")
+  challengeAppliedLocations  signalLocationChallenges[] @relation("ChallengeAppliedLocation")
 
   // Reverse relations for event
   eventOrigins      events[] @relation("EventOrigin")
@@ -696,6 +701,11 @@ model signals {
   locationId      String?    @map("location_id") // In case of signals without origin or destination
   generalLocation locations? @relation("SignalLocation", fields: [locationId], references: [id])
 
+  /// When an accepted Location challenge wrote this Signal's location (a
+  /// person corrected it). From then on a source revision
+  /// (updateSignalContent) keeps the corrected location and countries.
+  locationCorrectedAt DateTime? @map("location_corrected_at")
+
   /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
   /// Additive enrichment for comparison against the source's coords —
   /// never used for routing or alert decisions in this phase.
@@ -731,37 +741,58 @@ model signals {
   @@index([status, publishedAt])
 }
 
-/// Analyst Location challenge on a Signal, with an optional Location correction
-/// (Location trust v1, clear-mvp #314). A queue only — status is always
-/// "consideration" in v1, there is no accept/reject flow, and it NEVER mutates
-/// the Signal's own geometry. `@@unique([signalId, status])` keeps one open row
-/// per Signal so a resubmit updates the existing challenge.
+/// An analyst's Location challenge on a Signal, with an optional corrected
+/// point, filed for one team and decided by that team's admin (Exponential
+/// #836; Location trust v1 was a queue only). Accepting writes a point onto
+/// the Signal: the proposed one, or one the admin placed instead. Declining
+/// leaves the Signal as it is. A Signal has at most one open challenge (a
+/// partial unique index in the migration, as Prisma can't express one); a new
+/// challenge supersedes the open one instead of rewriting it, so a decision
+/// always applies to the exact challenge it was made on.
 model signalLocationChallenges {
   id       String  @id @default(cuid())
   signalId String  @map("signal_id")
   signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The team it was filed for: only that team's admin, or a platform admin,
+  /// decides it. Null on challenges filed before teams were recorded, which
+  /// only a platform admin decides.
+  teamId String? @map("team_id")
+  team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   /// Auth user id of whoever filed the challenge.
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  /// v1: always "consideration".
+  /// "consideration" (open), "accepted" (the proposed point was written),
+  /// "corrected" (the admin placed a different point), "declined", or
+  /// "superseded" (replaced by a newer challenge on the same Signal).
   status String @default("consideration")
 
   /// Optional note explaining why the pin looks wrong.
   note String?
 
-  /// Optional Location correction — all three null = bare challenge. When a
-  /// point is proposed, proposedLng + proposedLat are required together
-  /// (enforced in the resolver + a DB CHECK added by the migration).
+  /// Optional corrected point; all three null is a bare challenge. When a
+  /// point is proposed, proposedLng and proposedLat are set together
+  /// (enforced in the resolver and by a DB CHECK added by the migration).
   proposedLng  Float?  @map("proposed_lng")
   proposedLat  Float?  @map("proposed_lat")
   proposedName String? @map("proposed_name")
 
-  @@unique([signalId, status])
+  /// The Signal's location when the challenge was filed.
+  previousLocationId String?    @map("previous_location_id")
+  previousLocation   locations? @relation("ChallengePreviousLocation", fields: [previousLocationId], references: [id], onDelete: SetNull)
+  /// The point written onto the Signal, set when it is accepted or corrected.
+  appliedLocationId  String?    @map("applied_location_id")
+  appliedLocation    locations? @relation("ChallengeAppliedLocation", fields: [appliedLocationId], references: [id], onDelete: SetNull)
+  /// Auth user id of whoever decided it, and when.
+  decidedBy          String?    @map("decided_by")
+  decidedAt          DateTime?  @map("decided_at")
+
   @@index([signalId])
   @@index([status, createdAt])
+  @@index([teamId, status, createdAt])
   @@map("signal_location_challenges")
 }
 

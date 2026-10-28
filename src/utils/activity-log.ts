@@ -43,7 +43,14 @@ export type ActivityAction =
   | "task.requested"
   | "task.cancelled"
   | "impact_prior.decided"
-  | "case_proposal.decided";
+  | "case_proposal.decided"
+  // Location challenges on a Signal (Exponential #836): an analyst filed one;
+  // the team's admin wrote its point onto the Signal, placed a different point
+  // instead, or declined it.
+  | "signal.location_challenge.file"
+  | "signal.location_challenge.accept"
+  | "signal.location_challenge.correct"
+  | "signal.location_challenge.decline";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
