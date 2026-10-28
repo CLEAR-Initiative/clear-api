@@ -26,9 +26,32 @@ export const queryTypeDef = gql`
     """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
     signalsByLocation(locationId: String!): [Signal!]!
 
-    """Open Signal Location challenges (for map dual-pin rendering). Team-scoped
-    like signals when teamId is given; status defaults to "consideration"."""
+    """Signal Location challenges by status (for map dual-pin rendering).
+    Team-scoped like signals when teamId is given (challenges whose Signal is
+    in the team's area). status is "consideration" (open, the default),
+    "accepted", "corrected", "declined" or "superseded"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
+
+    """Open Location challenges the caller can decide, newest first: for a team
+    admin, those filed for the teams they administer (or just teamId, one of
+    them); for a platform admin, all of them (or just teamId's). Excludes the
+    caller's own. At most \`first\` (default and maximum 200)."""
+    signalLocationChallengesToDecide(
+      """Only this team's challenges."""
+      teamId: String
+      """Max rows to return (1 to 200, default 200)."""
+      first: Int
+    ): [SignalLocationChallenge!]!
+
+    """The existing admin area a point falls in (district, else state, else
+    country), or null when it is outside the areas CLEAR covers. Lets a client
+    show where a corrected point would be placed before filing it."""
+    locationPlacement(
+      """Latitude of the point, -90 to 90."""
+      lat: Float!
+      """Longitude of the point, -180 to 180."""
+      lng: Float!
+    ): Location
 
     """Signals awaiting their first grouping (status = NEW, not retracted, not
     yet linked to any event), oldest-first — the Dagster event-driven drain.

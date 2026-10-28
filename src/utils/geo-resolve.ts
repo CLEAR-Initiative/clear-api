@@ -24,16 +24,8 @@ export async function resolveLatLngToLocation(
   lng: number,
 ): Promise<ResolvedLocation | null> {
   // Phase 1: smallest admin polygon (A2 > A1 > A0) that contains the point.
-  const containRows = await prisma.$queryRaw<ResolvedLocation[]>`
-    SELECT id, name, level
-    FROM "locations"
-    WHERE "geometry" IS NOT NULL
-      AND level < 4
-      AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
-    ORDER BY level DESC
-    LIMIT 1
-  `;
-  if (containRows.length > 0) return containRows[0]!;
+  const contained = await resolveContainingAdminArea(prisma, lat, lng);
+  if (contained) return contained;
 
   // Phase 2: nearest admin polygon within 50km (handles points just outside
   // any polygon — coastal/border slivers in OCHA boundary data).
@@ -47,6 +39,30 @@ export async function resolveLatLngToLocation(
     LIMIT 1
   `;
   return nearbyRows[0] ?? null;
+}
+
+/**
+ * The smallest admin area (A2 > A1 > A0) whose polygon contains the point, or
+ * null. Containment only: unlike `resolveLatLngToLocation` there is no
+ * nearest-area fallback, so a point just across a border into a country with
+ * no loaded areas is not attributed to its neighbour. Level-4 rows are
+ * excluded, as there.
+ */
+export async function resolveContainingAdminArea(
+  prisma: PrismaClient,
+  lat: number,
+  lng: number,
+): Promise<ResolvedLocation | null> {
+  const rows = await prisma.$queryRaw<ResolvedLocation[]>`
+    SELECT id, name, level
+    FROM "locations"
+    WHERE "geometry" IS NOT NULL
+      AND level < 4
+      AND ST_Contains("geometry"::geometry, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
+    ORDER BY level DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
 }
 
 /**
