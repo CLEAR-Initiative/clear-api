@@ -357,6 +357,7 @@ model teams {
   invitations          invitations[]
   invitationTeams      invitationTeams[]
   webhookSubscriptions WebhookSubscription[]
+  groundSources        groundSources[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -2200,10 +2201,16 @@ model groundSources {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// The team whose ERMs triage this source (e.g. the Sudan hotline to the
+  /// Sudan team). NULL = no team yet: only platform admins see its threads.
+  teamId String? @map("team_id")
+  team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   threads  groundThreads[]
   messages groundMessages[]
 
   @@index([kind])
+  @@index([teamId])
   @@map("ground_sources")
 }
 

@@ -3,8 +3,9 @@
  *
  * The whole tier is PRIVATE: the inbox queries + triage mutations require
  * `requireGroundInboxAccess` — a global admin, OR an
- * `emergency_response_manager` on any team (review actions for admins
- * additionally consult the source's own reviewerRoles). Ordinary members —
+ * `emergency_response_manager` on any team, who sees only the sources
+ * assigned to their ERM teams (review actions for admins additionally
+ * consult the source's own reviewerRoles). Ordinary members —
  * who can read signals/events — deliberately cannot see staged ground
  * content: sender names, unredacted-adjacent context, and unvetted claims
  * live here. (`analyst` is a TEAM role now and does not grant ground access.)
@@ -13,7 +14,12 @@
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireGroundInboxAccess, requireRole } from "../utils/auth-guard.js";
+import {
+  assertGroundSourceInScope,
+  groundSourceScope,
+  requireGroundInboxAccess,
+  requireRole,
+} from "../utils/auth-guard.js";
 import { getPresignedUrls } from "../services/s3.js";
 import {
   canReviewSource,
@@ -224,8 +230,11 @@ async function promoteThread(
 export const groundResolvers = {
   Query: {
     groundSources: async (_parent: unknown, _args: unknown, context: Context) => {
-      await requireGroundInboxAccess(context);
-      return context.prisma.groundSources.findMany({ orderBy: { createdAt: "desc" } });
+      const { sourceIds } = await requireGroundInboxAccess(context);
+      return context.prisma.groundSources.findMany({
+        where: sourceIds === null ? {} : { id: { in: sourceIds } },
+        orderBy: { createdAt: "desc" },
+      });
     },
 
     groundThreads: async (
@@ -238,10 +247,13 @@ export const groundResolvers = {
       },
       context: Context,
     ) => {
-      await requireGroundInboxAccess(context);
+      const { sourceIds } = await requireGroundInboxAccess(context);
       return context.prisma.groundThreads.findMany({
         where: {
-          ...(args.groundSourceId ? { groundSourceId: args.groundSourceId } : {}),
+          AND: [
+            groundSourceScope(sourceIds),
+            args.groundSourceId ? { groundSourceId: args.groundSourceId } : {},
+          ],
           ...(args.reviewState ? { reviewState: args.reviewState } : {}),
         },
         orderBy: { createdAt: "desc" },
@@ -251,8 +263,11 @@ export const groundResolvers = {
     },
 
     groundThread: async (_parent: unknown, args: { id: string }, context: Context) => {
-      await requireGroundInboxAccess(context);
-      return context.prisma.groundThreads.findUnique({ where: { id: args.id } });
+      const { sourceIds } = await requireGroundInboxAccess(context);
+      const thread = await context.prisma.groundThreads.findUnique({ where: { id: args.id } });
+      // Out of scope reads as absent, like a thread that does not exist.
+      if (!thread || (sourceIds !== null && !sourceIds.includes(thread.groundSourceId))) return null;
+      return thread;
     },
 
     groundMessages: async (
@@ -265,10 +280,13 @@ export const groundResolvers = {
       },
       context: Context,
     ) => {
-      await requireGroundInboxAccess(context);
+      const { sourceIds } = await requireGroundInboxAccess(context);
       return context.prisma.groundMessages.findMany({
         where: {
-          ...(args.groundSourceId ? { groundSourceId: args.groundSourceId } : {}),
+          AND: [
+            groundSourceScope(sourceIds),
+            args.groundSourceId ? { groundSourceId: args.groundSourceId } : {},
+          ],
           ...(args.threadId ? { threadId: args.threadId } : {}),
         },
         orderBy: { sentAt: "asc" },
@@ -513,6 +531,7 @@ export const groundResolvers = {
           privacyDefault?: string | null;
           reviewerRoles?: string[] | null;
           retentionRule?: string | null;
+          teamId?: string | null;
         };
       },
       context: Context,
@@ -527,6 +546,18 @@ export const groundResolvers = {
         throw new GraphQLError("Ground source not found", {
           extensions: { code: "NOT_FOUND" },
         });
+      }
+
+      if (input.teamId != null) {
+        const team = await context.prisma.teams.findUnique({
+          where: { id: input.teamId },
+          select: { id: true },
+        });
+        if (!team) {
+          throw new GraphQLError("teamId: team not found", {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
       }
 
       if (input.kind != null && !GROUND_SOURCE_KINDS.has(input.kind)) {
@@ -570,6 +601,8 @@ export const groundResolvers = {
           ...(input.retentionRule != null
             ? { retentionRule: input.retentionRule }
             : {}),
+          // Unlike the policy fields, an explicit null unassigns the team.
+          ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
         },
       });
     },
@@ -616,7 +649,7 @@ export const groundResolvers = {
     ) => {
       // Coarse gate first (viewers/pending never reach the queue), then
       // the per-source reviewerRoles policy record decides.
-      const { user, isErm } = await requireGroundInboxAccess(context);
+      const { user, isErm, sourceIds } = await requireGroundInboxAccess(context);
 
       const thread = await context.prisma.groundThreads.findUnique({
         where: { id: args.id },
@@ -627,10 +660,11 @@ export const groundResolvers = {
           extensions: { code: "NOT_FOUND" },
         });
       }
+      assertGroundSourceInScope(sourceIds, thread.groundSourceId, "Ground thread not found");
 
-      // An emergency_response_manager may triage any source they can see
-      // (Phase 1 — Phase 2 scopes them to their team's subscribed numbers).
-      // Admins/analysts still answer to the source's own reviewerRoles policy.
+      // An emergency_response_manager may triage any source in their scope
+      // (the sources assigned to their ERM teams). Admins/analysts still
+      // answer to the source's own reviewerRoles policy.
       if (!isErm && !canReviewSource(user, thread.source.reviewerRoles)) {
         throw new GraphQLError(
           `Reviewing this source requires one of: ${thread.source.reviewerRoles.join(", ")}`,
@@ -1139,18 +1173,19 @@ export const groundResolvers = {
       args: { messageId: string; locale: string },
       context: Context,
     ): Promise<GroundTranslationState> => {
-      await requireGroundInboxAccess(context);
+      const { sourceIds } = await requireGroundInboxAccess(context);
       const locale = groundTranslationLocale(args.locale);
 
       const message = await context.prisma.groundMessages.findUnique({
         where: { id: args.messageId },
-        select: { id: true, text: true },
+        select: { id: true, text: true, groundSourceId: true },
       });
       if (!message) {
         throw new GraphQLError("Ground message not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
+      assertGroundSourceInScope(sourceIds, message.groundSourceId, "Ground message not found");
       if (message.text.trim().length === 0) return { locale, status: "unavailable", text: null };
 
       const current = await groundTranslationState(context, message, locale);
@@ -1170,17 +1205,18 @@ export const groundResolvers = {
       args: { messageId: string; stage: GroundPipelineStage },
       context: Context,
     ) => {
-      await requireGroundInboxAccess(context);
+      const { sourceIds } = await requireGroundInboxAccess(context);
 
       const existing = await context.prisma.groundMessages.findUnique({
         where: { id: args.messageId },
-        select: { id: true },
+        select: { id: true, groundSourceId: true },
       });
       if (!existing) {
         throw new GraphQLError("Ground message not found", {
           extensions: { code: "NOT_FOUND" },
         });
       }
+      assertGroundSourceInScope(sourceIds, existing.groundSourceId, "Ground message not found");
 
       return context.prisma.groundMessages.update({
         where: { id: existing.id },

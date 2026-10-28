@@ -19,6 +19,9 @@ import {
   resolveTeamMembership,
   canSeeUserPii,
   canSeeUserPrivate,
+  requireGroundInboxAccess,
+  groundSourceScope,
+  assertGroundSourceInScope,
 } from "../../src/utils/auth-guard.js";
 import type { Context } from "../../src/context.js";
 
@@ -352,5 +355,70 @@ describe("canSeeUserPrivate", () => {
     expect(
       canSeeUserPrivate(buildContext({ id: "me", role: "member" }), "colleague"),
     ).toBe(false);
+  });
+});
+
+describe("requireGroundInboxAccess", () => {
+  function prismaWith(ermTeamIds: string[], sourceIds: string[]) {
+    const teamMembers = { findMany: vi.fn(async () => ermTeamIds.map((teamId) => ({ teamId }))) };
+    const groundSources = { findMany: vi.fn(async () => sourceIds.map((id) => ({ id }))) };
+    return { teamMembers, groundSources };
+  }
+
+  it("gives a platform admin every source, without a lookup", async () => {
+    const prisma = prismaWith([], []);
+    const access = await requireGroundInboxAccess(buildContext({ id: "a", role: "admin" }, prisma));
+    expect(access).toMatchObject({ isErm: false, sourceIds: null });
+    expect(prisma.teamMembers.findMany).not.toHaveBeenCalled();
+  });
+
+  it("gives an ERM only the sources assigned to their ERM teams", async () => {
+    const prisma = prismaWith(["team-sudan"], ["src-sudan"]);
+    const access = await requireGroundInboxAccess(buildContext({ id: "e", role: "member" }, prisma));
+    expect(access).toMatchObject({ isErm: true, sourceIds: ["src-sudan"] });
+    expect(prisma.teamMembers.findMany).toHaveBeenCalledWith({
+      where: { userId: "e", role: "emergency_response_manager" },
+      select: { teamId: true },
+    });
+    expect(prisma.groundSources.findMany).toHaveBeenCalledWith({
+      where: { teamId: { in: ["team-sudan"] } },
+      select: { id: true },
+    });
+  });
+
+  it("admits an ERM whose teams have no source yet, with nothing to see", async () => {
+    const access = await requireGroundInboxAccess(
+      buildContext({ id: "e", role: "member" }, prismaWith(["team-new"], [])),
+    );
+    expect(access).toMatchObject({ isErm: true, sourceIds: [] });
+  });
+
+  it("rejects a member who is not an ERM on any team", async () => {
+    await expect(
+      requireGroundInboxAccess(buildContext({ id: "m", role: "member" }, prismaWith([], ["src-sudan"]))),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it.each(["pending", "worker", "pipeline"])("rejects the %s role without a lookup", async (role) => {
+    const prisma = prismaWith(["team-sudan"], ["src-sudan"]);
+    await expect(requireGroundInboxAccess(buildContext({ id: "x", role }, prisma))).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(prisma.teamMembers.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("groundSourceScope / assertGroundSourceInScope", () => {
+  it("filters nothing for an admin and limits an ERM to their sources", () => {
+    expect(groundSourceScope(null)).toEqual({});
+    expect(groundSourceScope(["src-sudan"])).toEqual({ groundSourceId: { in: ["src-sudan"] } });
+  });
+
+  it("answers NOT_FOUND for an item from another team's source", () => {
+    expect(() => assertGroundSourceInScope(null, "src-chad", "Ground thread not found")).not.toThrow();
+    expect(() => assertGroundSourceInScope(["src-sudan"], "src-sudan", "Ground thread not found")).not.toThrow();
+    expect(() => assertGroundSourceInScope(["src-sudan"], "src-chad", "Ground thread not found")).toThrow(
+      expect.objectContaining({ message: "Ground thread not found", extensions: { code: "NOT_FOUND" } }),
+    );
   });
 });
