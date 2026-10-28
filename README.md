@@ -225,18 +225,8 @@ CONTEXT.md          Domain glossary
 
 ## Git flow and deployment
 
-- Branch off `dev` and open pull requests against `dev`. `prod` advances only through periodic
-  `dev -> prod` sync PRs.
-- Every PR runs `check` (lint, typecheck, docs drift, build, DB-free tests with a coverage gate) and
-  `db-tests` (the suite against a freshly migrated Postgres).
-- PRs into `dev` merge automatically once Greptile has reviewed the latest commit with no unresolved
-  P0/P1 finding and both checks pass. Add the `no-automerge` label to hold one.
-- A merge to `dev` tags a minor version and pushes a Docker image to GHCR; a merge to `prod` tags a
-  major version and does the same. Deployment itself happens outside this repo. The image runs `prisma migrate deploy` on start.
-
-Details: [docs/agents/git-flow.md](docs/agents/git-flow.md). Work is tracked in
-[Exponential](https://www.exponential.im), not GitHub Issues
-([docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branching, the checks every PR runs, review and
+auto-merge, deployment, and where work is tracked.
 
 ### Docker
 
