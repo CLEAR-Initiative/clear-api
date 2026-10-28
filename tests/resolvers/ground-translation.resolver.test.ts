@@ -40,7 +40,8 @@ const MESSAGE = { id: "m1", text: "قصف على السوق الرئيسي" };
 /** Prisma stub for one message and its translation state. `order` records
  * which table each state read hit, to pin the queue-before-overlay order. */
 function stub(opts: {
-  message?: { id: string; text: string } | null;
+  /** groundSourceId defaults to src-1, the ERM's team source. */
+  message?: { id: string; text: string; groundSourceId?: string } | null;
   queued?: boolean;
   translated?: string | null;
 }) {
@@ -144,6 +145,15 @@ describe("requestGroundMessageTranslation", () => {
     await expect(
       requestGroundMessageTranslation(null, { messageId: "nope", locale: "en" }, ctx(ERM, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it("throws NOT_FOUND for another team's message, before any translation read or queue write", async () => {
+    const { prisma, order } = stub({ message: { ...MESSAGE, groundSourceId: "src-other-team" } });
+    await expect(
+      requestGroundMessageTranslation(null, { messageId: "m1", locale: "en" }, ctx(ERM, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    expect(order).toEqual([]);
+    expect(prisma.translationQueue.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects an unsupported locale before touching the DB", async () => {
