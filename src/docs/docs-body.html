@@ -254,8 +254,9 @@ like signals when teamId is given; status defaults to &quot;consideration&quot;.
   </tr><tr>
     <td><code>eventLocationChangeRequests</code></td>
     <td><code>[EventLocationChangeRequest!]!</code></td>
-    <td>Event location change requests filed for a team, newest first; status
-defaults to &quot;pending&quot;. Auth: that team's team_admin, or a platform admin.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>status: String</code></span></div></td>
+    <td>Event location change requests filed for a team, newest first; status is
+&quot;pending&quot; (the default), &quot;accepted&quot; or &quot;rejected&quot;. Auth: that team's
+team_admin, or a platform admin.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>status: String</code></span></div></td>
   </tr><tr>
     <td><code>locationPlacement</code></td>
     <td><code>Location</code></td>
@@ -1148,9 +1149,10 @@ if there is one. Changes nothing on the Event until accepted.<div class="field-a
     <td><code>decideEventLocationChange</code></td>
     <td><code>EventLocationChangeRequest!</code></td>
     <td>Accept or reject a pending Event location change request. Auth: a
-team_admin of the request's team, or a platform admin. Accepting creates or
-reuses a named level-4 point location (landmark-geocoded) for the proposed
-place under the admin area that contains it, sets it as the
+team_admin of the request's team, or a platform admin; accepting also
+needs the Event to still be within the team's location scope. Accepting
+creates or reuses a named level-4 point location (landmark-geocoded) for
+the proposed place under the admin area that contains it, sets it as the
 Event's location (clearing origin/destination) and sets the Event's
 countries to that point's country. Only the Event moves, not its signals.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>accept: Boolean!</code></span><span class="arg"><code>note: String</code></span></div></td>
   </tr><tr id="mutation-createevent">

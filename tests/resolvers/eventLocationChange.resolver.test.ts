@@ -9,6 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "../../src/generated/prisma/client.js";
 import type { Context } from "../../src/context.js";
 
 const resolveLatLngToLocation = vi.fn();
@@ -18,6 +19,7 @@ vi.mock("../../src/utils/geo-resolve.js", () => ({ resolveLatLngToLocation, find
 vi.mock("../../src/utils/location-scope.js", () => ({ getTeamScopeLocationIds }));
 vi.mock("../../src/utils/activity-log.js", () => ({ logActivity: vi.fn() }));
 
+const { logActivity } = await import("../../src/utils/activity-log.js");
 const { eventLocationChangeResolvers } = await import("../../src/resolvers/eventLocationChange.resolver.js");
 const { proposeEventLocationChange, decideEventLocationChange } = eventLocationChangeResolvers.Mutation;
 const { eventLocationChangeRequests, locationPlacement } = eventLocationChangeResolvers.Query;
@@ -66,7 +68,8 @@ describe("Mutation.proposeEventLocationChange", () => {
       eventLocationChangeRequests: {
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockImplementation(({ data }) => ({ id: "R1", ...data })),
-        update: vi.fn().mockImplementation(({ data }) => ({ id: "R-open", ...data })),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUnique: vi.fn().mockResolvedValue({ id: "R-open", status: "pending" }),
       },
       ...extra,
     });
@@ -116,9 +119,35 @@ describe("Mutation.proposeEventLocationChange", () => {
       .eventLocationChangeRequests;
     requests.findFirst.mockResolvedValue({ id: "R-open" });
     const result = await proposeEventLocationChange(null, { input: proposal }, ctx);
-    expect(requests.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "R-open" } }));
+    // Only while still pending: a request decided meanwhile is never rewritten.
+    expect(requests.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "R-open", status: "pending" } }),
+    );
     expect(requests.create).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: "R-open" });
+  });
+
+  it("files a new request when the open one was decided meanwhile", async () => {
+    const ctx = proposeCtx("analyst");
+    const requests = (ctx.prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+      .eventLocationChangeRequests;
+    requests.findFirst.mockResolvedValue({ id: "R-open" });
+    requests.updateMany.mockResolvedValue({ count: 0 });
+    const result = await proposeEventLocationChange(null, { input: proposal }, ctx);
+    expect(requests.create).toHaveBeenCalled();
+    expect(result).toMatchObject({ id: "R1", status: "pending" });
+  });
+
+  it("answers a proposal filed at the same moment with CONFLICT", async () => {
+    const ctx = proposeCtx("analyst");
+    const requests = (ctx.prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+      .eventLocationChangeRequests;
+    requests.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+    );
+    await expect(
+      proposeEventLocationChange(null, { input: proposal }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
   });
 
   it("rejects an out-of-range latitude", async () => {
@@ -179,6 +208,13 @@ describe("Query.eventLocationChangeRequests", () => {
     await eventLocationChangeRequests(null, { teamId: "T1" }, ctx);
     expect(findMany.mock.calls[0][0].where).toEqual({ teamId: "T1", status: "pending" });
   });
+
+  it("rejects an unknown status", async () => {
+    const ctx = buildContext(MEMBER, { teamMembers: membership("team_admin") });
+    await expect(
+      eventLocationChangeRequests(null, { teamId: "T1", status: "open" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
 });
 
 describe("Query.locationPlacement", () => {
@@ -216,6 +252,14 @@ describe("Mutation.decideEventLocationChange", () => {
       eventLocationChangeRequests: {
         findUnique: vi.fn().mockResolvedValue(request),
         updateMany,
+      },
+      events: {
+        findUnique: vi.fn().mockResolvedValue({
+          originId: "A2-origin",
+          destinationId: "A2-destination",
+          locationId: "A2-old",
+          countries: [{ id: "A0-sudan" }, { id: "A0-chad" }],
+        }),
       },
       locations: {
         findUnique: vi.fn().mockResolvedValue({ id: "A4-village", level: 4, ancestorIds: ["A2-haya", "A1-red-sea", "A0-sudan"] }),
@@ -276,6 +320,44 @@ describe("Mutation.decideEventLocationChange", () => {
         countries: { set: [{ id: "A0-sudan" }] },
       },
     });
+  });
+
+  it("logs what the move overwrote, so it can be undone", async () => {
+    findOrCreateLandmarkL4.mockResolvedValue({ locationId: "A4-village", reused: false, pointType: "landmark-geocoded", abortedReason: null });
+    const { ctx } = decideCtx(MEMBER, "team_admin");
+    await decideEventLocationChange(null, { id: "R1", accept: true }, ctx);
+    expect(vi.mocked(logActivity)).toHaveBeenCalledWith(ctx.prisma, expect.objectContaining({
+      action: "event.location_change.accept",
+      resourceId: "E1",
+      metadata: {
+        requestId: "R1",
+        appliedLocationId: "A4-village",
+        previous: {
+          locationId: "A2-old",
+          originId: "A2-origin",
+          destinationId: "A2-destination",
+          countryIds: ["A0-sudan", "A0-chad"],
+        },
+      },
+    }));
+  });
+
+  it("refuses to accept once the Event is outside the team's scope, creating nothing", async () => {
+    getTeamScopeLocationIds.mockResolvedValue(["A0-afghanistan"]);
+    const { ctx, updateMany, eventsUpdate } = decideCtx(MEMBER, "team_admin");
+    await expect(
+      decideEventLocationChange(null, { id: "R1", accept: true }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(eventsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still lets the team_admin reject a request for an Event outside the scope", async () => {
+    getTeamScopeLocationIds.mockResolvedValue(["A0-afghanistan"]);
+    const { ctx, updateMany } = decideCtx(MEMBER, "team_admin");
+    await decideEventLocationChange(null, { id: "R1", accept: false }, ctx);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "rejected" }) }));
   });
 
   it("lets a platform admin decide without a team membership", async () => {

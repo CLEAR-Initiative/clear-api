@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
   isPlatformAdmin,
@@ -16,6 +17,7 @@ import { logActivity } from "../utils/activity-log.js";
 // admin area that contains it. Only the Event moves; its signals do not.
 
 const PENDING = "pending";
+const STATUSES: ReadonlySet<string> = new Set([PENDING, "accepted", "rejected"]);
 const PROPOSER_ROLES: ReadonlySet<string> = new Set(["analyst", "emergency_response_manager"]);
 const DECIDER_ROLE = "team_admin";
 const NOTE_MAX = 2000;
@@ -67,6 +69,26 @@ async function requireTeamDecider(context: Context, teamId: string) {
   });
 }
 
+/** Whether the team works on the Event. A team with no scope is global
+ *  monitoring; an Event with no location at all is open to any team. */
+async function eventInTeamScope(
+  context: Context,
+  teamId: string,
+  event: { originId: string | null; destinationId: string | null; locationId: string | null },
+): Promise<boolean> {
+  const scope = await getTeamScopeLocationIds(context.prisma, teamId);
+  const eventLocs = [event.originId, event.destinationId, event.locationId].filter(
+    (x): x is string => Boolean(x),
+  );
+  return !scope || eventLocs.length === 0 || eventLocs.some((id) => scope.includes(id));
+}
+
+function outsideTeamScope(): GraphQLError {
+  return new GraphQLError("This event is outside the team's location scope", {
+    extensions: { code: "FORBIDDEN" },
+  });
+}
+
 /** Country (level 0) of a location: itself, or the level-0 row among its ancestors. */
 async function countryOf(context: Context, locationId: string): Promise<string | null> {
   const loc = await context.prisma.locations.findUnique({
@@ -91,8 +113,12 @@ export const eventLocationChangeResolvers = {
       context: Context,
     ) => {
       await requireTeamDecider(context, args.teamId);
+      const status = args.status ?? PENDING;
+      if (!STATUSES.has(status)) {
+        throw badInput(`status must be one of: ${[...STATUSES].join(", ")}.`);
+      }
       return context.prisma.eventLocationChangeRequests.findMany({
-        where: { teamId: args.teamId, status: args.status ?? PENDING },
+        where: { teamId: args.teamId, status },
         orderBy: { createdAt: "desc" },
       });
     },
@@ -140,17 +166,7 @@ export const eventLocationChangeResolvers = {
         throw new GraphQLError("Event not found", { extensions: { code: "NOT_FOUND" } });
       }
 
-      // The Event must be one the team works on. A team with no scope is
-      // global monitoring; an Event with no location at all is open to any team.
-      const scope = await getTeamScopeLocationIds(context.prisma, input.teamId);
-      const eventLocs = [event.originId, event.destinationId, event.locationId].filter(
-        (x): x is string => Boolean(x),
-      );
-      if (scope && eventLocs.length > 0 && !eventLocs.some((id) => scope.includes(id))) {
-        throw new GraphQLError("This event is outside the team's location scope", {
-          extensions: { code: "FORBIDDEN" },
-        });
-      }
+      if (!(await eventInTeamScope(context, input.teamId, event))) throw outsideTeamScope();
 
       // Fail now rather than on accept: a point outside every loaded admin
       // area would leave the Event with no country and no district.
@@ -167,16 +183,37 @@ export const eventLocationChangeResolvers = {
         previousLocationId: event.locationId ?? event.originId ?? event.destinationId ?? null,
       };
       // One pending request per Event and team (a partial unique index backs
-      // this): a re-proposal replaces the open one.
+      // this): a re-proposal replaces the open one, but only while it is still
+      // pending, so a request decided meanwhile is never rewritten.
       const open = await context.prisma.eventLocationChangeRequests.findFirst({
         where: { eventId: event.id, teamId: input.teamId, status: PENDING },
         select: { id: true },
       });
-      const request = open
-        ? await context.prisma.eventLocationChangeRequests.update({ where: { id: open.id }, data: fields })
-        : await context.prisma.eventLocationChangeRequests.create({
+      let request = null;
+      if (open) {
+        const { count } = await context.prisma.eventLocationChangeRequests.updateMany({
+          where: { id: open.id, status: PENDING },
+          data: fields,
+        });
+        if (count > 0) {
+          request = await context.prisma.eventLocationChangeRequests.findUnique({ where: { id: open.id } });
+        }
+      }
+      if (!request) {
+        try {
+          request = await context.prisma.eventLocationChangeRequests.create({
             data: { eventId: event.id, teamId: input.teamId, status: PENDING, ...fields },
           });
+        } catch (err) {
+          // Another proposal for this Event and team was filed at the same moment.
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+            throw new GraphQLError("Another proposal for this event was just filed; try again", {
+              extensions: { code: "CONFLICT" },
+            });
+          }
+          throw err;
+        }
+      }
 
       void logActivity(context.prisma, {
         userId: user.id,
@@ -234,6 +271,22 @@ export const eventLocationChangeResolvers = {
         return context.prisma.eventLocationChangeRequests.findUnique({ where: { id: request.id } });
       }
 
+      const event = await context.prisma.events.findUnique({
+        where: { id: request.eventId },
+        select: {
+          originId: true,
+          destinationId: true,
+          locationId: true,
+          countries: { select: { id: true } },
+        },
+      });
+      if (!event) {
+        throw new GraphQLError("Event not found", { extensions: { code: "NOT_FOUND" } });
+      }
+      // The team may have lost the Event since the request was filed (its
+      // scope changed, or another team's request moved the Event away).
+      if (!(await eventInTeamScope(context, request.teamId, event))) throw outsideTeamScope();
+
       // Reuse a same-name point within 100 m in the same district, else create
       // one under the containing admin area. Tagged landmark-geocoded so the
       // app shows its own name (a village), not its district's. Outside the
@@ -283,8 +336,14 @@ export const eventLocationChangeResolvers = {
         resourceId: request.eventId,
         metadata: {
           requestId: request.id,
-          previousLocationId: request.previousLocationId,
           appliedLocationId: pointId,
+          // What the move overwrote, so it can be undone by hand.
+          previous: {
+            locationId: event.locationId,
+            originId: event.originId,
+            destinationId: event.destinationId,
+            countryIds: event.countries.map((c) => c.id),
+          },
         },
       });
       return context.prisma.eventLocationChangeRequests.findUnique({ where: { id: request.id } });

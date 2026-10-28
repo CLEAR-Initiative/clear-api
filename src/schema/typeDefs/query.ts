@@ -30,8 +30,9 @@ export const queryTypeDef = gql`
     like signals when teamId is given; status defaults to "consideration"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
 
-    """Event location change requests filed for a team, newest first; status
-    defaults to "pending". Auth: that team's team_admin, or a platform admin."""
+    """Event location change requests filed for a team, newest first; status is
+    "pending" (the default), "accepted" or "rejected". Auth: that team's
+    team_admin, or a platform admin."""
     eventLocationChangeRequests(teamId: String!, status: String): [EventLocationChangeRequest!]!
 
     """The most specific existing admin area (district, else state, else
