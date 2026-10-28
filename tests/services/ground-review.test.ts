@@ -119,9 +119,10 @@ function buildContext(
   user: { id: string; role: string } | null,
   thread: StubThread | null,
   knownLocationIds: string[] = [],
-  // When true, the caller carries the `emergency_response_manager` TEAM role, so
-  // the inbox gate admits them as an ERM (isErm → bypasses the source policy).
-  isErm = false,
+  // The caller's TEAM role on some team, if any. An `emergency_response_manager`
+  // or `team_admin` is admitted by the inbox gate as a triager (canTriage →
+  // bypasses the source policy); any other team role is not.
+  teamRole: string | null = null,
 ) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -137,8 +138,13 @@ function buildContext(
         return { ...thread, ...args.data };
       },
     },
-    // Inbox gate checks for an ERM team membership when the caller is a member.
-    teamMembers: { findMany: async () => (isErm ? [{ teamId: "team-1" }] : []) },
+    // Inbox gate asks for the caller's teams in the triage team roles when the
+    // caller is a member; honour the role filter so non-triage roles miss.
+    teamMembers: {
+      findMany: async (args: { where: { role: { in: string[] } } }) =>
+        teamRole && args.where.role.in.includes(teamRole) ? [{ teamId: "team-1" }] : [],
+    },
+    // team-1's sources: src-1, where every thread here comes from by default.
     groundSources: { findMany: async () => [{ id: "src-1" }] },
   };
   const context = {
@@ -218,7 +224,7 @@ describe("reviewGroundThread resolver", () => {
   it("applies a valid decision and records the reviewer (an ERM triaging)", async () => {
     // A global `member` carrying the emergency_response_manager TEAM role is
     // admitted by the inbox gate and triages the thread.
-    const { context, updates } = buildContext({ id: "u1", role: "member" }, thread, [], true);
+    const { context, updates } = buildContext({ id: "u1", role: "member" }, thread, [], "emergency_response_manager");
     const result = await reviewGroundThread(
       null,
       { id: "t1", decision: "approve_private", note: "looks credible" },
@@ -230,14 +236,42 @@ describe("reviewGroundThread resolver", () => {
     expect(updates).toHaveLength(1);
   });
 
-  it("answers NOT_FOUND to an ERM for another team's thread, without touching it", async () => {
-    const other = { ...thread, groundSourceId: "src-other-team" };
-    const { context, updates } = buildContext({ id: "u1", role: "member" }, other, [], true);
-    await expect(
-      reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context),
-    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
-    expect(updates).toHaveLength(0);
+  it.each(["emergency_response_manager", "team_admin"])(
+    "answers NOT_FOUND to a %s for another team's thread, without touching it",
+    async (teamRole) => {
+      const other = { ...thread, groundSourceId: "src-other-team" };
+      const { context, updates } = buildContext({ id: "u1", role: "member" }, other, [], teamRole);
+      await expect(
+        reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context),
+      ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+      expect(updates).toHaveLength(0);
+    },
+  );
+
+  it("lets a team_admin triage like an ERM, bypassing the source's reviewerRoles", async () => {
+    // A global `member` who is team_admin on some team: admitted by the inbox
+    // gate and, like an ERM, not bound by the source's reviewerRoles ["admin"].
+    const { context, updates } = buildContext({ id: "u3", role: "member" }, thread, [], "team_admin");
+    const result = await reviewGroundThread(
+      null,
+      { id: "t1", decision: "approve_private" },
+      context,
+    );
+    expect(result.reviewState).toBe("approved_private");
+    expect(result.reviewedBy).toBe("u3");
+    expect(updates).toHaveLength(1);
   });
+
+  it.each(["analyst", "team_member"])(
+    "rejects a member whose only team role is %s before touching the thread",
+    async (role) => {
+      const { context, updates } = buildContext({ id: "u4", role: "member" }, thread, [], role);
+      await expect(
+        reviewGroundThread(null, { id: "t1", decision: "reject" }, context),
+      ).rejects.toThrowError(GraphQLError);
+      expect(updates).toHaveLength(0);
+    },
+  );
 
   it("rejects a plain member (no admin, no ERM team role) before touching the thread", async () => {
     const { context, updates } = buildContext({ id: "u1", role: "member" }, thread);
@@ -258,7 +292,7 @@ describe("reviewGroundThread resolver", () => {
     expect(asMember.updates).toHaveLength(0);
 
     // An ERM bypasses the source's reviewerRoles policy and may triage it.
-    const asErm = buildContext({ id: "u1", role: "member" }, restricted, [], true);
+    const asErm = buildContext({ id: "u1", role: "member" }, restricted, [], "emergency_response_manager");
     const ermResult = await reviewGroundThread(
       null,
       { id: "t1", decision: "reject" },

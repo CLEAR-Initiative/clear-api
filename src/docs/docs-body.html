@@ -901,15 +901,16 @@ except the worker role, which requests nothing.<div class="field-args"><span cla
 V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
 computed, see `Event.computedImpactPriors`) and none can be decided.
 An `accepted` one follows the Event's visibility; a `proposed` one
-is visible to its requester and to deciders (admins and analysts); a
+is visible to its requester and to deciders (admins, and the Task team's
+analysts and team admins); a
 `rejected` one to deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr>
     <td><code>caseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
     <td>The Inbox's per-case Review items (V4): CaseProposals in one state
 across every Event, newest first — `proposed` by default. Platform
-admins and analysts only, so the list is exactly what the caller may
-decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+admins (every team), and team analysts and team admins (their own teams'
+Tasks only), so the list is exactly what the caller may decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
   </tr><tr>
     <td><code>eventCaseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
@@ -1638,9 +1639,10 @@ shut off immediately.<div class="field-args"><span class="arg"><code>id: String!
     <td><code>reviewGroundThread</code></td>
     <td><code>GroundThread!</code></td>
     <td>Review a ground thread: decision is &quot;approve_private&quot;,
-&quot;approve_public&quot;, or &quot;reject&quot;. Role-gated per source (the caller's
-global role must appear in the source's reviewerRoles; platform
-admins always pass). Transitions follow the V1 state machine —
+&quot;approve_public&quot;, or &quot;reject&quot;. Open to platform admins (any source) and
+to members who are an emergency_response_manager or team_admin, for the
+sources assigned to those teams; a thread from another team's source is
+NOT_FOUND. Transitions follow the V1 state machine —
 notably approved_public is terminal. approve_public also promotes
 the thread into the standard signals graph via createSignal, with
 all sender identity scrubbed.
@@ -1787,8 +1789,8 @@ cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
   </tr><tr id="mutation-decidecaseproposal">
     <td><code>decideCaseProposal</code></td>
     <td><code>CaseProposal!</code></td>
-    <td>Decide one web case (V4): a platform admin or a team analyst on the
-case's team accepts or
+    <td>Decide one web case (V4): a platform admin, or a team analyst or team
+admin on the case's team, accepts or
 rejects it, recorded as who, when and why (the Domain Ontology's
 DecisionRecord). Only from `proposed` (CONFLICT otherwise). The
 `rationale` is required to reject and optional to accept.

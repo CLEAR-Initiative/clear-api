@@ -666,9 +666,10 @@ export const mutationTypeDef = gql`
     setGroundSourceActive(id: String!, isActive: Boolean!): GroundSource!
 
     """Review a ground thread: decision is "approve_private",
-    "approve_public", or "reject". Role-gated per source (the caller's
-    global role must appear in the source's reviewerRoles; platform
-    admins always pass). Transitions follow the V1 state machine —
+    "approve_public", or "reject". Open to platform admins (any source) and
+    to members who are an emergency_response_manager or team_admin, for the
+    sources assigned to those teams; a thread from another team's source is
+    NOT_FOUND. Transitions follow the V1 state machine —
     notably approved_public is terminal. approve_public also promotes
     the thread into the standard signals graph via createSignal, with
     all sender identity scrubbed.
@@ -1275,8 +1276,8 @@ export const mutationTypeDef = gql`
       horizonYears: Int
     ): [Task!]!
 
-    """Decide one web case (V4): a platform admin or a team analyst on the
-    case's team accepts or
+    """Decide one web case (V4): a platform admin, or a team analyst or team
+    admin on the case's team, accepts or
     rejects it, recorded as who, when and why (the Domain Ontology's
     DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
     \`rationale\` is required to reject and optional to accept.
