@@ -114,7 +114,8 @@ function submitCtx(
     if (over.createError) throw over.createError;
     return { id: "C-new", ...args.data };
   });
-  const tx = { signalLocationChallenges: { updateMany, create } };
+  const lock = vi.fn().mockResolvedValue([]);
+  const tx = { $queryRaw: lock, signalLocationChallenges: { updateMany, create } };
   const signalsFindUnique = vi.fn().mockResolvedValue("signal" in over ? over.signal : SIGNAL);
   const prisma = {
     teamMembers: { findUnique: teamMembersFindUnique() },
@@ -122,7 +123,7 @@ function submitCtx(
     signals: { findUnique: signalsFindUnique },
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
   };
-  return { ctx: buildContext(user, prisma), updateMany, create, signalsFindUnique };
+  return { ctx: buildContext(user, prisma), lock, updateMany, create, signalsFindUnique };
 }
 
 const FILING = { signalId: "S1", teamId: "T1" };
@@ -241,6 +242,13 @@ describe("Mutation.submitSignalLocationChallenge", () => {
     );
   });
 
+  it("locks the signal before superseding, the order deciding uses, so the two can't deadlock", async () => {
+    const { ctx, lock, updateMany } = submitCtx(ANALYST);
+    await submitSignalLocationChallenge(null, { input: FILING }, ctx);
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(lock.mock.invocationCallOrder[0]!).toBeLessThan(updateMany.mock.invocationCallOrder[0]!);
+  });
+
   it("files a corrected point with its name", async () => {
     const { ctx, create } = submitCtx(ANALYST);
     await submitSignalLocationChallenge(
@@ -284,7 +292,7 @@ const OPEN = {
 function decideCtx(
   user: User,
   challenge: unknown = OPEN,
-  over: { signal?: unknown; locked?: unknown; count?: number; country?: unknown } = {},
+  over: { signal?: unknown; locked?: unknown; count?: number; country?: unknown; pointAncestors?: string[] } = {},
 ) {
   const count = over.count ?? 1;
   const outsideUpdateMany = vi.fn().mockResolvedValue({ count });
@@ -309,7 +317,7 @@ function decideCtx(
     },
     signals: { findUnique: vi.fn().mockResolvedValue("signal" in over ? over.signal : SIGNAL) },
     locations: {
-      findUnique: vi.fn().mockResolvedValue({ id: "P-new", level: 4, ancestorIds: ["SD", "SD-SD", "D1"] }),
+      findUnique: vi.fn().mockResolvedValue({ ancestorIds: over.pointAncestors ?? ["D1", "SD-SD", "SD"] }),
       findFirst: vi.fn().mockResolvedValue("country" in over ? over.country : { id: "SD" }),
     },
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
@@ -428,6 +436,7 @@ describe("Mutation.decideSignalLocationChallenge: ACCEPT and CORRECT", () => {
       lat: 12.05,
       lng: 24.88,
       kind: "admin",
+      withinId: "D1",
     });
     expect(lock).toHaveBeenCalledTimes(1);
     expect(txUpdateMany).toHaveBeenCalledWith({
@@ -483,6 +492,7 @@ describe("Mutation.decideSignalLocationChallenge: ACCEPT and CORRECT", () => {
       lat: 12.1,
       lng: 24.9,
       kind: "admin",
+      withinId: "D1",
     });
     expect(txUpdateMany.mock.calls[0]![0].data).toMatchObject({ status: "corrected", appliedLocationId: "P-new" });
     expect(logActivity).toHaveBeenCalledWith(
@@ -516,9 +526,20 @@ describe("Mutation.decideSignalLocationChallenge: ACCEPT and CORRECT", () => {
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
 
-    const { ctx, signalsUpdate } = decideCtx(PLATFORM);
+    const { ctx, signalsUpdate } = decideCtx(PLATFORM, OPEN, { pointAncestors: ["D2", "SD-SD", "SD"] });
     await decideSignalLocationChallenge(null, { id: "C1", decision: "ACCEPT" }, ctx);
+    expect(findOrCreateLandmarkL4).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ withinId: "D2" }));
     expect(signalsUpdate).toHaveBeenCalled();
+  });
+
+  it("refuses a point that isn't under the checked area, writing nothing", async () => {
+    // A point reused across a border would carry the neighbour's district.
+    const { ctx, lock, signalsUpdate } = decideCtx(TEAM_ADMIN, OPEN, { pointAncestors: ["D9", "XX"] });
+    await expect(
+      decideSignalLocationChallenge(null, { id: "C1", decision: "ACCEPT" }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "INTERNAL_SERVER_ERROR" } });
+    expect(lock).not.toHaveBeenCalled();
+    expect(signalsUpdate).not.toHaveBeenCalled();
   });
 
   it("refuses when the signal left the team's area since it was filed, creating nothing", async () => {
@@ -698,6 +719,17 @@ describe("SignalLocationChallenge fields", () => {
   });
 
   it("team is null for a challenge filed with no team", async () => {
-    expect(team({ teamId: null }, {}, buildContext(ANALYST))).toBeNull();
+    await expect(team({ teamId: null }, {}, buildContext(ANALYST))).resolves.toBeNull();
+  });
+
+  it("team is shown to the team's members and platform admins only", async () => {
+    const teams = { findUnique: vi.fn().mockResolvedValue({ id: "T1", name: "Sudan team" }) };
+    const prisma = { teamMembers: { findUnique: teamMembersFindUnique() }, teams };
+    await expect(team({ teamId: "T1" }, {}, buildContext(MEMBER, prisma))).resolves.toMatchObject({ id: "T1" });
+    await expect(team({ teamId: "T1" }, {}, buildContext(PLATFORM, prisma))).resolves.toMatchObject({ id: "T1" });
+    teams.findUnique.mockClear();
+    // An admin of another team sees no team, and its members aren't loaded.
+    await expect(team({ teamId: "T1" }, {}, buildContext(OTHER_TEAMS_ADMIN, prisma))).resolves.toBeNull();
+    expect(teams.findUnique).not.toHaveBeenCalled();
   });
 });

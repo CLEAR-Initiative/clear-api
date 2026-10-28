@@ -843,17 +843,18 @@ export const signalResolvers = {
         // countries are sent (the common path, incl. the drain), the plain
         // updateMany keeps the compare-and-set exactly as before.
         //
-        // A source location is only written while no correction is: one
-        // landing after the read fails the compare-and-set, and the retry
-        // keeps the corrected location.
-        const writesLocation = contentChanged && !corrected;
+        // A source location or countries are only written while no correction
+        // is: one landing after the read fails the compare-and-set, and the
+        // retry keeps the corrected ones. Countries go with any effective
+        // update, a retraction-only or key-only one too.
+        const countryIds = corrected ? undefined : input.countryIds;
+        const writesLocation = !corrected && (contentChanged || countryIds != null);
         const casWhere = {
           id: existing.id,
           revision: existing.revision,
           status: existing.status,
           ...(writesLocation ? { locationCorrectedAt: null } : {}),
         };
-        const countryIds = corrected ? undefined : input.countryIds;
         const result =
           countryIds != null
             ? await context.prisma.$transaction(async (tx) => {

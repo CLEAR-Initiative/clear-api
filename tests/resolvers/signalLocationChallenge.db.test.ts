@@ -30,6 +30,11 @@ const TEAM_ID = `${RUN}-team`;
 const COUNTRY_ID = `${RUN}-country`;
 const DISTRICT_ID = `${RUN}-district`;
 const SOURCE_POINT_ID = `${RUN}-source-point`;
+/** A neighbouring country with no districts loaded, and a point just inside
+ *  the first country, 70 m from the border, named like the place chosen in
+ *  the neighbour. */
+const COUNTRY_B_ID = `${RUN}-country-b`;
+const BORDER_POINT_ID = `${RUN}-border-point`;
 
 const asUser = (id: string, role: string): Context =>
   ({ prisma, user: { id, role }, session: null, authMethod: "session", locale: "en" }) as unknown as Context;
@@ -64,6 +69,12 @@ describeIfDb("Location challenges against the real schema", () => {
     await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")
       VALUES (${SOURCE_POINT_ID}, 'Source pin', 4, ${DISTRICT_ID}, ARRAY[${DISTRICT_ID}, ${COUNTRY_ID}]::text[],
               ST_GeomFromText('POINT(51.5 51.5)', 4326))`;
+    await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "ancestor_ids", "geometry")
+      VALUES (${COUNTRY_B_ID}, 'Otherland', 0, ARRAY[]::text[],
+              ST_GeomFromText('MULTIPOLYGON(((54 50, 58 50, 58 54, 54 54, 54 50)))', 4326))`;
+    await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "point_type", "geometry")
+      VALUES (${BORDER_POINT_ID}, 'Border market', 4, ${COUNTRY_ID}, ARRAY[${COUNTRY_ID}]::text[], 'landmark-geocoded',
+              ST_GeomFromText('POINT(53.9995 52)', 4326))`;
     await prisma.teamLocations.create({ data: { teamId: TEAM_ID, locationId: DISTRICT_ID } });
 
     sourceId = (await prisma.dataSources.create({ data: { name: `${RUN}-source`, type: "test" } })).id;
@@ -87,9 +98,12 @@ describeIfDb("Location challenges against the real schema", () => {
     // Challenges cascade with their Signal.
     if (sourceId) await prisma.signals.deleteMany({ where: { sourceId } });
     if (sourceId) await prisma.dataSources.deleteMany({ where: { id: sourceId } });
-    // The source pin and any point a decision created sit under the district.
-    await prisma.locations.deleteMany({ where: { ancestorIds: { has: DISTRICT_ID } } });
-    await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT_ID, COUNTRY_ID] } } });
+    // The district, the source pin and any point a decision created sit
+    // under one of the two countries.
+    await prisma.locations.deleteMany({
+      where: { OR: [{ ancestorIds: { has: COUNTRY_ID } }, { ancestorIds: { has: COUNTRY_B_ID } }] },
+    });
+    await prisma.locations.deleteMany({ where: { id: { in: [COUNTRY_ID, COUNTRY_B_ID] } } });
     await prisma.teamMembers.deleteMany({ where: { teamId: TEAM_ID } });
     await prisma.user.deleteMany({ where: { id: { in: [ANALYST_ID, ADMIN_ID, PLATFORM_ID] } } });
     await prisma.teams.deleteMany({ where: { id: TEAM_ID } });
@@ -182,5 +196,22 @@ describeIfDb("Location challenges against the real schema", () => {
       revision: before.revision + 1,
     });
     expect(after.locationId).not.toBe(SOURCE_POINT_ID);
+  });
+
+  it("a point placed where no district is loaded never reuses a same-name point across the border", async () => {
+    const filed = await submitSignalLocationChallenge(null, { input: { signalId, teamId: TEAM_ID } }, analyst);
+    // A platform admin may place beyond the team's area: just over the border.
+    await decideSignalLocationChallenge(
+      null,
+      { id: filed.id, decision: "CORRECT", point: { lat: 52, lng: 54.0005, name: "Border market" } },
+      platform,
+    );
+    const signal = await prisma.signals.findUniqueOrThrow({
+      where: { id: signalId },
+      include: { generalLocation: true, countries: { select: { id: true } } },
+    });
+    expect(signal.locationId).not.toBe(BORDER_POINT_ID);
+    expect(signal.generalLocation).toMatchObject({ name: "Border market", parentId: COUNTRY_B_ID });
+    expect(signal.countries).toEqual([{ id: COUNTRY_B_ID }]);
   });
 });

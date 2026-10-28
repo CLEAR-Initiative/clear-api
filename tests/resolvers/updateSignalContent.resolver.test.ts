@@ -682,6 +682,27 @@ describe("updateSignalContent keeps a corrected location", () => {
     expect(state.rows.get("s1")).toMatchObject({ locationId: "loc-corrected", title: "revised", revision: 4 });
   });
 
+  it("a retraction carrying countries doesn't overwrite a correction that lands meanwhile", async () => {
+    // Countries go with any effective update, so this write is guarded too.
+    const { prisma, state } = makeStore([baseRow({ locationId: "loc-source-old" })]);
+    Object.assign(prisma, {
+      locations: { findMany: vi.fn().mockResolvedValue([{ id: "c-source", level: 0 }]) },
+    });
+    state.beforeFirstUpdateMany = () => {
+      Object.assign(state.rows.get("s1")!, corrected);
+    };
+    await update(
+      null,
+      { input: { id: "s1", contentHash: "h0", retracted: true, countryIds: ["c-source"] } } as never,
+      ctx(prisma),
+    );
+    expect(written(prisma, 0).where).toMatchObject({ locationCorrectedAt: null });
+    expect(prisma.signals.updateMany).toHaveBeenCalledTimes(2);
+    // The retry sees the correction: retraction written, countries left alone.
+    expect(prisma.signals.update).not.toHaveBeenCalled();
+    expect(state.rows.get("s1")).toMatchObject({ retracted: true, locationId: "loc-corrected" });
+  });
+
   it("a retraction of a corrected signal still lands", async () => {
     const { prisma, state } = makeStore([baseRow(corrected)]);
     await update(null, { input: { id: "s1", contentHash: "h0", retracted: true } as never }, ctx(prisma));

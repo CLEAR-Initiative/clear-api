@@ -269,6 +269,11 @@ export async function findOrCreateLandmarkL4(
     kind: "landmark" | "admin";
     sourceLat?: number | null;
     sourceLng?: number | null;
+    /** Reuse only points under this location instead of the candidate's
+     *  district: the area a caller already checked the place against. Without
+     *  it, a place where no district is loaded could reuse a point anywhere,
+     *  across a border too. */
+    withinId?: string | null;
   },
 ): Promise<FindOrCreateLandmarkL4Result> {
   const { name, lat, lng, kind } = args;
@@ -277,6 +282,7 @@ export async function findOrCreateLandmarkL4(
   // A2 id specifically for the reuse scope; resolveLatLngToLocation may
   // return A1/A0 if the point is outside any A2.
   const candidateA2 = await resolveContainingA2(prisma, lat, lng);
+  const reuseScope = args.withinId ?? candidateA2;
 
   // Same-A2 safety check against the source coords, if provided.
   if (args.sourceLat != null && args.sourceLng != null) {
@@ -291,17 +297,18 @@ export async function findOrCreateLandmarkL4(
     }
   }
 
-  // Reuse scope: when we know the candidate's A2, restrict the search to
-  // A4s whose parent chain contains it. When A2 is unknown (point falls
-  // outside any A2 polygon), search country-wide — rare path, and the
-  // Nominatim country-code filter already keeps us in the right country.
+  // Reuse scope: the caller's `withinId` when given, else the candidate's
+  // A2; restrict the search to A4s whose parent chain contains it. When
+  // neither is known (point falls outside any A2 polygon), search
+  // country-wide: a rare path, and the Nominatim country-code filter
+  // already keeps us in the right country.
   if (kind === "landmark") {
     const existing = await prisma.$queryRaw<{ id: string; point_type: string | null }[]>`
       SELECT id, point_type
       FROM "locations"
       WHERE level = 4
         AND LOWER(name) = LOWER(${name})
-        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+        ${reuseScope ? Prisma.sql`AND ${reuseScope} = ANY("ancestor_ids")` : Prisma.empty}
       LIMIT 1
     `;
     if (existing.length > 0) {
@@ -332,7 +339,7 @@ export async function findOrCreateLandmarkL4(
           ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
           ${ADMIN_REUSE_RADIUS_M}
         )
-        ${candidateA2 ? Prisma.sql`AND ${candidateA2} = ANY("ancestor_ids")` : Prisma.empty}
+        ${reuseScope ? Prisma.sql`AND ${reuseScope} = ANY("ancestor_ids")` : Prisma.empty}
       ORDER BY ST_Distance(
         "geometry"::geography,
         ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography

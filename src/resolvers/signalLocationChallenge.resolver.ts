@@ -153,31 +153,23 @@ function decidedMeanwhile(): GraphQLError {
   });
 }
 
-/** Country (level 0) of a location: itself, or the level-0 row among its ancestors. */
-async function countryOf(context: Context, locationId: string): Promise<string | null> {
-  const loc = await context.prisma.locations.findUnique({
-    where: { id: locationId },
-    select: { id: true, level: true, ancestorIds: true },
+function couldNotPlace(): GraphQLError {
+  return new GraphQLError("The place could not be placed", {
+    extensions: { code: "INTERNAL_SERVER_ERROR" },
   });
-  if (!loc) return null;
-  if (loc.level === 0) return loc.id;
-  if (loc.ancestorIds.length === 0) return null;
-  const country = await context.prisma.locations.findFirst({
-    where: { id: { in: loc.ancestorIds }, level: 0 },
-    select: { id: true },
-  });
-  return country?.id ?? null;
 }
 
-/** The level-4 point to write for a place. With a name, a same-name point
- *  within 100 m in the same district is reused, else one is created tagged
+/** The level-4 point to write for a place, under `areaId` (the admin area
+ *  that contains it, which the checks passed). With a name, a same-name point
+ *  within 100 m under that area is reused, else one is created tagged
  *  landmark-geocoded so the app shows that name (a village, not its district).
- *  Without one, a nearby point is reused or a plain one created, which the app
- *  shows by its admin area's name. Both are idempotent, so a point left behind
- *  by a lost race is reused next time. */
+ *  Without one, a nearby point with the same parent is reused or a plain one
+ *  created, which the app shows by its admin area's name. Both are
+ *  idempotent, so a point left behind by a lost race is reused next time. */
 async function pointFor(
   context: Context,
   place: { lat: number; lng: number; name: string | null },
+  areaId: string,
 ): Promise<string> {
   if (!place.name) {
     return (await createPointLocation(context.prisma, place.lat, place.lng)).id;
@@ -187,13 +179,30 @@ async function pointFor(
     lat: place.lat,
     lng: place.lng,
     kind: "admin",
+    withinId: areaId,
   });
-  if (!found.locationId) {
-    throw new GraphQLError("The place could not be placed", {
-      extensions: { code: "INTERNAL_SERVER_ERROR" },
-    });
-  }
+  if (!found.locationId) throw couldNotPlace();
   return found.locationId;
+}
+
+/** The country (level 0) of a point about to be written, after checking it
+ *  sits under `areaId`: the point and country written are the ones the
+ *  checks passed, never a neighbour's. */
+async function countryOfPointUnder(
+  context: Context,
+  pointId: string,
+  areaId: string,
+): Promise<string | null> {
+  const point = await context.prisma.locations.findUnique({
+    where: { id: pointId },
+    select: { ancestorIds: true },
+  });
+  if (!point || !point.ancestorIds.includes(areaId)) throw couldNotPlace();
+  const country = await context.prisma.locations.findFirst({
+    where: { id: { in: point.ancestorIds }, level: 0 },
+    select: { id: true },
+  });
+  return country?.id ?? null;
 }
 
 export const signalLocationChallengeResolvers = {
@@ -338,6 +347,10 @@ export const signalLocationChallengeResolvers = {
       let challenge;
       try {
         challenge = await context.prisma.$transaction(async (tx) => {
+          // Lock the Signal first, as deciding does. Otherwise this insert's
+          // foreign-key check waits on a Signal a decision has locked, while
+          // holding the open challenge the decision waits on: a deadlock.
+          await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
           await tx.signalLocationChallenges.updateMany({
             where: { signalId: signal.id, status: OPEN_CHALLENGE_STATUS },
             data: { status: SUPERSEDED },
@@ -442,8 +455,8 @@ export const signalLocationChallengeResolvers = {
       if (!signal) throw signalNotFound(challenge.signalId);
       if (!signalInArea(inArea, signal)) throw outsideTeamScope();
 
-      const pointId = await pointFor(context, place);
-      const countryId = await countryOf(context, pointId);
+      const pointId = await pointFor(context, place, placement.id);
+      const countryId = await countryOfPointUnder(context, pointId, placement.id);
       const status = args.decision === "CORRECT" ? "corrected" : "accepted";
 
       const previous = await context.prisma.$transaction(async (tx) => {
@@ -505,8 +518,14 @@ export const signalLocationChallengeResolvers = {
   SignalLocationChallenge: {
     signal: (parent: { signalId: string }, _args: unknown, { prisma }: Context) =>
       prisma.signals.findUnique({ where: { id: parent.signalId } }),
-    team: (parent: { teamId: string | null }, _args: unknown, { prisma }: Context) =>
-      parent.teamId ? prisma.teams.findUnique({ where: { id: parent.teamId } }) : null,
+    // Only for the team's members and platform admins, as `Query.team`: any
+    // reader lists challenges, and a Team carries its members.
+    team: async (parent: { teamId: string | null }, _args: unknown, context: Context) => {
+      const user = context.user;
+      if (!parent.teamId || !user) return null;
+      if (!isPlatformAdmin(user) && !(await teamRole(context, user.id, parent.teamId))) return null;
+      return context.prisma.teams.findUnique({ where: { id: parent.teamId } });
+    },
     hasProposedPoint: (parent: { proposedLng: number | null; proposedLat: number | null }) =>
       parent.proposedLng != null && parent.proposedLat != null,
     proposedPlacement: async (
