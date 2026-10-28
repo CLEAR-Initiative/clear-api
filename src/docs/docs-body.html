@@ -743,6 +743,12 @@ authenticated content reader.<div class="field-args"><span class="arg"><code>id:
 to a team or to enabled rows only. Requires any authenticated content
 reader.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>enabledOnly: Boolean</code></span></div></td>
   </tr><tr>
+    <td><code>analysisAutomation</code></td>
+    <td><code>AnalysisAutomation</code></td>
+    <td>One analysis automation, for its title, discussion, and evidence.
+A content reader on the owning team, or any content reader for a
+system-owned automation. Null when the id is unknown.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
     <td><code>pendingAnalyses</code></td>
     <td><code>[AnalysisRequest!]!</code></td>
     <td>Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
@@ -1935,7 +1941,7 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
   </tr></tbody></table><h3 id="type-addcommentinput"><code>AddCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String</code></td>
-    <td>Provide exactly one of eventId, signalId, or crisisId.</td>
+    <td>Provide exactly one of eventId, signalId, crisisId, or analysisAutomationId.</td>
   </tr><tr>
     <td><code>signalId</code></td>
     <td><code>String</code></td>
@@ -1944,6 +1950,10 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
     <td><code>crisisId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>analysisAutomationId</code></td>
+    <td><code>String</code></td>
+    <td>Discussion on an analysis automation. Shared with everyone who can read it.</td>
   </tr><tr>
     <td><code>comment</code></td>
     <td><code>String!</code></td>
@@ -2221,6 +2231,10 @@ admin of its organisation, or a platform admin.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Owning team. Omit for a system-owned automation (admin only).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name. Blank clears it. At most 120 characters.</td>
   </tr></tbody></table><h3 id="type-createapikeyinput"><code>CreateApiKeyInput</code> <span class="type-badge">input</span></h3><p>Input for creating a new API key.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -3528,6 +3542,10 @@ provide only what you want to change.</p><table class="ref-table"><thead><tr><th
     <td><code>enabled</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name. Blank clears it back to the area list. Omit to leave it.</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
@@ -4580,6 +4598,10 @@ rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class=
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name chosen by the team. Null means the area list is the name.</td>
+  </tr><tr>
     <td><code>cadence</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -4611,6 +4633,38 @@ rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class=
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>comments</code></td>
+    <td><code>[UserComment!]!</code></td>
+    <td>Shared discussion. Every reader of this analysis sees every comment.</td>
+  </tr><tr>
+    <td><code>documents</code></td>
+    <td><code>[AnalysisAutomationDocument!]!</code></td>
+    <td>PDFs attached as evidence for this analysis.</td>
+  </tr></tbody></table><h3 id="type-analysisautomationdocument"><code>AnalysisAutomationDocument</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>fileName</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String</code></td>
+    <td>Short-lived link for preview. Null when the file cannot be signed.</td>
   </tr></tbody></table><h3 id="type-analysisrequest"><code>AnalysisRequest</code> <span class="type-badge">object</span></h3><p>An on-demand analysis generation request (ADR-0007 §4). A user enqueues a
 frame that may not exist yet; a pipeline sensor drains `pendingAnalyses`,
 generates + upserts the analysis, and marks the request `GENERATED`. Scheduled

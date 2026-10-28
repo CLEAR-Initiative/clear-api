@@ -185,6 +185,19 @@ export const feedbackResolvers = {
         });
       }
 
+      // Re-check membership on a team automation's discussion — inheriting the
+      // parent's analysisAutomationId must NOT let a former member (or a
+      // non-member) post into a team-scoped thread. Mirrors addComment's gate.
+      if (parentComment.analysisAutomationId) {
+        const automation = await context.prisma.analysisAutomation.findUnique({
+          where: { id: parentComment.analysisAutomationId },
+          select: { teamId: true },
+        });
+        if (automation?.teamId) {
+          await resolveTeamMembership(context.prisma, user.id, automation.teamId, user.role);
+        }
+      }
+
       const created = await context.prisma.userComments.create({
         data: {
           userId: user.id,

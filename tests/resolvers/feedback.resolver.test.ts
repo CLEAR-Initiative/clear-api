@@ -542,3 +542,89 @@ describe("UserComment field resolvers — null target short-circuit", () => {
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "e1" } });
   });
 });
+
+// ─── analysis-automation discussion (PR #255) ───────────────────────────────
+
+describe("analysis automation discussion", () => {
+  const SYSTEM_AUTO = { teamId: null as string | null };
+  const TEAM_AUTO = { teamId: "t1" as string | null };
+
+  it("addComment attaches analysisAutomationId (system-owned, no membership gate)", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "c1" });
+    const ctx = buildContext(VIEWER, {
+      analysisAutomation: { findUnique: vi.fn().mockResolvedValue(SYSTEM_AUTO) },
+      userComments: { create },
+      commentTags: { createMany: vi.fn() },
+    });
+    await addComment(null, { input: { analysisAutomationId: "a1", comment: "hi" } }, ctx);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      analysisAutomationId: "a1",
+      eventId: null,
+      signalId: null,
+      crisisId: null,
+      isCommentReply: false,
+    });
+  });
+
+  it("addComment rejects more than one target", async () => {
+    const ctx = buildContext(VIEWER, { userComments: { create: vi.fn() } });
+    await expect(
+      addComment(null, { input: { eventId: "e1", analysisAutomationId: "a1", comment: "x" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
+  it("addComment errors NOT_FOUND for an unknown automation", async () => {
+    const ctx = buildContext(VIEWER, {
+      analysisAutomation: { findUnique: vi.fn().mockResolvedValue(null) },
+      userComments: { create: vi.fn() },
+    });
+    await expect(
+      addComment(null, { input: { analysisAutomationId: "ghost", comment: "x" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it("addComment forbids a non-member on a team automation", async () => {
+    const ctx = buildContext(VIEWER, {
+      analysisAutomation: { findUnique: vi.fn().mockResolvedValue(TEAM_AUTO) },
+      teamMembers: { findUnique: vi.fn().mockResolvedValue(null) },
+      userComments: { create: vi.fn() },
+    });
+    await expect(
+      addComment(null, { input: { analysisAutomationId: "a1", comment: "x" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("replyToComment inherits the parent's analysisAutomationId", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "c2" });
+    const ctx = buildContext(VIEWER, {
+      userComments: {
+        findUnique: vi.fn().mockResolvedValue({ id: "c1", analysisAutomationId: "a1" }),
+        create,
+      },
+      analysisAutomation: { findUnique: vi.fn().mockResolvedValue(SYSTEM_AUTO) },
+      commentTags: { createMany: vi.fn() },
+    });
+    await replyToComment(null, { input: { repliedToCommentId: "c1", comment: "re" } }, ctx);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      analysisAutomationId: "a1",
+      isCommentReply: true,
+      repliedToCommentId: "c1",
+    });
+  });
+
+  it("replyToComment forbids a non-member on a team automation thread (P1)", async () => {
+    const create = vi.fn();
+    const ctx = buildContext(VIEWER, {
+      userComments: {
+        findUnique: vi.fn().mockResolvedValue({ id: "c1", analysisAutomationId: "a1" }),
+        create,
+      },
+      analysisAutomation: { findUnique: vi.fn().mockResolvedValue(TEAM_AUTO) },
+      teamMembers: { findUnique: vi.fn().mockResolvedValue(null) },
+    });
+    await expect(
+      replyToComment(null, { input: { repliedToCommentId: "c1", comment: "re" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+});

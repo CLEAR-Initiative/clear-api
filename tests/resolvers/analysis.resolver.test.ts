@@ -12,6 +12,11 @@ import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../../src/generated/prisma/client.js";
 
+// AnalysisAutomation.documents presigns each row's S3 key via a dynamic import.
+vi.mock("../../src/services/s3.js", () => ({
+  getPresignedUrl: vi.fn(async (key: string) => `https://signed/${key}`),
+}));
+
 import { analysisResolvers } from "../../src/resolvers/analysis.resolver.js";
 import type { Context } from "../../src/context.js";
 
@@ -600,5 +605,72 @@ describe("analysis resolver", () => {
       expect(data.attempts).toEqual({ increment: 1 });
       expect(data.lastError).toBe("boom");
     });
+  });
+});
+
+// ─── title + discussion + documents (PR #255) ──────────────────────────────
+
+describe("analysis automation title / discussion / documents", () => {
+  it("createAnalysisAutomation stores a trimmed title", async () => {
+    const prisma = makePrisma();
+    await analysisResolvers.Mutation.createAnalysisAutomation(
+      null,
+      { input: { locationIds: ["a"], eventTypes: [], needSectors: [], windowStart: new Date("2026-01-01"), cadence: "daily", title: "  Sudan floods  " } },
+      ctx(admin, prisma),
+    );
+    const create = (prisma.analysisAutomation as { create: ReturnType<typeof vi.fn> }).create;
+    expect(create.mock.calls[0][0].data.title).toBe("Sudan floods");
+  });
+
+  it("createAnalysisAutomation rejects an over-long title", async () => {
+    await expect(
+      analysisResolvers.Mutation.createAnalysisAutomation(
+        null,
+        { input: { locationIds: ["a"], eventTypes: [], needSectors: [], windowStart: new Date("2026-01-01"), cadence: "daily", title: "x".repeat(121) } },
+        ctx(admin),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
+  it("updateAnalysisAutomation writes an explicit null title to clear it", async () => {
+    const prisma = makePrisma({
+      analysisAutomation: {
+        findUnique: vi.fn(async () => ({ teamId: null })),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "au-1", ...data })),
+      },
+    });
+    await analysisResolvers.Mutation.updateAnalysisAutomation(
+      null,
+      { id: "au-1", input: { title: "" } },
+      ctx(admin, prisma),
+    );
+    const update = (prisma.analysisAutomation as { update: ReturnType<typeof vi.fn> }).update;
+    expect(update.mock.calls[0][0].data.title).toBeNull();
+  });
+
+  it("AnalysisAutomation.comments reads the thread oldest-first", async () => {
+    const findMany = vi.fn(async () => [{ id: "c1" }]);
+    const prisma = makePrisma({ userComments: { findMany } });
+    const rows = await analysisResolvers.AnalysisAutomation.comments({ id: "au-1" }, {}, ctx(admin, prisma));
+    expect(rows).toEqual([{ id: "c1" }]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { analysisAutomationId: "au-1" },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+
+  it("AnalysisAutomation.documents presigns each attached file", async () => {
+    const findMany = vi.fn(async () => [{ id: "d1", fileName: "r.pdf", reportId: "manual:ab", s3Key: "kb/r.pdf" }]);
+    const prisma = makePrisma({ analysisAutomationDocument: { findMany } });
+    const rows = await analysisResolvers.AnalysisAutomation.documents({ id: "au-1" }, {}, ctx(admin, prisma));
+    expect(rows[0]).toMatchObject({ id: "d1", s3Key: "kb/r.pdf", url: "https://signed/kb/r.pdf" });
+  });
+
+  it("Query.analysisAutomation returns a system-owned automation to an admin", async () => {
+    const prisma = makePrisma({
+      analysisAutomation: { findUnique: vi.fn(async () => ({ id: "au-1", teamId: null })) },
+    });
+    const row = await analysisResolvers.Query.analysisAutomation(null, { id: "au-1" }, ctx(admin, prisma));
+    expect(row).toMatchObject({ id: "au-1" });
   });
 });
