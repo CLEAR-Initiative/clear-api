@@ -51,6 +51,7 @@ vi.mock("../../src/services/password-reset.js", () => ({
 }));
 
 import express from "express";
+import { runInNewContext } from "node:vm";
 import { portalRouter } from "../../src/portal/index.js";
 
 let server: Server;
@@ -118,6 +119,22 @@ describe("GET /portal", () => {
       `<script>if (["getting-started","reference","authentication"].indexOf(location.hash.slice(1)) === -1) location.replace('/portal/welcome');</script>`,
     );
     expect(html).toContain('var PORTAL_PENDING_TABS = ["getting-started","reference","authentication"];');
+  });
+
+  it("runs the pending redirect: docs tabs stay, a bare /portal or a locked tab goes to Welcome", async () => {
+    const html = await (await fetch(`${base}/portal`)).text();
+    const script = html.match(/<script>(if \(\[[^<]*location\.replace[^<]*)<\/script>/)![1]!;
+    const landing = (hash: string) => {
+      let target: string | null = null;
+      runInNewContext(script, { location: { hash, replace: (url: string) => (target = url) } });
+      return target;
+    };
+    for (const hash of ["#getting-started", "#reference", "#authentication"]) {
+      expect(landing(hash)).toBeNull();
+    }
+    for (const hash of ["", "#api-keys", "#usage-analytics", "#nope"]) {
+      expect(landing(hash)).toBe("/portal/welcome");
+    }
   });
 
   it("still renders the portal for approved users", async () => {
