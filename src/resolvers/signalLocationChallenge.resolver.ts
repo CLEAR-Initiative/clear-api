@@ -261,8 +261,8 @@ export const signalLocationChallengeResolvers = {
         }
       }
       return context.prisma.signalLocationChallenges.findMany({
-        // Nobody decides their own challenge, so it isn't in their Inbox.
-        where: { status: OPEN_CHALLENGE_STATUS, createdBy: { not: user.id }, ...teamFilter },
+        // The caller's own are listed too: a decider may decide their own.
+        where: { status: OPEN_CHALLENGE_STATUS, ...teamFilter },
         orderBy: { createdAt: "desc" },
         take,
       });
@@ -391,11 +391,9 @@ export const signalLocationChallengeResolvers = {
       if (!challenge) {
         throw new GraphQLError("Location challenge not found", { extensions: { code: "NOT_FOUND" } });
       }
+      // A decider may decide a challenge they filed: requiring a second admin
+      // added nothing, since an admin can override the decision anyway.
       const user = await requireDecider(context, challenge.teamId);
-      // Approval means a second person: the filer never decides their own.
-      if (challenge.createdBy === user.id) {
-        throw forbidden("You filed this challenge, so another admin decides it");
-      }
       if (challenge.status !== OPEN_CHALLENGE_STATUS) {
         throw new GraphQLError(
           challenge.status === SUPERSEDED

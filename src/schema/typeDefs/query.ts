@@ -34,8 +34,8 @@ export const queryTypeDef = gql`
 
     """Open Location challenges the caller can decide, newest first: for a team
     admin, those filed for the teams they administer (or just teamId, one of
-    them); for a platform admin, all of them (or just teamId's). Excludes the
-    caller's own. At most \`first\` (default and maximum 200)."""
+    them); for a platform admin, all of them (or just teamId's). The caller's
+    own are included. At most \`first\` (default and maximum 200)."""
     signalLocationChallengesToDecide(
       """Only this team's challenges."""
       teamId: String

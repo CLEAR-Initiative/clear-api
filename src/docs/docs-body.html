@@ -269,8 +269,8 @@ in the team's area). status is &quot;consideration&quot; (open, the default),
     <td><code>[SignalLocationChallenge!]!</code></td>
     <td>Open Location challenges the caller can decide, newest first: for a team
 admin, those filed for the teams they administer (or just teamId, one of
-them); for a platform admin, all of them (or just teamId's). Excludes the
-caller's own. At most `first` (default and maximum 200).<div class="field-args"><span class="arg"><code>teamId: String</code> — Only this team's challenges.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 200).</span></div></td>
+them); for a platform admin, all of them (or just teamId's). The caller's
+own are included. At most `first` (default and maximum 200).<div class="field-args"><span class="arg"><code>teamId: String</code> — Only this team's challenges.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 200).</span></div></td>
   </tr><tr>
     <td><code>locationPlacement</code></td>
     <td><code>Location</code></td>
@@ -1183,7 +1183,7 @@ challenge, if any. Never changes the Signal: a decision does.<div class="field-a
     <td><code>decideSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
     <td>Decide an open Location challenge. Auth: the team_admin of the team it
-was filed for, or a platform admin, but never whoever filed it. ACCEPT
+was filed for, or a platform admin, including whoever filed it. ACCEPT
 writes the proposed point onto the Signal; CORRECT writes `point`
 instead; DECLINE leaves the Signal as it is. A written point becomes the
 Signal's general location (a reused or new level-4 point under the admin
@@ -7671,8 +7671,8 @@ grouped before it was recorded, or never grouped.</td>
 person corrected it); null when the location is the source's. Source
 revisions keep a corrected location.</td>
   </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal: why its location looks wrong,
-optionally with a corrected point, filed for one team. That team's admin (or
-a platform admin, never the filer) decides it. Accepting writes the proposed
+optionally with a corrected point, filed for one team. That team's admin or a
+platform admin decides it, even when they filed it. Accepting writes the proposed
 point onto the Signal, correcting writes a point the admin placed instead,
 and declining leaves the Signal as it is. A written point becomes the
 Signal's general location (its origin and destination are cleared and its

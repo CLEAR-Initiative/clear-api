@@ -3,7 +3,7 @@
  *
  * `context.prisma.*` is stubbed with `vi.fn()` delegates and the PostGIS
  * helpers are mocked. They cover who files and who decides (a team analyst
- * files, the team's admin decides, never their own), the team-area and
+ * files, the team's admin decides, even one they filed), the team-area and
  * coverage rules, superseding instead of rewriting, the write onto the Signal
  * under a lock, the list queries, and the field resolvers.
  */
@@ -345,12 +345,13 @@ describe("Mutation.decideSignalLocationChallenge: who decides", () => {
     expect(signalsUpdate).not.toHaveBeenCalled();
   });
 
-  it("refuses the filer, even a platform admin: approval needs a second person", async () => {
-    const { ctx, signalsUpdate } = decideCtx(PLATFORM, { ...OPEN, createdBy: "u-platform" });
-    await expect(
-      decideSignalLocationChallenge(null, { id: "C1", decision: "ACCEPT" }, ctx),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(signalsUpdate).not.toHaveBeenCalled();
+  it.each([
+    ["a platform admin", PLATFORM],
+    ["the team's admin", TEAM_ADMIN],
+  ])("lets %s decide one they filed: an admin could override it anyway", async (_who, user) => {
+    const { ctx, signalsUpdate } = decideCtx(user, { ...OPEN, createdBy: user.id });
+    await decideSignalLocationChallenge(null, { id: "C1", decision: "ACCEPT" }, ctx);
+    expect(signalsUpdate).toHaveBeenCalled();
   });
 
   it("leaves a challenge filed with no team to a platform admin", async () => {
@@ -619,11 +620,11 @@ describe("Query.signalLocationChallengesToDecide", () => {
     return { ctx, findMany };
   }
 
-  it("lists a team admin's teams' open challenges, newest first, not their own", async () => {
+  it("lists a team admin's teams' open challenges, newest first, their own included", async () => {
     const { ctx, findMany } = listCtx(TEAM_ADMIN, ["T1", "T3"]);
     await signalLocationChallengesToDecide(null, {}, ctx);
     expect(findMany).toHaveBeenCalledWith({
-      where: { status: "consideration", createdBy: { not: "u-admin" }, teamId: { in: ["T1", "T3"] } },
+      where: { status: "consideration", teamId: { in: ["T1", "T3"] } },
       orderBy: { createdAt: "desc" },
       take: 200,
     });
@@ -644,13 +645,10 @@ describe("Query.signalLocationChallengesToDecide", () => {
     });
   });
 
-  it("lists every team's for a platform admin", async () => {
+  it("lists every team's for a platform admin, their own included", async () => {
     const { ctx, findMany } = listCtx(PLATFORM, []);
     await signalLocationChallengesToDecide(null, {}, ctx);
-    expect(findMany.mock.calls[0]![0].where).toEqual({
-      status: "consideration",
-      createdBy: { not: "u-platform" },
-    });
+    expect(findMany.mock.calls[0]![0].where).toEqual({ status: "consideration" });
   });
 
   it("rejects first outside 1..200", async () => {
