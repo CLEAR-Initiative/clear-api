@@ -1,7 +1,7 @@
 import { gql } from "graphql-tag";
 
 export const locationTypeDef = gql`
-  """A geographic location in a hierarchy (country > state > city, etc.)."""
+  """A place in the location hierarchy: country > state > district > point"""
   type Location {
     id: String!
     """GeoNames identifier."""
@@ -11,7 +11,7 @@ export const locationTypeDef = gql`
     """P-Code identifier."""
     pCode: String
     name: String!
-    """Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc."""
+    """Hierarchy level: 0 = country, 1 = state, 2 = district, 4 = point (there is no level 3)"""
     level: Int!
     """Geometry as GeoJSON (Point or MultiPolygon)."""
     geometry: GeoJSON
@@ -27,8 +27,9 @@ export const locationTypeDef = gql`
     population: String
     """Provenance of this location's geometry. Notable values:
       - 'landmark-geocoded': L4 created by the pipeline geoparser from a
-        landmark/place name resolved via Nominatim. The location's \`name\`
-        field is meaningful for display (e.g., 'Nyala Airport').
+        landmark or place name resolved via the GeoNames gazetteer or
+        LocationIQ, including place names read from text-only signals. The
+        location's \`name\` field is meaningful for display (e.g., 'Nyala Airport').
       - 'gps' / 'source-gps' / 'centroid' / 'source-centroid': see schema
         documentation on the Prisma model.
       - null: legacy rows (most signal-title L4s from \`createPointLocation\`)."""
