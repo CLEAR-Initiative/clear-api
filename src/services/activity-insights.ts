@@ -162,6 +162,8 @@ export interface NrcExportRow {
 }
 
 interface Membership {
+  /** Grouping key: organisation and team ids, since names aren't unique. */
+  key: string;
   organisation: string;
   team: string;
   role: string;
@@ -216,10 +218,16 @@ export async function nrcExportRows(
           teamMemberships: {
             select: {
               role: true,
-              team: { select: { name: true, organisation: { select: { name: true } } } },
+              team: {
+                select: {
+                  id: true,
+                  name: true,
+                  organisation: { select: { id: true, name: true } },
+                },
+              },
             },
           },
-          organisations: { select: { organisation: { select: { name: true } } } },
+          organisations: { select: { organisation: { select: { id: true, name: true } } } },
         },
       })
     : [];
@@ -227,15 +235,26 @@ export async function nrcExportRows(
   const membershipsByUser = new Map<string, Membership[]>();
   for (const u of users) {
     const ms: Membership[] = u.teamMemberships.map((m) => ({
+      key: `${m.team.organisation.id}/${m.team.id}/${m.role}`,
       organisation: m.team.organisation.name,
       team: m.team.name,
       role: m.role,
     }));
+    // A "(no team)" row for each organisation the person belongs to without
+    // a team there, so org-only membership isn't lost when they have a team
+    // elsewhere.
+    const orgsWithTeam = new Set(u.teamMemberships.map((m) => m.team.organisation.id));
+    for (const { organisation } of u.organisations) {
+      if (orgsWithTeam.has(organisation.id)) continue;
+      ms.push({
+        key: `${organisation.id}//${u.role}`,
+        organisation: organisation.name,
+        team: NO_TEAM,
+        role: u.role,
+      });
+    }
     if (ms.length === 0) {
-      const orgs = u.organisations.map((o) => o.organisation.name);
-      for (const org of orgs.length ? orgs : [NO_ORG]) {
-        ms.push({ organisation: org, team: NO_TEAM, role: u.role });
-      }
+      ms.push({ key: `//${u.role}`, organisation: NO_ORG, team: NO_TEAM, role: u.role });
     }
     membershipsByUser.set(u.id, ms);
   }
@@ -247,12 +266,14 @@ export async function nrcExportRows(
     if (!ms) return; // admin, or deleted since
     const month = at.toISOString().slice(0, 7);
     for (const m of ms) {
-      const key = JSON.stringify([month, m.organisation, m.team, m.role]);
+      const key = `${month}|${m.key}`;
       let g = groups.get(key);
       if (!g) {
         g = {
           month,
-          ...m,
+          organisation: m.organisation,
+          team: m.team,
+          role: m.role,
           distinctUsers: 0,
           actions: 0,
           agentTurns: 0,

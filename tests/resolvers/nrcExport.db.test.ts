@@ -17,6 +17,7 @@ const RUN = `nrc-export-${Date.now()}`;
 const ORG = `${RUN} org`;
 const BIG = `${RUN} big`;
 const SMALL = `${RUN} small`;
+const DUP = `${RUN} dup`;
 const FROM = new Date("2026-09-01T00:00:00Z");
 const TO = new Date("2026-09-30T23:59:59Z");
 const AT = new Date("2026-09-15T12:00:00Z");
@@ -62,6 +63,16 @@ describeIfDb("NRC aggregate export against the real schema", () => {
     // Small team: 4 analysts, and 4 admins that must not lift it over 5.
     for (let i = 0; i < 4; i++) await seedUser(`small${i}`, small.id, "analyst");
     for (let i = 0; i < 4; i++) await seedUser(`sadmin${i}`, small.id, "analyst", "admin");
+    // Two different teams that share a name: 3 + 2 people must not merge
+    // into one five-person row.
+    const dupA = await prisma.teams.create({
+      data: { organisationId: orgId, name: DUP, slug: `${RUN}-dup-a` },
+    });
+    const dupB = await prisma.teams.create({
+      data: { organisationId: orgId, name: DUP, slug: `${RUN}-dup-b` },
+    });
+    for (let i = 0; i < 3; i++) await seedUser(`dupa${i}`, dupA.id, "analyst");
+    for (let i = 0; i < 2; i++) await seedUser(`dupb${i}`, dupB.id, "analyst");
   });
 
   afterAll(async () => {
@@ -92,6 +103,7 @@ describeIfDb("NRC aggregate export against the real schema", () => {
     } as unknown as Context);
     expect(csv).toContain(BIG);
     expect(csv).not.toContain(SMALL);
+    expect(csv).not.toContain(DUP);
     expect(csv).not.toContain("never");
   });
 });
