@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { trimActivityLogPii } from "../../../src/services/activity-log/trim-worker.js";
+import {
+  startActivityLogTrimWorker,
+  stopActivityLogTrimWorker,
+  trimActivityLogPii,
+} from "../../../src/services/activity-log/trim-worker.js";
 import type { PrismaClient } from "../../../src/generated/prisma/client.js";
 
 describe("trimActivityLogPii", () => {
@@ -18,5 +22,37 @@ describe("trimActivityLogPii", () => {
       { userAgent: { not: null } },
     ]);
     expect(arg.data).toEqual({ ipAddress: null, userAgent: null });
+  });
+});
+
+describe("startActivityLogTrimWorker / stop", () => {
+  it("runs nothing when stopped before the first run", async () => {
+    vi.useFakeTimers();
+    try {
+      const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+      const prisma = { activityLogs: { updateMany } } as unknown as PrismaClient;
+      startActivityLogTrimWorker(prisma);
+      stopActivityLogTrimWorker();
+      await vi.advanceTimersByTimeAsync(7 * 60 * 60 * 1000);
+      expect(updateMany).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs once after the boot delay, then on the interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+      const prisma = { activityLogs: { updateMany } } as unknown as PrismaClient;
+      startActivityLogTrimWorker(prisma);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(updateMany).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
+      expect(updateMany).toHaveBeenCalledTimes(2);
+      stopActivityLogTrimWorker();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

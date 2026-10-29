@@ -40,6 +40,7 @@ export async function trimActivityLogPii(
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let firstRun: ReturnType<typeof setTimeout> | null = null;
 
 async function runOnce(prisma: PrismaClient): Promise<void> {
   try {
@@ -53,14 +54,19 @@ async function runOnce(prisma: PrismaClient): Promise<void> {
 /** Start the trim schedule. Idempotent — calling twice is a no-op. */
 export function startActivityLogTrimWorker(prisma: PrismaClient): void {
   if (timer !== null) return;
-  const first = setTimeout(() => void runOnce(prisma), FIRST_RUN_DELAY_MS);
-  first.unref?.();
+  firstRun = setTimeout(() => {
+    firstRun = null;
+    void runOnce(prisma);
+  }, FIRST_RUN_DELAY_MS);
+  firstRun.unref?.();
   timer = setInterval(() => void runOnce(prisma), INTERVAL_MS);
   timer.unref?.();
 }
 
 /** Stop the schedule (tests / graceful shutdown). */
 export function stopActivityLogTrimWorker(): void {
+  if (firstRun !== null) clearTimeout(firstRun);
   if (timer !== null) clearInterval(timer);
+  firstRun = null;
   timer = null;
 }

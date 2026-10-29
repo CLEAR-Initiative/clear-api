@@ -225,7 +225,7 @@ describeIfDb("Tasks against the real schema", () => {
     let rows: { userId: string; actionUrl: string | null; notificationType: string }[] = [];
     for (let i = 0; i < 20 && rows.length < 2; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      rows = await prisma.notifications.findMany({ where: { notificationType: "task", actionUrl: `/event/${eventId}` } });
+      rows = await prisma.notifications.findMany({ where: { notificationType: "task", actionUrl: `/event/${eventId}?from=inbox` } });
     }
     // Recipients: the requester, platform admins, and the Task team's analysts.
     // ANALYST_B is a second team `analyst` on TEAM_ID, so it is notified too.
@@ -500,7 +500,7 @@ describeIfDb("Tasks against the real schema", () => {
     for (let i = 0; i < 20 && told.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 25));
       told = await prisma.notifications.findMany({
-        where: { userId: ANALYST_B_ID, notificationType: "task", actionUrl: `/event/${id}` },
+        where: { userId: ANALYST_B_ID, notificationType: "task", actionUrl: `/event/${id}?from=inbox` },
         select: { message: true },
       });
     }
