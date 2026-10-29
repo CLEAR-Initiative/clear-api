@@ -2,6 +2,11 @@ import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { requireNonWorker, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
+import {
+  agentUsageStats,
+  nrcExportRows,
+  toNrcCsv,
+} from "../services/activity-insights.js";
 
 /** Default `activityStats` window when the caller doesn't specify one. */
 const DEFAULT_STATS_WINDOW_DAYS = 30;
@@ -9,6 +14,9 @@ const DEFAULT_STATS_WINDOW_DAYS = 30;
 /** Maximum rows returned by `activityLogs` in one call. Generous because the
  *  table is well-indexed and the admin dashboard occasionally exports CSV. */
 const MAX_LIMIT = 500;
+
+/** Default NRC export window: the last 12 calendar months (UTC). */
+const DEFAULT_EXPORT_MONTHS = 12;
 
 /** Top-N users surfaced in the per-user breakdown of `activityStats`. */
 const TOP_USERS = 50;
@@ -162,6 +170,12 @@ export const activityLogResolvers = {
         bumpBucket(dayBucket, row.action);
       }
 
+      // PERMISSION NOTE: this per-user breakdown names individuals and is
+      // gated only on the global `admin` role, which today is held only by
+      // the CLEAR team. Before any non-team user (e.g. an NRC or partner
+      // account) can become a global admin, give the per-user breakdown its
+      // own permission — the aggregate views (`agentUsageStats`,
+      // `nrcActivityExport`) are the ones meant for wider audiences.
       // Top-N users by total. Tied counts → arbitrary tiebreak (stable
       // by insertion order from the Map iterator).
       const topUserIds = [...byUserMap.entries()]
@@ -200,6 +214,41 @@ export const activityLogResolvers = {
         }));
 
       return { from, to, totals: serializeCounts(totals), byUser, byDay };
+    },
+
+    agentUsageStats: async (
+      _parent: unknown,
+      args: { from?: Date | string | null; to?: Date | string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const to = args.to ? new Date(args.to) : new Date();
+      const from = args.from
+        ? new Date(args.from)
+        : new Date(to.getTime() - DEFAULT_STATS_WINDOW_DAYS * 86_400_000);
+      return agentUsageStats(context.prisma, from, to);
+    },
+
+    /** CSV of monthly aggregates by organisation, team and role. Admins are
+     *  excluded and groups under 5 people dropped in the service, so no
+     *  client can get the raw breakdown. */
+    nrcActivityExport: async (
+      _parent: unknown,
+      args: { from?: Date | string | null; to?: Date | string | null },
+      context: Context,
+    ): Promise<string> => {
+      requireRole(context, ["admin"]);
+      const to = args.to ? new Date(args.to) : new Date();
+      const from = args.from
+        ? new Date(args.from)
+        : new Date(
+            Date.UTC(
+              to.getUTCFullYear(),
+              to.getUTCMonth() - (DEFAULT_EXPORT_MONTHS - 1),
+              1,
+            ),
+          );
+      return toNrcCsv(await nrcExportRows(context.prisma, from, to));
     },
 
     userEngagement: async (
