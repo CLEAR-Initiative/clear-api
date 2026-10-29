@@ -843,6 +843,8 @@ export const mutationTypeDef = gql`
     enableSMSNotification: Boolean
     """Preferred UI language code (BCP-47 / ISO 639-1, e.g. "en", "ar")."""
     language: String
+    """Opt out of (true) or back into (false) usage analytics, account-wide."""
+    analyticsOptOut: Boolean
   }
 
   input CreateAlertInput {

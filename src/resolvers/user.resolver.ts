@@ -19,6 +19,7 @@ interface UpdateProfileInput {
   enableEmailNotification?: boolean;
   enableSMSNotification?: boolean;
   language?: string;
+  analyticsOptOut?: boolean | null;
 }
 
 export const userResolvers = {
@@ -81,6 +82,11 @@ export const userResolvers = {
 
       if (input.enableEmailNotification !== undefined) {
         data.emailNotification = input.enableEmailNotification;
+      }
+
+      // Explicit null is "no change": the column is non-nullable.
+      if (input.analyticsOptOut !== undefined && input.analyticsOptOut !== null) {
+        data.analyticsOptOut = input.analyticsOptOut;
       }
 
       if (input.language !== undefined) {
@@ -209,6 +215,23 @@ export const userResolvers = {
       return context.prisma.eventEscaladedByUsers.findMany({
         where: { userId: parent.id },
       });
+    },
+
+    // Self only — not even admins. Analytics consent is the user's own business.
+    // Read from the database, not the parent: `me` returns the session's user,
+    // which Better Auth caches for minutes, so an opt-out saved in another
+    // browser would otherwise read false here.
+    analyticsOptOut: async (
+      parent: { id: string },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (!context.user || context.user.id !== parent.id) return null;
+      const row = await context.prisma.user.findUnique({
+        where: { id: parent.id },
+        select: { analyticsOptOut: true },
+      });
+      return row?.analyticsOptOut ?? false;
     },
 
     // Map Prisma field names to GraphQL field names

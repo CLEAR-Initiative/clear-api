@@ -99,6 +99,9 @@ model user {
   emailNotification Boolean @default(false) @map("email_notification")
   smsNotification   Boolean @default(false) @map("sms_notification")
 
+  /// Usage-analytics opt-out, account-wide. When true, clear-mvp loads no tracker for this user.
+  analyticsOptOut Boolean @default(false) @map("analytics_opt_out")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @map("updated_at")
 
