@@ -164,12 +164,13 @@ export const mutationTypeDef = gql`
     Admin/pipeline only."""
     updateSignalGeoparsedData(id: String!, geoparsedData: JSON!): Signal!
 
-    """Set (or replace) an existing signal's generalLocation. Used by the
-    manual-signal pipeline path: when the user didn't pick a location and
-    the geoparser resolved a landmark, we promote it to an L4 via
-    findOrCreateLandmarkL4 and then wire the signal to it so downstream
-    event grouping can key on the resolved admin-2 district instead of
-    creating an isolated event. Admin/pipeline only."""
+    """Set (or replace) an existing signal's generalLocation. Used by
+    pipeline paths that place a signal after it was created: manual signals
+    whose author picked no location, and push feeds (e.g. sudan-war-x) that
+    arrive with text only. The location is an admin area matched from the
+    text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
+    can key on its admin-2 district instead of creating an isolated event.
+    Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
     """Apply an in-place change to a signal, identified by \`id\` or by
@@ -296,7 +297,9 @@ export const mutationTypeDef = gql`
     and sourceLng are provided, the resolver verifies that the candidate's
     containing A2 matches the source coord's containing A2 — on mismatch it
     aborts with abortedReason="different_a2" so the caller can fall back to
-    source coords. Admin/pipeline only."""
+    source coords. Without source coords no check is made: the text-only
+    signal path checks the point lies inside the admin area it matched from
+    the text before calling. Admin/pipeline only."""
     findOrCreateLandmarkL4(input: FindOrCreateLandmarkL4Input!): FindOrCreateLandmarkL4Result!
 
     # ─── Geocoder cache ──────────────────────────────────────────────────────

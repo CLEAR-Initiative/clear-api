@@ -13,7 +13,7 @@
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
             <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
-            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
+            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district &mdash; or to a state or country when its signals couldn&rsquo;t be placed more precisely.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
           </tbody>
@@ -75,7 +75,7 @@
   -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
         <div class="notice notice-info">
-          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state/province, <code>2</code> = city, and so on. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state, <code>2</code> = district, <code>4</code> = point (a named place or coordinates inside a district). There is no level <code>3</code>. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
         </div>
 
         <h2 id="guide-by-location">5. Slice by location</h2>
@@ -85,6 +85,17 @@
   -H "Content-Type: application/json" \
   -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the source observations underneath (title, location, severity &mdash; not the upstream source payload), or its <code>alerts</code> to see what was escalated from it.</p>
+        <h3 id="guide-location-precision">How precise is a location?</h3>
+        <p>Sources differ in what they tell CLEAR about place, so check <code>level</code> before treating a location as exact.</p>
+        <table class="feature-table">
+          <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
+          <tbody>
+            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) inside its district</td></tr>
+            <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
+            <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
+          </tbody>
+        </table>
+        <p>Two consequences. A <code>&hellip;ByLocation</code> query for a district doesn&rsquo;t return items placed only at its state, so query the state when you need everything in an area. And a signal from a text-only source has no location until CLEAR&rsquo;s pipeline places it, usually within minutes of arriving.</p>
         <div class="notice notice-info">
           The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
         </div>
@@ -1106,12 +1117,13 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!<
   </tr><tr id="mutation-updatesignallocation">
     <td><code>updateSignalLocation</code></td>
     <td><code>Signal!</code></td>
-    <td>Set (or replace) an existing signal's generalLocation. Used by the
-manual-signal pipeline path: when the user didn't pick a location and
-the geoparser resolved a landmark, we promote it to an L4 via
-findOrCreateLandmarkL4 and then wire the signal to it so downstream
-event grouping can key on the resolved admin-2 district instead of
-creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+    <td>Set (or replace) an existing signal's generalLocation. Used by
+pipeline paths that place a signal after it was created: manual signals
+whose author picked no location, and push feeds (e.g. sudan-war-x) that
+arrive with text only. The location is an admin area matched from the
+text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
+can key on its admin-2 district instead of creating an isolated event.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>
@@ -1252,7 +1264,9 @@ resolver invent a fresh point-location for every signal. When sourceLat
 and sourceLng are provided, the resolver verifies that the candidate's
 containing A2 matches the source coord's containing A2 — on mismatch it
 aborts with abortedReason=&quot;different_a2&quot; so the caller can fall back to
-source coords. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
+source coords. Without source coords no check is made: the text-only
+signal path checks the point lies inside the admin area it matched from
+the text before calling. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
   </tr><tr id="mutation-upsertnominatimcache">
     <td><code>upsertNominatimCache</code></td>
     <td><code>NominatimCacheEntry!</code></td>
@@ -6654,7 +6668,7 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
     <td><code>endedAt</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-location"><code>Location</code> <span class="type-badge">object</span></h3><p>A geographic location in a hierarchy (country &gt; state &gt; city, etc.).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-location"><code>Location</code> <span class="type-badge">object</span></h3><p>A place in the location hierarchy: country &gt; state &gt; district &gt; point</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -6677,7 +6691,7 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
   </tr><tr>
     <td><code>level</code></td>
     <td><code>Int!</code></td>
-    <td>Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc.</td>
+    <td>Hierarchy level: 0 = country, 1 = state, 2 = district, 4 = point (there is no level 3)</td>
   </tr><tr>
     <td><code>geometry</code></td>
     <td><code>GeoJSON</code></td>
@@ -6707,8 +6721,9 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
     <td><code>String</code></td>
     <td>Provenance of this location's geometry. Notable values:
 - 'landmark-geocoded': L4 created by the pipeline geoparser from a
-  landmark/place name resolved via Nominatim. The location's `name`
-  field is meaningful for display (e.g., 'Nyala Airport').
+  landmark or place name resolved via the GeoNames gazetteer or
+  LocationIQ, including place names read from text-only signals. The
+  location's `name` field is meaningful for display (e.g., 'Nyala Airport').
 - 'gps' / 'source-gps' / 'centroid' / 'source-centroid': see schema
   documentation on the Prisma model.
 - null: legacy rows (most signal-title L4s from `createPointLocation`).</td>
