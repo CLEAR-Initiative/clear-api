@@ -366,12 +366,16 @@ export const queryTypeDef = gql`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
     loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
     Arabic names (GeoNames' Arabic alternate names) match exactly only: no
-    fuzzy tier. Returns null on no match - the geoparser then falls back to
-    LocationIQ for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
+    fuzzy tier. \`withinLocationId\` keeps only matches strictly inside that
+    location's geometry (null for an unknown id or one without geometry), so
+    a same-named place elsewhere can't win on population. Returns null on no
+    match - the geoparser then falls back to LocationIQ for landmarks/POIs
+    the gazetteer lacks. Admin / pipeline only."""
     resolveGazetteerLocation(
       name: String!
       countryCode: String
       minSimilarity: Float
+      withinLocationId: String
     ): GazetteerHit
 
     """Hybrid dense + BM25 retrieval over the knowledge base, fused
