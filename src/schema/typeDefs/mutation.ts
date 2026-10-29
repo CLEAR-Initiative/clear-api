@@ -210,7 +210,7 @@ export const mutationTypeDef = gql`
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
 
     """Decide an open Location challenge. Auth: the team_admin of the team it
-    was filed for, or a platform admin, but never whoever filed it. ACCEPT
+    was filed for, or a platform admin, including whoever filed it. ACCEPT
     writes the proposed point onto the Signal; CORRECT writes \`point\`
     instead; DECLINE leaves the Signal as it is. A written point becomes the
     Signal's general location (a reused or new level-4 point under the admin

@@ -2,8 +2,8 @@ import { gql } from "graphql-tag";
 
 export const signalLocationChallengeTypeDef = gql`
   """An analyst's Location challenge on a Signal: why its location looks wrong,
-  optionally with a corrected point, filed for one team. That team's admin (or
-  a platform admin, never the filer) decides it. Accepting writes the proposed
+  optionally with a corrected point, filed for one team. That team's admin or a
+  platform admin decides it, even when they filed it. Accepting writes the proposed
   point onto the Signal, correcting writes a point the admin placed instead,
   and declining leaves the Signal as it is. A written point becomes the
   Signal's general location (its origin and destination are cleared and its
