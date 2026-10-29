@@ -139,17 +139,31 @@ describe("analyticsOptOut", () => {
     expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { analyticsOptOut: false } });
   });
 
-  const field = userResolvers.User.analyticsOptOut;
-  const ctx = (user: unknown) => ({ user }) as unknown as Context;
-
-  it("is readable by the user themselves", () => {
-    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "u1", role: "member" }))).toBe(true);
-    expect(field({ id: "u1", analyticsOptOut: false }, {}, ctx({ id: "u1", role: "member" }))).toBe(false);
+  it("updateProfile treats an explicit null as no change", async () => {
+    const update = vi.fn(async (args) => ({ id: "u1", ...args.data }));
+    await updateProfile(undefined, { input: { analyticsOptOut: null } }, buildContext(update));
+    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: {} });
   });
 
-  it("is null for other users, admins included, and anonymous callers", () => {
-    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "u2", role: "member" }))).toBeNull();
-    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "admin-1", role: "admin" }))).toBeNull();
-    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx(null))).toBeNull();
+  const field = userResolvers.User.analyticsOptOut;
+  const ctx = (user: unknown, stored: boolean | undefined = true) => {
+    const findUnique = vi.fn(async () => (stored === undefined ? null : { analyticsOptOut: stored }));
+    return { context: { user, prisma: { user: { findUnique } } } as unknown as Context, findUnique };
+  };
+
+  it("is read fresh from the database for the user themselves", async () => {
+    // The parent (a cached session user) says false; the saved row says true.
+    const { context, findUnique } = ctx({ id: "u1", role: "member" }, true);
+    await expect(field({ id: "u1", analyticsOptOut: false } as { id: string }, {}, context)).resolves.toBe(true);
+    expect(findUnique).toHaveBeenCalledWith({ where: { id: "u1" }, select: { analyticsOptOut: true } });
+    await expect(field({ id: "u1" }, {}, ctx({ id: "u1", role: "member" }, false).context)).resolves.toBe(false);
+  });
+
+  it("is null for other users, admins included, and anonymous callers", async () => {
+    for (const user of [{ id: "u2", role: "member" }, { id: "admin-1", role: "admin" }, null]) {
+      const { context, findUnique } = ctx(user);
+      await expect(field({ id: "u1" }, {}, context)).resolves.toBeNull();
+      expect(findUnique).not.toHaveBeenCalled();
+    }
   });
 });
