@@ -277,6 +277,18 @@ export const queryTypeDef = gql`
     admin dashboard. Admin only. Default window: last 30 days."""
     activityStats(from: DateTime, to: DateTime): ActivityStats!
 
+    """CLEAR Agent usage aggregates (turns, distinct users, cost, tokens, and
+    turns by route) from usage metadata only; message content is never read.
+    Admin only. Default window: last 30 days."""
+    agentUsageStats(from: DateTime, to: DateTime): AgentUsageStats!
+
+    """Monthly NRC aggregate export as CSV: one row per month, organisation,
+    team and team role, with distinct active users, action count, Agent
+    turns and Agent cost. Global admins are excluded and groups with fewer
+    than 5 distinct people are left out. Admin only. Default window: the
+    last 12 calendar months (UTC)."""
+    nrcActivityExport(from: DateTime, to: DateTime): String!
+
     """Point-in-time user-engagement summary: DAU, WAU, MAU, and the
     DAU/MAU stickiness ratio. Derived from auth.login activity. Admin
     only. \`asOf\` defaults to NOW(); pass a historical timestamp to

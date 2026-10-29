@@ -523,6 +523,20 @@ null when the entry is missing or expired (admin/pipeline only).<div class="fiel
     <td>Aggregated activity counts + per-user + per-day breakdown for the
 admin dashboard. Admin only. Default window: last 30 days.<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
   </tr><tr>
+    <td><code>agentUsageStats</code></td>
+    <td><code>AgentUsageStats!</code></td>
+    <td>CLEAR Agent usage aggregates (turns, distinct users, cost, tokens, and
+turns by route) from usage metadata only; message content is never read.
+Admin only. Default window: last 30 days.<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
+  </tr><tr>
+    <td><code>nrcActivityExport</code></td>
+    <td><code>String!</code></td>
+    <td>Monthly NRC aggregate export as CSV: one row per month, organisation,
+team and team role, with distinct active users, action count, Agent
+turns and Agent cost. Global admins are excluded and groups with fewer
+than 5 distinct people are left out. Admin only. Default window: the
+last 12 calendar months (UTC).<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
+  </tr><tr>
     <td><code>userEngagement</code></td>
     <td><code>UserEngagementMetrics!</code></td>
     <td>Point-in-time user-engagement summary: DAU, WAU, MAU, and the
@@ -4368,6 +4382,75 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>resetsAt</code></td>
     <td><code>DateTime!</code></td>
     <td>When spend resets to zero: the next UTC midnight.</td>
+  </tr></tbody></table><h3 id="type-agentdailyusage"><code>AgentDailyUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>date</code></td>
+    <td><code>String!</code></td>
+    <td>YYYY-MM-DD in UTC.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentrouteusage"><code>AgentRouteUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>route</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentusagestats"><code>AgentUsageStats</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a window, from usage metadata only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>User turns (questions sent to the Agent).</td>
+  </tr><tr>
+    <td><code>answers</code></td>
+    <td><code>Int!</code></td>
+    <td>Agent Answers.</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>People who sent at least one turn.</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Summed Answer cost, in USD.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>byRoute</code></td>
+    <td><code>[AgentRouteUsage!]!</code></td>
+    <td>Turns by the page they were sent from, id segments collapsed to
+':id'. Most turns first.</td>
+  </tr><tr>
+    <td><code>byDay</code></td>
+    <td><code>[AgentDailyUsage!]!</code></td>
+    <td>Per UTC day, ascending.</td>
   </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
 Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
