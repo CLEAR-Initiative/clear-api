@@ -190,7 +190,7 @@ export function renderDocsBody(schema: SchemaData): string {
   -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
         <div class="notice notice-info">
-          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state, <code>2</code> = district, <code>4</code> = point (a named place or coordinates inside a district). There is no level <code>3</code>. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state, <code>2</code> = district, <code>4</code> = point (a named place or coordinates), filed under the smallest area that contains it &mdash; usually a district, but a state or the country near borders and coastlines. There is no level <code>3</code>. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
         </div>
 
         <h2 id="guide-by-location">5. Slice by location</h2>
@@ -205,7 +205,7 @@ export function renderDocsBody(schema: SchemaData): string {
         <table class="feature-table">
           <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
           <tbody>
-            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) inside its district</td></tr>
+            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
             <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
             <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
           </tbody>
