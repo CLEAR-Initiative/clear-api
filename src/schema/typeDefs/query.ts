@@ -365,8 +365,9 @@ export const queryTypeDef = gql`
     areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
     loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
-    Returns null on no match - the geoparser then falls back to LocationIQ
-    for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
+    Arabic names (GeoNames' Arabic alternate names) match exactly only: no
+    fuzzy tier. Returns null on no match - the geoparser then falls back to
+    LocationIQ for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
     resolveGazetteerLocation(
       name: String!
       countryCode: String

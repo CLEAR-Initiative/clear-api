@@ -11,10 +11,11 @@
  * resolver's input normalisation, or fuzzy lookups silently miss.
  */
 import "dotenv/config";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
-import { normalizeGazetteerName as norm } from "../src/utils/geonames-normalize.js";
+import { hasArabic, normalizeGazetteerName as norm } from "../src/utils/geonames-normalize.js";
 
 const COUNTRIES = ["SD", "VE", "AF"] as const;
 const GEONAMES_DIR = join(process.cwd(), "src", "geonames");
@@ -59,7 +60,11 @@ async function main() {
 
     for (const cc of COUNTRIES) {
       const path = join(GEONAMES_DIR, cc, `${cc}.txt`);
-      const lines = readFileSync(path, "utf-8").split("\n");
+      const file = readFileSync(path);
+      // GeoNames publishes no checksums; log the extract's hash so a load can
+      // be traced back to exactly the file that went in.
+      const sha256 = createHash("sha256").update(file).digest("hex");
+      const lines = file.toString("utf-8").split("\n");
 
       // Collect the whole country, then insert places BEFORE their names so
       // the geonames_name → geonames FK is always satisfied.
@@ -98,7 +103,11 @@ async function main() {
 
       totalPlaces += placeRows.length;
       totalNames += nameRows.length;
-      console.log(`  ${cc}: ${placeRows.length.toLocaleString()} places, ${nameRows.length.toLocaleString()} name variants`);
+      const arabic = nameRows.filter((r) => hasArabic(r[1] as string)).length;
+      console.log(
+        `  ${cc}: ${placeRows.length.toLocaleString()} places, ${nameRows.length.toLocaleString()} name variants ` +
+          `(${arabic.toLocaleString()} Arabic) · ${cc}.txt sha256 ${sha256}`,
+      );
     }
 
     await client.query("COMMIT");
