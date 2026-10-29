@@ -2,6 +2,17 @@ import { gql } from "graphql-tag";
 
 export const mutationTypeDef = gql`
   type Mutation {
+    # ─── Product analytics (activity log) ─────────────────────────────────────
+    """Record that you finished onboarding (\`user.onboarding_completed\`).
+    Best-effort: returns true even if the log write fails. Any signed-in user."""
+    recordOnboardingCompleted: Boolean!
+
+    """Record that you exported an analysis report
+    (\`analysis.report_exported\`). The log row holds the analysis id and its
+    frame (locations, event types, need sectors, window), never content.
+    Best-effort: returns true even if the log write fails. Any signed-in user."""
+    recordReportExported(analysisId: String!): Boolean!
+
     # ─── API Keys ──────────────────────────────────────────────────────────────
     """Create a new API key for the authenticated user."""
     createApiKey(input: CreateApiKeyInput!): CreateApiKeyPayload!

@@ -210,7 +210,7 @@ describe("fanOutAlertWebhooks — delivery", () => {
     expect(body.alert).toMatchObject({ id: "al-1", status: "published" });
     expect(body.event).toMatchObject({ id: "ev-1", types: ["FL"] });
     expect(body.event.locations).toEqual(["North Darfur"]);
-    expect(body.url).toBe("https://app.test/event/ev-1");
+    expect(body.url).toBe("https://app.test/event/ev-1?from=webhook");
 
     // attemptDelivery fired once per created delivery (fire-and-forget).
     await vi.waitFor(() => expect(attemptDelivery).toHaveBeenCalledTimes(2));

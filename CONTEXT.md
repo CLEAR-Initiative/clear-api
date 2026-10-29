@@ -156,6 +156,21 @@ Signal with its figures as Estimates; it is evidence an **ImpactPrior** is compu
 itself.
 _Avoid_: web result, search hit, prior case, impact prior
 
+### Product analytics
+
+**Activity log**:
+The append-only `activity_logs` record of user-initiated actions, one row per action named
+`<resource>.<verb>` (e.g. `auth.login`, `user.onboarding_completed`, `analysis.report_exported`).
+Rows hold ids and fixed values, never content. IP address and user agent are cleared after 90
+days; the row itself stays. `activityStats` counts every action generically, so a new action
+needs no schema change.
+
+**Link source**:
+The `from` query parameter on every Event link clear-api sends out — `email`, `sms`, `webhook`
+or `inbox` (in-app notification or Task) — so analytics can tell which channel brought a user
+to the Event.
+_Avoid_: utm, referrer
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**

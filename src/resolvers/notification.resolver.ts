@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { NotificationStatus, PrismaClient } from "../generated/prisma/client.js";
 import { requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
@@ -182,7 +183,7 @@ export const notificationResolvers = {
       if (userIds.length === 0) return 0;
 
       const fallbackTitle = event.types[0] ?? "Alert";
-      const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+      const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
 
       // Pull recipients up front so one Prisma read covers both the
       // per-recipient in-app message text and the per-recipient email
@@ -223,7 +224,7 @@ export const notificationResolvers = {
           userId: r.id,
           message: `New alert: ${titleFor(r.language)}`,
           notificationType: "alert",
-          actionUrl: `/event/${event.id}`,
+          actionUrl: eventLink(event.id, "inbox"),
           actionText: "View Alert",
         })),
       });
@@ -469,7 +470,7 @@ export const notificationResolvers = {
             .map((a) => ({
               title: a.event.title ?? a.event.types[0] ?? "Alert",
               description: a.event.description,
-              url: `${env.FRONTEND_URL}/event/${a.event.id}`,
+              url: eventLink(a.event.id, "email", env.FRONTEND_URL),
             }));
 
           const content = alertDigest(u.name, frequency, userAlerts, dashboardUrl);

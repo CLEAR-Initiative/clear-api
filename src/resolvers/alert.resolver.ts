@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { AlertStatus } from "../generated/prisma/client.js";
 import {
@@ -232,7 +233,7 @@ export const alertResolvers = {
 
         if (uniqueUserIds.length > 0) {
           const fallbackTitle = event.types[0] ?? "Alert";
-          const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+          const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
 
           // 1. Populate userAlerts join table
           await context.prisma.userAlerts.createMany({
@@ -273,7 +274,7 @@ export const alertResolvers = {
               userId: r.id,
               message: `New alert: ${titleFor(r.language)}`,
               notificationType: "alert",
-              actionUrl: `/event/${event.id}`,
+              actionUrl: eventLink(event.id, "inbox"),
               actionText: "View Alert",
             })),
           });
