@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
@@ -812,7 +813,7 @@ export const eventResolvers = {
 
           if (uniqueUserIds.length > 0) {
             const fallbackTitle = event.types[0] ?? "Alert";
-            const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+            const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
             const primaryLoc =
               locations.find((l) => l.id === event.locationId) ??
               locations.find((l) => l.id === event.originId) ??
@@ -881,7 +882,7 @@ export const eventResolvers = {
                 userId: r.id,
                 message: `New alert: ${titleFor(r.language)}`,
                 notificationType: "alert",
-                actionUrl: `/event/${event.id}`,
+                actionUrl: eventLink(event.id, "inbox"),
                 actionText: "View Alert",
               })),
             });

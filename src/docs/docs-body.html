@@ -954,7 +954,19 @@ platform admins and analysts.<div class="field-args"><span class="arg"><code>eve
     <h2 id="mutations">Mutations</h2>
     <table class="ref-table">
       <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
-      <tbody><tr id="mutation-createapikey">
+      <tbody><tr id="mutation-recordonboardingcompleted">
+    <td><code>recordOnboardingCompleted</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Record that you finished onboarding (`user.onboarding_completed`).
+Best-effort: returns true even if the log write fails. Any signed-in user.</td>
+  </tr><tr id="mutation-recordreportexported">
+    <td><code>recordReportExported</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Record that you exported an analysis report
+(`analysis.report_exported`). The log row holds the analysis id and its
+frame (locations, event types, need sectors, window), never content.
+Best-effort: returns true even if the log write fails. Any signed-in user.<div class="field-args"><span class="arg"><code>analysisId: String!</code></span></div></td>
+  </tr><tr id="mutation-createapikey">
     <td><code>createApiKey</code></td>
     <td><code>CreateApiKeyPayload!</code></td>
     <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
@@ -4260,34 +4272,25 @@ ask for. Not defaulted, deliberately.</td>
     <td><code>translations</code></td>
     <td><code>[LocaleTranslationInput!]!</code></td>
     <td>One entry per target locale. Each row is upserted independently.</td>
-  </tr></tbody></table><h3 id="type-activitycountsbyaction"><code>ActivityCountsByAction</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
-    <td><code>login</code></td>
+  </tr></tbody></table><h3 id="type-actioncount"><code>ActionCount</code> <span class="type-badge">object</span></h3><p>How many times one action was recorded.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>action</code></td>
+    <td><code>String!</code></td>
+    <td>Namespaced action, e.g. 'auth.login', 'analysis.report_exported'.</td>
+  </tr><tr>
+    <td><code>count</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
-  </tr><tr>
-    <td><code>signalCreateManual</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>eventCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>alertCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>crisisCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>feedbackCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
+  </tr></tbody></table><h3 id="type-activitycountsbyaction"><code>ActivityCountsByAction</code> <span class="type-badge">object</span></h3><p>Activity counts for one bucket (the whole window, a user, or a day).
+Generic over action names, so a newly logged action appears here without a
+schema change.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Int!</code></td>
-    <td>—</td>
+    <td>Every recorded action in the bucket, whatever its name.</td>
+  </tr><tr>
+    <td><code>actions</code></td>
+    <td><code>[ActionCount!]!</code></td>
+    <td>One entry per action seen in the bucket, highest count first (ties by
+action name). Actions with zero rows are omitted.</td>
   </tr></tbody></table><h3 id="type-activitylog"><code>ActivityLog</code> <span class="type-badge">object</span></h3><p>A single user-initiated action recorded for analytics.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>

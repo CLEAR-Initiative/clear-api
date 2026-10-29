@@ -33,6 +33,7 @@ import { logieRouter } from "./routes/logie.js";
 import { usgsRouter } from "./routes/usgs.js";
 import { healthRouter } from "./routes/health.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
+import { startActivityLogTrimWorker } from "./services/activity-log/trim-worker.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -137,6 +138,8 @@ httpServer.listen(env.PORT, () => {
   // due retries every 15s. Safe to start unconditionally; if there are
   // no rows, the tick is essentially free.
   startWebhookRetryWorker(prisma);
+  // Clear ip / user agent on activity_logs rows older than 90 days.
+  startActivityLogTrimWorker(prisma);
 });
 
 const shutdown = async () => {

@@ -50,7 +50,12 @@ export type ActivityAction =
   | "signal.location_challenge.file"
   | "signal.location_challenge.accept"
   | "signal.location_challenge.correct"
-  | "signal.location_challenge.decline";
+  | "signal.location_challenge.decline"
+  // Product analytics (Exponential #1213), recorded by clear-mvp through
+  // `recordOnboardingCompleted` / `recordReportExported`. Ids and fixed
+  // values only — never analysis content.
+  | "user.onboarding_completed"
+  | "analysis.report_exported";
 
 /**
  * Coarse resource bucket. Redundant with `action` but cheap to filter
@@ -67,7 +72,8 @@ export type ActivityResourceType =
   | "conversation"
   | "task"
   | "impact_prior"
-  | "case_proposal";
+  | "case_proposal"
+  | "analysis";
 
 export interface LogActivityOptions {
   /** Required. The user the action is attributed to. */

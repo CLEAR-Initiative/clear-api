@@ -13,8 +13,8 @@
  *   - activityLogs: limit clamp to MAX_LIMIT (500) + default 50, offset clamp
  *     to >= 0, and the full where-filter builder (userId, action, actionPrefix
  *     precedence, resourceType, from/to date range).
- *   - activityStats: default 30-day window, bucket aggregation (known actions
- *     map to named buckets, unknown actions only bump total), top-N user
+ *   - activityStats: default 30-day window, generic { action, count }
+ *     aggregation over every action, top-N user
  *     sorting, byDay ascending sort, deleted-user dropping, and the empty-rows
  *     short-circuit (no user lookup).
  *   - userEngagement: DAU/WAU/MAU window bounds, dauMauRatio percentage, and
@@ -222,7 +222,7 @@ describe("Query.activityStats", () => {
     return { ctx, logsFindMany, userFindMany };
   }
 
-  it("queries the default 30-day trailing window over the tracked actions", async () => {
+  it("queries the default 30-day trailing window over every action", async () => {
     const { ctx, logsFindMany } = statsCtx([]);
     const before = Date.now();
     await activityStats(null, {}, ctx);
@@ -235,8 +235,7 @@ describe("Query.activityStats", () => {
     expect(to).toBeLessThanOrEqual(after);
     // 30 days in ms.
     expect(to - from).toBe(30 * 86_400_000);
-    expect(where.action.in).toContain("auth.login");
-    expect(where.action.in).toContain("feedback.create");
+    expect(where.action).toBeUndefined();
   });
 
   it("honours explicit from/to bounds", async () => {
@@ -262,44 +261,43 @@ describe("Query.activityStats", () => {
     expect(result.byDay).toEqual([]);
   });
 
-  it("aggregates known actions into their named buckets", async () => {
+  it("returns a generic { action, count } list, highest count first", async () => {
     const day = new Date("2026-06-01T10:00:00.000Z");
     const rows = [
       { userId: "u1", action: "auth.login", createdAt: day },
       { userId: "u1", action: "alert.create", createdAt: day },
+      { userId: "u1", action: "auth.login", createdAt: day },
       { userId: "u1", action: "feedback.create", createdAt: day },
     ];
     const { ctx } = statsCtx(rows, [{ id: "u1" }]);
     const result = await activityStats(null, {}, ctx);
 
-    expect(result.totals).toMatchObject({
-      login: 1,
-      alertCreate: 1,
-      feedbackCreate: 1,
-      total: 3,
+    expect(result.totals).toEqual({
+      total: 4,
+      actions: [
+        { action: "auth.login", count: 2 },
+        { action: "alert.create", count: 1 },
+        { action: "feedback.create", count: 1 },
+      ],
     });
+    expect(result.byUser[0].counts.total).toBe(4);
+    expect(result.byDay[0].counts.actions).toHaveLength(3);
   });
 
-  it("counts an unknown action toward total only (no named bucket)", async () => {
+  it("includes actions added after the schema was written", async () => {
     const day = new Date("2026-06-01T10:00:00.000Z");
     const rows = [
-      { userId: "u1", action: "auth.login", createdAt: day },
-      { userId: "u1", action: "mystery.action", createdAt: day },
+      { userId: "u1", action: "analysis.report_exported", createdAt: day },
+      { userId: "u1", action: "user.onboarding_completed", createdAt: day },
     ];
     const { ctx } = statsCtx(rows, [{ id: "u1" }]);
     const result = await activityStats(null, {}, ctx);
 
-    expect(result.totals.login).toBe(1);
     expect(result.totals.total).toBe(2);
-    // No named bucket was bumped for the unknown action.
-    const namedSum =
-      result.totals.login +
-      result.totals.signalCreateManual +
-      result.totals.eventCreate +
-      result.totals.alertCreate +
-      result.totals.crisisCreate +
-      result.totals.feedbackCreate;
-    expect(namedSum).toBe(1);
+    expect(result.totals.actions.map((a: { action: string }) => a.action)).toEqual([
+      "analysis.report_exported",
+      "user.onboarding_completed",
+    ]);
   });
 
   it("orders byUser descending by total and looks up exactly those ids", async () => {
@@ -466,5 +464,89 @@ describe("Query.mauSeries", () => {
       { month: "2026-05", uniqueUsers: 40 },
       { month: "2026-06", uniqueUsers: 55 },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Product-analytics mutations (Exponential #1213).
+// ---------------------------------------------------------------------------
+
+describe("Mutation.recordOnboardingCompleted / recordReportExported", () => {
+  const { recordOnboardingCompleted, recordReportExported } =
+    activityLogResolvers.Mutation;
+  const VIEWER_USER = { id: "u1", role: "viewer" };
+
+  it("rejects a logged-out caller", async () => {
+    await expect(
+      recordOnboardingCompleted(null, {}, buildContext(null)),
+    ).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+    await expect(
+      recordReportExported(null, { analysisId: "a1" }, buildContext(null)),
+    ).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("logs user.onboarding_completed for the caller", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    const ctx = buildContext(VIEWER_USER, { activityLogs: { create } });
+    await expect(recordOnboardingCompleted(null, {}, ctx)).resolves.toBe(true);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      userId: "u1",
+      action: "user.onboarding_completed",
+      resourceType: "user",
+      resourceId: "u1",
+      ipAddress: null,
+      userAgent: null,
+    });
+  });
+
+  it("logs analysis.report_exported with the analysis id and frame scope", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    const findUnique = vi.fn().mockResolvedValue({
+      locationIds: ["loc1"],
+      eventTypes: ["flood"],
+      needSectors: [],
+      windowStart: new Date("2026-10-01T00:00:00.000Z"),
+      windowEnd: null,
+    });
+    const ctx = buildContext(VIEWER_USER, {
+      activityLogs: { create },
+      analysis: { findUnique },
+    });
+    await expect(
+      recordReportExported(null, { analysisId: "a1" }, ctx),
+    ).resolves.toBe(true);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      action: "analysis.report_exported",
+      resourceType: "analysis",
+      resourceId: "a1",
+      metadata: {
+        analysisId: "a1",
+        scope: {
+          locationIds: ["loc1"],
+          eventTypes: ["flood"],
+          needSectors: [],
+          windowStart: "2026-10-01T00:00:00.000Z",
+          windowEnd: null,
+        },
+      },
+    });
+  });
+
+  it("is best-effort: a failed lookup or write still resolves true", async () => {
+    const create = vi.fn().mockRejectedValue(new Error("db down"));
+    const findUnique = vi.fn().mockRejectedValue(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ctx = buildContext(VIEWER_USER, {
+      activityLogs: { create },
+      analysis: { findUnique },
+    });
+    await expect(
+      recordReportExported(null, { analysisId: "a1" }, ctx),
+    ).resolves.toBe(true);
+    expect(create.mock.calls[0][0].data.metadata).toEqual({
+      analysisId: "a1",
+      scope: null,
+    });
+    spy.mockRestore();
   });
 });
