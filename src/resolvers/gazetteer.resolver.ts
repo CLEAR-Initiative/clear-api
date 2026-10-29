@@ -1,6 +1,6 @@
 import type { Context } from "../context.js";
 import { requireRole } from "../utils/auth-guard.js";
-import { normalizeGazetteerName } from "../utils/geonames-normalize.js";
+import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.js";
 
 interface Row {
   geonamesId: number;
@@ -60,6 +60,11 @@ export const gazetteerResolvers = {
         LIMIT 1
       `;
       if (exact.length > 0) return toHit(exact[0], 1.0, true);
+
+      // Arabic names match exactly or not at all: trigrams over short Arabic
+      // words are too coarse (ربك Rabak vs رباك), and the caller falls back
+      // to the Latin spelling, which has the fuzzy tier below.
+      if (hasArabic(q)) return null;
 
       // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator.
       //    `%` prunes by pg_trgm's similarity-threshold GUC, NOT by any
