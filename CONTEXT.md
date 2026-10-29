@@ -171,6 +171,13 @@ or `inbox` (in-app notification or Task) — so analytics can tell which channel
 to the Event.
 _Avoid_: utm, referrer
 
+**Analytics opt-out**:
+`User.analyticsOptOut` — the user's account-wide choice not to be counted in usage analytics.
+Default `false`. Set by the user via `updateProfile`; readable only by the user themselves (null
+for everyone else, admins included). clear-mvp reads it from `me` and loads no tracker while it is
+`true`, in every browser the user signs in from. It does not affect the **Activity log**, which is
+the platform's own audit record.
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**

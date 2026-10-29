@@ -19,6 +19,7 @@ interface UpdateProfileInput {
   enableEmailNotification?: boolean;
   enableSMSNotification?: boolean;
   language?: string;
+  analyticsOptOut?: boolean;
 }
 
 export const userResolvers = {
@@ -81,6 +82,10 @@ export const userResolvers = {
 
       if (input.enableEmailNotification !== undefined) {
         data.emailNotification = input.enableEmailNotification;
+      }
+
+      if (input.analyticsOptOut !== undefined) {
+        data.analyticsOptOut = input.analyticsOptOut;
       }
 
       if (input.language !== undefined) {
@@ -209,6 +214,16 @@ export const userResolvers = {
       return context.prisma.eventEscaladedByUsers.findMany({
         where: { userId: parent.id },
       });
+    },
+
+    // Self only — not even admins. Analytics consent is the user's own business.
+    analyticsOptOut: (
+      parent: { id: string; analyticsOptOut?: boolean | null },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (context.user?.id !== parent.id) return null;
+      return parent.analyticsOptOut ?? false;
     },
 
     // Map Prisma field names to GraphQL field names

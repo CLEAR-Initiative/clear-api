@@ -3884,6 +3884,10 @@ see and triage its threads. Null unassigns it (platform admins only).</td>
     <td><code>language</code></td>
     <td><code>String</code></td>
     <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
+  </tr><tr>
+    <td><code>analyticsOptOut</code></td>
+    <td><code>Boolean</code></td>
+    <td>Opt out of (true) or back into (false) usage analytics, account-wide.</td>
   </tr></tbody></table><h3 id="type-updatesignalcontentinput"><code>UpdateSignalContentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String</code></td>
@@ -8215,6 +8219,12 @@ a TEAM role (see TeamMemberRole), not a global role.</td>
     <td><code>enableSMSNotification</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>analyticsOptOut</code></td>
+    <td><code>Boolean</code></td>
+    <td>Whether the user has opted out of usage analytics, account-wide.
+Readable only by the user themselves (null for everyone else, admins
+included). Set via `updateProfile`.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>

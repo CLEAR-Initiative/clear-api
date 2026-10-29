@@ -125,3 +125,31 @@ describe("updateUserRole — admin gate", () => {
     expect(result).toMatchObject({ id: "u1", role: "admin" });
   });
 });
+
+describe("analyticsOptOut", () => {
+  it("updateProfile persists the opt-out", async () => {
+    const update = vi.fn(async (args) => ({ id: "u1", ...args.data }));
+    await updateProfile(undefined, { input: { analyticsOptOut: true } }, buildContext(update));
+    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { analyticsOptOut: true } });
+  });
+
+  it("updateProfile can opt back in", async () => {
+    const update = vi.fn(async (args) => ({ id: "u1", ...args.data }));
+    await updateProfile(undefined, { input: { analyticsOptOut: false } }, buildContext(update));
+    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { analyticsOptOut: false } });
+  });
+
+  const field = userResolvers.User.analyticsOptOut;
+  const ctx = (user: unknown) => ({ user }) as unknown as Context;
+
+  it("is readable by the user themselves", () => {
+    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "u1", role: "member" }))).toBe(true);
+    expect(field({ id: "u1", analyticsOptOut: false }, {}, ctx({ id: "u1", role: "member" }))).toBe(false);
+  });
+
+  it("is null for other users, admins included, and anonymous callers", () => {
+    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "u2", role: "member" }))).toBeNull();
+    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx({ id: "admin-1", role: "admin" }))).toBeNull();
+    expect(field({ id: "u1", analyticsOptOut: true }, {}, ctx(null))).toBeNull();
+  });
+});
