@@ -10,6 +10,14 @@ GraphQL API and developer-facing surfaces for CLEAR — humanitarian signals, ev
 The app at `/portal` where a **Developer** reads Getting Started / API Reference publicly, and manages API keys, auth guidance, and account access when signed in.
 _Avoid_: dashboard, console (unless referring to browser console)
 
+**Welcome page**:
+The **Developer Portal** page at `/portal/welcome` where a newly signed-up **Developer** lands while pending approval: what happens next, plus a **Developer profile** form. Every signed-in **Developer** can return to it from the Welcome nav item.
+_Avoid_: waiting page, pending screen, onboarding wizard
+
+**Developer profile**:
+What a **Developer** tells us on the **Welcome page**: affiliation, links, and the kind of contribution they'd like to make. Shown to admins on pending sign-ups; the first submission is emailed to the maintainers.
+_Avoid_: user profile (the **Account** owns name and email)
+
 **API Docs**:
 The documentation surface at `/docs` — public to read, visually aligned with the **Developer Portal**.
 _Avoid_: documentation site, docs app (as a separate product)
@@ -148,6 +156,63 @@ Signal with its figures as Estimates; it is evidence an **ImpactPrior** is compu
 itself.
 _Avoid_: web result, search hit, prior case, impact prior
 
+### Briefs
+
+**Brief**:
+A platform admin's hand-picked summary of one area (a country, state or district) over one
+**Brief window**: a title, a Markdown-lite summary and closing notes, counts of the area's
+Signals, Events and Alerts, and picked Alerts, Events and Signals, each with an optional note.
+Emailed to a **Recipient list**. Edited while `draft`; frozen once `sent`. Platform admins only.
+_Avoid_: report (ReliefWeb reports, LogIE PAC reports, the analysis PDF), digest (that is the
+**Alert Digest**)
+
+**Brief window**:
+The rolling period a **Brief** covers: the last 24 hours, 7 days or 30 days by cadence (daily,
+weekly, monthly), ending when the Brief was created or last refreshed. Never a calendar day,
+week or month.
+
+**Recipient list**:
+A named set of email addresses a **Brief** is sent to. Addresses need not belong to CLEAR users;
+each carries its own unsubscribe link.
+_Avoid_: subscribers (those are alert subscriptions), mailing list
+
+**Alert Digest**:
+The automatic `notifyAlertDigest` email of Alert titles to users with daily, weekly or monthly
+alert subscriptions. Nothing calls it today, so it has never gone out. Distinct from a **Brief**,
+which a person composes. An Alert goes in a user's digest when one of their active subscriptions
+at that frequency matches its Event's type, its location or an ancestor of it, and its severity
+floor (`matchDigestRecipients`, `src/services/alert-digest.ts`).
+
+**Digest preview**:
+What the daily **Alert Digest** would send for a **Brief**'s area and **Brief window**: each
+published Alert it would include and how many subscribers it would reach
+(`briefDigestPreview`). Read-only: it writes no user alerts or notifications and sends nothing.
+Shown beside a Brief so a person can compare what they picked with what the automatic digest
+would have picked.
+_Avoid_: digest (on its own, that is the **Alert Digest** itself)
+
+### Product analytics
+
+**Activity log**:
+The append-only `activity_logs` record of user-initiated actions, one row per action named
+`<resource>.<verb>` (e.g. `auth.login`, `user.onboarding_completed`, `analysis.report_exported`).
+Rows hold ids and fixed values, never content. IP address and user agent are cleared after 90
+days; the row itself stays. `activityStats` counts every action generically, so a new action
+needs no schema change.
+
+**Link source**:
+The `from` query parameter on every Event link clear-api sends out — `email`, `sms`, `webhook`
+or `inbox` (in-app notification or Task) — so analytics can tell which channel brought a user
+to the Event.
+_Avoid_: utm, referrer
+
+**Analytics opt-out**:
+`User.analyticsOptOut` — the user's account-wide choice not to be counted in usage analytics.
+Default `false`. Set by the user via `updateProfile`; readable only by the user themselves (null
+for everyone else, admins included). clear-mvp reads it from `me` and loads no tracker while it is
+`true`, in every browser the user signs in from. It does not affect the **Activity log**, which is
+the platform's own audit record.
+
 ## Relationships
 
 - The **Portal Shell** frames both the **Developer Portal** and **API Docs**
@@ -194,6 +259,11 @@ _Avoid_: web result, search hit, prior case, impact prior
 - A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Accepting one writes it into CLEAR as history: a Signal on the matched or a new historical Event, its figures as Estimates
 - An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis The whole-prior proposals and their review (V1–V3) are retired (ADR-0010, 2026-10-08)
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
+
+- A **Brief**'s counts cover exactly its area and **Brief window**, with `entityStats` semantics (Alerts and Events on their first Signal, Signals on publication, the area including everything inside it), whatever filters a list shows
+- A picked **Brief** item stores a snapshot of what it showed, built by clear-api from live data, never by a client. Sending rewrites each snapshot from live data once and then freezes the **Brief**: later reclassification by the pipeline never changes a sent Brief, and a sent Brief rejects every edit
+- A **Brief** is emailed only from clear-api, one email per **Recipient list** member who hasn't unsubscribed. Failed emails are counted, never retried automatically
+- A **Digest preview** scopes Alerts like a **Brief**'s counts (published only, first Signal in the **Brief window**, area including everything inside it) and matches them with the same rule as the **Alert Digest** (`matchDigestRecipients`), so the two can't drift. It lists only Alerts with at least one daily subscriber
 
 ## Example dialogue
 

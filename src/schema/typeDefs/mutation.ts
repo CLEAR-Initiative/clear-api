@@ -2,6 +2,17 @@ import { gql } from "graphql-tag";
 
 export const mutationTypeDef = gql`
   type Mutation {
+    # ─── Product analytics (activity log) ─────────────────────────────────────
+    """Record that you finished onboarding (\`user.onboarding_completed\`).
+    Best-effort: returns true even if the log write fails. Any signed-in user."""
+    recordOnboardingCompleted: Boolean!
+
+    """Record that you exported an analysis report
+    (\`analysis.report_exported\`). The log row holds the analysis id and its
+    frame (locations, event types, need sectors, window), never content.
+    Best-effort: returns true even if the log write fails. Any signed-in user."""
+    recordReportExported(analysisId: String!): Boolean!
+
     # ─── API Keys ──────────────────────────────────────────────────────────────
     """Create a new API key for the authenticated user."""
     createApiKey(input: CreateApiKeyInput!): CreateApiKeyPayload!
@@ -138,6 +149,13 @@ export const mutationTypeDef = gql`
     matches). Returns rows updated. Idempotent. Admin/pipeline only."""
     markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
 
+    """Put signals back in the Dagster drain queue for a backfill: sets status
+    NEW and clears processedAt, so the next drain re-classifies and re-groups
+    them. Only signals with no event link are requeued - a linked signal would
+    be grouped a second time - so delete or unlink their events first. At most
+    500 ids per call. Returns rows requeued. Admin only."""
+    requeueSignals(ids: [String!]!): Int!
+
     """Create a manual signal from a field officer, partner, or government source.
     Persists the signal and sends it to the pipeline for event grouping and auto-escalation."""
     createManualSignal(input: CreateManualSignalInput!): Signal!
@@ -157,12 +175,13 @@ export const mutationTypeDef = gql`
     Admin/pipeline only."""
     updateSignalGeoparsedData(id: String!, geoparsedData: JSON!): Signal!
 
-    """Set (or replace) an existing signal's generalLocation. Used by the
-    manual-signal pipeline path: when the user didn't pick a location and
-    the geoparser resolved a landmark, we promote it to an L4 via
-    findOrCreateLandmarkL4 and then wire the signal to it so downstream
-    event grouping can key on the resolved admin-2 district instead of
-    creating an isolated event. Admin/pipeline only."""
+    """Set (or replace) an existing signal's generalLocation. Used by
+    pipeline paths that place a signal after it was created: manual signals
+    whose author picked no location, and push feeds (e.g. sudan-war-x) that
+    arrive with text only. The location is an admin area matched from the
+    text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
+    can key on its admin-2 district instead of creating an isolated event.
+    Admin/pipeline only."""
     updateSignalLocation(id: String!, locationId: String!): Signal!
 
     """Apply an in-place change to a signal, identified by \`id\` or by
@@ -184,10 +203,30 @@ export const mutationTypeDef = gql`
     Admin/pipeline only."""
     setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
 
-    """Create or replace the open (consideration) Location challenge for a Signal.
-    Auth: any approved logged-in team member who can view the Signal. Queue only —
-    does NOT accept/reject and does NOT mutate the Signal's geometry."""
+    """File a Location challenge on a Signal for a team, with an optional
+    corrected point. Auth: an analyst on that team, or a platform admin; the
+    Signal must be within the team's area. Supersedes the Signal's open
+    challenge, if any. Never changes the Signal: a decision does."""
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
+
+    """Decide an open Location challenge. Auth: the team_admin of the team it
+    was filed for, or a platform admin, including whoever filed it. ACCEPT
+    writes the proposed point onto the Signal; CORRECT writes \`point\`
+    instead; DECLINE leaves the Signal as it is. A written point becomes the
+    Signal's general location (a reused or new level-4 point under the admin
+    area containing it; origin and destination are cleared, countries follow),
+    and later source revisions keep it. Writing needs the Signal still within
+    the team's area, and the point inside the areas CLEAR covers and, unless
+    a platform admin decides, within the team's area. CONFLICT when the
+    challenge is no longer open."""
+    decideSignalLocationChallenge(
+      """The challenge to decide."""
+      id: String!
+      """ACCEPT, CORRECT or DECLINE."""
+      decision: SignalLocationChallengeDecision!
+      """The point to write: required with CORRECT, refused otherwise."""
+      point: LocationChallengePointInput
+    ): SignalLocationChallenge!
 
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
@@ -220,8 +259,12 @@ export const mutationTypeDef = gql`
     creating an ungraded row if none matches (admin/pipeline only). Matching order:
     exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
     default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-    future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004."""
-    resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
+    future lookups hit exactly. Returns the resolved data_sources id.
+    When markTrusted is true the resolved source is graded at the maximum
+    reliability (4) — used for the publisher of a human-uploaded document, which
+    is trusted by virtue of a team member deliberately uploading it. This
+    overwrites any existing grade. See clear-pipeline ADR-0004."""
+    resolveDataSource(name: String!, homepage: String, minSimilarity: Float, markTrusted: Boolean): String!
 
     # ─── Locations ─────────────────────────────────────────────────────────────
     """Create a new location."""
@@ -269,7 +312,9 @@ export const mutationTypeDef = gql`
     and sourceLng are provided, the resolver verifies that the candidate's
     containing A2 matches the source coord's containing A2 — on mismatch it
     aborts with abortedReason="different_a2" so the caller can fall back to
-    source coords. Admin/pipeline only."""
+    source coords. Without source coords no check is made: the text-only
+    signal path checks the point lies inside the admin area it matched from
+    the text before calling. Admin/pipeline only."""
     findOrCreateLandmarkL4(input: FindOrCreateLandmarkL4Input!): FindOrCreateLandmarkL4Result!
 
     # ─── Geocoder cache ──────────────────────────────────────────────────────
@@ -494,6 +539,18 @@ export const mutationTypeDef = gql`
       s3Key: String!
       publishedAt: DateTime!
       chunks: [KnowledgebaseChunkInput!]!
+      """When true, delete only this report's FIGURE chunks before inserting,
+      leaving its text chunks intact — the figure→KB sync uses this to attach
+      figures to a report whose text was ingested in an earlier run. Every chunk
+      must then be a figure chunk (figureS3Key set). Default false = replace all
+      chunks for the report (text + figures), the original behaviour."""
+      figuresOnly: Boolean = false
+      """Team-scoped upload attribution (Cap 1): stored on every chunk of the
+      report so a team-scoped read can filter by it. Null for the weekly
+      ReliefWeb ingest; set for a team member's manual upload."""
+      teamId: ID
+      """clear-api user id of the uploader (provenance). Null for weekly ingest."""
+      uploadedByUserId: ID
     ): UpsertKnowledgebaseResult!
 
     """Synthesise, embed, and upsert incident-tier "event cards" into
@@ -547,7 +604,9 @@ export const mutationTypeDef = gql`
     deleteAnalysisAutomation(id: String!): Boolean!
 
     """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team."""
+    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.
+    A manual trigger always regenerates: it bypasses both the 24h regeneration floor and the
+    new-evidence freshness gate (ADR-0008). The floor still governs scheduled automations."""
     requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
     """Pipeline: mark a drained request GENERATED after its analysis was
     upserted. Admin / pipeline only."""
@@ -600,15 +659,29 @@ export const mutationTypeDef = gql`
     in place. To force a fresh row, tweak the file (any byte) or
     switch to a scripted upload that supplies its own report_id.
 
-    Restricted to admin — the ingest costs LLM + embedding
-    credits per document. When DAGSTER_URL is unset the mutation
-    still stages the PDF in S3 but returns a UNKNOWN-status job with
-    no runId — useful for offline dev of the upload path."""
+    Team-scoped (Cap 1): a global admin, or any content-writer member of
+    \`teamId\`, may upload — the ingest costs LLM + embedding credits per
+    document, so it stays gated, but a team member can now upload on behalf
+    of their team rather than it being admin-only. The uploader and (when
+    given) the team are attributed onto the Dagster ingest run. Omit
+    \`teamId\` only as a global admin; a non-admin must pass a \`teamId\` they
+    belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
+    S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
+    of the upload path."""
     uploadKnowledgebaseDocument(
       file: Upload!
       title: String!
       sourceUrl: String
       publishedAt: DateTime!
+      """Team to attribute the upload to. Required for a non-admin uploader
+      (must be a team they belong to); optional for a global admin."""
+      teamId: ID
+      """Optionally attach this upload to an analysis automation. The file is
+      ingested into the knowledgebase exactly as a normal upload; in addition
+      its name (with the resulting \`reportId\`/\`s3Key\`) is recorded against
+      the automation as a document in its reference set. The automation must
+      belong to \`teamId\` (or be system-owned and uploaded by an admin)."""
+      analysisAutomationId: ID
     ): KnowledgebaseIngestJob!
 
     # ─── Ground intel staging tier ─────────────────────────────────────
@@ -633,9 +706,10 @@ export const mutationTypeDef = gql`
     setGroundSourceActive(id: String!, isActive: Boolean!): GroundSource!
 
     """Review a ground thread: decision is "approve_private",
-    "approve_public", or "reject". Role-gated per source (the caller's
-    global role must appear in the source's reviewerRoles; platform
-    admins always pass). Transitions follow the V1 state machine —
+    "approve_public", or "reject". Open to platform admins (any source) and
+    to members who are an emergency_response_manager or team_admin, for the
+    sources assigned to those teams; a thread from another team's source is
+    NOT_FOUND. Transitions follow the V1 state machine —
     notably approved_public is terminal. approve_public also promotes
     the thread into the standard signals graph via createSignal, with
     all sender identity scrubbed.
@@ -775,6 +849,8 @@ export const mutationTypeDef = gql`
     enableSMSNotification: Boolean
     """Preferred UI language code (BCP-47 / ISO 639-1, e.g. "en", "ar")."""
     language: String
+    """Opt out of (true) or back into (false) usage analytics, account-wide."""
+    analyticsOptOut: Boolean
   }
 
   input CreateAlertInput {
@@ -846,6 +922,19 @@ export const mutationTypeDef = gql`
     severity: Int
     """Reported casualties for the signal."""
     casualties: Int
+    """Structured event attributes extracted by the shared event-classification
+    LLM. Dates are ISO-8601; accuracy is one of DAY/WEEK/MONTH/YEAR."""
+    startDate: String
+    startDateAccuracy: DateAccuracy
+    endDate: String
+    endDateAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"). Null for non-disaster signals."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors. Omitted/empty for non-conflict signals."""
+    actors: [String!]
+    """Admin-0 location ids the extracted event touches (countries relation)."""
+    countryIds: [String!]
     """Media URLs (source URLs for images, videos, etc.)."""
     media: [String!]
     originId: String
@@ -888,6 +977,15 @@ export const mutationTypeDef = gql`
     title: String
     description: String
     rewriteMembersHash: String
+    """Structured event attributes, aggregated from the live members. Absolute:
+    an explicit null / empty list clears a fact no live member supports."""
+    endedAt: String
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    magnitude: Float
+    magnitudeUnit: String
+    actors: [String!]
+    countryIds: [String!]
   }
 
   input UpdateSignalContentInput {
@@ -911,6 +1009,18 @@ export const mutationTypeDef = gql`
     description: String
     severity: Int
     casualties: Int
+    """Structured event attributes extracted by the shared event-classification
+    LLM. Absent fields leave the stored value unchanged; dates are ISO-8601."""
+    startDate: String
+    startDateAccuracy: DateAccuracy
+    endDate: String
+    endDateAccuracy: DateAccuracy
+    magnitude: Float
+    magnitudeUnit: String
+    actors: [String!]
+    """Admin-0 location ids the extracted event touches (countries relation).
+    When provided, replaces the signal's country set."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -934,6 +1044,20 @@ export const mutationTypeDef = gql`
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601; null/omitted when no onset could be resolved."""
     startedAt: String
+    """ISO-8601 event end (the onset's close), distinct from validTo.
+    Null/omitted when no end is known ("ongoing")."""
+    endedAt: String
+    """Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR)."""
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"), aggregated from
+    member signals. Null for non-disaster events."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors aggregated from member signals."""
+    actors: [String!]
+    """Admin-0 location ids the event touches (countries relation)."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -976,6 +1100,21 @@ export const mutationTypeDef = gql`
     """When the real-world event started (onset), parsed from signal text.
     ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals."""
     startedAt: String
+    """ISO-8601 event end. Pass \`null\` to clear ("ongoing"); omit to leave
+    unchanged. The pipeline keeps the LATEST end across an event's signals."""
+    endedAt: String
+    """Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR)."""
+    startedAtAccuracy: DateAccuracy
+    endedAtAccuracy: DateAccuracy
+    """Natural-hazard magnitude + its unit, aggregated from member signals."""
+    magnitude: Float
+    magnitudeUnit: String
+    """Named conflict actors aggregated from member signals. Replaces the set
+    when provided; omit to leave unchanged."""
+    actors: [String!]
+    """Admin-0 location ids the event touches (countries relation). Replaces
+    the set when provided; omit to leave unchanged."""
+    countryIds: [String!]
     originId: String
     destinationId: String
     locationId: String
@@ -1072,10 +1211,12 @@ export const mutationTypeDef = gql`
   }
 
   input AddCommentInput {
-    """Provide exactly one of eventId, signalId, or crisisId."""
+    """Provide exactly one of eventId, signalId, crisisId, or analysisAutomationId."""
     eventId: String
     signalId: String
     crisisId: String
+    """Discussion on an analysis automation. Shared with everyone who can read it."""
+    analysisAutomationId: String
     comment: String!
     """User IDs to tag in the comment."""
     tagUserIds: [String!]
@@ -1177,8 +1318,8 @@ export const mutationTypeDef = gql`
       horizonYears: Int
     ): [Task!]!
 
-    """Decide one web case (V4): a platform admin or a team analyst on the
-    case's team accepts or
+    """Decide one web case (V4): a platform admin, or a team analyst or team
+    admin on the case's team, accepts or
     rejects it, recorded as who, when and why (the Domain Ontology's
     DecisionRecord). Only from \`proposed\` (CONFLICT otherwise). The
     \`rationale\` is required to reject and optional to accept.
@@ -1251,5 +1392,67 @@ export const mutationTypeDef = gql`
       """Skill or handler version that produced \`cases\`; required with them."""
       methodVersion: String
     ): Task!
+  }
+
+  # ─── Briefs (platform admin only) ────────────────────────────────────
+  extend type Mutation {
+    """Start a draft Brief for one area. The window ends now and starts
+    24 hours, 7 days or 30 days earlier, by cadence."""
+    createBrief(input: CreateBriefInput!): Brief!
+
+    """Edit a draft Brief's text. Only the fields given change. Every
+    mutation on a sent Brief or its items is BAD_USER_INPUT "Brief already
+    sent"."""
+    updateBrief(id: String!, input: UpdateBriefInput!): Brief!
+
+    """Move a draft Brief's window end to now and its start back by the
+    cadence."""
+    refreshBriefWindow(id: String!): Brief!
+
+    """Delete a draft Brief and its items. Sent Briefs are kept."""
+    deleteBrief(id: String!): Boolean!
+
+    """Pick an Alert, Event or Signal into a draft Brief, at the end of its
+    kind's group. The snapshot is built from the live row; the client never
+    supplies it. Picking the same item again returns the existing one.
+    NOT_FOUND when the entity doesn't exist."""
+    addBriefItem(briefId: String!, kind: BriefItemKind!, entityId: String!): BriefItem!
+
+    """Unpick an item from a draft Brief."""
+    removeBriefItem(itemId: String!): Boolean!
+
+    """Set or clear (null or blank) an item's analyst note."""
+    updateBriefItemNote(itemId: String!, note: String): BriefItem!
+
+    """Reorder one kind's group. \`itemIds\` must list every item of that
+    kind in the Brief exactly once, in the new order."""
+    reorderBriefItems(briefId: String!, kind: BriefItemKind!, itemIds: [String!]!): [BriefItem!]!
+
+    """Email the Brief to the caller's own address only, with [TEST] in
+    the subject. Changes nothing. False when the email provider refused
+    it."""
+    sendBriefTest(id: String!): Boolean!
+
+    """Send a draft Brief to a Recipient list and freeze it. In one
+    transaction it rewrites every item's snapshot from live data (keeping
+    the stored one when the entity is gone), stores the counts and marks
+    the Brief sent; then it emails every member who hasn't unsubscribed,
+    each with their own unsubscribe link. Failed emails are counted, not
+    retried. BAD_USER_INPUT when the Brief is already sent, the list has
+    no one to send to, or the window was refreshed during the send (send
+    again)."""
+    sendBrief(id: String!, recipientListId: String!): BriefSendResult!
+
+    """Create an empty Recipient list. BAD_USER_INPUT when the name is
+    blank or taken."""
+    createRecipientList(name: String!): RecipientList!
+
+    """Add an address to a Recipient list, lower-cased. It need not belong
+    to a CLEAR user. An address already on the list is returned unchanged,
+    so re-adding never clears an unsubscribe."""
+    addRecipientListMember(listId: String!, email: String!): RecipientListMember!
+
+    """Take an address off its Recipient list."""
+    removeRecipientListMember(memberId: String!): Boolean!
   }
 `;

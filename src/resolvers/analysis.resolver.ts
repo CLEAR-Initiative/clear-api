@@ -27,7 +27,7 @@ import {
   requireNonWorker,
   requireRole,
   resolveTeamMembership,
-  TEAM_ANALYST_ROLE,
+  TEAM_ANALYST_ROLES,
 } from "../utils/auth-guard.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { deepMergeTranslation } from "../utils/translation-merge.js";
@@ -108,11 +108,27 @@ interface CreateAnalysisAutomationInput {
   windowStart: Date;
   cadence: string;
   teamId?: string | null;
+  title?: string | null;
 }
 
 interface UpdateAnalysisAutomationInput {
   cadence?: string | null;
   enabled?: boolean | null;
+  title?: string | null;
+}
+
+const TITLE_MAX = 120;
+
+/** Blank becomes null. A title longer than TITLE_MAX is rejected. */
+function cleanTitle(title: string | null | undefined): string | null {
+  const value = title?.trim() ?? "";
+  if (!value) return null;
+  if (value.length > TITLE_MAX) {
+    throw new GraphQLError(`Analysis title must be ${TITLE_MAX} characters or fewer`, {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  return value;
 }
 
 /** Cadence → milliseconds until the next run. Unknown cadences fall back to
@@ -156,9 +172,9 @@ async function requireAutomationTeamAccess(
     where: { teamId_userId: { teamId, userId: user.id } },
     select: { role: true },
   });
-  if (membership?.role !== TEAM_ANALYST_ROLE) {
+  if (!membership || !TEAM_ANALYST_ROLES.includes(membership.role)) {
     throw new GraphQLError(
-      "Requires a team analyst on this automation's team, or global admin",
+      "Requires a team analyst on this automation's team (or an emergency response manager), or global admin",
       { extensions: { code: "FORBIDDEN" } },
     );
   }
@@ -202,6 +218,30 @@ export const analysisResolvers = {
       const tr = await context.translationLoader.load("analysis", parent.id);
       if (!tr) return parent.data;
       return deepMergeTranslation(parent.data, tr);
+    },
+  },
+
+  AnalysisAutomation: {
+    comments: (parent: { id: string }, _args: unknown, ctx: Context) => {
+      requireContentReader(ctx);
+      return ctx.prisma.userComments.findMany({
+        where: { analysisAutomationId: parent.id },
+        orderBy: { createdAt: "asc" },
+      });
+    },
+    documents: async (parent: { id: string }, _args: unknown, ctx: Context) => {
+      requireContentReader(ctx);
+      const rows = await ctx.prisma.analysisAutomationDocument.findMany({
+        where: { analysisAutomationId: parent.id },
+        orderBy: { createdAt: "desc" },
+      });
+      const { getPresignedUrl } = await import("../services/s3.js");
+      return Promise.all(
+        rows.map(async (row) => ({
+          ...row,
+          url: await getPresignedUrl(row.s3Key).catch(() => null),
+        })),
+      );
     },
   },
 
@@ -272,6 +312,20 @@ export const analysisResolvers = {
       });
     },
 
+    analysisAutomation: async (
+      _parent: unknown,
+      args: { id: string },
+      context: Context,
+    ) => {
+      const user = requireContentReader(context);
+      const row = await context.prisma.analysisAutomation.findUnique({ where: { id: args.id } });
+      if (!row) return null;
+      if (row.teamId && !isPlatformAdmin(user)) {
+        await resolveTeamMembership(context.prisma, user.id, row.teamId, user.role);
+      }
+      return row;
+    },
+
     // Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand requests. The
     // sensor generates each frame and marks it GENERATED / FAILED.
     pendingAnalyses: async (
@@ -309,28 +363,69 @@ export const analysisResolvers = {
     },
 
     // Freshness watermark for a frame (ADR-0008): the newest ingestion time +
-    // count over the `knowledgebase` corpus the analysis is generated from.
-    // Reuses the KB search's exact filter (incl. single-location → subtree
-    // expansion) so "new evidence" means what retrieval would actually see. The
-    // drain compares `latestEvidenceAt` to the live analysis's `generatedAt`.
+    // count over the corpus the analysis is generated from. Scans BOTH retrieval
+    // tiers — the `knowledgebase` report tier AND the `events_index` incident
+    // tier — because the analysis RAG reads both; watching only reports (the
+    // original behaviour) missed new events entirely (#1067). Reuses the KB
+    // search's exact filter (incl. single-location → subtree expansion) so "new
+    // evidence" means what retrieval would actually see. `events_index` has no
+    // need_sectors/figure/team columns, so those filter arms are disabled for it.
     frameEvidenceWatermark: async (
       _parent: unknown,
       args: { frame: FrameInput },
       context: Context,
-    ): Promise<{ latestEvidenceAt: Date | null; evidenceCount: number }> => {
+    ): Promise<{
+      latestEvidenceAt: Date | null;
+      evidenceCount: number;
+      reportsLatestEvidenceAt: Date | null;
+      reportsCount: number;
+      eventsLatestEvidenceAt: Date | null;
+      eventsCount: number;
+    }> => {
       requireRole(context, ["admin", "pipeline"]);
-      const params: unknown[] = [];
-      const whereClause = buildFilterClause(frameToKbFilters(args.frame), params);
-      const sql =
+      const filters = frameToKbFilters(args.frame);
+
+      const reportParams: unknown[] = [];
+      const reportWhere = buildFilterClause(filters, reportParams);
+      const reportSql =
         `SELECT MAX("created_at") AS "latestEvidenceAt", ` +
-        `COUNT(*)::int AS "evidenceCount" FROM "knowledgebase" ${whereClause}`;
-      const rows = await context.prisma.$queryRawUnsafe<
-        { latestEvidenceAt: Date | null; evidenceCount: number }[]
-      >(sql, ...params);
-      const row = rows[0];
+        `COUNT(*)::int AS "evidenceCount" FROM "knowledgebase" ${reportWhere}`;
+
+      const eventParams: unknown[] = [];
+      const eventWhere = buildFilterClause(filters, eventParams, {
+        hasNeedSectors: false,
+        hasFigureColumn: false,
+        hasTeamColumn: false,
+      });
+      const eventSql =
+        `SELECT MAX("created_at") AS "latestEvidenceAt", ` +
+        `COUNT(*)::int AS "evidenceCount" FROM "events_index" ${eventWhere}`;
+
+      const [reportRows, eventRows] = await Promise.all([
+        context.prisma.$queryRawUnsafe<{ latestEvidenceAt: Date | null; evidenceCount: number }[]>(
+          reportSql, ...reportParams,
+        ),
+        context.prisma.$queryRawUnsafe<{ latestEvidenceAt: Date | null; evidenceCount: number }[]>(
+          eventSql, ...eventParams,
+        ),
+      ]);
+
+      const reportsAt = reportRows[0]?.latestEvidenceAt ?? null;
+      const eventsAt = eventRows[0]?.latestEvidenceAt ?? null;
+      const reportsCount = Number(reportRows[0]?.evidenceCount ?? 0);
+      const eventsCount = Number(eventRows[0]?.evidenceCount ?? 0);
+      // Combined watermark = the later of the two (the gate fires if EITHER tier
+      // advanced past the analysis's generatedAt).
+      const combinedAt =
+        reportsAt && eventsAt ? (reportsAt > eventsAt ? reportsAt : eventsAt) : (reportsAt ?? eventsAt);
+
       return {
-        latestEvidenceAt: row?.latestEvidenceAt ?? null,
-        evidenceCount: Number(row?.evidenceCount ?? 0),
+        latestEvidenceAt: combinedAt,
+        evidenceCount: reportsCount + eventsCount,
+        reportsLatestEvidenceAt: reportsAt,
+        reportsCount,
+        eventsLatestEvidenceAt: eventsAt,
+        eventsCount,
       };
     },
   },
@@ -467,6 +562,7 @@ export const analysisResolvers = {
         cadence: input.cadence,
         teamId: input.teamId ?? null,
         createdByUserId: context.user?.id ?? null,
+        title: cleanTitle(input.title),
       };
       try {
         return await context.prisma.analysisAutomation.create({ data });
@@ -488,7 +584,11 @@ export const analysisResolvers = {
           if (existing) {
             return context.prisma.analysisAutomation.update({
               where: { id: existing.id },
-              data: { cadence: data.cadence, enabled: true },
+              data: {
+                cadence: data.cadence,
+                enabled: true,
+                ...(input.title !== undefined ? { title: data.title } : {}),
+              },
             });
           }
         }
@@ -509,6 +609,7 @@ export const analysisResolvers = {
         data: {
           ...(input.cadence != null ? { cadence: input.cadence } : {}),
           ...(input.enabled != null ? { enabled: input.enabled } : {}),
+          ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
         },
       });
     },
@@ -534,13 +635,14 @@ export const analysisResolvers = {
     ) => {
       const user = requireNonWorker(context);
       const { input } = args;
-      // Force bypasses the regeneration gate (ADR-0008) — admin only.
-      const force = input.force ?? false;
-      if (force && !isPlatformAdmin(user)) {
-        throw new GraphQLError("Only a platform admin can force an analysis regeneration", {
-          extensions: { code: "FORBIDDEN" },
-        });
-      }
+      // Manual triggers always regenerate: a human asking for an analysis
+      // bypasses BOTH the 24h regeneration floor AND the new-evidence freshness
+      // gate (ADR-0008). The gate still governs the scheduled automation path
+      // (automations are never forced). Every authorized manual request is
+      // forced regardless of role — the authorization below still decides WHO
+      // may request a frame. `input.force` is retained for backward
+      // compatibility but ignored (a manual trigger is always forced now).
+      const force = true;
       // Authorisation: a team-attributed request requires admin OR a team
       // `analyst` on that team (the team-scoped replacement for the old global
       // analyst); a team-less (platform) request is admin-only.

@@ -31,7 +31,10 @@ import { webhooksRouter } from "./routes/webhooks.js";
 import { hotlineWebhookRouter } from "./routes/hotline-webhook.js";
 import { logieRouter } from "./routes/logie.js";
 import { usgsRouter } from "./routes/usgs.js";
+import { healthRouter } from "./routes/health.js";
+import { briefsUnsubscribeRouter } from "./routes/briefs-unsubscribe.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
+import { startActivityLogTrimWorker } from "./services/activity-log/trim-worker.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -113,10 +116,15 @@ app.use(
 app.use("/api/logie", logieRouter);
 app.use("/api/usgs", usgsRouter);
 
-// Health check
-app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
-});
+// Health probes. `/health` is liveness only (the compose healthcheck in
+// clear-infra hits it — keep it independent of the DB so an outage doesn't
+// restart-loop the API); `/health/ready` adds a 2s `SELECT 1` and 503s when
+// Postgres is unreachable. See routes/health.ts.
+app.use("/health", healthRouter);
+
+// Public unsubscribe link from Brief emails (`?token=` is the credential).
+// See routes/briefs-unsubscribe.ts.
+app.use("/briefs", briefsUnsubscribeRouter);
 
 // GraphQL (with multipart upload support)
 app.use(
@@ -135,6 +143,8 @@ httpServer.listen(env.PORT, () => {
   // due retries every 15s. Safe to start unconditionally; if there are
   // no rows, the tick is essentially free.
   startWebhookRetryWorker(prisma);
+  // Clear ip / user agent on activity_logs rows older than 90 days.
+  startActivityLogTrimWorker(prisma);
 });
 
 const shutdown = async () => {

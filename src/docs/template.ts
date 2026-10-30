@@ -128,7 +128,7 @@ export function renderDocsBody(schema: SchemaData): string {
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
             <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
-            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
+            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district &mdash; or to a state or country when its signals couldn&rsquo;t be placed more precisely.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
           </tbody>
@@ -190,7 +190,7 @@ export function renderDocsBody(schema: SchemaData): string {
   -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
         <div class="notice notice-info">
-          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state/province, <code>2</code> = city, and so on. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state, <code>2</code> = district, <code>4</code> = point (a named place or coordinates), filed under the smallest area that contains it &mdash; usually a district, but a state or the country near borders and coastlines. There is no level <code>3</code>. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
         </div>
 
         <h2 id="guide-by-location">5. Slice by location</h2>
@@ -200,6 +200,17 @@ export function renderDocsBody(schema: SchemaData): string {
   -H "Content-Type: application/json" \\
   -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the source observations underneath (title, location, severity &mdash; not the upstream source payload), or its <code>alerts</code> to see what was escalated from it.</p>
+        <h3 id="guide-location-precision">How precise is a location?</h3>
+        <p>Sources differ in what they tell CLEAR about place, so check <code>level</code> before treating a location as exact.</p>
+        <table class="feature-table">
+          <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
+          <tbody>
+            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
+            <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
+            <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
+          </tbody>
+        </table>
+        <p>Two consequences. A <code>&hellip;ByLocation</code> query for a district doesn&rsquo;t return items placed only at its state, so query the state when you need everything in an area. And a signal from a text-only source has no location until CLEAR&rsquo;s pipeline places it, usually within minutes of arriving.</p>
         <div class="notice notice-info">
           The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
         </div>
@@ -304,6 +315,24 @@ const data = await fetch('/graphql', {
   credentials: 'include',
   body: JSON.stringify({ query: '{ me { id email } }' }),
 });</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+      </div>
+
+      <div id="section-health">
+        <h2 id="health">Health &amp; Readiness</h2>
+        <p>Two unauthenticated probes tell you whether the API is up and whether it can reach its database. They answer different questions &mdash; pick the one that matches what you are monitoring.</p>
+
+        <h3><code>GET /health</code> &mdash; liveness</h3>
+        <p>Returns <code>200 {"status":"ok"}</code> whenever the process is running and serving requests. It checks nothing else, so it stays green during a database outage. This is the probe the container orchestrator uses to decide whether to restart the API; tying it to the database would restart-loop a healthy process while the fault lies elsewhere.</p>
+        <pre><code>curl -i https://api.clearinitiative.io/health</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+        <h3><code>GET /health/ready</code> &mdash; readiness</h3>
+        <p>Runs <code>SELECT 1</code> against Postgres with a two-second timeout. Returns <code>200</code> when the database answers, <code>503</code> when it does not:</p>
+        <pre><code>// 200 — ready to serve DB-backed queries
+{"status":"ok","db":"ok"}
+
+// 503 — process is up, database is not
+{"status":"degraded","db":"unreachable","error":"database probe timed out after 2000ms"}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>Point uptime monitors and integration health checks at this one. If <code>/health</code> is 200 and <code>/health/ready</code> is 503, the API is reachable and the database is the problem &mdash; not the other way round. The <code>error</code> field carries the driver message with connection details redacted.</p>
       </div>
 
       <div id="section-reference">

@@ -76,3 +76,91 @@ describe("renderAdminUsers", () => {
     expect(html).toMatch(/Approve/);
   });
 });
+
+describe("renderAdminUsers — Welcome page profile", () => {
+  const base = {
+    currentUserEmail: "admin@clearinitiative.io",
+    pendingCount: 1,
+  };
+  const pending = {
+    id: "u-pending",
+    name: "New Dev",
+    email: "new@example.com",
+    role: "pending",
+    createdAt: new Date("2026-10-27"),
+    organisations: [],
+  };
+
+  it("shows affiliation, links and contribution interest on pending users", () => {
+    const html = renderAdminUsers({
+      ...base,
+      users: [
+        {
+          ...pending,
+          profile: {
+            personalWebsite: "https://ada.example.org/",
+            organisation: "NRC",
+            organisationWebsite: "https://www.nrc.no/",
+            linkedinUrl: null,
+            githubUrl: "https://github.com/ada",
+            contributionInterest: "Data pipeline / LLMs",
+          },
+        },
+      ],
+    });
+    expect(html).toContain("Affiliation");
+    expect(html).toMatch(/<a class="users-profile-link" href="https:\/\/www\.nrc\.no\/" target="_blank" rel="noopener noreferrer"[^>]*>NRC<\/a>/);
+    expect(html).toMatch(/href="https:\/\/github\.com\/ada"[^>]*rel="noopener noreferrer"[^>]*>GitHub</);
+    expect(html).toContain("Would like to contribute");
+    expect(html).toContain("Data pipeline / LLMs");
+  });
+
+  it("escapes every user-supplied value and refuses non-http links", () => {
+    const xss = `"><script>alert(1)</script>`;
+    const html = renderAdminUsers({
+      ...base,
+      users: [
+        {
+          ...pending,
+          profile: {
+            personalWebsite: "javascript:alert(1)",
+            organisation: xss,
+            organisationWebsite: `https://x.test/"onmouseover="alert(1)`,
+            linkedinUrl: null,
+            githubUrl: null,
+            contributionInterest: xss,
+          },
+        },
+      ],
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).not.toContain('href="javascript:');
+    expect(html).not.toContain('"onmouseover="');
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
+  it("says when a pending user hasn't filled it in, and hides it for approved users", () => {
+    const html = renderAdminUsers({
+      ...base,
+      users: [
+        { ...pending, profile: null },
+        {
+          ...pending,
+          id: "u-member",
+          email: "member@example.com",
+          role: "member",
+          profile: {
+            personalWebsite: null,
+            organisation: "Member Org",
+            organisationWebsite: null,
+            linkedinUrl: null,
+            githubUrl: null,
+            contributionInterest: null,
+          },
+        },
+      ],
+    });
+    expect(html).toContain("Not filled in yet");
+    expect(html).not.toContain("Member Org");
+  });
+});

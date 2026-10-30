@@ -68,6 +68,7 @@ describe("detectionMetrics schema contract", () => {
       exclusions: [
         { reason: "NO_INGESTED_SIGNAL", count: 0 },
         { reason: "NO_ONSET", count: 1 },
+        { reason: "COARSE_ONSET", count: 0 },
         { reason: "DATE_ONLY_FIRST_SIGNAL", count: 0 },
         { reason: "BEFORE_ONSET", count: 0 },
       ],

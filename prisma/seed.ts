@@ -433,7 +433,7 @@ async function seed() {
   const nyala = loc.nyala!;
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
-  const [dataminr, acled, gdacs, dtm, idmc] = await Promise.all([
+  const [dataminr, acled, gdacs] = await Promise.all([
     prisma.dataSources.create({
       data: {
         name: "dataminr",
@@ -467,6 +467,15 @@ async function seed() {
         type: "api",
         isActive: true,
         baseUrl: "https://dtmapi.iom.int/api/",
+        infoUrl: "https://dtm.iom.int/",
+      },
+    }),
+    prisma.dataSources.create({
+      data: {
+        name: "iom_dtm_flash_alerts",
+        type: "api",
+        isActive: true,
+        baseUrl: "https://dtm.iom.int/flash-reports-export",
         infoUrl: "https://dtm.iom.int/",
       },
     }),
@@ -514,7 +523,18 @@ async function seed() {
     },
   });
 
-  console.log("Created 6 data sources + 1 manual source + 1 push feed");
+  // INSO security newsletters, read by clear-pipeline's gx from the newsletter
+  // mailbox (IMAP), so no baseUrl. Name must match `INSO_SOURCE_NAME`. Ungraded.
+  await prisma.dataSources.create({
+    data: {
+      name: "inso",
+      type: "email",
+      isActive: true,
+      infoUrl: "https://ngosafety.org/",
+    },
+  });
+
+  console.log("Created 8 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();

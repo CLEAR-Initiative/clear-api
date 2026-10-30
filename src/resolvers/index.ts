@@ -4,6 +4,7 @@ import { authResolvers } from "./auth.resolver.js";
 import { userResolvers } from "./user.resolver.js";
 import { alertResolvers } from "./alert.resolver.js";
 import { signalResolvers } from "./signal.resolver.js";
+import { signalLocationChallengeResolvers } from "./signalLocationChallenge.resolver.js";
 import { eventResolvers } from "./event.resolver.js";
 import { estimateResolvers } from "./estimate.resolver.js";
 import { dataSourceResolvers } from "./dataSource.resolver.js";
@@ -37,6 +38,7 @@ import { groundResolvers } from "./ground.resolver.js";
 import { conversationResolvers } from "./conversation.resolver.js";
 import { taskResolvers } from "./task.resolver.js";
 import { metricsResolvers } from "./metrics.resolver.js";
+import { briefResolvers } from "./brief.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -44,6 +46,7 @@ export const resolvers: IResolvers[] = [
   userResolvers,
   alertResolvers,
   signalResolvers,
+  signalLocationChallengeResolvers,
   eventResolvers,
   estimateResolvers,
   dataSourceResolvers,
@@ -77,4 +80,5 @@ export const resolvers: IResolvers[] = [
   conversationResolvers,
   taskResolvers,
   metricsResolvers,
+  briefResolvers,
 ];

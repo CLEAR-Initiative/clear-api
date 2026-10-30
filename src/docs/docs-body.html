@@ -13,7 +13,7 @@
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
             <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
-            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district.</td></tr>
+            <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district &mdash; or to a state or country when its signals couldn&rsquo;t be placed more precisely.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
           </tbody>
@@ -75,7 +75,7 @@
   -d '{"query":"{ locations(level: 0) { id name population } }"}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>You&rsquo;ll get back an array of <a href="#type-location">Location</a> objects. Grab the <code>id</code> of a country that interests you &mdash; you&rsquo;ll feed it into the next query.</p>
         <div class="notice notice-info">
-          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state/province, <code>2</code> = city, and so on. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
+          <code>level</code> walks the hierarchy: <code>0</code> = country, <code>1</code> = state, <code>2</code> = district, <code>4</code> = point (a named place or coordinates), filed under the smallest area that contains it &mdash; usually a district, but a state or the country near borders and coastlines. There is no level <code>3</code>. Pass a country&rsquo;s <code>id</code> to <code>location(id: &hellip;)</code> and request <code>children</code> to drill down a level at a time.
         </div>
 
         <h2 id="guide-by-location">5. Slice by location</h2>
@@ -85,6 +85,17 @@
   -H "Content-Type: application/json" \
   -d '{"query":"query($loc: String!) { eventsByLocation(locationId: $loc) { id title severity types generalLocation { name level } } }","variables":{"loc":"YOUR_LOCATION_ID"}}'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
         <p>Each <a href="#type-event">Event</a> comes back with a <code>severity</code> from 1 (low) to 5 (severe), its disaster-type <code>types</code> tags, and the place it&rsquo;s bound to. From any event you can follow the graph further &mdash; ask for its <code>signals</code> to see the source observations underneath (title, location, severity &mdash; not the upstream source payload), or its <code>alerts</code> to see what was escalated from it.</p>
+        <h3 id="guide-location-precision">How precise is a location?</h3>
+        <p>Sources differ in what they tell CLEAR about place, so check <code>level</code> before treating a location as exact.</p>
+        <table class="feature-table">
+          <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
+          <tbody>
+            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
+            <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
+            <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
+          </tbody>
+        </table>
+        <p>Two consequences. A <code>&hellip;ByLocation</code> query for a district doesn&rsquo;t return items placed only at its state, so query the state when you need everything in an area. And a signal from a text-only source has no location until CLEAR&rsquo;s pipeline places it, usually within minutes of arriving.</p>
         <div class="notice notice-info">
           The plain <code>events</code>, <code>signals</code>, and <code>alerts</code> lists are scoped to a team. If you&rsquo;re not an admin, pass a <code>teamId</code> for a team you belong to (find yours via the <code>myTeams</code> query). The <code>&hellip;ByLocation</code> queries shown here have no such requirement, which is why they&rsquo;re the easiest place to start.
         </div>
@@ -191,6 +202,24 @@ const data = await fetch('/graphql', {
 });</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
       </div>
 
+      <div id="section-health">
+        <h2 id="health">Health &amp; Readiness</h2>
+        <p>Two unauthenticated probes tell you whether the API is up and whether it can reach its database. They answer different questions &mdash; pick the one that matches what you are monitoring.</p>
+
+        <h3><code>GET /health</code> &mdash; liveness</h3>
+        <p>Returns <code>200 {"status":"ok"}</code> whenever the process is running and serving requests. It checks nothing else, so it stays green during a database outage. This is the probe the container orchestrator uses to decide whether to restart the API; tying it to the database would restart-loop a healthy process while the fault lies elsewhere.</p>
+        <pre><code>curl -i https://api.clearinitiative.io/health</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+
+        <h3><code>GET /health/ready</code> &mdash; readiness</h3>
+        <p>Runs <code>SELECT 1</code> against Postgres with a two-second timeout. Returns <code>200</code> when the database answers, <code>503</code> when it does not:</p>
+        <pre><code>// 200 — ready to serve DB-backed queries
+{"status":"ok","db":"ok"}
+
+// 503 — process is up, database is not
+{"status":"degraded","db":"unreachable","error":"database probe timed out after 2000ms"}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+        <p>Point uptime monitors and integration health checks at this one. If <code>/health</code> is 200 and <code>/health/ready</code> is 503, the API is reachable and the database is the problem &mdash; not the other way round. The <code>error</code> field carries the driver message with connection details redacted.</p>
+      </div>
+
       <div id="section-reference">
         
     <h2 id="queries">Queries</h2>
@@ -231,8 +260,23 @@ const data = await fetch('/graphql', {
   </tr><tr>
     <td><code>signalLocationChallenges</code></td>
     <td><code>[SignalLocationChallenge!]!</code></td>
-    <td>Open Signal Location challenges (for map dual-pin rendering). Team-scoped
-like signals when teamId is given; status defaults to &quot;consideration&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
+    <td>Signal Location challenges by status (for map dual-pin rendering).
+Team-scoped like signals when teamId is given (challenges whose Signal is
+in the team's area). status is &quot;consideration&quot; (open, the default),
+&quot;accepted&quot;, &quot;corrected&quot;, &quot;declined&quot; or &quot;superseded&quot;.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>status: String</code></span></div></td>
+  </tr><tr>
+    <td><code>signalLocationChallengesToDecide</code></td>
+    <td><code>[SignalLocationChallenge!]!</code></td>
+    <td>Open Location challenges the caller can decide, newest first: for a team
+admin, those filed for the teams they administer (or just teamId, one of
+them); for a platform admin, all of them (or just teamId's). The caller's
+own are included. At most `first` (default and maximum 200).<div class="field-args"><span class="arg"><code>teamId: String</code> — Only this team's challenges.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 200).</span></div></td>
+  </tr><tr>
+    <td><code>locationPlacement</code></td>
+    <td><code>Location</code></td>
+    <td>The existing admin area a point falls in (district, else state, else
+country), or null when it is outside the areas CLEAR covers. Lets a client
+show where a corrected point would be placed before filing it.<div class="field-args"><span class="arg"><code>lat: Float!</code> — Latitude of the point, -90 to 90.</span><span class="arg"><code>lng: Float!</code> — Longitude of the point, -180 to 180.</span></div></td>
   </tr><tr>
     <td><code>pendingSignals</code></td>
     <td><code>[Signal!]!</code></td>
@@ -255,7 +299,7 @@ unless `first` is given. Admin/pipeline only.<div class="field-args"><span class
   </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
-    <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
+    <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span><span class="arg"><code>lastSignalSince: DateTime</code></span><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
     <td><code>event</code></td>
     <td><code>Event</code></td>
@@ -283,8 +327,10 @@ are blocked.<div class="field-args"><span class="arg"><code>eventId: String!</co
     <td><code>eventsPendingAlert</code></td>
     <td><code>[Event!]!</code></td>
     <td>Events awaiting an alert (severity &gt;= minSeverity AND no alert row yet AND
-a signal within the last `maxAgeHours`), oldest-first by the event's
-earliest-signal timestamp — the Dagster alert-stage queue. `first` caps the
+a signal within the last `maxAgeHours` AND at least one NRC-relevant type —
+events whose types are all out-of-interest never alert, so they are not
+queued), oldest-first by the event's earliest-signal timestamp — the Dagster
+alert-stage queue. `first` caps the
 batch (default 100, max 500); `minSeverity` floors the severity (default 4);
 `maxAgeHours` bounds staleness on the latest signal's real-world time so the
 historical backlog / backdated backfill never alerts (default 48; 0 disables).
@@ -308,7 +354,10 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</
   </tr><tr>
     <td><code>locations</code></td>
     <td><code>[Location!]!</code></td>
-    <td>List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.).<div class="field-args"><span class="arg"><code>level: Int</code></span></div></td>
+    <td>List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)
+and scoped to part of the hierarchy. `within` keeps only locations that are one of the
+given IDs or descend from one, so `locations(level: 2, within: [stateId])` returns that
+state's districts. Omitted or empty means no scope.<div class="field-args"><span class="arg"><code>level: Int</code></span><span class="arg"><code>within: [String!]</code></span></div></td>
   </tr><tr>
     <td><code>location</code></td>
     <td><code>Location</code></td>
@@ -477,6 +526,20 @@ null when the entry is missing or expired (admin/pipeline only).<div class="fiel
     <td>Aggregated activity counts + per-user + per-day breakdown for the
 admin dashboard. Admin only. Default window: last 30 days.<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
   </tr><tr>
+    <td><code>agentUsageStats</code></td>
+    <td><code>AgentUsageStats!</code></td>
+    <td>CLEAR Agent usage aggregates (turns, distinct users, cost, tokens, and
+turns by route) from usage metadata only; message content is never read.
+Admin only. Default window: last 30 days.<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
+  </tr><tr>
+    <td><code>nrcActivityExport</code></td>
+    <td><code>String!</code></td>
+    <td>Monthly NRC aggregate export as CSV: one row per month, organisation,
+team and team role, with distinct active users, action count, Agent
+turns and Agent cost. Global admins are excluded and groups with fewer
+than 5 distinct people are left out. Admin only. Default window: the
+last 12 calendar months (UTC).<div class="field-args"><span class="arg"><code>from: DateTime</code></span><span class="arg"><code>to: DateTime</code></span></div></td>
+  </tr><tr>
     <td><code>userEngagement</code></td>
     <td><code>UserEngagementMetrics!</code></td>
     <td>Point-in-time user-engagement summary: DAU, WAU, MAU, and the
@@ -560,8 +623,12 @@ match, then a `pg_trgm` fuzzy match, preferring populated places / admin
 areas (feature class P/A) and the more-populous tie-break. `countryCode`
 (ISO-3166-1 alpha-2, e.g. &quot;SD&quot;) scopes the search; omit to search every
 loaded country. `minSimilarity` (default 0.4) floors the fuzzy match.
-Returns null on no match - the geoparser then falls back to LocationIQ
-for landmarks/POIs the gazetteer lacks. Admin / pipeline only.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>countryCode: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
+Arabic names (GeoNames' Arabic alternate names) match exactly only: no
+fuzzy tier. `withinLocationId` keeps only matches strictly inside that
+location's geometry (null for an unknown id or one without geometry), so
+a same-named place elsewhere can't win on population. Returns null on no
+match - the geoparser then falls back to LocationIQ for landmarks/POIs
+the gazetteer lacks. Admin / pipeline only.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>countryCode: String</code></span><span class="arg"><code>minSimilarity: Float</code></span><span class="arg"><code>withinLocationId: String</code></span></div></td>
   </tr><tr>
     <td><code>searchKnowledgebase</code></td>
     <td><code>[KnowledgebaseHit!]!</code></td>
@@ -585,7 +652,62 @@ severity; TOPICAL (a strong free-text query — the chatbot case)
 interleaves by relevance, gating weak incidents. AUTO picks FRAME
 when the query is effectively empty/frame-only, else TOPICAL. Every
 hit carries its `tier`.<div class="field-args"><span class="arg"><code>query: String!</code></span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>tiers: [KnowledgebaseTier!]</code> — Which tiers to search. Default: both (the KB is always fresh). Pass
-[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span></div></td>
+[report] to get the pre-ADR-0006 report-only behaviour.</span><span class="arg"><code>mode: KnowledgebaseSearchMode</code></span><span class="arg"><code>includeFigures: Boolean</code> — When true, append a band of the most relevant FIGURE hits (charts /
+maps / infographics) AFTER the normal text results — the RAG-with-figures
+case: a chatbot gets its answer context plus supporting visuals in one
+call. Figure hits carry `figureS3Key` / `figureImageUrl`, so split the
+band off by `figureS3Key != null`; their scores sit just below the text
+hits. These are IN ADDITION to `limit` (they don't displace text), and
+deduped against any figure that already ranked into the main results.
+No-op when `filters.figuresOnly` is set (that's already figures-only) or
+the report tier isn't searched. Default false.</span><span class="arg"><code>figureLimit: Int</code> — How many figures the `includeFigures` band may add (1–20). Default 6.</span></div></td>
+  </tr><tr>
+    <td><code>searchReports</code></td>
+    <td><code>[ReportHit!]!</code></td>
+    <td>Find whole REPORTS (not chunks) and get a download link — the Cap 3
+read path (&quot;fetch me the UNHCR report on X between these dates&quot;). Groups
+the knowledgebase by `reportId` and returns one `ReportHit` per report,
+each with a presigned PDF `downloadUrl`.
+
+Two modes, picked by whether `query` is a non-empty topical string:
+  - With a query: semantic retrieval over report chunks, grouped to the
+    best-matching chunk per report, ordered by that best similarity.
+  - Without a query: a filter/date listing ordered by `publishedAt`
+    descending (most recent first).
+
+`source` is a case-insensitive substring matched against the report
+title and source URL (e.g. &quot;UNHCR&quot;). `publishedRange` filters on the
+report's publication date (distinct from `filters.timeRange`, which is
+the chunk's extracted EVENT window). `filters` applies the same
+location / event-type / sector scoping as `searchKnowledgebase`.
+Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>query: String</code> — Topical query. Omit or pass empty for a pure filter/date listing.</span><span class="arg"><code>filters: KnowledgebaseFilters</code></span><span class="arg"><code>publishedRange: DateRangeInput</code> — Filter on the report's PUBLICATION date (inclusive).</span><span class="arg"><code>source: String</code> — Case-insensitive substring on report title / source URL (e.g. a
+publisher like &quot;UNHCR&quot; or &quot;OCHA&quot;).</span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>searchReportsNaturalLanguage</code></td>
+    <td><code>NlReportSearch!</code></td>
+    <td>Natural-language front door to `searchReports` (the &quot;NL on top of
+structured&quot; layer). Parses a free-text question — e.g. &quot;fetch me the UNHCR
+report on flooding in Sudan between March and June 2024&quot; — into the
+structured arguments (`source`, publication-date window, country scope, and
+the residual topical query) and runs the same report search. Returns BOTH
+the parsed `interpreted` filters and the `reports`, so a caller can show
+how the question was understood and, if it's wrong, call `searchReports`
+directly with corrected arguments.
+
+Parsing is deterministic (no LLM): it recognises a curated set of
+publishers, common date phrasings, and country names from the locations
+table. Anything it doesn't recognise simply stays in the topical query,
+which still finds the report by content. Requires any authenticated content
+reader.<div class="field-args"><span class="arg"><code>question: String!</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>reportFiguresPendingKbMerge</code></td>
+    <td><code>[ReportFigureForMerge!]!</code></td>
+    <td>Figures (from `report_figures`) whose report is in the knowledgebase but
+whose figure chunk isn't present yet — the work list for the figure→KB sync
+(clear-pipeline). Returns ALL figures for each report that needs syncing (not
+just the missing ones) so the caller can `figuresOnly`-upsert the complete
+set per report. Bounded by `limit` REPORTS (not figures), oldest report id
+first. admin/pipeline only.<div class="field-args"><span class="arg"><code>limit: Int</code></span></div></td>
   </tr><tr>
     <td><code>knowledgebaseIngestJob</code></td>
     <td><code>KnowledgebaseIngestJob</code></td>
@@ -667,6 +789,12 @@ authenticated content reader.<div class="field-args"><span class="arg"><code>id:
     <td>List analysis automation subscriptions (ADR-0007 §5). Optionally scope
 to a team or to enabled rows only. Requires any authenticated content
 reader.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>enabledOnly: Boolean</code></span></div></td>
+  </tr><tr>
+    <td><code>analysisAutomation</code></td>
+    <td><code>AnalysisAutomation</code></td>
+    <td>One analysis automation, for its title, discussion, and evidence.
+A content reader on the owning team, or any content reader for a
+system-owned automation. Null when the id is unknown.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
     <td><code>pendingAnalyses</code></td>
     <td><code>[AnalysisRequest!]!</code></td>
@@ -820,15 +948,16 @@ except the worker role, which requests nothing.<div class="field-args"><span cla
 V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
 computed, see `Event.computedImpactPriors`) and none can be decided.
 An `accepted` one follows the Event's visibility; a `proposed` one
-is visible to its requester and to deciders (admins and analysts); a
+is visible to its requester and to deciders (admins, and the Task team's
+analysts and team admins); a
 `rejected` one to deciders only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr>
     <td><code>caseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
     <td>The Inbox's per-case Review items (V4): CaseProposals in one state
 across every Event, newest first — `proposed` by default. Platform
-admins and analysts only, so the list is exactly what the caller may
-decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+admins (every team), and team analysts and team admins (their own teams'
+Tasks only), so the list is exactly what the caller may decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
   </tr><tr>
     <td><code>eventCaseProposals</code></td>
     <td><code>[CaseProposal!]!</code></td>
@@ -840,13 +969,45 @@ decide.<div class="field-args"><span class="arg"><code>state: CaseProposalState<
     <td>Source URLs already rejected for an Event: a web Worker reads this
 before searching and never proposes one again. The worker role,
 platform admins and analysts.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>briefs</code></td>
+    <td><code>[Brief!]!</code></td>
+    <td>Briefs, newest first. Platform admins only.<div class="field-args"><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>brief</code></td>
+    <td><code>Brief</code></td>
+    <td>One Brief, or null. Platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>recipientLists</code></td>
+    <td><code>[RecipientList!]!</code></td>
+    <td>Every Recipient list, by name. Platform admins only.</td>
+  </tr><tr>
+    <td><code>briefDigestPreview</code></td>
+    <td><code>[DigestPreviewRow!]!</code></td>
+    <td>What the automatic daily Alert Digest would send for a Brief's area
+and window: each published Alert it would include, newest first, with
+how many daily subscribers it would reach. Alerts no subscriber matches
+are left out. Reads only: nothing is written or sent. Works on sent
+Briefs too, against today's subscriptions. Platform admins only.<div class="field-args"><span class="arg"><code>briefId: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
     <h2 id="mutations">Mutations</h2>
     <table class="ref-table">
       <thead><tr><th>Name</th><th>Returns</th><th>Description</th></tr></thead>
-      <tbody><tr id="mutation-createapikey">
+      <tbody><tr id="mutation-recordonboardingcompleted">
+    <td><code>recordOnboardingCompleted</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Record that you finished onboarding (`user.onboarding_completed`).
+Best-effort: returns true even if the log write fails. Any signed-in user.</td>
+  </tr><tr id="mutation-recordreportexported">
+    <td><code>recordReportExported</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Record that you exported an analysis report
+(`analysis.report_exported`). The log row holds the analysis id and its
+frame (locations, event types, need sectors, window), never content.
+Best-effort: returns true even if the log write fails. Any signed-in user.<div class="field-args"><span class="arg"><code>analysisId: String!</code></span></div></td>
+  </tr><tr id="mutation-createapikey">
     <td><code>createApiKey</code></td>
     <td><code>CreateApiKeyPayload!</code></td>
     <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
@@ -975,6 +1136,14 @@ after recomputing a changed signal's events. Sets status (PROCESSED, or
 FAILED) and processedAt. Pass exactly one of `ids` (unconditional) or
 `items` (compare-and-set: a row is updated only if its revision still
 matches). Returns rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
+  </tr><tr id="mutation-requeuesignals">
+    <td><code>requeueSignals</code></td>
+    <td><code>Int!</code></td>
+    <td>Put signals back in the Dagster drain queue for a backfill: sets status
+NEW and clears processedAt, so the next drain re-classifies and re-groups
+them. Only signals with no event link are requeued - a linked signal would
+be grouped a second time - so delete or unlink their events first. At most
+500 ids per call. Returns rows requeued. Admin only.<div class="field-args"><span class="arg"><code>ids: [String!]!</code></span></div></td>
   </tr><tr id="mutation-createmanualsignal">
     <td><code>createManualSignal</code></td>
     <td><code>Signal!</code></td>
@@ -1001,12 +1170,13 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!<
   </tr><tr id="mutation-updatesignallocation">
     <td><code>updateSignalLocation</code></td>
     <td><code>Signal!</code></td>
-    <td>Set (or replace) an existing signal's generalLocation. Used by the
-manual-signal pipeline path: when the user didn't pick a location and
-the geoparser resolved a landmark, we promote it to an L4 via
-findOrCreateLandmarkL4 and then wire the signal to it so downstream
-event grouping can key on the resolved admin-2 district instead of
-creating an isolated event. Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+    <td>Set (or replace) an existing signal's generalLocation. Used by
+pipeline paths that place a signal after it was created: manual signals
+whose author picked no location, and push feeds (e.g. sudan-war-x) that
+arrive with text only. The location is an admin area matched from the
+text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
+can key on its admin-2 district instead of creating an isolated event.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>
@@ -1032,9 +1202,23 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!<
   </tr><tr id="mutation-submitsignallocationchallenge">
     <td><code>submitSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
-    <td>Create or replace the open (consideration) Location challenge for a Signal.
-Auth: any approved logged-in team member who can view the Signal. Queue only —
-does NOT accept/reject and does NOT mutate the Signal's geometry.<div class="field-args"><span class="arg"><code>input: SubmitSignalLocationChallengeInput!</code></span></div></td>
+    <td>File a Location challenge on a Signal for a team, with an optional
+corrected point. Auth: an analyst on that team, or a platform admin; the
+Signal must be within the team's area. Supersedes the Signal's open
+challenge, if any. Never changes the Signal: a decision does.<div class="field-args"><span class="arg"><code>input: SubmitSignalLocationChallengeInput!</code></span></div></td>
+  </tr><tr id="mutation-decidesignallocationchallenge">
+    <td><code>decideSignalLocationChallenge</code></td>
+    <td><code>SignalLocationChallenge!</code></td>
+    <td>Decide an open Location challenge. Auth: the team_admin of the team it
+was filed for, or a platform admin, including whoever filed it. ACCEPT
+writes the proposed point onto the Signal; CORRECT writes `point`
+instead; DECLINE leaves the Signal as it is. A written point becomes the
+Signal's general location (a reused or new level-4 point under the admin
+area containing it; origin and destination are cleared, countries follow),
+and later source revisions keep it. Writing needs the Signal still within
+the team's area, and the point inside the areas CLEAR covers and, unless
+a platform admin decides, within the team's area. CONFLICT when the
+challenge is no longer open.<div class="field-args"><span class="arg"><code>id: String!</code> — The challenge to decide.</span><span class="arg"><code>decision: SignalLocationChallengeDecision!</code> — ACCEPT, CORRECT or DECLINE.</span><span class="arg"><code>point: LocationChallengePointInput</code> — The point to write: required with CORRECT, refused otherwise.</span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -1074,7 +1258,11 @@ event.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
 creating an ungraded row if none matches (admin/pipeline only). Matching order:
 exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (&gt;= minSimilarity,
 default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
+future lookups hit exactly. Returns the resolved data_sources id.
+When markTrusted is true the resolved source is graded at the maximum
+reliability (4) — used for the publisher of a human-uploaded document, which
+is trusted by virtue of a team member deliberately uploading it. This
+overwrites any existing grade. See clear-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span><span class="arg"><code>markTrusted: Boolean</code></span></div></td>
   </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>
@@ -1133,7 +1321,9 @@ resolver invent a fresh point-location for every signal. When sourceLat
 and sourceLng are provided, the resolver verifies that the candidate's
 containing A2 matches the source coord's containing A2 — on mismatch it
 aborts with abortedReason=&quot;different_a2&quot; so the caller can fall back to
-source coords. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
+source coords. Without source coords no check is made: the text-only
+signal path checks the point lies inside the admin area it matched from
+the text before calling. Admin/pipeline only.<div class="field-args"><span class="arg"><code>input: FindOrCreateLandmarkL4Input!</code></span></div></td>
   </tr><tr id="mutation-upsertnominatimcache">
     <td><code>upsertNominatimCache</code></td>
     <td><code>NominatimCacheEntry!</code></td>
@@ -1387,7 +1577,13 @@ Runs inside one transaction — a failed insert rolls back the
 delete so a re-run can retry cleanly. Vector length is validated
 against the pgvector column dimension (1024) on the server;
 mismatched rows are rejected before the write hits Postgres.
-Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span></div></td>
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>reportId: String!</code></span><span class="arg"><code>reportTitle: String!</code></span><span class="arg"><code>sourceUrl: String!</code></span><span class="arg"><code>s3Key: String!</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>chunks: [KnowledgebaseChunkInput!]!</code></span><span class="arg"><code>figuresOnly: Boolean</code> — When true, delete only this report's FIGURE chunks before inserting,
+leaving its text chunks intact — the figure→KB sync uses this to attach
+figures to a report whose text was ingested in an earlier run. Every chunk
+must then be a figure chunk (figureS3Key set). Default false = replace all
+chunks for the report (text + figures), the original behaviour.</span><span class="arg"><code>teamId: ID</code> — Team-scoped upload attribution (Cap 1): stored on every chunk of the
+report so a team-scoped read can filter by it. Null for the weekly
+ReliefWeb ingest; set for a team member's manual upload.</span><span class="arg"><code>uploadedByUserId: ID</code> — clear-api user id of the uploader (provenance). Null for weekly ingest.</span></div></td>
   </tr><tr id="mutation-synceventcards">
     <td><code>syncEventCards</code></td>
     <td><code>SyncEventCardsResult!</code></td>
@@ -1448,7 +1644,9 @@ analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the ow
     <td><code>requestAnalysis</code></td>
     <td><code>AnalysisRequest!</code></td>
     <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.
+A manual trigger always regenerates: it bypasses both the 24h regeneration floor and the
+new-evidence freshness gate (ADR-0008). The floor still governs scheduled automations.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
   </tr><tr id="mutation-markanalysisrequestgenerated">
     <td><code>markAnalysisRequestGenerated</code></td>
     <td><code>AnalysisRequest!</code></td>
@@ -1502,10 +1700,20 @@ prefixed `manual:`) so re-uploading the same bytes is idempotent
 in place. To force a fresh row, tweak the file (any byte) or
 switch to a scripted upload that supplies its own report_id.
 
-Restricted to admin — the ingest costs LLM + embedding
-credits per document. When DAGSTER_URL is unset the mutation
-still stages the PDF in S3 but returns a UNKNOWN-status job with
-no runId — useful for offline dev of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span></div></td>
+Team-scoped (Cap 1): a global admin, or any content-writer member of
+`teamId`, may upload — the ingest costs LLM + embedding credits per
+document, so it stays gated, but a team member can now upload on behalf
+of their team rather than it being admin-only. The uploader and (when
+given) the team are attributed onto the Dagster ingest run. Omit
+`teamId` only as a global admin; a non-admin must pass a `teamId` they
+belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
+S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
+of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>teamId: ID</code> — Team to attribute the upload to. Required for a non-admin uploader
+(must be a team they belong to); optional for a global admin.</span><span class="arg"><code>analysisAutomationId: ID</code> — Optionally attach this upload to an analysis automation. The file is
+ingested into the knowledgebase exactly as a normal upload; in addition
+its name (with the resulting `reportId`/`s3Key`) is recorded against
+the automation as a document in its reference set. The automation must
+belong to `teamId` (or be system-owned and uploaded by an admin).</span></div></td>
   </tr><tr id="mutation-creategroundsource">
     <td><code>createGroundSource</code></td>
     <td><code>GroundSource!</code></td>
@@ -1533,9 +1741,10 @@ shut off immediately.<div class="field-args"><span class="arg"><code>id: String!
     <td><code>reviewGroundThread</code></td>
     <td><code>GroundThread!</code></td>
     <td>Review a ground thread: decision is &quot;approve_private&quot;,
-&quot;approve_public&quot;, or &quot;reject&quot;. Role-gated per source (the caller's
-global role must appear in the source's reviewerRoles; platform
-admins always pass). Transitions follow the V1 state machine —
+&quot;approve_public&quot;, or &quot;reject&quot;. Open to platform admins (any source) and
+to members who are an emergency_response_manager or team_admin, for the
+sources assigned to those teams; a thread from another team's source is
+NOT_FOUND. Transitions follow the V1 state machine —
 notably approved_public is terminal. approve_public also promotes
 the thread into the standard signals graph via createSignal, with
 all sender identity scrubbed.
@@ -1682,8 +1891,8 @@ cases.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
   </tr><tr id="mutation-decidecaseproposal">
     <td><code>decideCaseProposal</code></td>
     <td><code>CaseProposal!</code></td>
-    <td>Decide one web case (V4): a platform admin or a team analyst on the
-case's team accepts or
+    <td>Decide one web case (V4): a platform admin, or a team analyst or team
+admin on the case's team, accepts or
 rejects it, recorded as who, when and why (the Domain Ontology's
 DecisionRecord). Only from `proposed` (CONFLICT otherwise). The
 `rationale` is required to reject and optional to accept.
@@ -1751,17 +1960,92 @@ only while LEASED (CONFLICT
 `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
 requested meanwhile the Task becomes CANCELLED and the result is
 discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
+  </tr><tr id="mutation-createbrief">
+    <td><code>createBrief</code></td>
+    <td><code>Brief!</code></td>
+    <td>Start a draft Brief for one area. The window ends now and starts
+24 hours, 7 days or 30 days earlier, by cadence.<div class="field-args"><span class="arg"><code>input: CreateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-updatebrief">
+    <td><code>updateBrief</code></td>
+    <td><code>Brief!</code></td>
+    <td>Edit a draft Brief's text. Only the fields given change. Every
+mutation on a sent Brief or its items is BAD_USER_INPUT &quot;Brief already
+sent&quot;.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-refreshbriefwindow">
+    <td><code>refreshBriefWindow</code></td>
+    <td><code>Brief!</code></td>
+    <td>Move a draft Brief's window end to now and its start back by the
+cadence.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-deletebrief">
+    <td><code>deleteBrief</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a draft Brief and its items. Sent Briefs are kept.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-addbriefitem">
+    <td><code>addBriefItem</code></td>
+    <td><code>BriefItem!</code></td>
+    <td>Pick an Alert, Event or Signal into a draft Brief, at the end of its
+kind's group. The snapshot is built from the live row; the client never
+supplies it. Picking the same item again returns the existing one.
+NOT_FOUND when the entity doesn't exist.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>entityId: String!</code></span></div></td>
+  </tr><tr id="mutation-removebriefitem">
+    <td><code>removeBriefItem</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Unpick an item from a draft Brief.<div class="field-args"><span class="arg"><code>itemId: String!</code></span></div></td>
+  </tr><tr id="mutation-updatebriefitemnote">
+    <td><code>updateBriefItemNote</code></td>
+    <td><code>BriefItem!</code></td>
+    <td>Set or clear (null or blank) an item's analyst note.<div class="field-args"><span class="arg"><code>itemId: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+  </tr><tr id="mutation-reorderbriefitems">
+    <td><code>reorderBriefItems</code></td>
+    <td><code>[BriefItem!]!</code></td>
+    <td>Reorder one kind's group. `itemIds` must list every item of that
+kind in the Brief exactly once, in the new order.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>itemIds: [String!]!</code></span></div></td>
+  </tr><tr id="mutation-sendbrieftest">
+    <td><code>sendBriefTest</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Email the Brief to the caller's own address only, with [TEST] in
+the subject. Changes nothing. False when the email provider refused
+it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-sendbrief">
+    <td><code>sendBrief</code></td>
+    <td><code>BriefSendResult!</code></td>
+    <td>Send a draft Brief to a Recipient list and freeze it. In one
+transaction it rewrites every item's snapshot from live data (keeping
+the stored one when the entity is gone), stores the counts and marks
+the Brief sent; then it emails every member who hasn't unsubscribed,
+each with their own unsubscribe link. Failed emails are counted, not
+retried. BAD_USER_INPUT when the Brief is already sent, the list has
+no one to send to, or the window was refreshed during the send (send
+again).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>recipientListId: String!</code></span></div></td>
+  </tr><tr id="mutation-createrecipientlist">
+    <td><code>createRecipientList</code></td>
+    <td><code>RecipientList!</code></td>
+    <td>Create an empty Recipient list. BAD_USER_INPUT when the name is
+blank or taken.<div class="field-args"><span class="arg"><code>name: String!</code></span></div></td>
+  </tr><tr id="mutation-addrecipientlistmember">
+    <td><code>addRecipientListMember</code></td>
+    <td><code>RecipientListMember!</code></td>
+    <td>Add an address to a Recipient list, lower-cased. It need not belong
+to a CLEAR user. An address already on the list is returned unchanged,
+so re-adding never clears an unsubscribe.<div class="field-args"><span class="arg"><code>listId: String!</code></span><span class="arg"><code>email: String!</code></span></div></td>
+  </tr><tr id="mutation-removerecipientlistmember">
+    <td><code>removeRecipientListMember</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Take an address off its Recipient list.<div class="field-args"><span class="arg"><code>memberId: String!</code></span></div></td>
   </tr></tbody>
     </table>
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposaldecision"><code>CaseProposalDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed case.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-briefcadence"><code>BriefCadence</code> <span class="type-badge">enum</span></h3><p>How far back a Brief window reaches from its end.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>daily</code></td><td>The last 24 hours.</td></tr><tr><td><code>weekly</code></td><td>The last 7 days.</td></tr><tr><td><code>monthly</code></td><td>The last 30 days.</td></tr></tbody></table><h3 id="type-briefitemkind"><code>BriefItemKind</code> <span class="type-badge">enum</span></h3><p>Which detection a Brief item points at. Items are grouped by kind,
+shown in the order alert, event, signal.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>alert</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>signal</code></td><td>—</td></tr></tbody></table><h3 id="type-briefstatus"><code>BriefStatus</code> <span class="type-badge">enum</span></h3><p>A Brief is edited while `draft` and frozen once `sent`.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>sent</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposaldecision"><code>CaseProposalDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed case.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
 accepts or rejects each case; a rejected one stays, so its URL is never
 proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
-ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
-Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
+ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-dateaccuracy"><code>DateAccuracy</code> <span class="type-badge">enum</span></h3><p>Precision of an extracted start/end date — how finely the pipeline's LLM
+could pin the real-world onset/close. DAY = exact; coarser values mean the
+date is only known to that week/month/year.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr><tr><td><code>YEAR</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
+Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>COARSE_ONSET</code></td><td>The onset is only known to a week/month/year (coarse startedAtAccuracy), so a whole-day delay would be spuriously precise.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
 beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>event_caused</code></td><td>—</td></tr><tr><td><code>pre_existing</code></td><td>—</td></tr><tr><td><code>combined</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemethod"><code>EstimateMethod</code> <span class="type-badge">enum</span></h3><p>How a figure was arrived at (the Domain Ontology's Estimate methods).
 `not_documented` when the method is unknown, e.g. figures backfilled from
 the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
@@ -1782,7 +2066,7 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
 work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
 classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
 grouped, then changed (content revision or retraction flip), so its events
@@ -1834,7 +2118,7 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
   </tr></tbody></table><h3 id="type-addcommentinput"><code>AddCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String</code></td>
-    <td>Provide exactly one of eventId, signalId, or crisisId.</td>
+    <td>Provide exactly one of eventId, signalId, crisisId, or analysisAutomationId.</td>
   </tr><tr>
     <td><code>signalId</code></td>
     <td><code>String</code></td>
@@ -1843,6 +2127,10 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
     <td><code>crisisId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>analysisAutomationId</code></td>
+    <td><code>String</code></td>
+    <td>Discussion on an analysis automation. Shared with everyone who can read it.</td>
   </tr><tr>
     <td><code>comment</code></td>
     <td><code>String!</code></td>
@@ -2120,6 +2408,10 @@ admin of its organisation, or a platform admin.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Owning team. Omit for a system-owned automation (admin only).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name. Blank clears it. At most 120 characters.</td>
   </tr></tbody></table><h3 id="type-createapikeyinput"><code>CreateApiKeyInput</code> <span class="type-badge">input</span></h3><p>Input for creating a new API key.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -2128,6 +2420,18 @@ admin of its organisation, or a platform admin.</td>
     <td><code>expiresAt</code></td>
     <td><code>DateTime</code></td>
     <td>Optional expiration date. Omit for a key that never expires.</td>
+  </tr></tbody></table><h3 id="type-createbriefinput"><code>CreateBriefInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>cadence</code></td>
+    <td><code>BriefCadence!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String!</code></td>
+    <td>A country, state or district (location level 0 to 2).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Defaults to &quot;&lt;Daily|Weekly|Monthly&gt; Brief, &lt;area name&gt;&quot;.</td>
   </tr></tbody></table><h3 id="type-createbulknotificationsinput"><code>CreateBulkNotificationsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userIds</code></td>
     <td><code>[String!]!</code></td>
@@ -2257,6 +2561,36 @@ Ignored for platform-level callers.</td>
     <td><code>String</code></td>
     <td>When the real-world event started (onset), parsed from signal text.
 ISO-8601; null/omitted when no onset could be resolved.</td>
+  </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>ISO-8601 event end (the onset's close), distinct from validTo.
+Null/omitted when no end is known (&quot;ongoing&quot;).</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit (e.g. 6.4 &quot;Mw&quot;), aggregated from
+member signals. Null for non-disaster events.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors aggregated from member signals.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the event touches (countries relation).</td>
   </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
@@ -2529,6 +2863,39 @@ for sources not yet landing in the lake.</td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal.</td>
   </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes extracted by the shared event-classification
+LLM. Dates are ISO-8601; accuracy is one of DAY/WEEK/MONTH/YEAR.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit (e.g. 6.4 &quot;Mw&quot;). Null for non-disaster signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors. Omitted/empty for non-conflict signals.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the extracted event touches (countries relation).</td>
+  </tr><tr>
     <td><code>media</code></td>
     <td><code>[String!]</code></td>
     <td>Media URLs (source URLs for images, videos, etc.).</td>
@@ -2698,6 +3065,35 @@ left unchanged; explicit nulls clear them.</p><table class="ref-table"><thead><t
   </tr><tr>
     <td><code>rewriteMembersHash</code></td>
     <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes, aggregated from the live members. Absolute:
+an explicit null / empty list clears a fact no live member supports.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-eventspageinput"><code>EventsPageInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>limit</code></td>
@@ -3008,6 +3404,29 @@ embedding provider + model. Default true — mixing embedding
 spaces yields meaningless distances. Set false only when
 inspecting historical rows via BM25-only search (no vector
 step will be run for filtered-out rows).</td>
+  </tr><tr>
+    <td><code>figuresOnly</code></td>
+    <td><code>Boolean</code></td>
+    <td>Infographic search (Cap 2): keep only figure-transcription chunks
+(those with a `figureS3Key`). Combine with a topical `query` to find
+the charts/maps/tables most relevant to a question, then read
+`figureImageUrl` on each hit for the cropped image. Only affects the
+`report` tier — the `incident` tier has no figures. Default false.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>ID</code></td>
+    <td>Team-scoped reads (Cap 1): return only documents uploaded on behalf of
+this team (`team_id` match). Set only on team uploads, so this EXCLUDES the
+shared ReliefWeb corpus — use it to show a team just its own uploads.
+Report tier only. Omit to search everything the reader may see.</td>
+  </tr><tr>
+    <td><code>boostTeamUploadsId</code></td>
+    <td><code>ID</code></td>
+    <td>Ranking HINT, not an exclusion: give this team's own uploaded documents
+(`team_id` match) more weight by promoting them a few ranks in the TOPICAL
+fusion — the shared corpus is still searched and returned. Set by the
+analysis generator to the team whose analysis is being generated so its
+uploads carry extra weight; ordinary search omits it. Report tier only.</td>
   </tr></tbody></table><h3 id="type-localetranslationinput"><code>LocaleTranslationInput</code> <span class="type-badge">input</span></h3><p>Per-locale payload accepted by upsertTranslations. data mirrors the
 canonical entity's JSON shape exactly for the given locale — e.g. for
 a crisis it carries the localized title/summary/scenarios/needs with
@@ -3024,6 +3443,19 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>sourceHashes</code></td>
     <td><code>JSON!</code></td>
     <td>Per-field SHA-256 hashes of the canonical English source used to produce `data`. Stored so the pipeline can detect which canonical field changed and re-translate only that field on the next pass.</td>
+  </tr></tbody></table><h3 id="type-locationchallengepointinput"><code>LocationChallengePointInput</code> <span class="type-badge">input</span></h3><p>The point an admin places when the proposed one is wrong too.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>lat</code></td>
+    <td><code>Float!</code></td>
+    <td>Latitude, -90 to 90.</td>
+  </tr><tr>
+    <td><code>lng</code></td>
+    <td><code>Float!</code></td>
+    <td>Longitude, -180 to 180.</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String</code></td>
+    <td>Display name of the place, at most 500 characters. Without one the
+point shows its admin area's name.</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -3123,8 +3555,9 @@ for groundMessage, whose source is the reporter's language.</td>
   </tr><tr>
     <td><code>force</code></td>
     <td><code>Boolean</code></td>
-    <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
-Admin only — a non-admin passing `true` is rejected.</td>
+    <td>Deprecated / ignored: a manual trigger always regenerates now, bypassing
+both the 24h floor and the freshness gate (ADR-0008), for any authorized
+requester. Retained for backward compatibility; its value has no effect.</td>
   </tr></tbody></table><h3 id="type-saveagentworkingmemoryinput"><code>SaveAgentWorkingMemoryInput</code> <span class="type-badge">input</span></h3><p>Replace your Agent working memory. Omitted fields stay unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>workingMemory</code></td>
     <td><code>String</code></td>
@@ -3190,6 +3623,11 @@ Admin only — a non-admin passing `true` is rejected.</td>
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String!</code></td>
+    <td>The team it is filed for. The caller must be an analyst on it (or a
+platform admin), and the Signal must be within the team's area.</td>
+  </tr><tr>
     <td><code>note</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -3197,7 +3635,9 @@ Admin only — a non-admin passing `true` is rejected.</td>
     <td><code>proposedLng</code></td>
     <td><code>Float</code></td>
     <td>Omit both to file a bare challenge. Provide both (finite, in range) for a
-Location correction — one without the other is rejected.</td>
+corrected point, which must fall inside the areas CLEAR covers and, unless
+a platform admin files it, within the team's area. One without the other
+is rejected.</td>
   </tr><tr>
     <td><code>proposedLat</code></td>
     <td><code>Float</code></td>
@@ -3320,6 +3760,22 @@ provide only what you want to change.</p><table class="ref-table"><thead><tr><th
     <td><code>enabled</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name. Blank clears it back to the area list. Omit to leave it.</td>
+  </tr></tbody></table><h3 id="type-updatebriefinput"><code>UpdateBriefInput</code> <span class="type-badge">input</span></h3><p>Fields to change on a draft Brief; omitted fields are kept.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Must not be blank.</td>
+  </tr><tr>
+    <td><code>summary</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
+  </tr><tr>
+    <td><code>closingNotes</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
@@ -3410,6 +3866,37 @@ ignored, so an out-of-order signal can't pull it back.</td>
     <td>When the real-world event started (onset), parsed from signal text.
 ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
   </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>String</code></td>
+    <td>ISO-8601 event end. Pass `null` to clear (&quot;ongoing&quot;); omit to leave
+unchanged. The pipeline keeps the LATEST end across an event's signals.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of startedAt / endedAt (DAY/WEEK/MONTH/YEAR).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude + its unit, aggregated from member signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>Named conflict actors aggregated from member signals. Replaces the set
+when provided; omit to leave unchanged.</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the event touches (countries relation). Replaces
+the set when provided; omit to leave unchanged.</td>
+  </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -3446,9 +3933,10 @@ ISO-8601. The pipeline keeps the EARLIEST onset across an event's signals.</td>
     <td><code>Float</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
-left unchanged; transportId is immutable (it is the identity that
-externalIds are minted against). The merged row is re-validated: group
-kinds must end up with a complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+left unchanged, except teamId, where null unassigns the team;
+transportId is immutable (it is the identity that externalIds are minted
+against). The merged row is re-validated: group kinds must end up with a
+complete consent record.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
     <td>—</td>
@@ -3480,6 +3968,11 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td><code>retentionRule</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>Assign the source to a team, whose emergency response managers then
+see and triage its threads. Null unassigns it (platform admins only).</td>
   </tr></tbody></table><h3 id="type-updatelocationinput"><code>UpdateLocationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geoId</code></td>
     <td><code>Int</code></td>
@@ -3544,6 +4037,10 @@ kinds must end up with a complete consent record.</p><table class="ref-table"><t
     <td><code>language</code></td>
     <td><code>String</code></td>
     <td>Preferred UI language code (BCP-47 / ISO 639-1, e.g. &quot;en&quot;, &quot;ar&quot;).</td>
+  </tr><tr>
+    <td><code>analyticsOptOut</code></td>
+    <td><code>Boolean</code></td>
+    <td>Opt out of (true) or back into (false) usage analytics, account-wide.</td>
   </tr></tbody></table><h3 id="type-updatesignalcontentinput"><code>UpdateSignalContentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String</code></td>
@@ -3595,6 +4092,40 @@ leaves it unchanged; a change alone is metadata-only (no revision bump).</td>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>String</code></td>
+    <td>Structured event attributes extracted by the shared event-classification
+LLM. Absent fields leave the stored value unchanged; dates are ISO-8601.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Admin-0 location ids the extracted event touches (countries relation).
+When provided, replaces the signal's country set.</td>
   </tr><tr>
     <td><code>originId</code></td>
     <td><code>String</code></td>
@@ -3898,34 +4429,25 @@ ask for. Not defaulted, deliberately.</td>
     <td><code>translations</code></td>
     <td><code>[LocaleTranslationInput!]!</code></td>
     <td>One entry per target locale. Each row is upserted independently.</td>
-  </tr></tbody></table><h3 id="type-activitycountsbyaction"><code>ActivityCountsByAction</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
-    <td><code>login</code></td>
+  </tr></tbody></table><h3 id="type-actioncount"><code>ActionCount</code> <span class="type-badge">object</span></h3><p>How many times one action was recorded.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>action</code></td>
+    <td><code>String!</code></td>
+    <td>Namespaced action, e.g. 'auth.login', 'analysis.report_exported'.</td>
+  </tr><tr>
+    <td><code>count</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
-  </tr><tr>
-    <td><code>signalCreateManual</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>eventCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>alertCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>crisisCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
-    <td><code>feedbackCreate</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
-  </tr><tr>
+  </tr></tbody></table><h3 id="type-activitycountsbyaction"><code>ActivityCountsByAction</code> <span class="type-badge">object</span></h3><p>Activity counts for one bucket (the whole window, a user, or a day).
+Generic over action names, so a newly logged action appears here without a
+schema change.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Int!</code></td>
-    <td>—</td>
+    <td>Every recorded action in the bucket, whatever its name.</td>
+  </tr><tr>
+    <td><code>actions</code></td>
+    <td><code>[ActionCount!]!</code></td>
+    <td>One entry per action seen in the bucket, highest count first (ties by
+action name). Actions with zero rows are omitted.</td>
   </tr></tbody></table><h3 id="type-activitylog"><code>ActivityLog</code> <span class="type-badge">object</span></h3><p>A single user-initiated action recorded for analytics.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -3999,6 +4521,75 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>resetsAt</code></td>
     <td><code>DateTime!</code></td>
     <td>When spend resets to zero: the next UTC midnight.</td>
+  </tr></tbody></table><h3 id="type-agentdailyusage"><code>AgentDailyUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>date</code></td>
+    <td><code>String!</code></td>
+    <td>YYYY-MM-DD in UTC.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentrouteusage"><code>AgentRouteUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>route</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentusagestats"><code>AgentUsageStats</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a window, from usage metadata only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>User turns (questions sent to the Agent).</td>
+  </tr><tr>
+    <td><code>answers</code></td>
+    <td><code>Int!</code></td>
+    <td>Agent Answers.</td>
+  </tr><tr>
+    <td><code>distinctUsers</code></td>
+    <td><code>Int!</code></td>
+    <td>People who sent at least one turn.</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Summed Answer cost, in USD.</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>byRoute</code></td>
+    <td><code>[AgentRouteUsage!]!</code></td>
+    <td>Turns by the page they were sent from, id segments collapsed to
+':id'. Most turns first.</td>
+  </tr><tr>
+    <td><code>byDay</code></td>
+    <td><code>[AgentDailyUsage!]!</code></td>
+    <td>Per UTC day, ascending.</td>
   </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
 Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
@@ -4307,6 +4898,10 @@ rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class=
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Display name chosen by the team. Null means the area list is the name.</td>
+  </tr><tr>
     <td><code>cadence</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -4338,6 +4933,38 @@ rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class=
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>comments</code></td>
+    <td><code>[UserComment!]!</code></td>
+    <td>Shared discussion. Every reader of this analysis sees every comment.</td>
+  </tr><tr>
+    <td><code>documents</code></td>
+    <td><code>[AnalysisAutomationDocument!]!</code></td>
+    <td>PDFs attached as evidence for this analysis.</td>
+  </tr></tbody></table><h3 id="type-analysisautomationdocument"><code>AnalysisAutomationDocument</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>fileName</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String</code></td>
+    <td>Short-lived link for preview. Null when the file cannot be signed.</td>
   </tr></tbody></table><h3 id="type-analysisrequest"><code>AnalysisRequest</code> <span class="type-badge">object</span></h3><p>An on-demand analysis generation request (ADR-0007 §4). A user enqueues a
 frame that may not exist yet; a pipeline sensor drains `pendingAnalyses`,
 generates + upserts the analysis, and marks the request `GENERATED`. Scheduled
@@ -4453,6 +5080,181 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td><code>alertsArchived</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-brief"><code>Brief</code> <span class="type-badge">object</span></h3><p>A Brief: a platform admin's hand-picked summary of one area over one
+Brief window, emailed to a Recipient list. Sending freezes it. Platform
+admins only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>BriefCadence!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>BriefStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String!</code></td>
+    <td>The area: a country, state or district (locations.id). Not a
+relation: a sent Brief outlives location changes.</td>
+  </tr><tr>
+    <td><code>locationName</code></td>
+    <td><code>String!</code></td>
+    <td>The area's name, frozen when the Brief was created.</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the Brief window: `windowEnd` minus 24h, 7d or 30d.</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the Brief window: when the Brief was created or last
+refreshed.</td>
+  </tr><tr>
+    <td><code>summary</code></td>
+    <td><code>String!</code></td>
+    <td>Markdown-lite: **bold**, *italic*, `- ` bullets and
+[text](https://...) links.</td>
+  </tr><tr>
+    <td><code>closingNotes</code></td>
+    <td><code>String!</code></td>
+    <td>Markdown-lite, like `summary`.</td>
+  </tr><tr>
+    <td><code>items</code></td>
+    <td><code>[BriefItem!]!</code></td>
+    <td>Picked items, ordered by group (alert, event, signal) and then by
+`position` within the group.</td>
+  </tr><tr>
+    <td><code>counts</code></td>
+    <td><code>BriefCounts!</code></td>
+    <td>Signals, Events and Alerts over exactly this Brief's area and
+window, by severity and type, whatever filters a list shows. Live
+for a draft; for a sent Brief, the counts it was sent with.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentById</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentToListId</code></td>
+    <td><code>String</code></td>
+    <td>The Recipient list it was sent to.</td>
+  </tr><tr>
+    <td><code>sentCount</code></td>
+    <td><code>Int</code></td>
+    <td>Emails accepted by the provider at send.</td>
+  </tr><tr>
+    <td><code>failedCount</code></td>
+    <td><code>Int</code></td>
+    <td>Emails the provider refused at send. Not retried.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefcounts"><code>BriefCounts</code> <span class="type-badge">object</span></h3><p>Counts for a Brief's area and window, with the same semantics as
+`entityStats`: Alerts and Events windowed on their first Signal,
+Signals on publication, the area including everything inside it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signal</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alert</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefitem"><code>BriefItem</code> <span class="type-badge">object</span></h3><p>A detection picked into a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>briefId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>BriefItemKind!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>entityId</code></td>
+    <td><code>String!</code></td>
+    <td>The Alert, Event or Signal id. Not a relation: the item survives
+the entity being merged or deleted.</td>
+  </tr><tr>
+    <td><code>position</code></td>
+    <td><code>Int!</code></td>
+    <td>Order within its kind group, from 0.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>The analyst's note, Markdown-lite.</td>
+  </tr><tr>
+    <td><code>snapshot</code></td>
+    <td><code>BriefItemSnapshot!</code></td>
+    <td>What the Brief shows for the item. Built server-side when the item
+is added, rewritten from live data at send, then frozen.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefitemsnapshot"><code>BriefItemSnapshot</code> <span class="type-badge">object</span></h3><p>A Brief item as the Brief shows it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>1 to 5, or null when unknown.</td>
+  </tr><tr>
+    <td><code>locationName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Disaster-type codes. A Signal takes its Events' types.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the item happened, by the same columns the History list and
+`entityStats` window on: an Alert's or Event's first Signal, a
+Signal's publication. Earlier than `Brief.windowStart` means it was
+picked from before the window.</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String!</code></td>
+    <td>The item's page in the CLEAR app.</td>
+  </tr></tbody></table><h3 id="type-briefsendresult"><code>BriefSendResult</code> <span class="type-badge">object</span></h3><p>What `sendBrief` handed to the email provider.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sent</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider accepted.</td>
+  </tr><tr>
+    <td><code>failed</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider refused. Not retried.</td>
   </tr></tbody></table><h3 id="type-caseproposal"><code>CaseProposal</code> <span class="type-badge">object</span></h3><p>One historical case a web Worker found while enriching an Event (V4):
 a past incident like it, the source that reports it, the figures it gives,
 and the CLEAR Event it describes when CLEAR already holds one. The unit an
@@ -5023,6 +5825,19 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
     <td><code>isPartial</code></td>
     <td><code>Boolean!</code></td>
     <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr></tbody></table><h3 id="type-digestpreviewrow"><code>DigestPreviewRow</code> <span class="type-badge">object</span></h3><p>One Alert the daily Alert Digest would send for a Brief's area and
+window.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>alert</code></td>
+    <td><code>Alert!</code></td>
+    <td>A published Alert in the Brief's area whose Event's first Signal
+falls in the Brief window, the same scope as `Brief.counts`. Its
+title and severity are on `event`.</td>
+  </tr><tr>
+    <td><code>subscriberCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Distinct users with an active daily subscription matching the
+Alert's type, location (or an ancestor of it) and severity floor.
+Always at least 1.</td>
   </tr></tbody></table><h3 id="type-disasterlevel1"><code>DisasterLevel1</code> <span class="type-badge">object</span></h3><p>A level-1 category with its level-2 groups.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -5072,6 +5887,19 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>idType</code></td>
     <td><code>String!</code></td>
     <td>Identifier system: &quot;glide_number&quot; or &quot;clear_id&quot;.</td>
+  </tr></tbody></table><h3 id="type-entitycount"><code>EntityCount</code> <span class="type-badge">object</span></h3><p>One kind of detection's counts in a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bySeverity</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Keys are severities 1 to 5 as strings, &quot;(unknown)&quot; for none.</td>
+  </tr><tr>
+    <td><code>byType</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Disaster-type codes for Events and Alerts; data-source names for
+Signals, as in `entityStats`.</td>
   </tr></tbody></table><h3 id="type-entitystats"><code>EntityStats</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Int!</code></td>
@@ -5219,6 +6047,37 @@ under, e.g. `0.3.0`.</td>
     <td>When the real-world event actually STARTED (its onset) — parsed from the
 signal text, distinct from `validFrom`/`firstSignalCreatedAt` (record +
 signal-collection times). Null when no onset could be resolved.</td>
+  </tr><tr>
+    <td><code>endedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the real-world event actually ENDED (its close), distinct from
+`validTo` (the visibility/expiry window). Null = ongoing / no known end.</td>
+  </tr><tr>
+    <td><code>startedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `startedAt` (DAY = exact day; coarser = week/month/year).</td>
+  </tr><tr>
+    <td><code>endedAtAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `endedAt`.</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude (e.g. 6.4), aggregated from member signals.
+Null for non-disaster events.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>Unit for `magnitude` (e.g. &quot;Mw&quot;, &quot;km/h&quot;). Null when no magnitude.</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Named conflict actors aggregated across member signals. Empty for
+non-conflict events.</td>
+  </tr><tr>
+    <td><code>countries</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Countries the event touches, resolved to admin-0 locations.</td>
   </tr><tr>
     <td><code>originLocation</code></td>
     <td><code>Location</code></td>
@@ -5423,18 +6282,38 @@ Null when the call aborted without producing a row.</td>
     <td><code>String</code></td>
     <td>Set to 'different_a2' when the candidate and source coords resolve to
 different containing A2s. Null on success.</td>
-  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over the `knowledgebase`
-retrieval corpus the analysis is generated from. The drain compares
-`latestEvidenceAt` to the live analysis's `generatedAt` to decide whether
-anything new warrants a regeneration.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-frameevidencewatermark"><code>FrameEvidenceWatermark</code> <span class="type-badge">object</span></h3><p>Latest-evidence watermark for a frame (ADR-0008), over BOTH retrieval tiers
+the analysis is generated from — the `knowledgebase` report tier AND the
+`events_index` incident tier. The drain compares `latestEvidenceAt` to the
+live analysis's `generatedAt` to decide whether anything new warrants a
+regeneration. The per-tier fields let a selective regenerator tell whether the
+change came from new reports, new events, or both (#1067).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>latestEvidenceAt</code></td>
     <td><code>DateTime</code></td>
-    <td>Max ingestion time (`created_at`) across knowledgebase rows matching the
-frame, or null when the frame has no evidence yet.</td>
+    <td>Max ingestion time (`created_at`) across BOTH tiers matching the frame —
+the later of the report and event watermarks — or null when the frame has no
+evidence yet. This is the combined signal the regeneration gate keys off, so
+a new event now advances it just like a new report.</td>
   </tr><tr>
     <td><code>evidenceCount</code></td>
     <td><code>Int!</code></td>
-    <td>Count of knowledgebase rows matching the frame.</td>
+    <td>Combined count across both tiers.</td>
+  </tr><tr>
+    <td><code>reportsLatestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Report tier (`knowledgebase`) only: max `created_at` and row count.</td>
+  </tr><tr>
+    <td><code>reportsCount</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventsLatestEvidenceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Incident tier (`events_index`) only: max `created_at` and row count.</td>
+  </tr><tr>
+    <td><code>eventsCount</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A GeoNames gazetteer match for a place name. Coordinates come straight
 from GeoNames — callers still validate them (e.g. the same-A2 check
 against a signal's source coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -5753,6 +6632,11 @@ resources only&quot;). Ingest policy is judged against this record.</td>
     <td><code>String</code></td>
     <td>Free-text retention rule; enforcement is operational in V1.</td>
   </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>The team whose emergency response managers triage this source. Null:
+no team yet, so only platform admins see its threads.</td>
+  </tr><tr>
     <td><code>isActive</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
@@ -5965,6 +6849,32 @@ Event, if any. Never crosses sources.</td>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-interpretedreportquery"><code>InterpretedReportQuery</code> <span class="type-badge">object</span></h3><p>How `searchReportsNaturalLanguage` parsed the question into the structured
+arguments it ran. Surfaced so a UI can show &quot;interpreted as …&quot; and let the
+user correct it (then call `searchReports` directly with the fix).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>topicalQuery</code></td>
+    <td><code>String!</code></td>
+    <td>Residual topical text used for the semantic step (empty → recency listing).</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String</code></td>
+    <td>Recognised publisher/source substring (e.g. &quot;UNHCR&quot;); null if none.</td>
+  </tr><tr>
+    <td><code>publishedFrom</code></td>
+    <td><code>DateTime</code></td>
+    <td>Parsed publication-date window (inclusive); null ends are open.</td>
+  </tr><tr>
+    <td><code>publishedTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String</code></td>
+    <td>A0 location resolved from a country named in the question; null if none.</td>
+  </tr><tr>
+    <td><code>countryName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-invitation"><code>Invitation</code> <span class="type-badge">object</span></h3><p>An invitation to join an organisation, with one or more team assignments.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -6145,6 +7055,14 @@ to the LLM call; plain Q&amp;A ignores it. Kept as a lightweight REFERENCE
     <td><code>figureKind</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>figureImageUrl</code></td>
+    <td><code>String</code></td>
+    <td>Presigned (1-hour) URL to the cropped figure image, for a figure hit;
+null for a text hit. Resolved lazily — only presigned when the field is
+actually selected, so ordinary text search never pays the S3 round-trip.
+This is the infographic-search (Cap 2) payload: pair it with
+`filters.figuresOnly: true`.</td>
   </tr></tbody></table><h3 id="type-knowledgebaseingestjob"><code>KnowledgebaseIngestJob</code> <span class="type-badge">object</span></h3><p>One Dagster run kicked off by `uploadKnowledgebaseDocument`.
 Returned by both the mutation (initial launch) and the polling
 query. `reportId` / `reportTitle` / `s3Key` are populated from
@@ -6180,7 +7098,7 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
     <td><code>endedAt</code></td>
     <td><code>DateTime</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-location"><code>Location</code> <span class="type-badge">object</span></h3><p>A geographic location in a hierarchy (country &gt; state &gt; city, etc.).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-location"><code>Location</code> <span class="type-badge">object</span></h3><p>A place in the location hierarchy: country &gt; state &gt; district &gt; point</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -6203,7 +7121,7 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
   </tr><tr>
     <td><code>level</code></td>
     <td><code>Int!</code></td>
-    <td>Hierarchy level: 0 = country, 1 = state/province, 2 = city, etc.</td>
+    <td>Hierarchy level: 0 = country, 1 = state, 2 = district, 4 = point (there is no level 3)</td>
   </tr><tr>
     <td><code>geometry</code></td>
     <td><code>GeoJSON</code></td>
@@ -6233,8 +7151,9 @@ surfaces on `Knowledgebase.reportId` once the run succeeds.</td>
     <td><code>String</code></td>
     <td>Provenance of this location's geometry. Notable values:
 - 'landmark-geocoded': L4 created by the pipeline geoparser from a
-  landmark/place name resolved via Nominatim. The location's `name`
-  field is meaningful for display (e.g., 'Nyala Airport').
+  landmark or place name resolved via the GeoNames gazetteer or
+  LocationIQ, including place names read from text-only signals. The
+  location's `name` field is meaningful for display (e.g., 'Nyala Airport').
 - 'gps' / 'source-gps' / 'centroid' / 'source-centroid': see schema
   documentation on the Prisma model.
 - null: legacy rows (most signal-title L4s from `createPointLocation`).</td>
@@ -6295,6 +7214,16 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in at least once during the
 calendar month.</td>
+  </tr></tbody></table><h3 id="type-nlreportsearch"><code>NlReportSearch</code> <span class="type-badge">object</span></h3><p>Result of `searchReportsNaturalLanguage` — the parsed interpretation plus
+the matching reports, so the caller sees both the answer and how the question
+was understood.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>interpreted</code></td>
+    <td><code>InterpretedReportQuery!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reports</code></td>
+    <td><code>[ReportHit!]!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-nominatimcacheentry"><code>NominatimCacheEntry</code> <span class="type-badge">object</span></h3><p>A cached Nominatim-protocol geocoder response.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -6586,6 +7515,56 @@ for raw point-locations like &quot;Point 15.62, 30.21&quot;.</td>
     <td><code>lat</code></td>
     <td><code>Float!</code></td>
     <td>Geographic latitude.</td>
+  </tr></tbody></table><h3 id="type-recipientlist"><code>RecipientList</code> <span class="type-badge">object</span></h3><p>A named set of email addresses a Brief is sent to. Addresses need not
+belong to CLEAR users. Platform admins only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Unique.</td>
+  </tr><tr>
+    <td><code>members</code></td>
+    <td><code>[RecipientListMember!]!</code></td>
+    <td>Every address on the list, unsubscribed ones included, by email.</td>
+  </tr><tr>
+    <td><code>recipientCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Addresses a send would reach: members who haven't unsubscribed.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-recipientlistmember"><code>RecipientListMember</code> <span class="type-badge">object</span></h3><p>One address on a Recipient list.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>listId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>email</code></td>
+    <td><code>String!</code></td>
+    <td>Lower-cased.</td>
+  </tr><tr>
+    <td><code>unsubscribedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set when the address followed the unsubscribe link in a Brief
+email. Sends skip it from then on.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-refreshaggregateddatapointsresult"><code>RefreshAggregatedDatapointsResult</code> <span class="type-badge">object</span></h3><p>Summary counts from a `refreshAggregatedDatapoints` run.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>computedBuckets</code></td>
     <td><code>Int!</code></td>
@@ -6788,6 +7767,129 @@ not the publisher, so it is a label of last resort.</td>
     <td><code>extractedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-reportfigureformerge"><code>ReportFigureForMerge</code> <span class="type-badge">object</span></h3><p>One captured figure that belongs in the KB but isn't merged yet — the work
+item for the figure→KB sync. Report-level fields (title/url/pdf key/date) come
+from the report's existing knowledgebase rows; the rest from `report_figures`.
+`transcription` is the raw FigureTranscription object; the caller flattens +
+embeds it to build the figure chunk.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportS3Key</code></td>
+    <td><code>String!</code></td>
+    <td>The report PDF's S3 key (carried onto the figure chunk, same as text chunks).</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>ID</code></td>
+    <td>Team attribution from the report's KB rows, so the figure→KB sync stamps
+merged figures with the same team as the report's text. Null for the shared
+ReliefWeb corpus.</td>
+  </tr><tr>
+    <td><code>uploadedByUserId</code></td>
+    <td><code>ID</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>figureS3Key</code></td>
+    <td><code>String!</code></td>
+    <td>The cropped image's S3 key — becomes the chunk's `figureS3Key`.</td>
+  </tr><tr>
+    <td><code>figureKind</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>pageNumber</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>transcription</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationPcodes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeStart</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>timeRangeEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-reporthit"><code>ReportHit</code> <span class="type-badge">object</span></h3><p>One report (not a chunk) matched by `searchReports` — the Cap 3 read
+model. Groups the knowledgebase by `reportId`: when a topical `query`
+is given, `score`/`snippet` come from the report's best-matching chunk;
+for a pure filter/date listing they're the report's head chunk and null
+score. `downloadUrl` is a presigned (1-hour) link to the full PDF.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>reportId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportTitle</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceUrl</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>publishedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Publication date — what date filters (`publishedRange`) and the
+recency listing order on.</td>
+  </tr><tr>
+    <td><code>s3Key</code></td>
+    <td><code>String!</code></td>
+    <td>S3 key of the source PDF (join/debug handle).</td>
+  </tr><tr>
+    <td><code>downloadUrl</code></td>
+    <td><code>String!</code></td>
+    <td>Presigned (1-hour) URL to download the full report PDF. Regenerated
+per request, so don't cache it past its expiry.</td>
+  </tr><tr>
+    <td><code>score</code></td>
+    <td><code>Float</code></td>
+    <td>Best chunk similarity for a topical query (larger = better); null for a
+pure filter/date listing (ordered by recency instead).</td>
+  </tr><tr>
+    <td><code>matchedChunks</code></td>
+    <td><code>Int!</code></td>
+    <td>How many of the report's chunks matched — a rough relevance-breadth
+signal. 1 for a pure recency listing (the head chunk).</td>
+  </tr><tr>
+    <td><code>snippet</code></td>
+    <td><code>String!</code></td>
+    <td>Excerpt from the best-matching chunk (topical) or the report's head
+chunk (listing) — a preview for the citation.</td>
   </tr></tbody></table><h3 id="type-rotatedevuserapikeyresult"><code>RotateDevUserApiKeyResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `rotateDevUserApiKey` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
@@ -6878,6 +7980,40 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
 field; for Dataminr, parsed from raw text via regex.</td>
   </tr><tr>
+    <td><code>startDate</code></td>
+    <td><code>DateTime</code></td>
+    <td>Real-world event onset extracted from this signal by the shared
+event-classification LLM. Null when no onset was resolved.</td>
+  </tr><tr>
+    <td><code>startDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `startDate` (DAY = exact day; coarser = week/month/year).</td>
+  </tr><tr>
+    <td><code>endDate</code></td>
+    <td><code>DateTime</code></td>
+    <td>Real-world event close extracted from this signal. Null = ongoing/unknown.</td>
+  </tr><tr>
+    <td><code>endDateAccuracy</code></td>
+    <td><code>DateAccuracy</code></td>
+    <td>Precision of `endDate`.</td>
+  </tr><tr>
+    <td><code>magnitude</code></td>
+    <td><code>Float</code></td>
+    <td>Natural-hazard magnitude (e.g. 6.4). Null for non-disaster signals.</td>
+  </tr><tr>
+    <td><code>magnitudeUnit</code></td>
+    <td><code>String</code></td>
+    <td>Unit for `magnitude` (e.g. &quot;Mw&quot;, &quot;km/h&quot;). Null when no magnitude.</td>
+  </tr><tr>
+    <td><code>actors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Named conflict actors extracted from this signal. Empty for
+non-conflict signals.</td>
+  </tr><tr>
+    <td><code>countries</code></td>
+    <td><code>[Location!]!</code></td>
+    <td>Countries the extracted event touches, resolved to admin-0 locations.</td>
+  </tr><tr>
     <td><code>glideCode</code></td>
     <td><code>String</code></td>
     <td>Glide code the pipeline grouped this signal with. Null for signals
@@ -6918,9 +8054,21 @@ grouped before it was recorded, or never grouped.</td>
     <td><code>locationChallenge</code></td>
     <td><code>SignalLocationChallenge</code></td>
     <td>Open Location challenge for this signal, if any (null when none).</td>
-  </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal, with an optional Location
-correction (Location trust v1). Queue only — status is always &quot;consideration&quot;,
-there is no accept/reject, and it never mutates the Signal's own geometry.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr><tr>
+    <td><code>locationCorrectedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When a decided Location challenge last wrote this signal's location (a
+person corrected it); null when the location is the source's. Source
+revisions keep a corrected location.</td>
+  </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal: why its location looks wrong,
+optionally with a corrected point, filed for one team. That team's admin or a
+platform admin decides it, even when they filed it. Accepting writes the proposed
+point onto the Signal, correcting writes a point the admin placed instead,
+and declining leaves the Signal as it is. A written point becomes the
+Signal's general location (its origin and destination are cleared and its
+countries follow), and later source revisions keep it. Which Event the
+Signal belongs to does not change. A Signal has at most one open challenge:
+filing a new one supersedes it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>ID!</code></td>
     <td>—</td>
@@ -6929,9 +8077,25 @@ there is no accept/reject, and it never mutates the Signal's own geometry.</p><t
     <td><code>String!</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>signal</code></td>
+    <td><code>Signal!</code></td>
+    <td>The challenged Signal.</td>
+  </tr><tr>
+    <td><code>teamId</code></td>
+    <td><code>String</code></td>
+    <td>The team it was filed for. Null on challenges filed before teams were
+recorded; a platform admin decides those.</td>
+  </tr><tr>
+    <td><code>team</code></td>
+    <td><code>Team</code></td>
+    <td>The team it was filed for, as an object: only for its members and
+platform admins, null for anyone else.</td>
+  </tr><tr>
     <td><code>status</code></td>
     <td><code>String!</code></td>
-    <td>v1 is always &quot;consideration&quot;.</td>
+    <td>&quot;consideration&quot; (open), &quot;accepted&quot; (the proposed point was written),
+&quot;corrected&quot; (the admin placed a different point), &quot;declined&quot;, or
+&quot;superseded&quot; (replaced by a newer challenge on the same Signal).</td>
   </tr><tr>
     <td><code>note</code></td>
     <td><code>String</code></td>
@@ -6950,9 +8114,27 @@ there is no accept/reject, and it never mutates the Signal's own geometry.</p><t
     <td><code>String</code></td>
     <td>Optional label for the proposed point.</td>
   </tr><tr>
+    <td><code>proposedPlacement</code></td>
+    <td><code>Location</code></td>
+    <td>The existing admin area the proposed point falls in (district, else
+state, else country). Null for a bare challenge, or a point outside the
+areas CLEAR covers.</td>
+  </tr><tr>
+    <td><code>previousLocation</code></td>
+    <td><code>Location</code></td>
+    <td>The Signal's location when the challenge was filed.</td>
+  </tr><tr>
+    <td><code>appliedLocation</code></td>
+    <td><code>Location</code></td>
+    <td>The point written onto the Signal, set when accepted or corrected.</td>
+  </tr><tr>
     <td><code>createdBy</code></td>
     <td><code>String!</code></td>
     <td>Auth user id of whoever filed the challenge.</td>
+  </tr><tr>
+    <td><code>createdByName</code></td>
+    <td><code>String</code></td>
+    <td>Display name of whoever filed it.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
@@ -6961,6 +8143,14 @@ there is no accept/reject, and it never mutates the Signal's own geometry.</p><t
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>decidedBy</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of whoever decided it.</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When it was decided.</td>
   </tr><tr>
     <td><code>hasProposedPoint</code></td>
     <td><code>Boolean!</code></td>
@@ -7502,6 +8692,12 @@ a TEAM role (see TeamMemberRole), not a global role.</td>
     <td><code>enableSMSNotification</code></td>
     <td><code>Boolean!</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>analyticsOptOut</code></td>
+    <td><code>Boolean</code></td>
+    <td>Whether the user has opted out of usage analytics, account-wide.
+Readable only by the user themselves (null for everyone else, admins
+included). Set via `updateProfile`.</td>
   </tr><tr>
     <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>

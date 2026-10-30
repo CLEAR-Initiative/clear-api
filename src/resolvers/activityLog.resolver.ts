@@ -1,6 +1,12 @@
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireNonWorker, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
+import {
+  agentUsageStats,
+  nrcExportRows,
+  toNrcCsv,
+} from "../services/activity-insights.js";
 
 /** Default `activityStats` window when the caller doesn't specify one. */
 const DEFAULT_STATS_WINDOW_DAYS = 30;
@@ -9,47 +15,41 @@ const DEFAULT_STATS_WINDOW_DAYS = 30;
  *  table is well-indexed and the admin dashboard occasionally exports CSV. */
 const MAX_LIMIT = 500;
 
+/** Default NRC export window: the last 12 calendar months (UTC). */
+const DEFAULT_EXPORT_MONTHS = 12;
+
 /** Top-N users surfaced in the per-user breakdown of `activityStats`. */
 const TOP_USERS = 50;
 
-/** Canonical actions tracked today. New actions added to the
- *  `ActivityAction` union in `utils/activity-log.ts` should be mirrored
- *  here so the aggregate-counts buckets stay in sync. */
-const TRACKED_ACTIONS = [
-  "auth.login",
-  "signal.create_manual",
-  "event.create",
-  "alert.create",
-  "crisis.create",
-  "feedback.create",
-] as const;
-
-function makeEmptyCounts() {
-  return {
-    login: 0,
-    signalCreateManual: 0,
-    eventCreate: 0,
-    alertCreate: 0,
-    crisisCreate: 0,
-    feedbackCreate: 0,
-    total: 0,
-  };
+/**
+ * Per-action counts for one bucket (the whole window, one user, or one day).
+ * Generic over the action string so a new `ActivityAction` shows up in
+ * `activityStats` without a schema change.
+ */
+export interface CountBucket {
+  total: number;
+  byAction: Map<string, number>;
 }
 
-type CountBucket = ReturnType<typeof makeEmptyCounts>;
+function makeEmptyCounts(): CountBucket {
+  return { total: 0, byAction: new Map() };
+}
 
 function bumpBucket(b: CountBucket, action: string): void {
-  switch (action) {
-    case "auth.login":            b.login++;              b.total++; return;
-    case "signal.create_manual":  b.signalCreateManual++; b.total++; return;
-    case "event.create":          b.eventCreate++;        b.total++; return;
-    case "alert.create":          b.alertCreate++;        b.total++; return;
-    case "crisis.create":         b.crisisCreate++;       b.total++; return;
-    case "feedback.create":       b.feedbackCreate++;     b.total++; return;
-    // Unknown actions land in `total` only — keeps the per-bucket numbers
-    // tight to the spec while still counting toward overall activity.
-    default:                                              b.total++; return;
-  }
+  b.total++;
+  b.byAction.set(action, (b.byAction.get(action) ?? 0) + 1);
+}
+
+/** GraphQL shape of a bucket: `{ total, actions: [{ action, count }] }`,
+ *  actions sorted by count desc then name asc so the order is stable. */
+export function serializeCounts(b: CountBucket): {
+  total: number;
+  actions: Array<{ action: string; count: number }>;
+} {
+  const actions = [...b.byAction.entries()]
+    .map(([action, count]) => ({ action, count }))
+    .sort((x, y) => y.count - x.count || x.action.localeCompare(y.action));
+  return { total: b.total, actions };
 }
 
 interface ActivityLogFilterInput {
@@ -143,7 +143,6 @@ export const activityLogResolvers = {
       const rows = await context.prisma.activityLogs.findMany({
         where: {
           createdAt: { gte: from, lte: to },
-          action: { in: [...TRACKED_ACTIONS] },
         },
         select: { userId: true, action: true, createdAt: true },
       });
@@ -171,6 +170,12 @@ export const activityLogResolvers = {
         bumpBucket(dayBucket, row.action);
       }
 
+      // PERMISSION NOTE: this per-user breakdown names individuals and is
+      // gated only on the global `admin` role, which today is held only by
+      // the CLEAR team. Before any non-team user (e.g. an NRC or partner
+      // account) can become a global admin, give the per-user breakdown its
+      // own permission — the aggregate views (`agentUsageStats`,
+      // `nrcActivityExport`) are the ones meant for wider audiences.
       // Top-N users by total. Tied counts → arbitrary tiebreak (stable
       // by insertion order from the Map iterator).
       const topUserIds = [...byUserMap.entries()]
@@ -189,7 +194,9 @@ export const activityLogResolvers = {
         .map((userId) => {
           const user = userById.get(userId);
           const counts = byUserMap.get(userId)!;
-          return user ? { user, total: counts.total, counts } : null;
+          return user
+            ? { user, total: counts.total, counts: serializeCounts(counts) }
+            : null;
         })
         // Drop entries where the user was deleted between activity and
         // the query (cascade would normally remove the row, but we're
@@ -200,9 +207,48 @@ export const activityLogResolvers = {
       // plot it as a time-series without extra client-side work.
       const byDay = [...byDayMap.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([date, counts]) => ({ date, total: counts.total, counts }));
+        .map(([date, counts]) => ({
+          date,
+          total: counts.total,
+          counts: serializeCounts(counts),
+        }));
 
-      return { from, to, totals, byUser, byDay };
+      return { from, to, totals: serializeCounts(totals), byUser, byDay };
+    },
+
+    agentUsageStats: async (
+      _parent: unknown,
+      args: { from?: Date | string | null; to?: Date | string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      const to = args.to ? new Date(args.to) : new Date();
+      const from = args.from
+        ? new Date(args.from)
+        : new Date(to.getTime() - DEFAULT_STATS_WINDOW_DAYS * 86_400_000);
+      return agentUsageStats(context.prisma, from, to);
+    },
+
+    /** CSV of monthly aggregates by organisation, team and role. Admins are
+     *  excluded and groups under 5 people dropped in the service, so no
+     *  client can get the raw breakdown. */
+    nrcActivityExport: async (
+      _parent: unknown,
+      args: { from?: Date | string | null; to?: Date | string | null },
+      context: Context,
+    ): Promise<string> => {
+      requireRole(context, ["admin"]);
+      const to = args.to ? new Date(args.to) : new Date();
+      const from = args.from
+        ? new Date(args.from)
+        : new Date(
+            Date.UTC(
+              to.getUTCFullYear(),
+              to.getUTCMonth() - (DEFAULT_EXPORT_MONTHS - 1),
+              1,
+            ),
+          );
+      return toNrcCsv(await nrcExportRows(context.prisma, from, to));
     },
 
     userEngagement: async (
@@ -289,6 +335,68 @@ export const activityLogResolvers = {
         month: r.month.toISOString().slice(0, 7), // YYYY-MM
         uniqueUsers: Number(r.unique_users),
       }));
+    },
+  },
+
+  Mutation: {
+    /** Best-effort: always resolves true once authenticated; a failed
+     *  write is swallowed by `logActivity`. */
+    recordOnboardingCompleted: async (
+      _parent: unknown,
+      _args: unknown,
+      context: Context,
+    ): Promise<boolean> => {
+      const user = requireNonWorker(context);
+      await logActivity(context.prisma, {
+        userId: user.id,
+        action: "user.onboarding_completed",
+        resourceType: "user",
+        resourceId: user.id,
+      });
+      return true;
+    },
+
+    /** Records a report export with the analysis id and its frame (scope),
+     *  read from the Analysis row so the client can't send content. An
+     *  unknown id is still logged, with a null scope. */
+    recordReportExported: async (
+      _parent: unknown,
+      args: { analysisId: string },
+      context: Context,
+    ): Promise<boolean> => {
+      const user = requireNonWorker(context);
+      let scope: Record<string, unknown> | null = null;
+      try {
+        const row = await context.prisma.analysis.findUnique({
+          where: { id: args.analysisId },
+          select: {
+            locationIds: true,
+            eventTypes: true,
+            needSectors: true,
+            windowStart: true,
+            windowEnd: true,
+          },
+        });
+        if (row) {
+          scope = {
+            locationIds: row.locationIds,
+            eventTypes: row.eventTypes,
+            needSectors: row.needSectors,
+            windowStart: row.windowStart.toISOString(),
+            windowEnd: row.windowEnd?.toISOString() ?? null,
+          };
+        }
+      } catch (err) {
+        console.error("[activity-log] analysis scope lookup failed:", err);
+      }
+      await logActivity(context.prisma, {
+        userId: user.id,
+        action: "analysis.report_exported",
+        resourceType: "analysis",
+        resourceId: args.analysisId,
+        metadata: { analysisId: args.analysisId, scope },
+      });
+      return true;
     },
   },
 

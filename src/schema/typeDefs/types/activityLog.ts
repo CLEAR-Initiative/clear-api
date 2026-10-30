@@ -39,14 +39,57 @@ export const activityLogTypeDef = gql`
     byDay: [DailyActivityCount!]!
   }
 
+  """Activity counts for one bucket (the whole window, a user, or a day).
+  Generic over action names, so a newly logged action appears here without a
+  schema change."""
   type ActivityCountsByAction {
-    login: Int!
-    signalCreateManual: Int!
-    eventCreate: Int!
-    alertCreate: Int!
-    crisisCreate: Int!
-    feedbackCreate: Int!
+    """Every recorded action in the bucket, whatever its name."""
     total: Int!
+    """One entry per action seen in the bucket, highest count first (ties by
+    action name). Actions with zero rows are omitted."""
+    actions: [ActionCount!]!
+  }
+
+  """CLEAR Agent usage over a window, from usage metadata only."""
+  type AgentUsageStats {
+    from: DateTime!
+    to: DateTime!
+    """User turns (questions sent to the Agent)."""
+    turns: Int!
+    """Agent Answers."""
+    answers: Int!
+    """People who sent at least one turn."""
+    distinctUsers: Int!
+    """Summed Answer cost, in USD."""
+    costUsd: Float!
+    inputTokens: Int!
+    outputTokens: Int!
+    """Turns by the page they were sent from, id segments collapsed to
+    ':id'. Most turns first."""
+    byRoute: [AgentRouteUsage!]!
+    """Per UTC day, ascending."""
+    byDay: [AgentDailyUsage!]!
+  }
+
+  type AgentRouteUsage {
+    route: String!
+    turns: Int!
+    distinctUsers: Int!
+  }
+
+  type AgentDailyUsage {
+    """YYYY-MM-DD in UTC."""
+    date: String!
+    turns: Int!
+    distinctUsers: Int!
+    costUsd: Float!
+  }
+
+  """How many times one action was recorded."""
+  type ActionCount {
+    """Namespaced action, e.g. 'auth.login', 'analysis.report_exported'."""
+    action: String!
+    count: Int!
   }
 
   type UserActivitySummary {

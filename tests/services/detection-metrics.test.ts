@@ -102,6 +102,11 @@ describe("classify", () => {
       reason: "DATE_ONLY_FIRST_SIGNAL",
     });
     expect(classify(row("2026-10-03T00:00:00Z", "2026-10-02T23:59:00Z"))).toEqual({ counted: false, reason: "BEFORE_ONSET" });
+    // A coarse onset (week/month/year) is excluded; a DAY or legacy-null onset counts.
+    expect(classify({ ...row("2026-10-01T00:00:00Z", "2026-10-02T10:00:00Z"), startedAtAccuracy: "MONTH" }))
+      .toEqual({ counted: false, reason: "COARSE_ONSET" });
+    expect(classify({ ...row("2026-10-01T00:00:00Z", "2026-10-02T10:00:00Z"), startedAtAccuracy: "DAY" }))
+      .toEqual({ counted: true, days: 1 });
   });
 });
 
@@ -117,12 +122,13 @@ describe("summarise", () => {
         row("2026-09-01T00:00:00Z", "2026-10-13T10:00:00Z"), // W42, 8d+
         { ...row("2026-10-01T00:00:00Z", null), inRangeAt: at("2026-10-07T09:00:00Z") }, // history only, in range in W41
         row(null, "2026-10-02T10:00:00Z"), // no onset
+        { ...row("2026-10-07T00:00:00Z", "2026-10-07T10:00:00Z"), startedAtAccuracy: "MONTH" }, // W41, coarse onset
         row("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"), // date only
         row("2026-10-05T00:00:00Z", "2026-10-04T10:00:00Z"), // before onset
       ],
       range,
     );
-    expect(m).toMatchObject({ eventsInRange: 8, withOnset: 7, counted: 4, sameDay: 1, byNextDay: 2 });
+    expect(m).toMatchObject({ eventsInRange: 9, withOnset: 8, counted: 4, sameDay: 1, byNextDay: 2 });
     expect(m.histogram).toHaveLength(9);
     expect(m.histogram.map((b) => b.count)).toEqual([1, 1, 0, 0, 0, 1, 0, 0, 1]);
     expect(m.histogram.map((b) => b.isOpenEnded)).toEqual([false, false, false, false, false, false, false, false, true]);
@@ -131,7 +137,7 @@ describe("summarise", () => {
     expect(m.weekly).toEqual([
       // W40 also holds the no-onset, date-only and before-onset Events.
       { isoWeek: "2026-W40", weekStart: at("2026-09-28T00:00:00Z"), eventsInRange: 5, counted: 2, sameDay: 1, byNextDay: 2, isPartial: false },
-      { isoWeek: "2026-W41", weekStart: at("2026-10-05T00:00:00Z"), eventsInRange: 2, counted: 1, sameDay: 0, byNextDay: 0, isPartial: false },
+      { isoWeek: "2026-W41", weekStart: at("2026-10-05T00:00:00Z"), eventsInRange: 3, counted: 1, sameDay: 0, byNextDay: 0, isPartial: false },
       { isoWeek: "2026-W42", weekStart: at("2026-10-12T00:00:00Z"), eventsInRange: 1, counted: 1, sameDay: 0, byNextDay: 0, isPartial: true },
     ]);
     expect(m.weekly.reduce((n, w) => n + w.eventsInRange, 0)).toBe(m.eventsInRange);
@@ -160,7 +166,7 @@ describe("summarise", () => {
     const m = summarise([], { from: at("2026-09-30T00:00:00Z"), to: at("2026-10-11T23:59:59.999Z") });
     expect(m).toMatchObject({ eventsInRange: 0, withOnset: 0, counted: 0, sameDay: 0, byNextDay: 0 });
     expect(m.histogram.every((b) => b.count === 0)).toBe(true);
-    expect(m.exclusions.map((e) => e.count)).toEqual([0, 0, 0, 0]);
+    expect(m.exclusions.map((e) => e.count)).toEqual([0, 0, 0, 0, 0]);
     expect(m.weekly.map((w) => [w.isoWeek, w.isPartial, w.counted, w.eventsInRange])).toEqual([
       ["2026-W40", true, 0, 0],
       ["2026-W41", false, 0, 0],

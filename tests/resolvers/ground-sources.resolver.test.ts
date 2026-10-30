@@ -388,3 +388,58 @@ describe("setGroundSourceActive", () => {
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 });
+
+describe("updateGroundSource teamId", () => {
+  const HOTLINE = {
+    id: "gs_hot",
+    name: "Sudan hotline",
+    kind: "hotline",
+    transportId: "+249000000000",
+    consentScope: null,
+    consentRecordedAt: null,
+    consentRecordedBy: null,
+    privacyDefault: "private",
+    reviewerRoles: ["admin"],
+    retentionRule: null,
+    isActive: true,
+    teamId: null,
+  };
+  const withTeams = (prisma: Record<string, unknown>, teamIds: string[]) => ({
+    ...prisma,
+    teams: { findUnique: async ({ where }: { where: { id: string } }) => (teamIds.includes(where.id) ? { id: where.id } : null) },
+  });
+
+  it("assigns the source to a team", async () => {
+    const { prisma, update } = sourcesPrisma(HOTLINE);
+    await updateGroundSource(
+      null,
+      { id: "gs_hot", input: { teamId: "team-sudan" } },
+      buildContext(ADMIN, withTeams(prisma, ["team-sudan"])),
+    );
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ teamId: "team-sudan" }) }));
+  });
+
+  it("unassigns it on an explicit null, and leaves it alone when omitted", async () => {
+    const { prisma, update } = sourcesPrisma({ ...HOTLINE, teamId: "team-sudan" });
+    await updateGroundSource(null, { id: "gs_hot", input: { teamId: null } }, buildContext(ADMIN, prisma));
+    expect(update.mock.calls[0]![0].data).toMatchObject({ teamId: null });
+    await updateGroundSource(null, { id: "gs_hot", input: { name: "Renamed" } }, buildContext(ADMIN, prisma));
+    expect(update.mock.calls[1]![0].data).not.toHaveProperty("teamId");
+  });
+
+  it("rejects an unknown team with BAD_USER_INPUT, without writing", async () => {
+    const { prisma, update } = sourcesPrisma(HOTLINE);
+    await expect(
+      updateGroundSource(null, { id: "gs_hot", input: { teamId: "ghost" } }, buildContext(ADMIN, withTeams(prisma, []))),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("stays admin-only", async () => {
+    const { prisma, update } = sourcesPrisma(HOTLINE);
+    await expect(
+      updateGroundSource(null, { id: "gs_hot", input: { teamId: "team-sudan" } }, buildContext(ANALYST, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(update).not.toHaveBeenCalled();
+  });
+});

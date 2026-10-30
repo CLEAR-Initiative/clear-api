@@ -36,6 +36,10 @@ export const userTypeDef = gql`
     enableInAppNotification: Boolean!
     enableEmailNotification: Boolean!
     enableSMSNotification: Boolean!
+    """Whether the user has opted out of usage analytics, account-wide.
+    Readable only by the user themselves (null for everyone else, admins
+    included). Set via \`updateProfile\`."""
+    analyticsOptOut: Boolean
     createdAt: DateTime!
     updatedAt: DateTime!
     """Alerts received by this user. Empty for non-self / non-admin

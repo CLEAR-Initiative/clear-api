@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
@@ -8,7 +9,7 @@ import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithD
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
-import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
+import { anyTypeNrcRelevant, eventIsAllNrcIrrelevant, nrcRelevantGlideCodes } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -45,6 +46,8 @@ import {
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 
+type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
+
 interface CreateEventInput {
   title?: string;
   description?: string;
@@ -54,6 +57,13 @@ interface CreateEventInput {
   firstSignalCreatedAt: string;
   lastSignalCreatedAt: string;
   startedAt?: string;
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy;
+  endedAtAccuracy?: DateAccuracy;
+  magnitude?: number;
+  magnitudeUnit?: string;
+  actors?: string[];
+  countryIds?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -85,6 +95,13 @@ interface UpdateEventInput {
   firstSignalCreatedAt?: string;
   lastSignalCreatedAt?: string;
   startedAt?: string;
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy | null;
+  endedAtAccuracy?: DateAccuracy | null;
+  magnitude?: number | null;
+  magnitudeUnit?: string | null;
+  actors?: string[];
+  countryIds?: string[];
   originId?: string;
   destinationId?: string;
   locationId?: string;
@@ -108,6 +125,15 @@ interface EventAggregatesInput {
   title?: string | null;
   description?: string | null;
   rewriteMembersHash?: string | null;
+  // Absolute writes from the pipeline recompute: null/[] clears a fact no live
+  // member supports any more.
+  endedAt?: string | null;
+  startedAtAccuracy?: DateAccuracy | null;
+  endedAtAccuracy?: DateAccuracy | null;
+  magnitude?: number | null;
+  magnitudeUnit?: string | null;
+  actors?: string[] | null;
+  countryIds?: string[] | null;
 }
 
 /** BigInt column from its decimal-string input, keeping absent (undefined)
@@ -131,20 +157,77 @@ function optionalBigInt(value: string | null | undefined, field: string): bigint
   return bigIntOrKeep(trimmed ? trimmed : undefined, field) ?? undefined;
 }
 
+/** Date column from an ISO string, keeping absent (undefined) and cleared
+ *  (null) distinct — so an explicit null clears, an omitted field is untouched. */
+function dateOrKeep(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined || value === null) return value;
+  return new Date(value);
+}
+
+/** `countryIds` must reference admin-0 (country) locations. Throws BAD_USER_INPUT
+ *  if any id is missing or sits at another level, so a state/city/point can't be
+ *  attached as a "country". No-op for an empty/undefined list. */
+async function assertCountryLocations(
+  prisma: Context["prisma"],
+  ids: string[] | null | undefined,
+): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const unique = [...new Set(ids)];
+  const rows = await prisma.locations.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, level: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r.level]));
+  const bad = unique.filter((id) => byId.get(id) !== 0);
+  if (bad.length > 0) {
+    throw new GraphQLError(
+      `countryIds must be admin-0 (country) locations; not a country (or not found): ${bad.join(", ")}`,
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+}
+
 export const eventResolvers = {
   Query: {
-    events: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
+    events: async (
+      _parent: unknown,
+      args: { teamId?: string; includeDummy?: boolean; lastSignalSince?: string; limit?: number },
+      context: Context,
+    ) => {
       requireContentReader(context);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
+      // Optional SERVER-SIDE bounding so a caller (e.g. the pipeline's grouping
+      // drain) can fetch only the recent window instead of the WHOLE events
+      // table. Returning every event + its translation includes on a table the
+      // drain grows continuously once ran clear-api to 6.2 GB and OOM-killed the
+      // host (2026-10-20). Both args are optional — omitted = the original full
+      // feed, so existing callers (clear-mvp) are unchanged.
+      const recentFilter =
+        args.lastSignalSince != null
+          ? { lastSignalCreatedAt: { gte: new Date(args.lastSignalSince) } }
+          : {};
+      // When a limit is given, take the NEWEST rows (bounded fetch must order).
+      const bound: { orderBy?: { lastSignalCreatedAt: "desc" }; take?: number } =
+        args.limit != null
+          ? { orderBy: { lastSignalCreatedAt: "desc" }, take: Math.min(Math.max(args.limit, 1), 5000) }
+          : {};
       const include = eventTranslationsInclude(context.locale);
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
-        return context.prisma.events.findMany({ where: dummyFilter, ...(include ? { include } : {}) });
+        return context.prisma.events.findMany({
+          where: { ...dummyFilter, ...recentFilter },
+          ...(include ? { include } : {}),
+          ...bound,
+        });
       }
       // teamId provided: apply that team's location filter as a view filter
       // (no membership check -  see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.events.findMany({ where: { ...filter, ...dummyFilter }, ...(include ? { include } : {}) });
+      return context.prisma.events.findMany({
+        where: { ...filter, ...dummyFilter, ...recentFilter },
+        ...(include ? { include } : {}),
+        ...bound,
+      });
     },
     eventsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireContentReader(context);
@@ -163,10 +246,10 @@ export const eventResolvers = {
     },
     // The Dagster alert-stage queue: events that need an alert but don't have
     // one yet — severity at or above `minSeverity` (default 4) AND no alert row
-    // (`alerts: { none: {} }`). Ordered oldest-first by the event's
-    // earliest-signal timestamp so the alert worker drains in ingestion order.
-    // `first` caps the batch (default 100, clamped to [1, 500]). Admin/pipeline
-    // only.
+    // (`alerts: { none: {} }`) AND at least one NRC-relevant type. Ordered
+    // oldest-first by the event's earliest-signal timestamp so the alert worker
+    // drains in ingestion order. `first` caps the batch (default 100, clamped
+    // to [1, 500]). Admin/pipeline only.
     eventsPendingAlert: async (
       _parent: unknown,
       args: {
@@ -194,17 +277,56 @@ export const eventResolvers = {
             }
           : {};
       const include = eventTranslationsInclude(context.locale);
-      return context.prisma.events.findMany({
-        where: {
-          severity: { gte: minSeverity },
-          alerts: { none: {} },
-          isDummy: false,
-          ...recentOnly,
-        },
-        orderBy: { firstSignalCreatedAt: "asc" },
-        take,
-        ...(include ? { include } : {}),
-      });
+      const where = {
+        severity: { gte: minSeverity },
+        alerts: { none: {} },
+        isDummy: false,
+        ...recentOnly,
+      };
+
+      // NRC-relevance gate, mirroring createAlert: an event whose types are ALL
+      // out-of-interest (disaster_types.nrc_relevant = false, or unknown) never
+      // gets an alert row, so it must not be queued either — otherwise it is
+      // re-sent to createAlert on every drain, forever (the Oct-2026 hot loop:
+      // ~2,500 skipped createAlert calls/hour for the same ~10 "ot" events).
+      // Filtered in memory rather than in SQL because the match must be
+      // case-insensitive (`events.types` may hold "FL", glide_number is "fl")
+      // and Prisma's scalar-list filters are not. Pages are re-fetched until
+      // `first` is honoured or the queue is exhausted, so a run of irrelevant
+      // events can't starve the batch. A page cap bounds the scan when
+      // `maxAgeHours: 0` exposes the whole backlog.
+      const relevantCodes = await nrcRelevantGlideCodes(context.prisma);
+      const MAX_PAGES = 10;
+      type Row = Awaited<ReturnType<typeof context.prisma.events.findMany>>[number];
+      const out: Row[] = [];
+      const seen = new Set<string>();
+      let skipped = 0;
+      for (let page = 0; page < MAX_PAGES && out.length < take; page++) {
+        const skip = page * take;
+        const rows: Row[] = await context.prisma.events.findMany({
+          where,
+          orderBy: [{ firstSignalCreatedAt: "asc" }, { id: "asc" }],
+          take,
+          ...(skip > 0 ? { skip } : {}),
+          ...(include ? { include } : {}),
+        });
+        for (const e of rows) {
+          if (seen.has(e.id)) continue; // offset pagination can repeat a row if the queue shifts between pages
+          seen.add(e.id);
+          if (eventIsAllNrcIrrelevant(e.types, relevantCodes)) {
+            skipped++;
+            continue;
+          }
+          if (out.length < take) out.push(e);
+        }
+        if (rows.length < take) break; // queue exhausted
+      }
+      if (skipped > 0) {
+        console.log(
+          `[eventsPendingAlert] skipped ${skipped} event(s) whose types are all NRC-irrelevant — they will never alert and are not queued`,
+        );
+      }
+      return out;
     },
     event: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireContentReader(context);
@@ -234,6 +356,7 @@ export const eventResolvers = {
       // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      await assertCountryLocations(context.prisma, input.countryIds);
       // Validated before any write (point location, event row).
       const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
       const populationDisplaced = optionalBigInt(input.populationDisplaced, "populationDisplaced");
@@ -330,6 +453,15 @@ export const eventResolvers = {
           firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
           lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
           startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+          endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
+          startedAtAccuracy: input.startedAtAccuracy ?? undefined,
+          endedAtAccuracy: input.endedAtAccuracy ?? undefined,
+          magnitude: input.magnitude ?? undefined,
+          magnitudeUnit: input.magnitudeUnit ?? undefined,
+          actors: input.actors ?? undefined,
+          ...(input.countryIds && input.countryIds.length > 0
+            ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
+            : {}),
           originId,
           destinationId,
           locationId,
@@ -385,6 +517,7 @@ export const eventResolvers = {
     ) => {
       requireRole(context, ["admin", "pipeline"]);
       const { id, input, members } = args;
+      await assertCountryLocations(context.prisma, input.countryIds);
       const data = {
         severity: input.severity,
         casualties: input.casualties,
@@ -394,6 +527,16 @@ export const eventResolvers = {
         title: input.title,
         description: input.description,
         rewriteMembersHash: input.rewriteMembersHash,
+        // Absolute aggregate writes — null/[] clears a withdrawn fact.
+        endedAt: dateOrKeep(input.endedAt),
+        startedAtAccuracy: input.startedAtAccuracy,
+        endedAtAccuracy: input.endedAtAccuracy,
+        magnitude: input.magnitude,
+        magnitudeUnit: input.magnitudeUnit,
+        actors: input.actors ?? undefined,
+        ...(input.countryIds != null
+          ? { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } }
+          : {}),
       };
       const sent = new Map(members.map((m) => [m.id, m.revision]));
       // Would otherwise read as stale and be silently dropped.
@@ -461,6 +604,7 @@ export const eventResolvers = {
         existing.destinationId,
         existing.locationId,
       ]);
+      await assertCountryLocations(context.prisma, input.countryIds);
 
       // Update signal links -  ADDITIVE + IDEMPOTENT semantics. Passing
       // signalIds appends them to the event; already-linked signals are
@@ -527,6 +671,18 @@ export const eventResolvers = {
             validTo:
               input.validTo === null ? null : input.validTo ? new Date(input.validTo) : undefined,
             startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            // null clears; omitted leaves untouched. Same for the accuracy +
+            // magnitude fields — pass null through so a correction can clear them.
+            endedAt: dateOrKeep(input.endedAt),
+            startedAtAccuracy: input.startedAtAccuracy,
+            endedAtAccuracy: input.endedAtAccuracy,
+            magnitude: input.magnitude,
+            magnitudeUnit: input.magnitudeUnit,
+            actors: input.actors ?? undefined,
+            // Provided (even empty) → replace the country set; omitted → leave as-is.
+            ...(input.countryIds != null
+              ? { countries: { set: input.countryIds.map((cid) => ({ id: cid })) } }
+              : {}),
             originId: input.originId,
             destinationId: input.destinationId,
             locationId: input.locationId,
@@ -657,7 +813,7 @@ export const eventResolvers = {
 
           if (uniqueUserIds.length > 0) {
             const fallbackTitle = event.types[0] ?? "Alert";
-            const alertUrl = `${env.FRONTEND_URL}/event/${event.id}`;
+            const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
             const primaryLoc =
               locations.find((l) => l.id === event.locationId) ??
               locations.find((l) => l.id === event.originId) ??
@@ -726,7 +882,7 @@ export const eventResolvers = {
                 userId: r.id,
                 message: `New alert: ${titleFor(r.language)}`,
                 notificationType: "alert",
-                actionUrl: `/event/${event.id}`,
+                actionUrl: eventLink(event.id, "inbox"),
                 actionText: "View Alert",
               })),
             });
@@ -1007,6 +1163,21 @@ export const eventResolvers = {
     ) => {
       if (parent.representativePoint !== undefined) return parent.representativePoint;
       return context.representativePointLoader.load(parent.id);
+    },
+    countries: (
+      parent: { id: string; countries?: unknown },
+      _args: unknown,
+      context: Context,
+    ) => {
+      // Fast path: preloaded via a deep include. Otherwise walk the m2m,
+      // carrying the viewer's locale for translated location names.
+      if (parent.countries !== undefined) return parent.countries;
+      const include = context.locale === DEFAULT_LOCALE
+        ? undefined
+        : { translations: { where: { locale: context.locale } } };
+      return context.prisma.events
+        .findUnique({ where: { id: parent.id } })
+        .countries(include ? { include } : undefined);
     },
     alerts: (
       parent: { id: string; alerts?: unknown[] },

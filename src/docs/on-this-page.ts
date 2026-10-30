@@ -56,6 +56,10 @@ export function buildTocTree(
       label: "Authentication",
     },
     {
+      id: "health",
+      label: "Health & Readiness",
+    },
+    {
       id: "queries",
       label: "Queries",
     },

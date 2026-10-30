@@ -105,16 +105,26 @@ export const analysisTypeDef = gql`
     reason: String
   }
 
-  """Latest-evidence watermark for a frame (ADR-0008), over the \`knowledgebase\`
-  retrieval corpus the analysis is generated from. The drain compares
-  \`latestEvidenceAt\` to the live analysis's \`generatedAt\` to decide whether
-  anything new warrants a regeneration."""
+  """Latest-evidence watermark for a frame (ADR-0008), over BOTH retrieval tiers
+  the analysis is generated from — the \`knowledgebase\` report tier AND the
+  \`events_index\` incident tier. The drain compares \`latestEvidenceAt\` to the
+  live analysis's \`generatedAt\` to decide whether anything new warrants a
+  regeneration. The per-tier fields let a selective regenerator tell whether the
+  change came from new reports, new events, or both (#1067)."""
   type FrameEvidenceWatermark {
-    """Max ingestion time (\`created_at\`) across knowledgebase rows matching the
-    frame, or null when the frame has no evidence yet."""
+    """Max ingestion time (\`created_at\`) across BOTH tiers matching the frame —
+    the later of the report and event watermarks — or null when the frame has no
+    evidence yet. This is the combined signal the regeneration gate keys off, so
+    a new event now advances it just like a new report."""
     latestEvidenceAt: DateTime
-    """Count of knowledgebase rows matching the frame."""
+    """Combined count across both tiers."""
     evidenceCount: Int!
+    """Report tier (\`knowledgebase\`) only: max \`created_at\` and row count."""
+    reportsLatestEvidenceAt: DateTime
+    reportsCount: Int!
+    """Incident tier (\`events_index\`) only: max \`created_at\` and row count."""
+    eventsLatestEvidenceAt: DateTime
+    eventsCount: Int!
   }
 
   """A subscription that keeps one frame's analysis current on a cadence
@@ -127,6 +137,8 @@ export const analysisTypeDef = gql`
     eventTypes: [String!]!
     needSectors: [String!]!
     windowStart: DateTime!
+    """Display name chosen by the team. Null means the area list is the name."""
+    title: String
     cadence: String!
     teamId: String
     createdByUserId: String
@@ -135,6 +147,20 @@ export const analysisTypeDef = gql`
     nextRunAt: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!
+    """Shared discussion. Every reader of this analysis sees every comment."""
+    comments: [UserComment!]!
+    """PDFs attached as evidence for this analysis."""
+    documents: [AnalysisAutomationDocument!]!
+  }
+
+  type AnalysisAutomationDocument {
+    id: String!
+    fileName: String!
+    reportId: String!
+    s3Key: String!
+    createdAt: DateTime!
+    """Short-lived link for preview. Null when the file cannot be signed."""
+    url: String
   }
 
   input CreateAnalysisAutomationInput {
@@ -146,11 +172,15 @@ export const analysisTypeDef = gql`
     cadence: String!
     """Owning team. Omit for a system-owned automation (admin only)."""
     teamId: String
+    """Display name. Blank clears it. At most 120 characters."""
+    title: String
   }
 
   input UpdateAnalysisAutomationInput {
     cadence: String
     enabled: Boolean
+    """Display name. Blank clears it back to the area list. Omit to leave it."""
+    title: String
   }
 
   enum AnalysisRequestStatus {
@@ -190,8 +220,9 @@ export const analysisTypeDef = gql`
     windowEnd: DateTime
     """Owning team, for a team-scoped on-demand request."""
     teamId: String
-    """Force a regeneration past the 24h floor + freshness gate (ADR-0008).
-    Admin only — a non-admin passing \`true\` is rejected."""
+    """Deprecated / ignored: a manual trigger always regenerates now, bypassing
+    both the 24h floor and the freshness gate (ADR-0008), for any authorized
+    requester. Retained for backward compatibility; its value has no effect."""
     force: Boolean
   }
 `;

@@ -87,11 +87,28 @@ export async function requireTeamContentWriter(
   return { user, via: "team" };
 }
 
+/** The team role with admin-level privileges over its team (manage members,
+ *  team settings). A TEAM value of `teamMembers.role`. It also opens both Inbox
+ *  review lists: the ground inbox (`requireGroundInboxAccess`) and, scoped to
+ *  their own teams, the case-proposal inbox. */
+export const TEAM_ADMIN_ROLE = "team_admin";
+
+/** Team roles with admin-level privileges over a team. */
+export const TEAM_ADMIN_ROLES: ReadonlySet<string> = new Set([TEAM_ADMIN_ROLE]);
+
 /** The team role carrying the elevated, location-scoped powers formerly held by
  *  the (now removed) global `analyst`: promote alerts, decide tasks / case
  *  proposals, manage team analyses, and act on events / alerts / crises that
  *  fall within the team's location scope. A TEAM value of `teamMembers.role`. */
 export const TEAM_ANALYST_ROLE = "analyst";
+
+/** Team roles that carry the elevated, location-scoped "analysis" powers: the
+ *  `analyst` role, plus `emergency_response_manager`, which is granted the full
+ *  analysis permission set ON TOP OF its own (manage team analyses/automations,
+ *  promote alerts, decide tasks / case proposals, act on events / alerts /
+ *  crises within the team's scope). Every analyst-power gate checks membership
+ *  against THIS set, not the single role, so the two roles stay in step. */
+export const TEAM_ANALYST_ROLES: readonly string[] = ["analyst", "emergency_response_manager"];
 
 /**
  * True when the user is a team `analyst` on at least one team whose location
@@ -106,7 +123,7 @@ export async function userIsTeamAnalystForLocations(
   locationIds: ReadonlyArray<string | null | undefined>,
 ): Promise<boolean> {
   const memberships = await prisma.teamMembers.findMany({
-    where: { userId, role: TEAM_ANALYST_ROLE },
+    where: { userId, role: { in: [...TEAM_ANALYST_ROLES] } },
     select: { teamId: true },
   });
   if (memberships.length === 0) return false;
@@ -140,7 +157,7 @@ export async function requireAdminOrTeamAnalystForLocations(
     return user;
   }
   throw new GraphQLError(
-    "Requires global admin, or a team analyst within the target's location scope",
+    "Requires global admin, or a team analyst / emergency response manager within the target's location scope",
     { extensions: { code: "FORBIDDEN" } },
   );
 }
@@ -163,9 +180,9 @@ export async function requireAdminOrTeamAnalyst(
       where: { teamId_userId: { teamId, userId: user.id } },
       select: { role: true },
     });
-    if (membership?.role === TEAM_ANALYST_ROLE) return user;
+    if (membership && TEAM_ANALYST_ROLES.includes(membership.role)) return user;
   }
-  throw new GraphQLError("Requires global admin, or team analyst on this team", {
+  throw new GraphQLError("Requires global admin, or team analyst / emergency response manager on this team", {
     extensions: { code: "FORBIDDEN" },
   });
 }
@@ -280,46 +297,86 @@ export async function resolveTeamMembership(
  *  (a value of `teamMembers.role`), distinct from the global admin/member roles. */
 export const EMERGENCY_RESPONSE_MANAGER = "emergency_response_manager";
 
-/** True when the user is an active `emergency_response_manager` on any team. */
-export async function isEmergencyResponseManager(
-  prisma: PrismaClient,
-  userId: string,
-): Promise<boolean> {
-  const membership = await prisma.teamMembers.findFirst({
-    where: { userId, role: EMERGENCY_RESPONSE_MANAGER },
-    select: { id: true },
-  });
-  return membership !== null;
-}
+/** Team roles that may triage the ground-intel inbox: an ERM (the role built
+ *  for it) and a team admin. Either admits a global `member` to the sources
+ *  of the teams where they hold it. */
+export const GROUND_TRIAGE_TEAM_ROLES: readonly string[] = [
+  EMERGENCY_RESPONSE_MANAGER,
+  TEAM_ADMIN_ROLE,
+];
 
 /**
- * Ground-intel inbox access gate. Admits a global `admin` (who sees everything)
- * OR an `emergency_response_manager` on any team. Returns the user plus `isErm`
- * so callers can branch review rights — admins keep the per-source
- * `reviewerRoles` policy; an ERM may triage. (Phase 2 will scope an ERM to the
- * hotline numbers their team subscribes to.)
+ * Ground-intel inbox access gate. Admits a global `admin` OR a global `member`
+ * who is an `emergency_response_manager` or `team_admin` on any team
+ * (GROUND_TRIAGE_TEAM_ROLES), and returns which ground sources the caller may
+ * see:
+ *
+ *   - admin: `sourceIds: null`, every source.
+ *   - ERM / team admin: the sources assigned to the teams where they hold
+ *     either role (`groundSources.teamId`). A source with no team is
+ *     admins-only.
+ *
+ * Callers filter lists with `groundSourceScope` and check single items with
+ * `assertGroundSourceInScope`. `canTriage` lets them branch review rights:
+ * admins keep the per-source `reviewerRoles` policy; an ERM or team admin may
+ * triage any source in their scope.
  *
  * `analyst` is no longer a global role and does NOT grant ground-inbox access:
- * ground triage is the ERM's team-scoped job. A team analyst's elevated powers
- * are on events/alerts/crises within their location scope, not the hotline.
+ * ground triage is the ERM's (and team admin's) team-scoped job. A team
+ * analyst's elevated powers are on events/alerts/crises within their location
+ * scope, not the hotline.
  */
 export async function requireGroundInboxAccess(
   context: Context,
-): Promise<{ user: ReturnType<typeof requireAuth>; isErm: boolean }> {
+): Promise<{ user: ReturnType<typeof requireAuth>; canTriage: boolean; sourceIds: string[] | null }> {
   const user = requireAuth(context);
   if (isPlatformAdmin(user)) {
-    return { user, isErm: false };
+    return { user, canTriage: false, sourceIds: null };
   }
-  // An ERM carries the global `member` role plus the emergency_response_manager
-  // TEAM role. Only check team membership for members — service roles
-  // (worker/pipeline/agent) and pending users can't be ERMs and are rejected
-  // without a DB lookup (keeps a service-role rejection free of DB touches).
-  if (user.role === "member" && (await isEmergencyResponseManager(context.prisma, user.id))) {
-    return { user, isErm: true };
+  // An ERM / team admin carries the global `member` role plus the TEAM role.
+  // Only check team membership for members: service roles
+  // (worker/pipeline/agent) and pending users can't hold either and are
+  // rejected without a DB lookup (keeps a service-role rejection free of DB
+  // touches).
+  if (user.role === "member") {
+    const triageTeamIds = (
+      await context.prisma.teamMembers.findMany({
+        where: { userId: user.id, role: { in: [...GROUND_TRIAGE_TEAM_ROLES] } },
+        select: { teamId: true },
+      })
+    ).map((m) => m.teamId);
+    if (triageTeamIds.length > 0) {
+      const sources = await context.prisma.groundSources.findMany({
+        where: { teamId: { in: triageTeamIds } },
+        select: { id: true },
+      });
+      return { user, canTriage: true, sourceIds: sources.map((source) => source.id) };
+    }
   }
   throw new GraphQLError("Insufficient permissions", {
     extensions: { code: "FORBIDDEN" },
   });
+}
+
+/** Prisma `where` fragment limiting ground rows (threads, messages) to the
+ *  caller's sources from `requireGroundInboxAccess`. Empty for an admin. */
+export function groundSourceScope(
+  sourceIds: string[] | null,
+): { groundSourceId?: { in: string[] } } {
+  return sourceIds === null ? {} : { groundSourceId: { in: sourceIds } };
+}
+
+/** Rejects a ground item whose source is outside the caller's scope. Throws
+ *  NOT_FOUND rather than FORBIDDEN so another team's threads don't reveal
+ *  that they exist. */
+export function assertGroundSourceInScope(
+  sourceIds: string[] | null,
+  groundSourceId: string,
+  notFoundMessage: string,
+): void {
+  if (sourceIds !== null && !sourceIds.includes(groundSourceId)) {
+    throw new GraphQLError(notFoundMessage, { extensions: { code: "NOT_FOUND" } });
+  }
 }
 
 /**

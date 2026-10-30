@@ -15,6 +15,7 @@
  * null-severity alerts).
  */
 import type { PrismaClient } from "../../generated/prisma/client.js";
+import { eventLink } from "../../utils/event-link.js";
 import { getTeamScopeLocationIds } from "../../utils/location-scope.js";
 import { attemptDelivery } from "./deliver.js";
 
@@ -95,7 +96,7 @@ export async function fanOutAlertWebhooks(
       severity: event.severity,
       locations: locationNames,
     },
-    url: `${frontendUrl}/event/${event.id}`,
+    url: eventLink(event.id, "webhook", frontendUrl),
   };
 
   // Create + dispatch each delivery INDEPENDENTLY. A subscription deleted

@@ -24,6 +24,9 @@ export const groundTypeDef = gql`
     reviewerRoles: [String!]!
     """Free-text retention rule; enforcement is operational in V1."""
     retentionRule: String
+    """The team whose emergency response managers triage this source. Null:
+    no team yet, so only platform admins see its threads."""
+    teamId: String
     isActive: Boolean!
     createdAt: DateTime!
     updatedAt: DateTime!
@@ -48,9 +51,10 @@ export const groundTypeDef = gql`
   }
 
   """Partial update of a source's policy record. Null/omitted fields are
-  left unchanged; transportId is immutable (it is the identity that
-  externalIds are minted against). The merged row is re-validated: group
-  kinds must end up with a complete consent record."""
+  left unchanged, except teamId, where null unassigns the team;
+  transportId is immutable (it is the identity that externalIds are minted
+  against). The merged row is re-validated: group kinds must end up with a
+  complete consent record."""
   input UpdateGroundSourceInput {
     name: String
     """"staff_group" | "partner_group" | "hotline"."""
@@ -61,6 +65,9 @@ export const groundTypeDef = gql`
     privacyDefault: String
     reviewerRoles: [String!]
     retentionRule: String
+    """Assign the source to a team, whose emergency response managers then
+    see and triage its threads. Null unassigns it (platform admins only)."""
+    teamId: String
   }
 
   """A thread — a cluster of staged Signals — in the review queue. V1

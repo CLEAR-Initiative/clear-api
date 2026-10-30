@@ -91,12 +91,30 @@ function fetchLocationGeo(
   return promise;
 }
 
+interface LocationsArgs {
+  level?: number | null;
+  within?: string[] | null;
+}
+
+/**
+ * Filter for `Query.locations`. `within` scopes to the given locations and
+ * their descendants (GIN index on `ancestor_ids`), so callers no longer pull
+ * a whole admin level — every row of which resolves its own geometry — just
+ * to filter it client-side.
+ */
+export function locationsWhere(args: LocationsArgs): Prisma.locationsWhereInput {
+  const where: Prisma.locationsWhereInput = {};
+  if (args.level != null) where.level = args.level;
+  if (args.within?.length) {
+    where.OR = [{ id: { in: args.within } }, { ancestorIds: { hasSome: args.within } }];
+  }
+  return where;
+}
+
 export const locationResolvers = {
   Query: {
-    locations: (_parent: unknown, args: { level?: number }, { prisma }: Context) => {
-      return prisma.locations.findMany({
-        where: args.level !== undefined ? { level: args.level } : undefined,
-      });
+    locations: (_parent: unknown, args: LocationsArgs, { prisma }: Context) => {
+      return prisma.locations.findMany({ where: locationsWhere(args) });
     },
     location: (_parent: unknown, args: { id: string }, { prisma }: Context) => {
       return prisma.locations.findUnique({ where: { id: args.id } });

@@ -107,8 +107,8 @@ describe("notifyTaskOutcome", () => {
     await notifyTaskOutcome(prisma, TASK, "completed");
     expect(createMany).toHaveBeenCalledWith({
       data: [
-        { userId: "u-req", message: "Impact prior proposed — review it", notificationType: "task", actionUrl: "/event/ev-1", actionText: "View Event" },
-        { userId: "u-admin", message: "Impact prior proposed — review it", notificationType: "task", actionUrl: "/event/ev-1", actionText: "View Event" },
+        { userId: "u-req", message: "Impact prior proposed — review it", notificationType: "task", actionUrl: "/event/ev-1?from=inbox", actionText: "View Event" },
+        { userId: "u-admin", message: "Impact prior proposed — review it", notificationType: "task", actionUrl: "/event/ev-1?from=inbox", actionText: "View Event" },
       ],
     });
     expect(sendBulk).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("notifyTaskOutcome", () => {
     const byTo = Object.fromEntries(msgs.map((m) => [m.to, m]));
     expect(byTo["u-req@example.test"]!.textBody).toContain("model timed out");
     expect(byTo["u-an@example.test"]!.textBody).not.toContain("model timed out");
-    expect(byTo["u-req@example.test"]!.textBody).toContain("/event/ev-1");
+    expect(byTo["u-req@example.test"]!.textBody).toContain("/event/ev-1?from=email");
     expect(byTo["u-req@example.test"]!.subject).toContain("failed");
   });
 

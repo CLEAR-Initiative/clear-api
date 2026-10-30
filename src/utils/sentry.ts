@@ -4,6 +4,10 @@
  * Env vars:
  *   SENTRY_DSN  — Sentry project DSN (required to enable)
  *   SENTRY_ENV  — Sentry environment label (default: NODE_ENV)
+ *   SENTRY_TRACES_SAMPLE_RATE — 0..1 share of requests traced (default: 0).
+ *     Tracing is off by default: at 1.0 on dev, the SDK's own sends to
+ *     GlitchTip kept generating traces, a loop of ~20 new TLS connections/s
+ *     that pinned clear-api's main thread at 100% CPU.
  */
 
 import * as Sentry from "@sentry/node";
@@ -14,7 +18,7 @@ if (dsn) {
   Sentry.init({
     dsn,
     environment: process.env.SENTRY_ENV ?? process.env.NODE_ENV ?? "development",
-    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0) || 0,
     beforeSend(event) {
       if (event.request?.headers) {
         delete event.request.headers["authorization"];

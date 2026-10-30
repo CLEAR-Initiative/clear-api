@@ -72,6 +72,16 @@ enum CrisisEnrichmentStatus {
   ENRICHED
 }
 
+/// Precision of an extracted start/end date — how finely the pipeline's LLM
+/// could pin the real-world onset/close. "DAY" = exact date; coarser values
+/// mean the date is only known to the week/month/year it falls in.
+enum DateAccuracy {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
 // ─── Auth (Better Auth) ────────────────────────────────────────────────────
 
 model user {
@@ -88,6 +98,9 @@ model user {
   inAppNotification Boolean @default(false) @map("in_app_notification")
   emailNotification Boolean @default(false) @map("email_notification")
   smsNotification   Boolean @default(false) @map("sms_notification")
+
+  /// Usage-analytics opt-out, account-wide. When true, clear-mvp loads no tracker for this user.
+  analyticsOptOut Boolean @default(false) @map("analytics_opt_out")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @map("updated_at")
@@ -114,6 +127,7 @@ model user {
   submittedSignals      signals[]               @relation("SignalSubmittedBy")
   agentWorkingMemory    agentWorkingMemory?
   estimatesCreated      estimate[]              @relation("EstimateCreatedBy")
+  developerProfile      developerProfile?
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -339,13 +353,15 @@ model teams {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organisation    organisations     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  members         teamMembers[]
-  locations       teamLocations[]
-  defaultForUsers user[]            @relation("DefaultTeam")
-  invitations     invitations[]
-  invitationTeams invitationTeams[]
-  webhookSubscriptions WebhookSubscription[]
+  organisation             organisations              @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  members                  teamMembers[]
+  locations                teamLocations[]
+  defaultForUsers          user[]                     @relation("DefaultTeam")
+  invitations              invitations[]
+  invitationTeams          invitationTeams[]
+  webhookSubscriptions     WebhookSubscription[]
+  groundSources            groundSources[]
+  signalLocationChallenges signalLocationChallenges[]
 
   @@unique([organisationId, slug])
   @@index([organisationId])
@@ -484,11 +500,17 @@ model locations {
   signalOrigins      signals[] @relation("SignalOrigin")
   signalDestinations signals[] @relation("SignalDestination")
   signalLocations    signals[] @relation("SignalLocation")
+  signalCountries    signals[] @relation("SignalCountries")
+
+  // Reverse relations for Location challenges
+  challengePreviousLocations signalLocationChallenges[] @relation("ChallengePreviousLocation")
+  challengeAppliedLocations  signalLocationChallenges[] @relation("ChallengeAppliedLocation")
 
   // Reverse relations for event
-  eventOrigins           events[]                 @relation("EventOrigin")
-  eventDestinations      events[]                 @relation("EventDestination")
-  eventLocations         events[]                 @relation("EventLocation")
+  eventOrigins      events[] @relation("EventOrigin")
+  eventDestinations events[] @relation("EventDestination")
+  eventLocations    events[] @relation("EventLocation")
+  eventCountries    events[] @relation("EventCountries")
 
   // Reverse relation for ground thread drafts
   groundThreadDrafts groundThreads[] @relation("GroundThreadDraftLocation")
@@ -542,12 +564,12 @@ model locationMetadata {
 // ─── Data Mining ─────────────────────────────────────────────────────────────
 
 model dataSources {
-  id        String   @id @default(cuid())
-  name      String
-  type      String
-  isActive  Boolean  @default(true) @map("is_active")
-  baseUrl   String?  @map("url_base")
-  infoUrl   String?  @map("url_info")
+  id       String  @id @default(cuid())
+  name     String
+  type     String
+  isActive Boolean @default(true) @map("is_active")
+  baseUrl  String? @map("url_base")
+  infoUrl  String? @map("url_info")
 
   /// Alias set for source-name normalisation. `resolveDataSource` matches an
   /// incoming name against `name` OR any `synonyms` entry (exact, then fuzzy)
@@ -620,7 +642,7 @@ model signals {
   /// lastRevisedAt marks that the API updated this record in place; contentHash
   /// is a fingerprint of the source's raw data (rawData), compared against
   /// incoming data to decide if an update is needed. Driven by IDMC integration.
-  contentHash String? @map("content_hash")
+  contentHash   String?   @map("content_hash")
   lastRevisedAt DateTime? @map("last_revised_at")
 
   /// Superseded upstream. Reversible and independent of `status`: keeps its
@@ -641,12 +663,31 @@ model signals {
   /// `fatalities` field directly, and parsed from raw text for Dataminr
   /// (regex: "X killed", "X dead", "X fatalities", etc.).
   casualties  Int?
+
+  /// Structured event attributes extracted from this signal by the shared
+  /// event-classification LLM (shared-event-classification-v1). Per-signal
+  /// provenance — the event-level aggregates live on `events`. Dates carry an
+  /// accuracy so a month/year-only onset isn't mistaken for an exact day.
+  startDate         DateTime?     @map("start_date")
+  startDateAccuracy DateAccuracy? @map("start_date_accuracy")
+  endDate           DateTime?     @map("end_date")
+  endDateAccuracy   DateAccuracy? @map("end_date_accuracy")
+  /// Natural-hazard magnitude + its unit (e.g. 6.4 "Mw", 120 "km/h"). Null for
+  /// non-disaster signals.
+  magnitude         Float?
+  magnitudeUnit     String?       @map("magnitude_unit")
+  /// Named actors for a conflict event (armed groups, forces). Empty for
+  /// non-conflict signals.
+  actors            String[]
+  /// Countries the extracted event touches, resolved to admin-0 `locations`
+  /// (reuses the locations relation rather than a free-text country list).
+  countries         locations[]   @relation("SignalCountries")
   /// Glide code the pipeline grouped this signal with (its first disaster
   /// type). Lets an event recompute reproduce grouping's per-signal stats
   /// fallback. Null for signals grouped before this column, or never grouped.
-  glideCode   String?  @map("glide_code")
-  media       String[]
-  isDummy     Boolean  @default(false)
+  glideCode         String?       @map("glide_code")
+  media             String[]
+  isDummy           Boolean       @default(false)
 
   /// The person who submitted this Signal, when one did (the Domain
   /// Ontology's `submitted_by_user`): e.g. the analyst who accepted a web
@@ -662,6 +703,11 @@ model signals {
 
   locationId      String?    @map("location_id") // In case of signals without origin or destination
   generalLocation locations? @relation("SignalLocation", fields: [locationId], references: [id])
+
+  /// When an accepted Location challenge wrote this Signal's location (a
+  /// person corrected it). From then on a source revision
+  /// (updateSignalContent) keeps the corrected location and countries.
+  locationCorrectedAt DateTime? @map("location_corrected_at")
 
   /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
   /// Additive enrichment for comparison against the source's coords —
@@ -698,37 +744,58 @@ model signals {
   @@index([status, publishedAt])
 }
 
-/// Analyst Location challenge on a Signal, with an optional Location correction
-/// (Location trust v1, clear-mvp #314). A queue only — status is always
-/// "consideration" in v1, there is no accept/reject flow, and it NEVER mutates
-/// the Signal's own geometry. `@@unique([signalId, status])` keeps one open row
-/// per Signal so a resubmit updates the existing challenge.
+/// An analyst's Location challenge on a Signal, with an optional corrected
+/// point, filed for one team and decided by that team's admin (Exponential
+/// #836; Location trust v1 was a queue only). Accepting writes a point onto
+/// the Signal: the proposed one, or one the admin placed instead. Declining
+/// leaves the Signal as it is. A Signal has at most one open challenge (a
+/// partial unique index in the migration, as Prisma can't express one); a new
+/// challenge supersedes the open one instead of rewriting it, so a decision
+/// always applies to the exact challenge it was made on.
 model signalLocationChallenges {
   id       String  @id @default(cuid())
   signalId String  @map("signal_id")
   signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The team it was filed for: only that team's admin, or a platform admin,
+  /// decides it. Null on challenges filed before teams were recorded, which
+  /// only a platform admin decides.
+  teamId String? @map("team_id")
+  team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   /// Auth user id of whoever filed the challenge.
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  /// v1: always "consideration".
+  /// "consideration" (open), "accepted" (the proposed point was written),
+  /// "corrected" (the admin placed a different point), "declined", or
+  /// "superseded" (replaced by a newer challenge on the same Signal).
   status String @default("consideration")
 
   /// Optional note explaining why the pin looks wrong.
   note String?
 
-  /// Optional Location correction — all three null = bare challenge. When a
-  /// point is proposed, proposedLng + proposedLat are required together
-  /// (enforced in the resolver + a DB CHECK added by the migration).
+  /// Optional corrected point; all three null is a bare challenge. When a
+  /// point is proposed, proposedLng and proposedLat are set together
+  /// (enforced in the resolver and by a DB CHECK added by the migration).
   proposedLng  Float?  @map("proposed_lng")
   proposedLat  Float?  @map("proposed_lat")
   proposedName String? @map("proposed_name")
 
-  @@unique([signalId, status])
+  /// The Signal's location when the challenge was filed.
+  previousLocationId String?    @map("previous_location_id")
+  previousLocation   locations? @relation("ChallengePreviousLocation", fields: [previousLocationId], references: [id], onDelete: SetNull)
+  /// The point written onto the Signal, set when it is accepted or corrected.
+  appliedLocationId  String?    @map("applied_location_id")
+  appliedLocation    locations? @relation("ChallengeAppliedLocation", fields: [appliedLocationId], references: [id], onDelete: SetNull)
+  /// Auth user id of whoever decided it, and when.
+  decidedBy          String?    @map("decided_by")
+  decidedAt          DateTime?  @map("decided_at")
+
   @@index([signalId])
   @@index([status, createdAt])
+  @@index([teamId, status, createdAt])
   @@map("signal_location_challenges")
 }
 
@@ -739,18 +806,32 @@ model events {
   // For LLM
   description_signals Json?
 
-  validFrom            DateTime @default(now()) @map("valid_from")
+  validFrom            DateTime      @default(now()) @map("valid_from")
   /// Event end / expiry. Null when no real end is known (the pipeline no longer
   /// invents start + 7 days) — a null validTo means "ongoing / no known end".
-  validTo              DateTime? @map("valid_to")
-  firstSignalCreatedAt DateTime @map("first_signal_created_at")
-  lastSignalCreatedAt  DateTime @map("last_signal_created_at")
+  validTo              DateTime?     @map("valid_to")
+  firstSignalCreatedAt DateTime      @map("first_signal_created_at")
+  lastSignalCreatedAt  DateTime      @map("last_signal_created_at")
   /// When the real-world event actually STARTED (its onset) — distinct from
   /// validFrom/firstSignalCreatedAt (record + signal-collection times). Parsed
   /// from the signal text by the pipeline (regex → LLM fallback); null when no
   /// onset could be resolved.
-  startedAt            DateTime? @map("started_at")
-  isDummy              Boolean  @default(false)
+  startedAt            DateTime?     @map("started_at")
+  /// When the real-world event actually ENDED (its close) — distinct from
+  /// validTo (the visibility/expiry window). Null = ongoing / no known end.
+  endedAt              DateTime?     @map("ended_at")
+  /// Precision of startedAt / endedAt from the shared event-classification LLM
+  /// (DAY = exact; coarser = only known to that week/month/year).
+  startedAtAccuracy    DateAccuracy? @map("started_at_accuracy")
+  endedAtAccuracy      DateAccuracy? @map("ended_at_accuracy")
+  /// Natural-hazard magnitude + its unit (e.g. 6.4 "Mw"), aggregated from the
+  /// member signals. Null for non-disaster events.
+  magnitude            Float?
+  magnitudeUnit        String?       @map("magnitude_unit")
+  /// Named conflict actors aggregated across the member signals. Empty for
+  /// non-conflict events.
+  actors               String[]
+  isDummy              Boolean       @default(false)
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])
@@ -760,6 +841,10 @@ model events {
 
   locationId      String?    @map("location_id") // In case of events without origin or destination
   generalLocation locations? @relation("EventLocation", fields: [locationId], references: [id], onDelete: SetNull)
+
+  /// Countries the event touches, resolved to admin-0 `locations` (reuses the
+  /// locations relation rather than a free-text list). Aggregated from members.
+  countries locations[] @relation("EventCountries")
 
   types                 String[]
   severity              Int? // 1-5 scale; aggregated from signal severities
@@ -794,9 +879,9 @@ model events {
   translations          translations[]
   impactPriors          impactPrior[]
   /// Web cases proposed while enriching this Event (V4).
-  caseProposals         caseProposal[] @relation("CaseProposalEvent")
+  caseProposals         caseProposal[]          @relation("CaseProposalEvent")
   /// Web cases a Worker matched to this (historical) Event.
-  matchedCaseProposals  caseProposal[] @relation("CaseProposalMatchedEvent")
+  matchedCaseProposals  caseProposal[]          @relation("CaseProposalMatchedEvent")
 }
 
 model disasterTypes {
@@ -986,9 +1071,10 @@ model userComments {
   id     String @id @default(cuid())
   userId String @map("user_id")
 
-  eventId  String? @map("event_id")
-  signalId String? @map("signal_id")
-  crisisId String? @map("crisis_id")
+  eventId              String? @map("event_id")
+  signalId             String? @map("signal_id")
+  crisisId             String? @map("crisis_id")
+  analysisAutomationId String? @map("analysis_automation_id")
 
   comment            String  @map("text")
   isCommentReply     Boolean @map("is_comment_reply")
@@ -997,16 +1083,18 @@ model userComments {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user   user     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  signal signals? @relation(fields: [signalId], references: [id], onDelete: Cascade)
-  event  events?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  crisis crises?  @relation(fields: [crisisId], references: [id], onDelete: Cascade)
+  user               user                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal             signals?            @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  event              events?             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  crisis             crises?             @relation(fields: [crisisId], references: [id], onDelete: Cascade)
+  analysisAutomation analysisAutomation? @relation(fields: [analysisAutomationId], references: [id], onDelete: Cascade)
 
   commentTags commentTags[]
 
   @@index([userId])
   @@index([eventId])
   @@index([signalId])
+  @@index([analysisAutomationId])
   @@map("user_comments")
 }
 
@@ -1189,25 +1277,25 @@ model nominatim_cache {
 /// because `embedding` and `lexicalTsv` are `Unsupported` — the Prisma
 /// client can't serialise them. Downstream code must reflect that.
 model knowledgebase {
-  id            String @id @default(cuid())
+  id String @id @default(cuid())
 
   /// Report identifier the chunk came from.
-  reportId      String @map("report_id")
-  reportTitle   String @map("report_title")
-  sourceUrl     String @map("source_url")
+  reportId    String   @map("report_id")
+  reportTitle String   @map("report_title")
+  sourceUrl   String   @map("source_url")
   /// S3 key of the PDF this chunk was extracted from — lets a search
   /// hit link back to the original document without re-fetching from
   /// ReliefWeb.
-  s3Key      String @map("s3_key")
-  publishedAt   DateTime @map("published_at")
+  s3Key       String   @map("s3_key")
+  publishedAt DateTime @map("published_at")
 
   /// Position of the chunk within its report (0-indexed).
-  chunkIndex    Int    @map("chunk_index")
+  chunkIndex Int @map("chunk_index")
   /// Inclusive PDF page range this chunk covers. Kept as start/end
   /// rather than a single page so chunks that straddle a page break
   /// still cite correctly.
-  pageStart     Int    @map("page_start")
-  pageEnd       Int    @map("page_end")
+  pageStart  Int @map("page_start")
+  pageEnd    Int @map("page_end")
 
   /// Original excerpt text — what a UI would render on a search hit.
   chunkText     String @map("chunk_text")
@@ -1272,6 +1360,16 @@ model knowledgebase {
   figureS3Key String? @map("figure_s3_key")
   figureKind  String? @map("figure_kind")
 
+  /// Team-scoped upload attribution (Cap 1). Set when a document was uploaded
+  /// on behalf of a team via `uploadKnowledgebaseDocument`; null for the weekly
+  /// ReliefWeb ingest (not team-owned). Carried on every chunk of the report
+  /// (report-level value denormalised per row, like `reportTitle`) so a
+  /// team-scoped read can filter by it. Not a Prisma relation (kept a plain
+  /// column) so the KB write path stays raw-SQL and self-contained.
+  teamId           String? @map("team_id")
+  /// clear-api user id of the uploader (provenance). Null for weekly ingest.
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   /// A given (report, chunk_index) pair is unique per re-ingest — the
@@ -1280,6 +1378,7 @@ model knowledgebase {
   @@unique([reportId, chunkIndex])
   @@index([reportId])
   @@index([embeddingModel])
+  @@index([teamId])
   @@index([locationIds], type: Gin)
   @@index([eventTypes], type: Gin)
   @@index([needSectors], type: Gin)
@@ -1304,8 +1403,8 @@ model eventsIndex {
 
   /// Event title, and the human-readable card text a UI renders on a hit
   /// (the incident-tier analog of `knowledgebase.chunk_text`).
-  title    String
-  cardText String @map("card_text")
+  title        String
+  cardText     String  @map("card_text")
   /// What was embedded + tokenised into `lexical_tsv` (card + a structured
   /// line: type / location / time / severity). Stored verbatim so the ranking
   /// is reproducible offline.
@@ -1319,10 +1418,10 @@ model eventsIndex {
   /// Same preservation rule + raw-SQL access as `knowledgebase.embedding`.
   embedding  Unsupported("vector(1024)")
   /// Populated by a BEFORE INSERT/UPDATE trigger from `embedded_text`.
-  lexicalTsv Unsupported("tsvector") @map("lexical_tsv")
+  lexicalTsv Unsupported("tsvector")     @map("lexical_tsv")
 
-  locationIds    String[] @map("location_ids")
-  locationPcodes String[] @map("location_pcodes")
+  locationIds    String[]  @map("location_ids")
+  locationPcodes String[]  @map("location_pcodes")
   timeRangeStart DateTime? @map("time_range_start")
   timeRangeEnd   DateTime? @map("time_range_end")
   /// Event onset — the recency signal frame-mode incident ordering uses.
@@ -1352,11 +1451,11 @@ model eventsIndex {
 ///     filters) is fanned out. See createAlert's fan-out + services/webhook.
 /// HMAC signing is always on — every delivery is signed with the row's `secret`.
 model WebhookSubscription {
-  id        String @id @default(uuid())
+  id        String  @id @default(uuid())
   /// Which trigger feeds this subscription: "glitchtip" (default, legacy) or
   /// "clear_alert" (team alert webhooks). Discriminates fan-out + the filters
   /// that apply.
-  source    String @default("glitchtip")
+  source    String  @default("glitchtip")
   /// Owning team for a `clear_alert` subscription; null for platform-level
   /// `glitchtip` subscriptions. Drives the location-scope match (teamLocations)
   /// and who may manage the row.
@@ -1365,7 +1464,7 @@ model WebhookSubscription {
   /// Human-readable label shown in the admin UI. Not sent downstream.
   name      String
   /// Target URL. Must include scheme; https is enforced at write time.
-  targetUrl String @map("target_url")
+  targetUrl String  @map("target_url")
   /// HMAC-SHA256 key. Generated on create (32 random bytes, hex-encoded),
   /// rotatable via a dedicated mutation. Stored plaintext because the
   /// signing worker needs it; scope of exposure is limited to the admins /
@@ -1385,7 +1484,7 @@ model WebhookSubscription {
   /// (clear_alert) Optional minimum alert severity (1-5). Null = all
   /// severities (incl. null-severity alerts). A set floor excludes
   /// null-severity alerts.
-  minSeverity Int? @map("min_severity")
+  minSeverity     Int?     @map("min_severity")
 
   /// User who created this subscription. Kept for audit; not FK-linked
   /// because the audit trail should survive user deletion.
@@ -1473,7 +1572,7 @@ model WebhookDelivery {
 /// safely, but multi-row upserts benefit from the same batching we use
 /// on knowledgebase). Reads go through Prisma's typed client.
 model reportDatapoint {
-  id      String @id @default(cuid())
+  id String @id @default(cuid())
 
   /// Stable dedup key for the report. Matches `knowledgebase.report_id`
   /// when the same source PDF is also embedded for vector RAG — a
@@ -1567,10 +1666,10 @@ model reportFigure {
   sourceUrl   String @map("source_url")
 
   /// 1-indexed source page (provenance).
-  pageNumber Int @map("page_number")
+  pageNumber Int     @map("page_number")
   /// Source-page bounding box of the crop as `[x0, top, x1, bottom]` in PDF
   /// points; empty on the full-page fallback.
-  bbox Float[] @default([])
+  bbox       Float[] @default([])
   /// True when the whole page was stored because region detection was uncertain.
   isFullPage Boolean @default(false) @map("is_full_page")
 
@@ -1582,8 +1681,8 @@ model reportFigure {
   kind String
 
   /// From the vision pass.
-  title       String?
-  description String?
+  title         String?
+  description   String?
   /// Full structured transcription (rows / nested groups / callouts) as emitted
   /// by the vision pass — the machine-readable form behind `description`.
   transcription Json?
@@ -1736,13 +1835,13 @@ model aggregatedDatapoint {
 /// second query. The top-level `sourceReportIds` column is the
 /// denormalised union for cheap admin-side filtering.
 model situationAnalysis {
-  id                     String   @id @default(cuid())
+  id String @id @default(cuid())
 
   /// FK to `locations.id` — the country (A0) this analysis covers.
   /// Not enforced as a Prisma relation because the situation-analysis
   /// pipeline should keep working even when locations are pruned /
   /// reshuffled during backfills.
-  countryLocationId      String   @map("country_location_id")
+  countryLocationId String @map("country_location_id")
 
   /// Analysis window — currently Jan 1..Dec 31 of the target year,
   /// but stored as a general range so a future switch to rolling-12-
@@ -1753,56 +1852,56 @@ model situationAnalysis {
   /// resolver each build the calendar window independently, and matching
   /// it on exact equality meant the writer's 23:59:59.000 never met the
   /// reader's 23:59:59.999. windowStart is unambiguous.
-  windowStart            DateTime @map("window_start")
-  windowEnd              DateTime @map("window_end")
+  windowStart DateTime @map("window_start")
+  windowEnd   DateTime @map("window_end")
 
   /// "yearly" today. Mirrors `aggregatedDatapoint.windowKind` so a
   /// monthly or weekly analysis needs no migration, and so the bucket
   /// key states its granularity instead of implying it from two dates.
-  windowKind             String   @map("window_kind")
+  windowKind String @map("window_kind")
 
   /// The full analysis payload keyed by component name. See docstring
   /// above and the Python schemas for shape.
-  data                   Json
+  data Json
 
   /// Denormalised union of every contributing report id across all
   /// components. Enables cheap "which reports fed this analysis" +
   /// bulk admin queries without opening the JSON blob.
-  sourceReportIds        String[] @map("source_report_ids")
+  sourceReportIds String[] @map("source_report_ids")
 
   /// FK-ish reference to the `aggregated_datapoints.id` this analysis
   /// was generated against. Optional because early runs may fire
   /// before aggregations exist for the country-year. Kept as a plain
   /// text column (no @relation) so aggregation-side cleanups don't
   /// cascade-delete analyses.
-  aggregatedDatapointId  String?  @map("aggregated_datapoint_id")
+  aggregatedDatapointId String? @map("aggregated_datapoint_id")
 
   /// LLM identifier (e.g. `claude-sonnet-4-6`). Deterministic-only
   /// runs (Phase B) record a synthetic value like `deterministic:v1`.
-  generatedByModel       String   @map("generated_by_model")
+  generatedByModel  String   @map("generated_by_model")
   /// Total LLM cost across all component calls, if the caller tracks it.
   /// Null for deterministic-only runs.
-  generationCostUsd      Float?   @map("generation_cost_usd")
-  generatedAt            DateTime @default(now()) @map("generated_at")
+  generationCostUsd Float?   @map("generation_cost_usd")
+  generatedAt       DateTime @default(now()) @map("generated_at")
 
   /// Bitemporal validity — same pattern as aggregated_datapoints.
   /// Every weekly regeneration inserts a new row and stamps the
   /// previous "current" row's validTo. History is preserved for the
   /// "compare to last week" dashboard UX and for audit.
-  validFrom              DateTime @default(now()) @map("valid_from")
-  validTo                DateTime? @map("valid_to")
+  validFrom DateTime  @default(now()) @map("valid_from")
+  validTo   DateTime? @map("valid_to")
 
   /// Bumped when either the output taxonomy OR the prompt set
   /// changes. Rows of different schema versions never mix on trend
   /// views; a version bump triggers full regeneration.
-  schemaVersion          String   @map("schema_version")
+  schemaVersion String @map("schema_version")
 
   /// Per-locale translation overlays of the prose in `data`. The pipeline
   /// writes one row per target locale carrying only the translated prose
   /// leaves; the resolver deep-merges them over canonical `data` at read
   /// time. Each regeneration is a new row, so its translations are fetched
   /// fresh (old history rows keep their own). Cascade-deletes with the row.
-  translations           translations[]
+  translations translations[]
 
   /// Partial unique index in the migration SQL:
   ///   UNIQUE (country_location_id, window_start, window_end, schema_version)
@@ -1909,6 +2008,11 @@ model analysis {
 model analysisAutomation {
   id String @id @default(cuid())
 
+  /// Human-friendly label for this automation and the analysis it produces
+  /// (e.g. "Sudan displacement — weekly"). Optional: system-owned rows and
+  /// existing automations may leave it null.
+  title String?
+
   /// Frame (canonicalised on write) — the `analysis` frame columns minus
   /// `windowEnd` (automation is always rolling to present).
   locationIds String[] @map("location_ids")
@@ -1932,6 +2036,18 @@ model analysisAutomation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// Threaded discussion for this automation — reuses the shared
+  /// `user_comments` table (via userComments.analysisAutomationId) rather than
+  /// a dedicated comments table, so replies and tags work exactly as they do
+  /// on events/signals/crises.
+  userComments userComments[]
+
+  /// Reference documents a user has attached to this automation. The files
+  /// themselves are ingested into the knowledgebase via
+  /// `uploadKnowledgebaseDocument`; each row here records the uploaded name
+  /// plus the KB `reportId`/`s3Key` it produced.
+  documents analysisAutomationDocument[]
+
   /// One subscription per (frame, owner) — a re-subscribe updates the
   /// cadence rather than duplicating. Enforced by a partial unique index in
   /// the migration SQL (NULLS NOT DISTINCT so array/owner columns compare by
@@ -1940,6 +2056,38 @@ model analysisAutomation {
   @@index([nextRunAt])
   @@index([locationIds], type: Gin)
   @@map("analysis_automations")
+}
+
+/// A reference document attached to an automation. The file is uploaded
+/// through `uploadKnowledgebaseDocument` (staged in S3 + ingested into the KB
+/// by Dagster); this row records the uploaded file name against the automation
+/// and the content-addressed `reportId` / `s3Key` the upload produced, so the
+/// KB report it became can always be found again.
+model analysisAutomationDocument {
+  id                   String @id @default(cuid())
+  analysisAutomationId String @map("analysis_automation_id")
+
+  /// The uploaded file's original name (e.g. "sudan-dtm-round-42.pdf").
+  fileName String @map("file_name")
+
+  /// Ties back to the knowledgebase: the `manual:<sha>` report id and the S3
+  /// object the upload produced (see uploadKnowledgebaseDocument).
+  reportId String @map("report_id")
+  s3Key    String @map("s3_key")
+
+  /// Uploader (Better Auth user id), for attribution; kept as a plain column —
+  /// authoritative attribution also lives on the Dagster ingest run.
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  analysisAutomation analysisAutomation @relation(fields: [analysisAutomationId], references: [id], onDelete: Cascade)
+
+  /// Content-addressed re-uploads of the same file to the same automation
+  /// update the existing row rather than duplicating it.
+  @@unique([analysisAutomationId, reportId])
+  @@index([analysisAutomationId])
+  @@map("analysis_automation_documents")
 }
 
 enum AnalysisRequestStatus {
@@ -2009,7 +2157,7 @@ model geonames {
   admin1Code   String? @map("admin1_code")
   population   BigInt  @default(0)
 
-  names        geonamesName[]
+  names geonamesName[]
 
   @@index([countryCode])
   @@map("geonames")
@@ -2019,12 +2167,12 @@ model geonames {
 /// and every alternatename — normalised (unaccent + lower). Trigram-indexed
 /// so a fuzzy transliteration lookup hits any spelling a report might use.
 model geonamesName {
-  id          BigInt   @id @default(autoincrement())
-  geonamesId  Int      @map("geonames_id")
-  nameNorm    String   @map("name_norm")
-  countryCode String   @map("country_code")
+  id          BigInt @id @default(autoincrement())
+  geonamesId  Int    @map("geonames_id")
+  nameNorm    String @map("name_norm")
+  countryCode String @map("country_code")
 
-  place       geonames @relation(fields: [geonamesId], references: [geonamesId], onDelete: Cascade)
+  place geonames @relation(fields: [geonamesId], references: [geonamesId], onDelete: Cascade)
 
   @@index([geonamesId])
   @@index([countryCode])
@@ -2087,10 +2235,16 @@ model groundSources {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// The team whose ERMs triage this source (e.g. the Sudan hotline to the
+  /// Sudan team). NULL = no team yet: only platform admins see its threads.
+  teamId String? @map("team_id")
+  team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   threads  groundThreads[]
   messages groundMessages[]
 
   @@index([kind])
+  @@index([teamId])
   @@map("ground_sources")
 }
 
@@ -2112,16 +2266,16 @@ model groundThreads {
 
   /// "unverified" | "approved_private" | "approved_public" | "rejected".
   /// Every thread starts unverified; approved_public triggers promotion.
-  reviewState String  @default("unverified") @map("review_state")
+  reviewState  String    @default("unverified") @map("review_state")
   /// Auth user id of the reviewer who last transitioned reviewState.
-  reviewedBy  String? @map("reviewed_by")
-  reviewedAt  DateTime? @map("reviewed_at")
+  reviewedBy   String?   @map("reviewed_by")
+  reviewedAt   DateTime? @map("reviewed_at")
   /// Optional reviewer note (why rejected / what was corrected).
-  reviewNote  String? @map("review_note")
+  reviewNote   String?   @map("review_note")
   /// Structured reason for a rejection: "spam" | "not_report" |
   /// "unusable" | "duplicate" (REJECT_REASONS in services/ground-review.ts).
   /// Set only while reviewState is "rejected"; cleared on any other decision.
-  rejectReason String? @map("reject_reason")
+  rejectReason String?   @map("reject_reason")
 
   /// Set when an approved_public thread has been promoted through
   /// createSignal — the id of the created `signals` row. One-shot: a
@@ -2188,7 +2342,7 @@ model groundMessages {
   /// S3 keys of stored attachments (content-hashed under
   /// "ground/{groundSourceId}/…"). Presigned URLs are generated at read /
   /// promotion time, never stored.
-  mediaKeys String[] @map("media_keys")
+  mediaKeys         String[] @map("media_keys")
   /// Attachment filenames referenced by the export ("<attached: …>") —
   /// kept for matching/debugging; count of media the export omitted
   /// ("image omitted") is preserved so caption-less omitted media still
@@ -2323,6 +2477,29 @@ model agentWorkingMemory {
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agent_working_memory")
+}
+
+/// What a self-registered Developer tells us about themselves on the
+/// Portal's Welcome page (/portal/welcome). 1:1 with `user`, kept out of
+/// Better Auth's own table. `user.name` stays the source of truth for the
+/// name; everything here is optional.
+model developerProfile {
+  id                   String  @id @default(cuid())
+  userId               String  @unique @map("user_id")
+  personalWebsite      String? @map("personal_website")
+  organisation         String?
+  organisationWebsite  String? @map("organisation_website")
+  linkedinUrl          String? @map("linkedin_url")
+  githubUrl            String? @map("github_url")
+  /// Free text: what kind of contribution they'd like to make.
+  contributionInterest String? @map("contribution_interest")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("developer_profile")
 }
 
 // ─── Estimates (CLEAR Domain Ontology v0.3.0) ──────────────────────────────
@@ -2576,10 +2753,10 @@ model impactPrior {
   /// locationLabel?, scope }]` — one entry per case.
   basis           Json
 
-  validFrom DateTime? @map("valid_from")
-  validTo   DateTime? @map("valid_to")
+  validFrom     DateTime? @map("valid_from")
+  validTo       DateTime? @map("valid_to")
   /// Skill / handler version string that produced this row.
-  methodVersion String @map("method_version")
+  methodVersion String    @map("method_version")
 
   supersedesId String?       @map("supersedes_id")
   supersedes   impactPrior?  @relation("ImpactPriorSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
@@ -2659,4 +2836,125 @@ model caseProposal {
   @@index([state, createdAt])
   @@index([taskId])
   @@map("case_proposals")
+}
+
+// ─── Briefs ────────────────────────────────────────────────────────────────
+
+/// How far back a Brief window reaches from its end: 24 hours, 7 days or
+/// 30 days.
+enum BriefCadence {
+  daily
+  weekly
+  monthly
+}
+
+/// A Brief is edited while `draft` and frozen once `sent`.
+enum BriefStatus {
+  draft
+  sent
+}
+
+/// Which detection a picked Brief item points at.
+enum BriefItemKind {
+  alert
+  event
+  signal
+}
+
+/// A Brief: an admin's hand-picked summary of one area over one Brief window
+/// (the last 24h / 7d / 30d ending when it was started or last refreshed),
+/// emailed to a Recipient list. Sending freezes it: item snapshots and counts
+/// are written then and never change again.
+model brief {
+  id           String       @id @default(cuid())
+  cadence      BriefCadence
+  status       BriefStatus  @default(draft)
+  title        String
+  /// Area: one locations.id (country, admin1 or admin2). Plain column, no FK:
+  /// a sent Brief is a record and must survive location pruning (same as
+  /// analysis.locationIds).
+  locationId   String       @map("location_id")
+  /// Display name of the area, frozen at create.
+  locationName String       @map("location_name")
+  windowStart  DateTime     @map("window_start")
+  windowEnd    DateTime     @map("window_end")
+  /// Markdown-lite: **bold**, *italic*, `- ` bullets, [text](https://...).
+  summary      String       @default("")
+  closingNotes String       @default("") @map("closing_notes")
+
+  /// Set at send: { signal|event|alert: { total, bySeverity[{key,count}],
+  /// byType[{key,count}] } }. Null while draft (counts are computed live).
+  countsSnapshot Json? @map("counts_snapshot")
+
+  /// Plain column, no FK: the audit trail survives user deletion.
+  createdById  String    @map("created_by_id")
+  sentAt       DateTime? @map("sent_at")
+  sentById     String?   @map("sent_by_id")
+  /// The Recipient list it was sent to. Plain column, no FK.
+  sentToListId String?   @map("sent_to_list_id")
+  sentCount    Int?      @map("sent_count")
+  failedCount  Int?      @map("failed_count")
+
+  items briefItem[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@map("briefs")
+}
+
+/// A detection picked into a Brief, with an optional analyst note. The
+/// snapshot is what the Brief shows: built server-side on add, rewritten from
+/// live data at send, then frozen.
+model briefItem {
+  id       String        @id @default(cuid())
+  briefId  String        @map("brief_id")
+  brief    brief         @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  kind     BriefItemKind
+  /// alerts / events / signals id. No FK: the pipeline merges and deletes
+  /// entities, and a sent Brief must survive that.
+  entityId String        @map("entity_id")
+  /// Order within its kind group.
+  position Int
+  note     String?
+  /// { title, severity, locationName, eventTypes[], occurredAt, url }.
+  snapshot Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([briefId, kind, entityId])
+  @@map("brief_items")
+}
+
+/// A named set of email addresses a Brief is sent to. Addresses need not
+/// belong to CLEAR users.
+model recipientList {
+  id          String                @id @default(cuid())
+  name        String                @unique
+  /// Plain column, no FK, like brief.createdById.
+  createdById String                @map("created_by_id")
+  members     recipientListMember[]
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  @@map("recipient_lists")
+}
+
+/// One address on a Recipient list. Each carries its own unsubscribe token,
+/// put in the link of every Brief email it is sent; following it sets
+/// `unsubscribedAt` and later sends skip the address.
+model recipientListMember {
+  id               String        @id @default(cuid())
+  listId           String        @map("list_id")
+  list             recipientList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  /// Lower-cased on write.
+  email            String
+  unsubscribeToken String        @unique @default(cuid()) @map("unsubscribe_token")
+  unsubscribedAt   DateTime?     @map("unsubscribed_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  @@unique([listId, email])
+  @@map("recipient_list_members")
 }

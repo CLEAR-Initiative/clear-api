@@ -3,28 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
-import { pushToProspects } from "../services/exponential.js";
-import { sendSignupAcknowledgement } from "../services/signup-ack.js";
-
-/**
- * Split a Better Auth display name into first / last so the CRM contact
- * row gets populated as expected. Best-effort — accounts created with a
- * single-word name land it in `firstName` with `lastName` left null.
- */
-function splitName(name: string | null | undefined): {
-  firstName: string | undefined;
-  lastName: string | undefined;
-} {
-  if (!name) return { firstName: undefined, lastName: undefined };
-  const trimmed = name.trim();
-  if (!trimmed) return { firstName: undefined, lastName: undefined };
-  const space = trimmed.indexOf(" ");
-  if (space === -1) return { firstName: trimmed, lastName: undefined };
-  return {
-    firstName: trimmed.slice(0, space),
-    lastName: trimmed.slice(space + 1).trim() || undefined,
-  };
-}
+import { onDeveloperSignedUp } from "../services/signup.js";
 
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
@@ -53,28 +32,10 @@ export const auth = betterAuth({
       create: {
         // Fires immediately after Better Auth inserts a new user row,
         // i.e. on successful self-signup via /api/auth/sign-up/email.
-        // 1) CLEAR-branded ack email from this API.
-        // 2) CRM contact into Exponential prospects (approval later
-        //    moves them to the approved collection). Best-effort: if
-        //    either side fails, signup still succeeds.
+        // Ack email, CRM prospects sync and maintainer notification —
+        // all best-effort, see services/signup.ts.
         after: async (user) => {
-          const { firstName, lastName } = splitName(user.name);
-          const [crm] = await Promise.all([
-            pushToProspects({
-              email: user.email,
-              firstName,
-              lastName,
-            }),
-            sendSignupAcknowledgement({
-              email: user.email,
-              name: firstName ?? user.name,
-            }),
-          ]);
-          if (!crm.ok) {
-            console.error(
-              `[auth.signup] CRM prospects sync failed for ${user.email}: ${crm.reason}`,
-            );
-          }
+          await onDeveloperSignedUp(user);
         },
       },
     },

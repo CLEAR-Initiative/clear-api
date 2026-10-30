@@ -40,7 +40,7 @@ describe("detectionMetrics", () => {
     );
     expect(m.from.toISOString()).toBe("2026-09-28T00:00:00.000Z");
     expect(m.weekly.map((w) => w.isoWeek)).toEqual(["2026-W40", "2026-W41"]);
-    expect(m.exclusions).toHaveLength(4);
+    expect(m.exclusions).toHaveLength(5);
     const [, ...values] = $queryRaw.mock.calls[0] as unknown as [unknown, ...unknown[]];
     expect(JSON.stringify(values)).toContain("loc-sdn");
   });

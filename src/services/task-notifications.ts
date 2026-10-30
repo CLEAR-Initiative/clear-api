@@ -8,6 +8,7 @@
  * never surfaces to the Worker whose write triggered it.
  */
 
+import { eventLink } from "../utils/event-link.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
@@ -106,7 +107,8 @@ export async function notifyTaskOutcome(
   try {
     const recipients = await taskRecipients(prisma, task);
     if (recipients.length === 0) return;
-    const actionUrl = task.subjectType === "event" ? `/event/${task.subjectId}` : null;
+    const isEvent = task.subjectType === "event";
+    const actionUrl = isEvent ? eventLink(task.subjectId, "inbox") : null;
     const message = taskOutcomeMessage(task, outcomeKind);
 
     await prisma.notifications.createMany({
@@ -121,7 +123,9 @@ export async function notifyTaskOutcome(
 
     const emailUsers = recipients.filter((r) => r.emailNotification && r.email);
     if (emailUsers.length === 0) return;
-    const eventUrl = actionUrl ? `${env.FRONTEND_URL}${actionUrl}` : env.FRONTEND_URL;
+    const eventUrl = isEvent
+      ? eventLink(task.subjectId, "email", env.FRONTEND_URL)
+      : env.FRONTEND_URL;
     void (async () => {
       try {
         const provider = await getEmailProvider();

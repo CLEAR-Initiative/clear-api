@@ -5,7 +5,7 @@ import {
   renderPortalToast,
   type PortalShellOptions,
 } from "./shell.js";
-import { renderAuthPageHead, renderWaitingPageStyles } from "../ui/auth-page.js";
+import { renderAuthPageHead } from "../ui/auth-page.js";
 import { renderFontLinks } from "../ui/theme.js";
 import { renderIconLinks } from "../ui/icons.js";
 import {
@@ -26,6 +26,12 @@ export interface PortalOptions {
 /** Portal tabs readable without a session. Auth-only tabs redirect to sign-in. */
 export const PORTAL_PUBLIC_TABS = ["getting-started", "reference"] as const;
 
+/**
+ * Tabs a pending sign-up can open. Any other hash, or none, sends them to
+ * the Welcome page — client-side, because only the browser sees the hash.
+ */
+export const PORTAL_PENDING_TABS = [...PORTAL_PUBLIC_TABS, "authentication"] as const;
+
 const PORTAL_SVGS = {
   modalClose:
     '<svg width="15" height="20" viewBox="0 0 15 20" aria-hidden="true"><path fill="currentColor" d="M2.5 2.5 12.5 12.5M12.5 2.5 2.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -43,6 +49,7 @@ const PORTAL_SVGS = {
 
 export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   const authed = Boolean(userEmail);
+  const pending = authed && userRole === "pending";
   const shellOpts: PortalShellOptions = {
     surface: "portal",
     account: authed ? { email: userEmail!, role: userRole } : null,
@@ -54,6 +61,7 @@ export function renderPortal({ userEmail, userRole }: PortalOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Portal</title>
+  ${pending ? `<script>if (${JSON.stringify(PORTAL_PENDING_TABS)}.indexOf(location.hash.slice(1)) === -1) location.replace('/portal/welcome');</script>` : ""}
   ${renderIconLinks()}
   <meta name="theme-color" content="#0a0a0b">
   ${renderFontLinks()}
@@ -699,8 +707,13 @@ print(data['me'])</code><button class="copy-btn" onclick="copyCode(this)">Copy</
     // --- Tab routing ---
     var PORTAL_AUTHED = ${authed ? "true" : "false"};
     var PORTAL_PUBLIC_TABS = ${JSON.stringify(PORTAL_PUBLIC_TABS)};
+    var PORTAL_PENDING_TABS = ${pending ? JSON.stringify(PORTAL_PENDING_TABS) : "null"};
 
     function showTab(name) {
+      if (PORTAL_PENDING_TABS && PORTAL_PENDING_TABS.indexOf(name) === -1) {
+        window.location.href = '/portal/welcome';
+        return;
+      }
       if (!PORTAL_AUTHED && PORTAL_PUBLIC_TABS.indexOf(name) === -1) {
         var next = '/portal#' + name;
         window.location.href = '/portal/login?next=' + encodeURIComponent(next);
@@ -1113,19 +1126,92 @@ export function safePortalNext(raw?: string | null): string {
   return `${pathname}${search}${hash}`;
 }
 
+/** Contribution areas, in the order the Welcome page form lists them. */
+const CONTRIBUTION_AREAS = [
+  "Frontend",
+  "API",
+  "Data pipeline and LLMs",
+  "Data and domain expertise",
+  "Docs",
+] as const;
+
+/**
+ * The pitch beside Create Account: what CLEAR is, where a contributor can
+ * help, and what happens after sign-up. Copy is borrowed from the home
+ * page hero and the Welcome page so the three stay in step; styling uses
+ * the same marketing theme and hero classes as the home page.
+ */
+function renderContributorPitch(): string {
+  return `<section class="pitch" aria-labelledby="pitch-title">
+    <span class="pill"><span class="dot"></span> Contribute &middot; Alpha &middot; Live in Sudan</span>
+    <h2 id="pitch-title">Help build the <span class="accent">humanitarian data commons.</span></h2>
+    <p class="lead"><strong>CLEAR</strong> is NRC&rsquo;s open early-warning platform: verified crisis signals, events, and alerts behind one GraphQL API. We&rsquo;re looking for contributors.</p>
+    <p class="eyebrow">Where you can help</p>
+    <ul class="pitch-areas">
+      ${CONTRIBUTION_AREAS.map((a) => `<li>${a}</li>`).join("")}
+    </ul>
+    <p class="eyebrow">What happens next</p>
+    <ol class="pitch-steps">
+      <li><span class="n">1</span><span>Create your account. It takes a minute.</span></li>
+      <li><span class="n">2</span><span>Tell us what you&rsquo;d like to work on.</span></li>
+      <li><span class="n">3</span><span>A maintainer gets in touch, and you&rsquo;ll get an email when your API access is approved.</span></li>
+    </ol>
+    <p class="pitch-foot">Open source &middot; MIT &middot; <a href="https://github.com/CLEAR-Initiative" target="_blank" rel="noopener noreferrer">github.com/CLEAR-Initiative</a></p>
+  </section>`;
+}
+
+function renderContributorPitchStyles(): string {
+  return `<style>
+    /* Contributor pitch: same tokens and hero styling as the home page. */
+    body { padding: 2rem; }
+    .auth-layout { display: grid; grid-template-columns: minmax(0, 30rem) 380px; gap: 4rem; align-items: center; max-width: 100%; }
+    .auth-layout:not([data-form="register"]) { grid-template-columns: 380px; }
+    .auth-layout:not([data-form="register"]) .pitch { display: none; }
+    .auth-layout .card { max-width: 100%; }
+    .pill { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-muted); border: 1px solid var(--color-border); border-radius: 999px; padding: 0.35rem 0.8rem; }
+    .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 3px rgba(242,97,42,0.18); }
+    .pitch h2 { font-size: 2.4rem; font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; margin: 1.25rem 0 1.1rem; }
+    .pitch h2 .accent { color: var(--color-accent); }
+    .pitch .lead { font-size: 1rem; line-height: 1.6; color: var(--color-muted); margin-bottom: 1.75rem; }
+    .pitch .lead strong { color: var(--color-text); font-weight: 600; }
+    .pitch .eyebrow { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-label); margin-bottom: 0.7rem; }
+    .pitch-areas { list-style: none; display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 1.6rem; }
+    .pitch-areas li { font-size: 0.8rem; color: var(--color-text); border: 1px solid var(--color-border-2); border-radius: 999px; padding: 0.25rem 0.75rem; }
+    .pitch-steps { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.6rem; }
+    .pitch-steps li { display: flex; gap: 0.75rem; align-items: baseline; font-size: 0.9rem; line-height: 1.5; color: var(--color-muted); }
+    .pitch-steps .n { flex: 0 0 1.5rem; height: 1.5rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-accent); background: var(--color-accent-soft); border: 1px solid rgba(242,97,42,0.35); transform: translateY(-0.1rem); }
+    .pitch-foot { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-label); }
+    .pitch-foot a { color: var(--color-muted); }
+    .pitch-foot a:hover { color: var(--color-accent); }
+    @media (max-width: 900px) {
+      body { align-items: flex-start; padding: 1.5rem 1rem 2.5rem; }
+      .auth-layout, .auth-layout:not([data-form="register"]) { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; width: 100%; max-width: 30rem; }
+      .auth-layout:not([data-form="register"]) { margin-top: 15vh; }
+      .pitch h2 { font-size: 1.85rem; margin: 1rem 0 0.75rem; }
+      .pitch .lead { font-size: 0.92rem; margin-bottom: 1.25rem; }
+      .pitch-steps { margin-bottom: 0; }
+      .pitch-foot { display: none; }
+      .auth-layout .card { width: 100%; padding: 1.5rem; }
+    }
+  </style>`;
+}
+
 export function renderLoginPage(opts?: { next?: string }): string {
   const nextJson = JSON.stringify(safePortalNext(opts?.next));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   ${renderAuthPageHead({ title: "Developer Portal &mdash; Create Account" })}
+  ${renderContributorPitchStyles()}
 </head>
 <body>
+  <div class="auth-layout" id="auth-layout" data-form="register">
+  ${renderContributorPitch()}
   <div class="card">
     <!-- Register first — first-time visitors need an account more often than a sign-in. -->
     <div id="register-form">
-      <h1>Create Account</h1>
-      <p>Sign up to get started with the API.</p>
+      <h1>Join as a contributor</h1>
+      <p>Free and open source. API access follows once you're approved.</p>
       <label for="register-name">Name</label>
       <input type="text" id="register-name" autocomplete="name" placeholder="Your name">
       <label for="register-email">Email</label>
@@ -1162,10 +1248,13 @@ export function renderLoginPage(opts?: { next?: string }): string {
       <div class="toggle"><a href="#" onclick="showForm('signin'); return false;">Back to sign in</a></div>
     </div>
   </div>
+  </div>
   <script>
     var LOGIN_NEXT = ${nextJson};
 
     function showForm(name) {
+      // The contributor pitch only sits beside Create Account.
+      document.getElementById('auth-layout').setAttribute('data-form', name);
       ['signin', 'register', 'forgot'].forEach(function (form) {
         document.getElementById(form + '-form').style.display = form === name ? 'block' : 'none';
       });
@@ -1269,7 +1358,9 @@ export function renderLoginPage(opts?: { next?: string }): string {
           body: JSON.stringify({ name: name, email: email, password: password }),
         });
         if (res.ok) {
-          window.location.href = LOGIN_NEXT;
+          // New accounts are always pending approval; their first stop is
+          // the Welcome page, whatever page sent them to sign-in.
+          window.location.href = '/portal/welcome';
         } else {
           var err = {};
           try { err = await res.json(); } catch(e) {}
@@ -2145,6 +2236,18 @@ function renderAdminShell(opts: AdminShellOptions): string {
       text-decoration: none;
       border-color: var(--color-accent);
     }
+    a.users-profile-link {
+      color: var(--color-accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      word-break: break-word;
+    }
+    .users-profile-interest {
+      display: block;
+      font-weight: 400;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
     .swipe-delete {
       --swipe-delete-tab-width: 4.5rem;
       --swipe-delete-gap: 10px;
@@ -2645,6 +2748,57 @@ export interface AdminUserRow {
   role: string | null;
   createdAt: Date;
   organisations: { id: string; name: string }[];
+  /** What they told us on the Welcome page; null until they submit it. */
+  profile?: AdminUserProfile | null;
+}
+
+export interface AdminUserProfile {
+  personalWebsite: string | null;
+  organisation: string | null;
+  organisationWebsite: string | null;
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  contributionInterest: string | null;
+}
+
+/** External link from user-supplied data. Only http(s) becomes a link. */
+function externalLink(url: string, label: string): string {
+  if (!/^https?:\/\//i.test(url)) return escapeHtml(url);
+  return `<a class="users-profile-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+}
+
+/**
+ * Welcome page answers for a pending sign-up, so whoever approves can see
+ * who they are. Every value is user-supplied: all of it is escaped.
+ */
+function renderUserProfileStats(
+  profile: AdminUserProfile | null | undefined,
+  stat: (label: string, value: string, extraClass?: string) => string,
+): string {
+  const muted = (text: string) => `<span style="color:var(--color-muted);">${escapeHtml(text)}</span>`;
+  if (!profile) {
+    return stat("Profile", muted("Not filled in yet"), " users-stat--row");
+  }
+  const affiliation = profile.organisation
+    ? profile.organisationWebsite
+      ? externalLink(profile.organisationWebsite, profile.organisation)
+      : escapeHtml(profile.organisation)
+    : profile.organisationWebsite
+      ? externalLink(profile.organisationWebsite, profile.organisationWebsite)
+      : muted("—");
+  const links = [
+    profile.personalWebsite ? externalLink(profile.personalWebsite, "Website") : "",
+    profile.linkedinUrl ? externalLink(profile.linkedinUrl, "LinkedIn") : "",
+    profile.githubUrl ? externalLink(profile.githubUrl, "GitHub") : "",
+  ].filter(Boolean);
+  const interest = profile.contributionInterest
+    ? `<span class="users-profile-interest">${escapeHtml(profile.contributionInterest)}</span>`
+    : muted("—");
+  return [
+    stat("Affiliation", affiliation),
+    stat("Links", links.length ? `<span class="users-org-list">${links.join("")}</span>` : muted("—")),
+    stat("Would like to contribute", interest, " users-stat--row"),
+  ].join("");
 }
 
 interface RenderAdminUsersOptions {
@@ -2728,6 +2882,7 @@ export function renderAdminUsers(opts: RenderAdminUsersOptions): string {
             ${stat("Organisation", orgs, " users-stat--row")}
             ${stat("Role", roleControl)}
             ${stat("Signed up", escapeHtml(u.createdAt.toISOString().slice(0, 10)))}
+            ${u.role === "pending" ? renderUserProfileStats(u.profile, stat) : ""}
           </div>
           ${action}
         </article>`;
@@ -3393,59 +3548,6 @@ export function renderAdminOrgDetail(opts: RenderAdminOrgDetailOptions): string 
     backLink: { href: "/portal/admin?tab=organisations", label: "← All organisations" },
     headingAlign: "end",
   });
-}
-
-// ─── Waiting-for-approval screen ──────────────────────────────────────────
-
-export interface WaitingForApprovalOptions {
-  userEmail: string;
-}
-
-/**
- * What a pending user sees when they hit /portal after signing up.
- * No tabs, no API key UI — just a confirmation that the account
- * exists and an admin will reach out by email once they're approved.
- */
-export function renderWaitingForApproval(opts: WaitingForApprovalOptions): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pending approval · CLEAR API</title>
-  ${renderIconLinks()}
-  ${renderFontLinks({ mono: false })}
-  ${renderWaitingPageStyles()}
-</head>
-<body>
-  <div class="card">
-    <div class="badge">Pending approval</div>
-    <h1>Thanks for registering</h1>
-    <p>You're signed in as <span class="email">${escapeHtml(opts.userEmail)}</span>. An admin will review your application and reach out by email once approved. You'll be able to access the developer dashboard at that point.</p>
-    <p style="font-size: 0.85rem;">No action needed from you for now. In the meantime, you can explore the <a class="docs-link" href="/docs">API documentation</a>.</p>
-    <button type="button" class="signout" onclick="signOut()">Sign out</button>
-  </div>
-  <script>
-    // Better Auth's /api/auth/sign-out endpoint clears the session cookie
-    // and responds with JSON. A plain HTML form POST would leave the
-    // browser sitting on that JSON page; instead we fetch it from JS
-    // then redirect back to /portal, which renders the login page now
-    // that the session is gone. Mirrors the signOut() helper on the
-    // main developer portal.
-    async function signOut() {
-      try {
-        await fetch('/api/auth/sign-out', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-      } catch (e) {}
-      window.location.href = '/portal';
-    }
-  </script>
-</body>
-</html>`;
 }
 
 // ─── Webhooks tab ──────────────────────────────────────────────────────

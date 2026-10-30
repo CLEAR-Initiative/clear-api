@@ -275,12 +275,19 @@ describe("pendingSignals (extra)", () => {
 // ─── A2. Event (alert-stage queue) ───────────────────────────────────────────
 
 describe("eventsPendingAlert", () => {
-  it("filters severity>=minSeverity + no-alert oldest-first and clamps `first` to [1, 500]", async () => {
+  // The queue also loads the NRC-relevant glide codes once per call to drop
+  // events that `createAlert` would skip anyway (see event.resolver.test.ts for
+  // the filter cases). An empty relevant set + no events keeps these shape
+  // tests about the Prisma filter only.
+  const disasterTypes = () => ({ findMany: vi.fn(async () => []) });
+
+  it("filters severity>=minSeverity + no-alert oldest-first (id tiebreak) and clamps `first` to [1, 500]", async () => {
     const findMany = vi.fn(async () => []);
-    const context = ctx({ events: { findMany } });
+    const context = ctx({ events: { findMany }, disasterTypes: disasterTypes() });
 
     await eventResolvers.Query.eventsPendingAlert({}, { first: 9999, minSeverity: 3 }, context);
 
+    expect(findMany).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith({
       where: {
         severity: { gte: 3 },
@@ -288,14 +295,14 @@ describe("eventsPendingAlert", () => {
         isDummy: false,
         lastSignalCreatedAt: { gte: expect.any(Date) }, // 48h age bound (default)
       },
-      orderBy: { firstSignalCreatedAt: "asc" },
+      orderBy: [{ firstSignalCreatedAt: "asc" }, { id: "asc" }],
       take: 500, // clamped down from 9999
     });
   });
 
   it("defaults minSeverity to 4 and `first` to 100 and applies the 48h age bound", async () => {
     const findMany = vi.fn(async () => []);
-    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }));
+    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany }, disasterTypes: disasterTypes() }));
     expect(findMany).toHaveBeenCalledWith({
       where: {
         severity: { gte: 4 },
@@ -303,17 +310,17 @@ describe("eventsPendingAlert", () => {
         isDummy: false,
         lastSignalCreatedAt: { gte: expect.any(Date) },
       },
-      orderBy: { firstSignalCreatedAt: "asc" },
+      orderBy: [{ firstSignalCreatedAt: "asc" }, { id: "asc" }],
       take: 100,
     });
   });
 
   it("omits the age bound when maxAgeHours is 0", async () => {
     const findMany = vi.fn(async () => []);
-    await eventResolvers.Query.eventsPendingAlert({}, { maxAgeHours: 0 }, ctx({ events: { findMany } }));
+    await eventResolvers.Query.eventsPendingAlert({}, { maxAgeHours: 0 }, ctx({ events: { findMany }, disasterTypes: disasterTypes() }));
     expect(findMany).toHaveBeenCalledWith({
       where: { severity: { gte: 4 }, alerts: { none: {} }, isDummy: false },
-      orderBy: { firstSignalCreatedAt: "asc" },
+      orderBy: [{ firstSignalCreatedAt: "asc" }, { id: "asc" }],
       take: 100,
     });
   });
@@ -321,14 +328,14 @@ describe("eventsPendingAlert", () => {
   it("rejects a viewer (admin/pipeline only)", async () => {
     const findMany = vi.fn();
     await expect(
-      eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }, "viewer")),
+      eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany }, disasterTypes: disasterTypes() }, "viewer")),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(findMany).not.toHaveBeenCalled();
   });
 
   it("accepts a pipeline-role user", async () => {
     const findMany = vi.fn(async () => []);
-    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany } }, "pipeline"));
+    await eventResolvers.Query.eventsPendingAlert({}, {}, ctx({ events: { findMany }, disasterTypes: disasterTypes() }, "pipeline"));
     expect(findMany).toHaveBeenCalled();
   });
 });
@@ -506,5 +513,50 @@ describe("markTranslated", () => {
       {}, { entityType: "event", entityId: "x", locale: "ar" }, ctx({ translationQueue: { deleteMany } }),
     );
     expect(removed).toBe(false);
+  });
+});
+
+// ─── updateSignalLocation ───────────────────────────────────────────────────
+
+describe("updateSignalLocation", () => {
+  function prismaFor(signalExists = true, locationExists = true) {
+    return {
+      signals: {
+        findUnique: vi.fn(async () => (signalExists ? { id: "s1" } : null)),
+        update: vi.fn(async ({ data }: { data: { locationId: string } }) => ({ id: "s1", ...data })),
+      },
+      locations: {
+        findUnique: vi.fn(async () => (locationExists ? { id: "loc-1" } : null)),
+      },
+    };
+  }
+
+  it("accepts a pipeline-role user (the drain locates push-feed signals)", async () => {
+    const prisma = prismaFor();
+    await signalResolvers.Mutation.updateSignalLocation(
+      {}, { id: "s1", locationId: "loc-1" }, ctx(prisma, "pipeline"),
+    );
+    expect(prisma.signals.update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: { locationId: "loc-1" },
+    });
+  });
+
+  it("rejects a member and an anonymous caller", async () => {
+    for (const role of ["member", null]) {
+      await expect(
+        signalResolvers.Mutation.updateSignalLocation(
+          {}, { id: "s1", locationId: "loc-1" }, ctx(prismaFor(), role),
+        ),
+      ).rejects.toBeInstanceOf(GraphQLError);
+    }
+  });
+
+  it("returns NOT_FOUND for an unknown location instead of an FK error", async () => {
+    await expect(
+      signalResolvers.Mutation.updateSignalLocation(
+        {}, { id: "s1", locationId: "nope" }, ctx(prismaFor(true, false), "pipeline"),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 });

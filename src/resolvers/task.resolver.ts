@@ -34,6 +34,7 @@ import {
   requireNonWorkerContentReader,
   requireRole,
   requireTeamContentWriter,
+  TEAM_ADMIN_ROLE,
   TEAM_ANALYST_ROLE,
   WORKER_ROLE,
 } from "../utils/auth-guard.js";
@@ -224,11 +225,17 @@ function redactForViewer<T extends { requesterId: string | null; lastError: stri
   return { ...row, lastError: null };
 }
 
+/** Team roles that may decide a Task's proposals on their OWN team: the team
+ *  `analyst` and the `team_admin`. Every "who may decide" check below matches
+ *  on this set, so the inbox, the decide gate and the visibility filters agree. */
+const PROPOSAL_DECIDER_TEAM_ROLES: readonly string[] = [TEAM_ANALYST_ROLE, TEAM_ADMIN_ROLE];
+
 /**
  * Who may DECIDE a proposed CaseProposal / ImpactPrior on a Task: a platform
- * admin (any Task), or a team `analyst` on the Task's OWN team. A null `teamId`
- * (platform-owned Task) is admin-only. Replaces the old global `admin`/`analyst`
- * decider roles — `analyst` is a TEAM role now, scoped to its team.
+ * admin (any Task), or a team `analyst` or `team_admin` on the Task's OWN team
+ * (PROPOSAL_DECIDER_TEAM_ROLES). A null `teamId` (platform-owned Task) is
+ * admin-only. Replaces the old global `admin`/`analyst` decider roles —
+ * `analyst` is a TEAM role now, scoped to its team.
  */
 async function userCanDecide(
   context: Context,
@@ -237,29 +244,30 @@ async function userCanDecide(
   const user = context.user;
   if (!user) return false;
   if (isPlatformAdmin(user)) return true;
-  // Approved humans only: a team `analyst` carries the global `member` role, so
+  // Approved humans only: a team decider carries the global `member` role, so
   // a `pending` signup or a service role can never decide even if it somehow
-  // holds an analyst membership.
+  // holds an analyst / team_admin membership.
   if (user.role !== "member") return false;
   if (!teamId) return false; // platform-owned Task → admin-only
   const membership = await context.prisma.teamMembers.findUnique({
     where: { teamId_userId: { teamId, userId: user.id } },
     select: { role: true },
   });
-  return membership?.role === TEAM_ANALYST_ROLE;
+  return !!membership && PROPOSAL_DECIDER_TEAM_ROLES.includes(membership.role);
 }
 
 /**
- * The teamIds on which the caller is a team `analyst` — the set that, with the
- * platform-admin bypass, decides which `proposed`/`rejected` rows a non-
- * requester may see in the visibility filters below. One query, computed once
- * per filter pass. Empty for admins (they bypass) and non-analysts.
+ * The teamIds on which the caller is a team decider (`analyst` or `team_admin`)
+ * — the set that, with the platform-admin bypass, decides which
+ * `proposed`/`rejected` rows a non-requester may see in the visibility filters
+ * below. One query, computed once per filter pass. Empty for admins (they
+ * bypass) and non-deciders.
  */
 async function deciderTeamIds(context: Context): Promise<Set<string>> {
   const user = context.user;
   if (!user || isPlatformAdmin(user)) return new Set();
   const rows = await context.prisma.teamMembers.findMany({
-    where: { userId: user.id, role: TEAM_ANALYST_ROLE },
+    where: { userId: user.id, role: { in: [...PROPOSAL_DECIDER_TEAM_ROLES] } },
     select: { teamId: true },
   });
   return new Set(rows.map((r) => r.teamId));
@@ -267,9 +275,9 @@ async function deciderTeamIds(context: Context): Promise<Set<string>> {
 
 /**
  * Inbox-access gate for the CaseProposal list / decision. Admits a platform
- * admin UNSCOPED and a team `analyst` SCOPED to their teams. Returns
- * `teamScope`: the teamIds the caller may decide for, or `null` meaning "all
- * teams" (admin). Only a global `member` triggers the team lookup; service
+ * admin UNSCOPED and a team `analyst` or `team_admin` SCOPED to the teams where
+ * they hold one of those roles. Returns `teamScope`: the teamIds the caller may
+ * decide for, or `null` meaning "all teams" (admin). Only a global `member` triggers the team lookup; service
  * roles (worker/pipeline/agent) and pending users are rejected without a DB
  * touch. `analyst` is a TEAM role now, so there is no global-analyst bypass.
  * (Case proposals are the web/impact-prior flow — distinct from the hotline
@@ -282,13 +290,13 @@ async function requireCaseProposalInboxAccess(
   const user = requireAuth(context);
   if (isPlatformAdmin(user)) return { user, teamScope: null };
   if (user.role === "member") {
-    const analystTeams = (
+    const deciderTeams = (
       await context.prisma.teamMembers.findMany({
-        where: { userId: user.id, role: TEAM_ANALYST_ROLE },
+        where: { userId: user.id, role: { in: [...PROPOSAL_DECIDER_TEAM_ROLES] } },
         select: { teamId: true },
       })
     ).map((m) => m.teamId);
-    if (analystTeams.length > 0) return { user, teamScope: analystTeams };
+    if (deciderTeams.length > 0) return { user, teamScope: deciderTeams };
   }
   throw new GraphQLError("Insufficient permissions", {
     extensions: { code: "FORBIDDEN" },
@@ -296,8 +304,8 @@ async function requireCaseProposalInboxAccess(
 }
 
 /**
- * Per-proposal DECIDE gate: a platform admin, or a team `analyst` on the
- * proposal's own team (`userCanDecide`). Call AFTER loading the proposal so the
+ * Per-proposal DECIDE gate: a platform admin, or a team `analyst` or
+ * `team_admin` on the proposal's own team (`userCanDecide`). Call AFTER loading the proposal so the
  * Task's `teamId` is known.
  */
 async function requireCanDecideProposal(
@@ -322,8 +330,8 @@ async function visibleImpactPriors<
 >(context: Context, rows: T[]): Promise<ImpactPriorRow[]> {
   const user = viewerOf(context);
   const admin = isPlatformAdmin(user);
-  // A team analyst decides (and so may see proposed/rejected rows) only on
-  // their own teams; admins see everything.
+  // A team analyst / team admin decides (and so may see proposed/rejected
+  // rows) only on their own teams; admins see everything.
   const deciderTeams = admin ? new Set<string>() : await deciderTeamIds(context);
   const isDeciderFor = (teamId: string | null) =>
     admin || (!!teamId && deciderTeams.has(teamId));
@@ -540,15 +548,16 @@ export const taskResolvers = {
 
   Query: {
     // The Inbox's per-case list (V4): CaseProposals in one state across
-    // every Event, newest first, `proposed` by default. Deciders only (admin or
-    // owning-team analyst): it lists exactly what the caller may decide.
+    // every Event, newest first, `proposed` by default. Deciders only (admin, or
+    // owning-team analyst / team admin): it lists exactly what the caller may
+    // decide.
     caseProposals: async (
       _parent: unknown,
       args: { state?: CaseProposalRow["state"] | null; limit?: number | null; offset?: number | null },
       context: Context,
     ) => {
-      // Admin gets the whole inbox (teamScope null); a team analyst is scoped to
-      // their teams' Tasks via the relation filter below. (ERMs do NOT decide
+      // Admin gets the whole inbox (teamScope null); a team analyst / team admin
+      // is scoped to their teams' Tasks via the relation filter below. (ERMs do NOT decide
       // case proposals — see requireCaseProposalInboxAccess.)
       const { teamScope } = await requireCaseProposalInboxAccess(context);
       return context.prisma.caseProposal.findMany({
@@ -579,13 +588,14 @@ export const taskResolvers = {
     rejectedCaseUrls: async (_parent: unknown, args: { eventId: string }, context: Context) => {
       const user = requireAuth(context);
       // The Worker needs this before it searches and passes on its role alone;
-      // an admin sees everything. A human decider must be a team `analyst` on a
-      // team that owns one of this Event's Tasks (null-team Tasks are admin-only)
-      // — AND the rejected URLs they get back are scoped to those same teams, so
-      // one team's analyst never reads another team's rejected cases.
+      // an admin sees everything. A human decider must be a team `analyst` or
+      // `team_admin` on a team that owns one of this Event's Tasks (null-team
+      // Tasks are admin-only) — AND the rejected URLs they get back are scoped
+      // to those same teams, so one team's deciders never read another team's
+      // rejected cases.
       let teamScope: string[] | null = null; // null = unrestricted (admin / worker)
       if (user.role !== WORKER_ROLE && !isPlatformAdmin(user)) {
-        // Approved humans only — a team analyst carries global `member`; reject
+        // Approved humans only — a team decider carries global `member`; reject
         // pending/service accounts before any membership lookup.
         if (user.role !== "member") throw forbidden("Insufficient permissions");
         const eventTaskTeams = new Set(
@@ -598,13 +608,13 @@ export const taskResolvers = {
             .map((t) => t.teamId)
             .filter((id): id is string => !!id),
         );
-        const myAnalystTeams = (
+        const myDeciderTeams = (
           await context.prisma.teamMembers.findMany({
-            where: { userId: user.id, role: TEAM_ANALYST_ROLE },
+            where: { userId: user.id, role: { in: [...PROPOSAL_DECIDER_TEAM_ROLES] } },
             select: { teamId: true },
           })
         ).map((m) => m.teamId);
-        teamScope = myAnalystTeams.filter((t) => eventTaskTeams.has(t));
+        teamScope = myDeciderTeams.filter((t) => eventTaskTeams.has(t));
         if (teamScope.length === 0) throw forbidden("Insufficient permissions");
       }
       const rows = await context.prisma.caseProposal.findMany({
@@ -714,7 +724,7 @@ export const taskResolvers = {
       // (Event, kind), NOT per team — the DB enforces one open Task per
       // Event+kind. So if team B already has an open Task and team A requests
       // the same Event+kind, A dedupes onto B's Task; when it completes, only
-      // B's analysts (and admins) can decide the resulting CaseProposals, not
+      // B's analysts / team admins (and admins) can decide the resulting CaseProposals, not
       // A's. Admins can always decide. Making each requesting team reviewable
       // needs a team-aware Task identity + unique index (follow-up); two teams
       // enriching the same Event is rare in practice (events are location-scoped
@@ -824,8 +834,8 @@ export const taskResolvers = {
       return kinds.map((kind) => redactForViewer(byKind.get(kind)!, user));
     },
 
-    // The per-case decision (V4). A platform admin or a team `analyst` on the
-    // proposal's Task team accepts or rejects one case, exactly
+    // The per-case decision (V4). A platform admin or a team `analyst` /
+    // `team_admin` on the proposal's Task team accepts or rejects one case, exactly
     // once. Rejecting keeps the row (and its URL, so the Worker never proposes
     // it again) with the reason, which is required. Accepting writes the case
     // into CLEAR as history in the same transaction that claims the decision,
@@ -849,7 +859,8 @@ export const taskResolvers = {
       const existing = await context.prisma.caseProposal.findUnique({ where: { id: args.id } });
       if (!existing) throw notFound("CaseProposal");
       // Gate on the proposal's Task team now that the entity is confirmed:
-      // admin, or a team analyst on that team (ERMs do not decide proposals).
+      // admin, or a team analyst / team admin on that team (ERMs do not decide
+      // proposals).
       const task = await context.prisma.task.findUnique({
         where: { id: existing.taskId },
         select: { teamId: true },

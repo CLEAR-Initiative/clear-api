@@ -52,6 +52,24 @@ export const signalTypeDef = gql`
     """Reported casualties for the signal. Sourced from ACLED's fatalities
     field; for Dataminr, parsed from raw text via regex."""
     casualties: Int
+    """Real-world event onset extracted from this signal by the shared
+    event-classification LLM. Null when no onset was resolved."""
+    startDate: DateTime
+    """Precision of \`startDate\` (DAY = exact day; coarser = week/month/year)."""
+    startDateAccuracy: DateAccuracy
+    """Real-world event close extracted from this signal. Null = ongoing/unknown."""
+    endDate: DateTime
+    """Precision of \`endDate\`."""
+    endDateAccuracy: DateAccuracy
+    """Natural-hazard magnitude (e.g. 6.4). Null for non-disaster signals."""
+    magnitude: Float
+    """Unit for \`magnitude\` (e.g. "Mw", "km/h"). Null when no magnitude."""
+    magnitudeUnit: String
+    """Named conflict actors extracted from this signal. Empty for
+    non-conflict signals."""
+    actors: [String!]!
+    """Countries the extracted event touches, resolved to admin-0 locations."""
+    countries: [Location!]!
     """Glide code the pipeline grouped this signal with. Null for signals
     grouped before it was recorded, or never grouped."""
     glideCode: String
@@ -73,5 +91,9 @@ export const signalTypeDef = gql`
     comments: [UserComment!]!
     """Open Location challenge for this signal, if any (null when none)."""
     locationChallenge: SignalLocationChallenge
+    """When a decided Location challenge last wrote this signal's location (a
+    person corrected it); null when the location is the source's. Source
+    revisions keep a corrected location."""
+    locationCorrectedAt: DateTime
   }
 `;

@@ -1,6 +1,7 @@
 import type { Context } from "../context.js";
+import { Prisma } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
-import { normalizeGazetteerName } from "../utils/geonames-normalize.js";
+import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.js";
 
 interface Row {
   geonamesId: number;
@@ -33,7 +34,12 @@ export const gazetteerResolvers = {
   Query: {
     resolveGazetteerLocation: async (
       _parent: unknown,
-      args: { name: string; countryCode?: string | null; minSimilarity?: number | null },
+      args: {
+        name: string;
+        countryCode?: string | null;
+        minSimilarity?: number | null;
+        withinLocationId?: string | null;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
@@ -45,6 +51,15 @@ export const gazetteerResolvers = {
       // so a caller could pass -1 (which would disable the floor entirely) or
       // >1 (which would match nothing). Defaults to 0.4.
       const minSim = Math.min(1, Math.max(0, args.minSimilarity ?? 0.4));
+      // Only matches strictly inside this location's geometry. Village names
+      // repeat, so without it the most populous same-named place anywhere
+      // wins. The subquery is uncorrelated, so Postgres evaluates it once; an
+      // unknown id or a location without geometry matches nothing.
+      const inArea = args.withinLocationId
+        ? Prisma.sql`AND ST_Contains(
+            (SELECT l."geometry" FROM "locations" l WHERE l.id = ${args.withinLocationId}),
+            ST_SetSRID(ST_MakePoint(g.longitude, g.latitude), 4326))`
+        : Prisma.empty;
 
       // 1. Exact normalised-name hit. Prefer populated places / admin areas
       //    over hydro/terrain/POI features, then the most-populous tie-break.
@@ -56,10 +71,16 @@ export const gazetteerResolvers = {
         JOIN "geonames" g ON g.geonames_id = n.geonames_id
         WHERE n.name_norm = ${q}
           AND (${cc}::text IS NULL OR n.country_code = ${cc})
+          ${inArea}
         ORDER BY (g.feature_class IN ('P', 'A')) DESC, g.population DESC
         LIMIT 1
       `;
       if (exact.length > 0) return toHit(exact[0], 1.0, true);
+
+      // Arabic names match exactly or not at all: trigrams over short Arabic
+      // words are too coarse (ربك Rabak vs رباك), and the caller falls back
+      // to the Latin spelling, which has the fuzzy tier below.
+      if (hasArabic(q)) return null;
 
       // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator.
       //    `%` prunes by pg_trgm's similarity-threshold GUC, NOT by any
@@ -81,6 +102,7 @@ export const gazetteerResolvers = {
           JOIN "geonames" g ON g.geonames_id = n.geonames_id
           WHERE (${cc}::text IS NULL OR n.country_code = ${cc})
             AND n.name_norm % ${q}
+            ${inArea}
           ORDER BY sim DESC, (g.feature_class IN ('P', 'A')) DESC, g.population DESC
           LIMIT 1
         `;

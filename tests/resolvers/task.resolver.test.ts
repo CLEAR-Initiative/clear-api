@@ -175,6 +175,8 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     "u-coord": { "team-a": "team_member" },
     "u-tanalyst": { "team-a": "analyst" },
     "u-erm": { "team-a": "emergency_response_manager" },
+    // A team_admin on team-a (decides team-a's proposals, not team-b's).
+    "u-tadmin": { "team-a": "team_admin" },
   };
   const teamMembers = {
     findUnique: vi.fn(
@@ -248,11 +250,13 @@ const teamAnalyst: User = { id: "u-tanalyst", role: "member" };
 // An emergency_response_manager: global `member` plus the ERM team membership
 // in the fixture. Sees the whole inbox (ground + proposed cases) in Phase 1.
 const erm: User = { id: "u-erm", role: "member" };
+// A team_admin on team-a: a proposal decider on their own team, like a team analyst.
+const teamAdmin: User = { id: "u-tadmin", role: "member" };
 const worker: User = { id: "u-worker", role: "worker" };
 const rivalWorker: User = { id: "u-worker-2", role: "worker" };
 const pipeline: User = { id: "u-pipe", role: "pipeline" };
 
-const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask } =
+const { requestEventEnrichment, claimTasks, heartbeatTask, completeTask, failTask, cancelTask, decideCaseProposal } =
   taskResolvers.Mutation;
 const { leaseToken: leaseTokenField } = taskResolvers.Task;
 const {
@@ -1083,6 +1087,44 @@ describe("case reads (V4)", () => {
     expect(prisma.caseProposal.findMany).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a team analyst", teamAnalyst],
+    ["a team_admin", teamAdmin],
+  ])("caseProposals admits %s, scoped to their own teams' Tasks", async (_n, user) => {
+    const prisma = makePrisma();
+    await caseProposalsQuery(null, {}, ctx(user, prisma));
+    expect(prisma.caseProposal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { state: "proposed", task: { teamId: { in: ["team-a"] } } } }),
+    );
+  });
+
+  it("caseProposals is FORBIDDEN for a plain team_member", async () => {
+    const prisma = makePrisma();
+    expect((await errorOf(caseProposalsQuery(null, {}, ctx(coordinator, prisma)))).extensions.code).toBe("FORBIDDEN");
+    expect(prisma.caseProposal.findMany).not.toHaveBeenCalled();
+  });
+
+  it("eventCaseProposals shows a team_admin the proposed/rejected rows of their own team's Tasks only", async () => {
+    const prisma = makePrisma();
+    prisma.caseProposal.findMany.mockResolvedValue([
+      row({ id: "cp-a-proposed", task: { requesterId: "someone", teamId: "team-a" } }),
+      row({ id: "cp-a-rejected", state: "rejected", task: { requesterId: "someone", teamId: "team-a" } }),
+      row({ id: "cp-b-proposed", task: { requesterId: "someone", teamId: "team-b" } }),
+    ]);
+    const seen = (await eventCaseProposals(null, { eventId: "ev-1" }, ctx(teamAdmin, prisma))).map((r) => r.id);
+    expect(seen).toEqual(["cp-a-proposed", "cp-a-rejected"]);
+  });
+
+  it("rejectedCaseUrls admits a team_admin scoped to their teams among the Event's Tasks", async () => {
+    const prisma = makePrisma();
+    prisma.task.findMany.mockResolvedValue([{ teamId: "team-a" }, { teamId: "team-b" }]);
+    prisma.caseProposal.findMany.mockResolvedValue([{ sourceUrl: "https://example.test/no" }]);
+    expect(await rejectedCaseUrls(null, { eventId: "ev-1" }, ctx(teamAdmin, prisma))).toEqual(["https://example.test/no"]);
+    expect(prisma.caseProposal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { eventId: "ev-1", state: "rejected", task: { teamId: { in: ["team-a"] } } } }),
+    );
+  });
+
   it("eventCaseProposals follows the ImpactPrior visibility rule", async () => {
     const prisma = makePrisma();
     const rows = [
@@ -1108,6 +1150,51 @@ describe("case reads (V4)", () => {
       expect.objectContaining({ where: { eventId: "ev-1", state: "rejected" }, select: { sourceUrl: true } }),
     );
     expect((await errorOf(rejectedCaseUrls(null, { eventId: "ev-1" }, ctx(viewer, prisma)))).extensions.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("decideCaseProposal — who may decide", () => {
+  /** One proposed case on a Task owned by `teamId`, with the delegates the
+   *  reject path touches. */
+  function decidable(teamId: string | null) {
+    const proposal: Row = {
+      id: "cp-1", eventId: "ev-1", taskId: "t-team", state: "proposed", sourceUrl: "https://example.test/a",
+    };
+    const caseProposal = {
+      findMany: vi.fn(async () => []),
+      findUnique: vi.fn(async () => proposal),
+      updateMany: vi.fn(async ({ data }: { data: Row }) => {
+        Object.assign(proposal, data);
+        return { count: 1 };
+      }),
+      findUniqueOrThrow: vi.fn(async () => proposal),
+    };
+    const prisma = makePrisma({ caseProposal });
+    prisma.task.store.set("t-team", makeTask({ id: "t-team", teamId }));
+    return { prisma, caseProposal };
+  }
+  const reject = { id: "cp-1", decision: "rejected" as const, rationale: "Not a flood." };
+
+  it.each([
+    ["a team analyst", teamAnalyst],
+    ["a team_admin", teamAdmin],
+    ["a platform admin", admin],
+  ])("lets %s decide a proposal on team-a's Task", async (_n, user) => {
+    const { prisma, caseProposal } = decidable("team-a");
+    const decided = await decideCaseProposal(null, reject, ctx(user, prisma));
+    expect(decided).toMatchObject({ state: "rejected", decidedById: user.id });
+    expect(caseProposal.updateMany).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a team_admin of another team", teamAdmin, "team-b"],
+    ["a team_admin on a platform-owned Task", teamAdmin, null],
+    ["a plain team_member of the Task's team", coordinator, "team-a"],
+    ["an ERM of the Task's team", erm, "team-a"],
+  ])("is FORBIDDEN for %s, and writes nothing", async (_n, user, teamId) => {
+    const { prisma, caseProposal } = decidable(teamId);
+    expect((await errorOf(decideCaseProposal(null, reject, ctx(user, prisma)))).extensions.code).toBe("FORBIDDEN");
+    expect(caseProposal.updateMany).not.toHaveBeenCalled();
   });
 });
 

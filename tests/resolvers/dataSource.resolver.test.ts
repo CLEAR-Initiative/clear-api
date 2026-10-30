@@ -12,6 +12,9 @@
  *   3. `updateDataSource` / `deleteDataSource` NOT_FOUND branch and the
  *      `?? undefined` partial-update mapping.
  *   4. The `DataSource.signals` field resolver filtering by `sourceId`.
+ *   5. `resolveDataSource` `markTrusted`: grading a matched/created source at
+ *      the max reliability (4), the no-op when the flag is absent, and the
+ *      admin/pipeline role gate. (`$queryRaw` stubbed to simulate hit/miss.)
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -30,7 +33,8 @@ function buildContext(user: User, dataSources: Record<string, unknown> = {}, sig
   } as Context;
 }
 
-const { createDataSource, updateDataSource, deleteDataSource } = dataSourceResolvers.Mutation;
+const { createDataSource, updateDataSource, deleteDataSource, resolveDataSource } =
+  dataSourceResolvers.Mutation;
 const { dataSources: dataSourcesQuery, dataSource: dataSourceQuery } = dataSourceResolvers.Query;
 
 describe("Query.dataSources", () => {
@@ -193,6 +197,78 @@ describe("Mutation.deleteDataSource", () => {
     await expect(
       deleteDataSource(null, { id: "ds1" }, buildContext({ id: "u1", role: "viewer" })),
     ).rejects.toThrow(GraphQLError);
+  });
+});
+
+describe("Mutation.resolveDataSource markTrusted", () => {
+  it("creates the source at max reliability (4) when markTrusted and nothing matches", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "new1" });
+    const queryRaw = vi.fn().mockResolvedValue([]); // exact + fuzzy both miss
+    const ctx = {
+      prisma: { $queryRaw: queryRaw, dataSources: { create } },
+      user: { id: "m2m", role: "pipeline" },
+      session: null,
+      authMethod: "apiKey",
+    } as unknown as Context;
+
+    const id = await resolveDataSource(null, { name: "UNHCR", markTrusted: true }, ctx);
+
+    expect(id).toBe("new1");
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      name: "UNHCR",
+      type: "organisation",
+      reliability: 4,
+    });
+  });
+
+  it("forces an existing matched source to max reliability (4) when markTrusted", async () => {
+    const update = vi.fn().mockResolvedValue({ id: "ds1" });
+    const queryRaw = vi.fn().mockResolvedValue([{ id: "ds1" }]); // exact hit
+    const ctx = {
+      prisma: { $queryRaw: queryRaw, dataSources: { update } },
+      user: { id: "a1", role: "admin" },
+      session: null,
+      authMethod: "session",
+    } as unknown as Context;
+
+    const id = await resolveDataSource(null, { name: "UNHCR", markTrusted: true }, ctx);
+
+    expect(id).toBe("ds1");
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "ds1" },
+      data: { reliability: 4 },
+    });
+  });
+
+  it("leaves an existing source's grade untouched when markTrusted is absent", async () => {
+    const update = vi.fn();
+    const queryRaw = vi.fn().mockResolvedValue([{ id: "ds1" }]); // exact hit
+    const ctx = {
+      prisma: { $queryRaw: queryRaw, dataSources: { update } },
+      user: { id: "a1", role: "admin" },
+      session: null,
+      authMethod: "session",
+    } as unknown as Context;
+
+    const id = await resolveDataSource(null, { name: "UNHCR" }, ctx);
+
+    expect(id).toBe("ds1");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("throws FORBIDDEN for a non-admin/non-pipeline role before touching the DB", async () => {
+    const queryRaw = vi.fn();
+    const ctx = {
+      prisma: { $queryRaw: queryRaw },
+      user: { id: "u1", role: "viewer" },
+      session: null,
+      authMethod: "session",
+    } as unknown as Context;
+
+    await expect(
+      resolveDataSource(null, { name: "x", markTrusted: true }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 });
 

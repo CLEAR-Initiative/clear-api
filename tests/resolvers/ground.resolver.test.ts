@@ -31,9 +31,9 @@ type User = { id: string; role: string } | null;
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
   return {
     // requireGroundInboxAccess consults teamMembers for the emergency_response_manager
-    // role when the caller is a non-admin member — default it to "no ERM
+    // role when the caller is a non-admin member: default it to "no ERM
     // membership"; a test can override by passing its own teamMembers stub.
-    prisma: { teamMembers: { findFirst: async () => null }, ...prisma } as Context["prisma"],
+    prisma: { teamMembers: { findMany: async () => [] }, ...prisma } as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -801,7 +801,7 @@ describe("retryGroundMessage", () => {
     const update = vi.fn(async (args: { where: { id: string } }) => ({ id: args.where.id }));
     const prisma = {
       groundMessages: {
-        findUnique: vi.fn(async () => (exists ? { id: "m1" } : null)),
+        findUnique: vi.fn(async () => (exists ? { id: "m1", groundSourceId: "src-1" } : null)),
         update,
       },
     };
@@ -855,8 +855,13 @@ describe("retryGroundMessage", () => {
 
   it("admits an emergency_response_manager (member global role + ERM team membership)", async () => {
     const { prisma, update } = retryPrisma();
-    // Global role is member, but an active ERM team membership grants inbox access.
-    const ermPrisma = { ...prisma, teamMembers: { findFirst: async () => ({ id: "tm1" }) } };
+    // Global role is member, but an ERM membership on the team owning the
+    // message's source grants inbox access.
+    const ermPrisma = {
+      ...prisma,
+      teamMembers: { findMany: async () => [{ teamId: "team-1" }] },
+      groundSources: { findMany: async () => [{ id: "src-1" }] },
+    };
     const result = await retryGroundMessage(
       null,
       { messageId: "m1", stage: "ENRICH" },
@@ -1423,5 +1428,95 @@ describe("pipelineGroundSourceIds", () => {
     await pipelineGroundSourceIds(null, {}, buildContext(PIPELINE, prisma));
 
     expect(findMany).toHaveBeenCalledWith({ where: {}, select: { id: true } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Team scoping: an ERM sees only the sources assigned to their ERM teams.
+// ---------------------------------------------------------------------------
+
+describe("ground inbox team scoping", () => {
+  const ERM: User = { id: "erm1", role: "member" };
+  const { groundSources, groundThreads, groundThread, groundMessages } = groundResolvers.Query;
+  /** The ERM is on team-sudan, which owns src-sudan; src-chad is another team's. */
+  const scope = {
+    teamMembers: { findMany: async () => [{ teamId: "team-sudan" }] },
+    groundSources: { findMany: vi.fn(async () => [{ id: "src-sudan" }]) },
+  };
+
+  it("lists only the ERM's sources", async () => {
+    await groundSources(null, {}, buildContext(ERM, scope));
+    expect(scope.groundSources.findMany).toHaveBeenLastCalledWith({
+      where: { id: { in: ["src-sudan"] } },
+      orderBy: { createdAt: "desc" },
+    });
+  });
+
+  it("filters threads to the ERM's sources, also when a source is asked for", async () => {
+    const findMany = vi.fn(async () => []);
+    await groundThreads(
+      null,
+      { groundSourceId: "src-chad", reviewState: "unverified" },
+      buildContext(ERM, { ...scope, groundThreads: { findMany } }),
+    );
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: [{ groundSourceId: { in: ["src-sudan"] } }, { groundSourceId: "src-chad" }],
+          reviewState: "unverified",
+        },
+      }),
+    );
+  });
+
+  it("returns no messages from another team's source, asked for by source or by thread", async () => {
+    // In-memory groundMessages honouring the where shapes the resolver builds,
+    // so dropping the scope condition would return src-chad's message.
+    const rows = [
+      { id: "m-sudan", groundSourceId: "src-sudan", threadId: "t-sudan" },
+      { id: "m-chad", groundSourceId: "src-chad", threadId: "t-chad" },
+    ];
+    type Cond = { groundSourceId?: string | { in: string[] }; threadId?: string; AND?: Cond[] };
+    const matches = (row: (typeof rows)[number], c: Cond): boolean =>
+      (c.AND ?? []).every((sub) => matches(row, sub)) &&
+      (c.groundSourceId === undefined ||
+        (typeof c.groundSourceId === "string"
+          ? row.groundSourceId === c.groundSourceId
+          : c.groundSourceId.in.includes(row.groundSourceId))) &&
+      (c.threadId === undefined || row.threadId === c.threadId);
+    const findMany = vi.fn(async ({ where }: { where: Cond }) => rows.filter((row) => matches(row, where)));
+    const ctx = buildContext(ERM, { ...scope, groundMessages: { findMany } });
+    const ids = async (args: { groundSourceId?: string; threadId?: string }) =>
+      ((await groundMessages(null, args, ctx)) as { id: string }[]).map((m) => m.id);
+
+    await expect(ids({ groundSourceId: "src-chad" })).resolves.toEqual([]);
+    await expect(ids({ threadId: "t-chad" })).resolves.toEqual([]);
+    await expect(ids({})).resolves.toEqual(["m-sudan"]);
+  });
+
+  it("leaves an admin's thread list unfiltered", async () => {
+    const findMany = vi.fn(async () => []);
+    await groundThreads(null, {}, buildContext(ADMIN, { groundThreads: { findMany } }));
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{}, {}] } }));
+  });
+
+  it("reads another team's thread as absent", async () => {
+    const thread = (groundSourceId: string) => ({ id: "t1", groundSourceId });
+    const ctx = (groundSourceId: string) =>
+      buildContext(ERM, { ...scope, groundThreads: { findUnique: async () => thread(groundSourceId) } });
+    await expect(groundThread(null, { id: "t1" }, ctx("src-sudan"))).resolves.toEqual(thread("src-sudan"));
+    await expect(groundThread(null, { id: "t1" }, ctx("src-chad"))).resolves.toBeNull();
+  });
+
+  it("answers NOT_FOUND to a retry on another team's message, without clearing it", async () => {
+    const update = vi.fn();
+    const prisma = {
+      ...scope,
+      groundMessages: { findUnique: async () => ({ id: "m1", groundSourceId: "src-chad" }), update },
+    };
+    await expect(
+      retryGroundMessage(null, { messageId: "m1", stage: "ENRICH" }, buildContext(ERM, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    expect(update).not.toHaveBeenCalled();
   });
 });

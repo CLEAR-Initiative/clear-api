@@ -170,7 +170,7 @@ const SIGNAL_TITLE_VARIANTS: Record<string, string[]> = {
     "Emergency alert level {level} - {location}",
     "Humanitarian alert: {type} situation in {location}",
   ],
-  dtm: [
+  iom_dtm_flash_alerts: [
     "DTM mobility tracking: Population movement detected near {location}",
     "Displacement data: {displaced} individuals tracked from {location}",
   ],
@@ -212,10 +212,10 @@ export async function seedDummyData() {
     throw new Error("No data sources found. Run full seed first.");
   }
   const sourceMap = new Map(dataSources.map((s) => [s.name, s.id]));
-  const sourceNames = ["dataminr", "acled", "gdacs", "dtm"];
+  const sourceNames = ["dataminr", "acled", "gdacs", "iom_dtm_flash_alerts"];
   const availableSources = sourceNames.filter((n) => sourceMap.has(n));
   if (availableSources.length === 0) {
-    throw new Error("No recognized data sources (dataminr/acled/gdacs/dtm) found.");
+    throw new Error("No recognized data sources (dataminr/acled/gdacs/iom_dtm_flash_alerts) found.");
   }
 
   // Fetch existing districts (level 2) for parenting point locations

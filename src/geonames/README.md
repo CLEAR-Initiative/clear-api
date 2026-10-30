@@ -6,6 +6,17 @@ gazetteer first — offline, transliteration-tolerant — and only falls back
 to LocationIQ/Nominatim for landmarks/POIs the gazetteer lacks (airports,
 stations). See `resolveGazetteerLocation` in the GraphQL schema.
 
+## Arabic names
+
+GeoNames' alternate names include Arabic for most Sudanese states, districts
+and state capitals (and about 1% of villages). They are stored and matched
+exactly: the normaliser (`src/utils/geonames-normalize.ts`) strips vowel marks
+and tatweel and folds spelling variants (أ إ آ ٱ → ا, ى → ي, ة → ه, Persian
+ک ی → ك ي). Arabic queries skip the fuzzy tier. GeoNames is volunteer-edited
+and has errors (Kosti carries Rabak's Arabic name, ربك), so callers check a
+hit against their own expectations before trusting it. Changing the
+normaliser requires a re-import.
+
 ## Why not in git
 
 The raw `.txt` extracts total ~28 MB (AF alone is 16 MB) and are the

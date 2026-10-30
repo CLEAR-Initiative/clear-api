@@ -12,6 +12,11 @@ import { describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
 import { Prisma } from "../../src/generated/prisma/client.js";
 
+// AnalysisAutomation.documents presigns each row's S3 key via a dynamic import.
+vi.mock("../../src/services/s3.js", () => ({
+  getPresignedUrl: vi.fn(async (key: string) => `https://signed/${key}`),
+}));
+
 import { analysisResolvers } from "../../src/resolvers/analysis.resolver.js";
 import type { Context } from "../../src/context.js";
 
@@ -43,6 +48,8 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
   const MEMBERSHIPS: Record<string, Record<string, string>> = {
     "u-analyst": { "team-a": "analyst" },
     "u-viewer": { "team-a": "team_member" },
+    // An emergency_response_manager is granted the analyst permission set too.
+    "u-erm": { "team-a": "emergency_response_manager" },
   };
   const teamMembers = {
     findUnique: vi.fn(async ({ where }: { where: { teamId_userId: { teamId: string; userId: string } } }) => {
@@ -223,34 +230,61 @@ describe("analysis resolver", () => {
         analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(viewer)),
       ).rejects.toThrow(/insufficient permissions/i);
     });
-    it("returns max created_at + count; single-location frame expands to subtree", async () => {
-      const latest = new Date("2026-05-01");
-      const prisma = makePrisma({
-        $queryRawUnsafe: vi.fn(async () => [{ latestEvidenceAt: latest, evidenceCount: 7 }]),
-      });
+    it("returns max created_at + count across both tiers; single-location frame expands to subtree", async () => {
+      // Two-tier watermark (#1067): the resolver queries knowledgebase (reports)
+      // then events_index (events). Return a report tier (count 7) and an event
+      // tier (count 3, later timestamp) so we can assert the combine.
+      const reportsAt = new Date("2026-05-01");
+      const eventsAt = new Date("2026-06-10");
+      const queryRaw = vi
+        .fn()
+        .mockResolvedValueOnce([{ latestEvidenceAt: reportsAt, evidenceCount: 7 }])
+        .mockResolvedValueOnce([{ latestEvidenceAt: eventsAt, evidenceCount: 3 }]);
+      const prisma = makePrisma({ $queryRawUnsafe: queryRaw });
       const res = await analysisResolvers.Query.frameEvidenceWatermark(null, { frame }, ctx(pipeline, prisma));
-      expect(res).toEqual({ latestEvidenceAt: latest, evidenceCount: 7 });
-      const sql = (prisma.$queryRawUnsafe as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-      expect(sql).toContain('FROM "knowledgebase"');
-      expect(sql).toContain("ancestor_ids"); // single A0 → subtree expansion
-      // Freshness counts all ingestion regardless of embedding model — so the
-      // query must NOT depend on EMBEDDING_* config (no embedding_provider filter).
-      expect(sql).not.toContain("embedding_provider");
+      // Combined = the later timestamp + summed count; per-tier breakdown preserved.
+      expect(res).toEqual({
+        latestEvidenceAt: eventsAt,
+        evidenceCount: 10,
+        reportsLatestEvidenceAt: reportsAt,
+        reportsCount: 7,
+        eventsLatestEvidenceAt: eventsAt,
+        eventsCount: 3,
+      });
+      const reportSql = queryRaw.mock.calls[0][0] as string;
+      const eventSql = queryRaw.mock.calls[1][0] as string;
+      expect(reportSql).toContain('FROM "knowledgebase"');
+      expect(eventSql).toContain('FROM "events_index"');
+      expect(reportSql).toContain("ancestor_ids"); // single A0 → subtree expansion
+      // Freshness counts all ingestion regardless of embedding model — so neither
+      // query depends on EMBEDDING_* config (no embedding_provider filter).
+      expect(reportSql).not.toContain("embedding_provider");
+      expect(eventSql).not.toContain("embedding_provider");
     });
   });
 
-  describe("requestAnalysis — force is admin-only (ADR-0008)", () => {
-    const input = (force?: boolean) => ({
-      locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30"), force,
+  describe("requestAnalysis — always forces (manual triggers bypass the 24h floor, ADR-0008)", () => {
+    const input = (force?: boolean, teamId?: string) => ({
+      locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30"),
+      ...(force === undefined ? {} : { force }),
+      ...(teamId === undefined ? {} : { teamId }),
     });
-    it("rejects a non-admin forcing", async () => {
-      await expect(
-        analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(analyst)),
-      ).rejects.toThrow(/force/i);
-    });
-    it("admin force persists force=true on the new request", async () => {
+    it("persists force=true on a new request even when force is omitted", async () => {
       const prisma = makePrisma();
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
+      expect((res as { force?: boolean }).force).toBe(true);
+      expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
+    });
+    it("forces even when the caller explicitly passes force:false (the field is ignored)", async () => {
+      const prisma = makePrisma();
+      await analysisResolvers.Mutation.requestAnalysis(null, { input: input(false) }, ctx(admin, prisma));
+      expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
+    });
+    it("a non-admin team analyst's team-scoped request is forced (no longer rejected for forcing)", async () => {
+      const prisma = makePrisma();
+      const res = await analysisResolvers.Mutation.requestAnalysis(
+        null, { input: input(undefined, "team-a") }, ctx(analyst, prisma),
+      );
       expect((res as { force?: boolean }).force).toBe(true);
       expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
     });
@@ -259,7 +293,7 @@ describe("analysis resolver", () => {
       (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
         id: "rq-x", teamId: null, requestedByUserId: null, lastError: null, force: false,
       });
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
       expect((prisma.analysisRequest as { update: ReturnType<typeof vi.fn> }).update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "rq-x" }, data: { force: true } }),
       );
@@ -302,9 +336,11 @@ describe("analysis resolver", () => {
     it("returns the existing PENDING request instead of creating a duplicate", async () => {
       // input() is team-less → admin-only; drive the dedupe path as an admin.
       const prisma = makePrisma();
-      (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "rq-existing", status: "PENDING" });
+      // A stored PENDING is already forced (manual triggers always force now),
+      // so the dedupe returns it as-is rather than upgrading it.
+      (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "rq-existing", status: "PENDING", force: true });
       const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
-      expect(res).toEqual({ id: "rq-existing", status: "PENDING" });
+      expect(res).toEqual({ id: "rq-existing", status: "PENDING", force: true });
       expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
     });
 
@@ -385,6 +421,13 @@ describe("analysis resolver", () => {
       it("member analyst can create for their team", async () => {
         const prisma = makePrisma();
         const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(analyst, prisma));
+        expect(res.teamId).toBe("team-a");
+      });
+
+      it("emergency response manager can create for their team (granted the analyst permission set)", async () => {
+        const prisma = makePrisma();
+        const erm = { id: "u-erm", role: "member" };
+        const res = await analysisResolvers.Mutation.createAnalysisAutomation(null, { input: createInput("team-a") }, ctx(erm, prisma));
         expect(res.teamId).toBe("team-a");
       });
 
@@ -506,7 +549,7 @@ describe("analysis resolver", () => {
       });
       it("dedupes onto another team's pending request without exposing its requester or error", async () => {
         const prisma = makePrisma();
-        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom" };
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom", force: true };
         rq(prisma).findFirst.mockResolvedValueOnce(foreign);
         const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(analyst, prisma));
         expect(res).toMatchObject({ id: "rq-b", teamId: null, requestedByUserId: null, lastError: null });
@@ -515,7 +558,7 @@ describe("analysis resolver", () => {
 
       it("admin sees the pending request as stored", async () => {
         const prisma = makePrisma();
-        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null };
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null, force: true };
         rq(prisma).findFirst.mockResolvedValueOnce(foreign);
         const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(admin, prisma));
         expect(res).toMatchObject({ teamId: "team-b", requestedByUserId: "u-b" });
@@ -583,5 +626,72 @@ describe("analysis resolver", () => {
       expect(data.attempts).toEqual({ increment: 1 });
       expect(data.lastError).toBe("boom");
     });
+  });
+});
+
+// ─── title + discussion + documents (PR #255) ──────────────────────────────
+
+describe("analysis automation title / discussion / documents", () => {
+  it("createAnalysisAutomation stores a trimmed title", async () => {
+    const prisma = makePrisma();
+    await analysisResolvers.Mutation.createAnalysisAutomation(
+      null,
+      { input: { locationIds: ["a"], eventTypes: [], needSectors: [], windowStart: new Date("2026-01-01"), cadence: "daily", title: "  Sudan floods  " } },
+      ctx(admin, prisma),
+    );
+    const create = (prisma.analysisAutomation as { create: ReturnType<typeof vi.fn> }).create;
+    expect(create.mock.calls[0][0].data.title).toBe("Sudan floods");
+  });
+
+  it("createAnalysisAutomation rejects an over-long title", async () => {
+    await expect(
+      analysisResolvers.Mutation.createAnalysisAutomation(
+        null,
+        { input: { locationIds: ["a"], eventTypes: [], needSectors: [], windowStart: new Date("2026-01-01"), cadence: "daily", title: "x".repeat(121) } },
+        ctx(admin),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+  });
+
+  it("updateAnalysisAutomation writes an explicit null title to clear it", async () => {
+    const prisma = makePrisma({
+      analysisAutomation: {
+        findUnique: vi.fn(async () => ({ teamId: null })),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "au-1", ...data })),
+      },
+    });
+    await analysisResolvers.Mutation.updateAnalysisAutomation(
+      null,
+      { id: "au-1", input: { title: "" } },
+      ctx(admin, prisma),
+    );
+    const update = (prisma.analysisAutomation as { update: ReturnType<typeof vi.fn> }).update;
+    expect(update.mock.calls[0][0].data.title).toBeNull();
+  });
+
+  it("AnalysisAutomation.comments reads the thread oldest-first", async () => {
+    const findMany = vi.fn(async () => [{ id: "c1" }]);
+    const prisma = makePrisma({ userComments: { findMany } });
+    const rows = await analysisResolvers.AnalysisAutomation.comments({ id: "au-1" }, {}, ctx(admin, prisma));
+    expect(rows).toEqual([{ id: "c1" }]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { analysisAutomationId: "au-1" },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+
+  it("AnalysisAutomation.documents presigns each attached file", async () => {
+    const findMany = vi.fn(async () => [{ id: "d1", fileName: "r.pdf", reportId: "manual:ab", s3Key: "kb/r.pdf" }]);
+    const prisma = makePrisma({ analysisAutomationDocument: { findMany } });
+    const rows = await analysisResolvers.AnalysisAutomation.documents({ id: "au-1" }, {}, ctx(admin, prisma));
+    expect(rows[0]).toMatchObject({ id: "d1", s3Key: "kb/r.pdf", url: "https://signed/kb/r.pdf" });
+  });
+
+  it("Query.analysisAutomation returns a system-owned automation to an admin", async () => {
+    const prisma = makePrisma({
+      analysisAutomation: { findUnique: vi.fn(async () => ({ id: "au-1", teamId: null })) },
+    });
+    const row = await analysisResolvers.Query.analysisAutomation(null, { id: "au-1" }, ctx(admin, prisma));
+    expect(row).toMatchObject({ id: "au-1" });
   });
 });

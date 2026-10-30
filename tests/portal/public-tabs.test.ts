@@ -52,6 +52,27 @@ describe("Portal public vs auth-gated tabs", () => {
     expect(html).toContain("Create Account");
   });
 
+  it("pitches contributing beside Create Account only", () => {
+    const html = renderLoginPage({ next: "/portal/welcome" });
+    expect(html).toContain('id="auth-layout" data-form="register"');
+    expect(html).toContain("Help build the");
+    expect(html).toContain("humanitarian data commons.");
+    for (const area of ["Frontend", "API", "Data pipeline and LLMs", "Data and domain expertise", "Docs"]) {
+      expect(html).toContain(`<li>${area}</li>`);
+    }
+    expect(html).toContain("What happens next");
+    expect(html).toMatch(/href="https:\/\/github\.com\/CLEAR-Initiative" target="_blank" rel="noopener noreferrer"/);
+    // Sign in / forgot password hide the pitch again.
+    expect(html).toContain("setAttribute('data-form', name)");
+    expect(html).toContain('.auth-layout:not([data-form="register"]) .pitch { display: none; }');
+  });
+
+  it("styles the pitch with the home page's marketing accent", () => {
+    const html = renderLoginPage();
+    expect(html).toContain("--color-accent: #f2612a");
+    expect(html).toContain(".pitch h2 .accent { color: var(--color-accent); }");
+  });
+
   it("rejects open-redirect tricks for login next", () => {
     expect(safePortalNext("//evil.example/phish")).toBe("/portal");
     expect(safePortalNext("/\\evil.example")).toBe("/portal");

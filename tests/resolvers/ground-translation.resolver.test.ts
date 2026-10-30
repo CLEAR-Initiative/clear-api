@@ -25,7 +25,7 @@ type User = { id: string; role: string } | null;
 const ADMIN: User = { id: "admin1", role: "admin" };
 // The ground inbox is admin-or-ERM now (analyst no longer grants ground access).
 // This caller is a global `member` carrying the emergency_response_manager TEAM
-// role (the stub's teamMembers.findFirst returns an ERM row for id "a1").
+// role on team-1, which owns the message's source (see the stub below).
 const ERM: User = { id: "a1", role: "member" };
 const PIPELINE: User = { id: "machine", role: "pipeline" };
 // A plain global member with no ERM membership.
@@ -40,14 +40,18 @@ const MESSAGE = { id: "m1", text: "قصف على السوق الرئيسي" };
 /** Prisma stub for one message and its translation state. `order` records
  * which table each state read hit, to pin the queue-before-overlay order. */
 function stub(opts: {
-  message?: { id: string; text: string } | null;
+  /** groundSourceId defaults to src-1, the ERM's team source. */
+  message?: { id: string; text: string; groundSourceId?: string } | null;
   queued?: boolean;
   translated?: string | null;
 }) {
   const order: string[] = [];
   const prisma = {
     groundMessages: {
-      findUnique: vi.fn(async () => (opts.message === undefined ? MESSAGE : opts.message)),
+      findUnique: vi.fn(async () => {
+        const message = opts.message === undefined ? MESSAGE : opts.message;
+        return message && { groundSourceId: "src-1", ...message };
+      }),
     },
     translationQueue: {
       findUnique: vi.fn(async () => {
@@ -63,9 +67,11 @@ function stub(opts: {
       }),
     },
     teamMembers: {
-      // The inbox gate asks "is this user an ERM?" — only id "a1" is one here.
-      findFirst: vi.fn(async ({ where }: { where: { userId: string } }) => (where.userId === "a1" ? { id: "tm-erm" } : null)),
+      // The inbox gate asks for the user's ERM teams: only id "a1" has one.
+      findMany: vi.fn(async ({ where }: { where: { userId: string } }) => (where.userId === "a1" ? [{ teamId: "team-1" }] : [])),
     },
+    // team-1's sources: the one every message here comes from.
+    groundSources: { findMany: vi.fn(async () => [{ id: "src-1" }]) },
   };
   return { prisma, order };
 }
@@ -139,6 +145,15 @@ describe("requestGroundMessageTranslation", () => {
     await expect(
       requestGroundMessageTranslation(null, { messageId: "nope", locale: "en" }, ctx(ERM, prisma)),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it("throws NOT_FOUND for another team's message, before any translation read or queue write", async () => {
+    const { prisma, order } = stub({ message: { ...MESSAGE, groundSourceId: "src-other-team" } });
+    await expect(
+      requestGroundMessageTranslation(null, { messageId: "m1", locale: "en" }, ctx(ERM, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    expect(order).toEqual([]);
+    expect(prisma.translationQueue.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects an unsupported locale before touching the DB", async () => {

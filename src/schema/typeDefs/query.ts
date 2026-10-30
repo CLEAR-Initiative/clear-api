@@ -26,9 +26,32 @@ export const queryTypeDef = gql`
     """List signals by location. Returns all signals whose origin, destination, or general location is within the given location (including descendants)."""
     signalsByLocation(locationId: String!): [Signal!]!
 
-    """Open Signal Location challenges (for map dual-pin rendering). Team-scoped
-    like signals when teamId is given; status defaults to "consideration"."""
+    """Signal Location challenges by status (for map dual-pin rendering).
+    Team-scoped like signals when teamId is given (challenges whose Signal is
+    in the team's area). status is "consideration" (open, the default),
+    "accepted", "corrected", "declined" or "superseded"."""
     signalLocationChallenges(teamId: String, status: String): [SignalLocationChallenge!]!
+
+    """Open Location challenges the caller can decide, newest first: for a team
+    admin, those filed for the teams they administer (or just teamId, one of
+    them); for a platform admin, all of them (or just teamId's). The caller's
+    own are included. At most \`first\` (default and maximum 200)."""
+    signalLocationChallengesToDecide(
+      """Only this team's challenges."""
+      teamId: String
+      """Max rows to return (1 to 200, default 200)."""
+      first: Int
+    ): [SignalLocationChallenge!]!
+
+    """The existing admin area a point falls in (district, else state, else
+    country), or null when it is outside the areas CLEAR covers. Lets a client
+    show where a corrected point would be placed before filing it."""
+    locationPlacement(
+      """Latitude of the point, -90 to 90."""
+      lat: Float!
+      """Longitude of the point, -180 to 180."""
+      lng: Float!
+    ): Location
 
     """Signals awaiting their first grouping (status = NEW, not retracted, not
     yet linked to any event), oldest-first — the Dagster event-driven drain.
@@ -47,7 +70,7 @@ export const queryTypeDef = gql`
     eventMembers(eventId: String!, first: Int): [Signal!]!
 
     """List events. Requires authentication. includeDummy defaults to false."""
-    events(teamId: String, includeDummy: Boolean): [Event!]!
+    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event
@@ -74,8 +97,10 @@ export const queryTypeDef = gql`
     existingPublicEventLink(eventId: String!): CreatePublicEventLinkResult
 
     """Events awaiting an alert (severity >= minSeverity AND no alert row yet AND
-    a signal within the last \`maxAgeHours\`), oldest-first by the event's
-    earliest-signal timestamp — the Dagster alert-stage queue. \`first\` caps the
+    a signal within the last \`maxAgeHours\` AND at least one NRC-relevant type —
+    events whose types are all out-of-interest never alert, so they are not
+    queued), oldest-first by the event's earliest-signal timestamp — the Dagster
+    alert-stage queue. \`first\` caps the
     batch (default 100, max 500); \`minSeverity\` floors the severity (default 4);
     \`maxAgeHours\` bounds staleness on the latest signal's real-world time so the
     historical backlog / backdated backfill never alerts (default 48; 0 disables).
@@ -94,8 +119,13 @@ export const queryTypeDef = gql`
     """Look up a data source by ID."""
     dataSource(id: String!): DataSource
 
-    """List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)."""
-    locations(level: Int): [Location!]!
+    """
+    List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)
+    and scoped to part of the hierarchy. \`within\` keeps only locations that are one of the
+    given IDs or descend from one, so \`locations(level: 2, within: [stateId])\` returns that
+    state's districts. Omitted or empty means no scope.
+    """
+    locations(level: Int, within: [String!]): [Location!]!
 
     """Look up a location by ID."""
     location(id: String!): Location
@@ -252,6 +282,18 @@ export const queryTypeDef = gql`
     admin dashboard. Admin only. Default window: last 30 days."""
     activityStats(from: DateTime, to: DateTime): ActivityStats!
 
+    """CLEAR Agent usage aggregates (turns, distinct users, cost, tokens, and
+    turns by route) from usage metadata only; message content is never read.
+    Admin only. Default window: last 30 days."""
+    agentUsageStats(from: DateTime, to: DateTime): AgentUsageStats!
+
+    """Monthly NRC aggregate export as CSV: one row per month, organisation,
+    team and team role, with distinct active users, action count, Agent
+    turns and Agent cost. Global admins are excluded and groups with fewer
+    than 5 distinct people are left out. Admin only. Default window: the
+    last 12 calendar months (UTC)."""
+    nrcActivityExport(from: DateTime, to: DateTime): String!
+
     """Point-in-time user-engagement summary: DAU, WAU, MAU, and the
     DAU/MAU stickiness ratio. Derived from auth.login activity. Admin
     only. \`asOf\` defaults to NOW(); pass a historical timestamp to
@@ -328,12 +370,17 @@ export const queryTypeDef = gql`
     areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
     loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
-    Returns null on no match - the geoparser then falls back to LocationIQ
-    for landmarks/POIs the gazetteer lacks. Admin / pipeline only."""
+    Arabic names (GeoNames' Arabic alternate names) match exactly only: no
+    fuzzy tier. \`withinLocationId\` keeps only matches strictly inside that
+    location's geometry (null for an unknown id or one without geometry), so
+    a same-named place elsewhere can't win on population. Returns null on no
+    match - the geoparser then falls back to LocationIQ for landmarks/POIs
+    the gazetteer lacks. Admin / pipeline only."""
     resolveGazetteerLocation(
       name: String!
       countryCode: String
       minSimilarity: Float
+      withinLocationId: String
     ): GazetteerHit
 
     """Hybrid dense + BM25 retrieval over the knowledge base, fused
@@ -364,7 +411,72 @@ export const queryTypeDef = gql`
       [report] to get the pre-ADR-0006 report-only behaviour."""
       tiers: [KnowledgebaseTier!]
       mode: KnowledgebaseSearchMode = AUTO
+      """When true, append a band of the most relevant FIGURE hits (charts /
+      maps / infographics) AFTER the normal text results — the RAG-with-figures
+      case: a chatbot gets its answer context plus supporting visuals in one
+      call. Figure hits carry \`figureS3Key\` / \`figureImageUrl\`, so split the
+      band off by \`figureS3Key != null\`; their scores sit just below the text
+      hits. These are IN ADDITION to \`limit\` (they don't displace text), and
+      deduped against any figure that already ranked into the main results.
+      No-op when \`filters.figuresOnly\` is set (that's already figures-only) or
+      the report tier isn't searched. Default false."""
+      includeFigures: Boolean = false
+      """How many figures the \`includeFigures\` band may add (1–20). Default 6."""
+      figureLimit: Int = 6
     ): [KnowledgebaseHit!]!
+
+    """Find whole REPORTS (not chunks) and get a download link — the Cap 3
+    read path ("fetch me the UNHCR report on X between these dates"). Groups
+    the knowledgebase by \`reportId\` and returns one \`ReportHit\` per report,
+    each with a presigned PDF \`downloadUrl\`.
+
+    Two modes, picked by whether \`query\` is a non-empty topical string:
+      - With a query: semantic retrieval over report chunks, grouped to the
+        best-matching chunk per report, ordered by that best similarity.
+      - Without a query: a filter/date listing ordered by \`publishedAt\`
+        descending (most recent first).
+
+    \`source\` is a case-insensitive substring matched against the report
+    title and source URL (e.g. "UNHCR"). \`publishedRange\` filters on the
+    report's publication date (distinct from \`filters.timeRange\`, which is
+    the chunk's extracted EVENT window). \`filters\` applies the same
+    location / event-type / sector scoping as \`searchKnowledgebase\`.
+    Requires any authenticated content reader."""
+    searchReports(
+      """Topical query. Omit or pass empty for a pure filter/date listing."""
+      query: String
+      filters: KnowledgebaseFilters
+      """Filter on the report's PUBLICATION date (inclusive)."""
+      publishedRange: DateRangeInput
+      """Case-insensitive substring on report title / source URL (e.g. a
+      publisher like "UNHCR" or "OCHA")."""
+      source: String
+      limit: Int = 20
+    ): [ReportHit!]!
+
+    """Natural-language front door to \`searchReports\` (the "NL on top of
+    structured" layer). Parses a free-text question — e.g. "fetch me the UNHCR
+    report on flooding in Sudan between March and June 2024" — into the
+    structured arguments (\`source\`, publication-date window, country scope, and
+    the residual topical query) and runs the same report search. Returns BOTH
+    the parsed \`interpreted\` filters and the \`reports\`, so a caller can show
+    how the question was understood and, if it's wrong, call \`searchReports\`
+    directly with corrected arguments.
+
+    Parsing is deterministic (no LLM): it recognises a curated set of
+    publishers, common date phrasings, and country names from the locations
+    table. Anything it doesn't recognise simply stays in the topical query,
+    which still finds the report by content. Requires any authenticated content
+    reader."""
+    searchReportsNaturalLanguage(question: String!, limit: Int = 20): NlReportSearch!
+
+    """Figures (from \`report_figures\`) whose report is in the knowledgebase but
+    whose figure chunk isn't present yet — the work list for the figure→KB sync
+    (clear-pipeline). Returns ALL figures for each report that needs syncing (not
+    just the missing ones) so the caller can \`figuresOnly\`-upsert the complete
+    set per report. Bounded by \`limit\` REPORTS (not figures), oldest report id
+    first. admin/pipeline only."""
+    reportFiguresPendingKbMerge(limit: Int = 50): [ReportFigureForMerge!]!
 
     """Poll a Dagster run kicked off by \`uploadKnowledgebaseDocument\`.
     Returns null when the runId doesn't exist on this Dagster instance
@@ -461,6 +573,11 @@ export const queryTypeDef = gql`
     reader."""
     analysisAutomations(teamId: String, enabledOnly: Boolean): [AnalysisAutomation!]!
 
+    """One analysis automation, for its title, discussion, and evidence.
+    A content reader on the owning team, or any content reader for a
+    system-owned automation. Null when the id is unknown."""
+    analysisAutomation(id: String!): AnalysisAutomation
+
     """Pipeline drain (ADR-0007 §4): the oldest PENDING on-demand analysis
     requests, so the generation sensor can pick them up. Admin / pipeline only."""
     pendingAnalyses(limit: Int): [AnalysisRequest!]!
@@ -543,7 +660,7 @@ export const queryTypeDef = gql`
     admin, org admin, or platform admin for the team. Secrets are scrubbed."""
     teamAlertWebhooks(teamId: String!): [WebhookSubscription!]!
 
-    # ─── Ground intel staging tier (admin only) ────────────────
+    # ─── Ground intel staging tier (admin, ERM or team admin) ──
     """All ground sources (per-source policy records), newest first."""
     groundSources: [GroundSource!]!
 
@@ -634,14 +751,15 @@ export const queryTypeDef = gql`
     V1–V3, newest first. Nothing creates them any more (the ImpactPrior is
     computed, see \`Event.computedImpactPriors\`) and none can be decided.
     An \`accepted\` one follows the Event's visibility; a \`proposed\` one
-    is visible to its requester and to deciders (admins and analysts); a
+    is visible to its requester and to deciders (admins, and the Task team's
+    analysts and team admins); a
     \`rejected\` one to deciders only."""
     eventImpactPriors(eventId: String!): [ImpactPrior!]!
 
     """The Inbox's per-case Review items (V4): CaseProposals in one state
     across every Event, newest first — \`proposed\` by default. Platform
-    admins and analysts only, so the list is exactly what the caller may
-    decide."""
+    admins (every team), and team analysts and team admins (their own teams'
+    Tasks only), so the list is exactly what the caller may decide."""
     caseProposals(state: CaseProposalState = proposed, limit: Int = 50, offset: Int = 0): [CaseProposal!]!
 
     """Web cases proposed for an Event, newest first. Same visibility as
@@ -652,5 +770,24 @@ export const queryTypeDef = gql`
     before searching and never proposes one again. The worker role,
     platform admins and analysts."""
     rejectedCaseUrls(eventId: String!): [String!]!
+  }
+
+  # ─── Briefs (platform admin only) ────────────────────────────────────
+  extend type Query {
+    """Briefs, newest first. Platform admins only."""
+    briefs(limit: Int = 50, offset: Int = 0): [Brief!]!
+
+    """One Brief, or null. Platform admins only."""
+    brief(id: String!): Brief
+
+    """Every Recipient list, by name. Platform admins only."""
+    recipientLists: [RecipientList!]!
+
+    """What the automatic daily Alert Digest would send for a Brief's area
+    and window: each published Alert it would include, newest first, with
+    how many daily subscribers it would reach. Alerts no subscriber matches
+    are left out. Reads only: nothing is written or sent. Works on sent
+    Briefs too, against today's subscriptions. Platform admins only."""
+    briefDigestPreview(briefId: String!): [DigestPreviewRow!]!
   }
 `;
