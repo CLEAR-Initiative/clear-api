@@ -444,7 +444,9 @@ describe("Mutation.notifyAlertDigest", () => {
           ]),
         },
         // district1 expands to include country1.
-        locations: { findMany: vi.fn().mockResolvedValue([{ ancestorIds: ["country1"] }]) },
+        locations: {
+          findMany: vi.fn().mockResolvedValue([{ id: "district1", ancestorIds: ["country1"] }]),
+        },
         userAlertSubscriptions: {
           findMany: vi.fn().mockResolvedValue([
             // Matches: type FLOOD, country1 in expanded set, minSeverity 3 <= 5.

@@ -150,6 +150,19 @@ export const briefTypeDef = gql`
     createdAt: DateTime!
   }
 
+  """One Alert the daily Alert Digest would send for a Brief's area and
+  window."""
+  type DigestPreviewRow {
+    """A published Alert in the Brief's area whose Event's first Signal
+    falls in the Brief window, the same scope as \`Brief.counts\`. Its
+    title and severity are on \`event\`."""
+    alert: Alert!
+    """Distinct users with an active daily subscription matching the
+    Alert's type, location (or an ancestor of it) and severity floor.
+    Always at least 1."""
+    subscriberCount: Int!
+  }
+
   """What \`sendBrief\` handed to the email provider."""
   type BriefSendResult {
     """Emails the provider accepted."""

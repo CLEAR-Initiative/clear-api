@@ -11,6 +11,8 @@ import type { BriefCadence, BriefItemKind } from "../generated/prisma/enums.js";
 import { env } from "../utils/env.js";
 import type { BriefEmailView } from "./messaging/templates.js";
 import { computeEntityStats, type EntityKind } from "../resolvers/pagination.resolver.js";
+import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
+import { matchDigestRecipients } from "./alert-digest.js";
 
 /** Item groups in the order a Brief shows them. */
 export const BRIEF_KIND_ORDER: readonly BriefItemKind[] = ["alert", "event", "signal"];
@@ -238,6 +240,47 @@ export async function computeBriefCounts(
   };
   const [signal, event, alert] = await Promise.all([one("signal"), one("event"), one("alert")]);
   return { signal, event, alert };
+}
+
+/**
+ * What the daily Alert Digest would send for a Brief's area and window:
+ * each published Alert it would include, with how many subscribers it would
+ * reach. Alerts no daily subscriber matches are left out.
+ *
+ * Alerts are scoped like the Brief's counts: windowed on their Event's first
+ * Signal, the area including everything inside it, test (dummy) Events
+ * excluded. Newest first. Reads only: nothing is written or sent.
+ */
+export async function computeDigestPreview(
+  prisma: PrismaClient,
+  scope: { locationId: string; windowStart: Date; windowEnd: Date },
+) {
+  const areaIds = await getLocationIdsWithDescendants(prisma, scope.locationId);
+  if (areaIds.length === 0) return [];
+
+  const alerts = await prisma.alerts.findMany({
+    where: {
+      status: "published",
+      event: {
+        isDummy: false,
+        firstSignalCreatedAt: { gte: scope.windowStart, lte: scope.windowEnd },
+        OR: [
+          { originId: { in: areaIds } },
+          { destinationId: { in: areaIds } },
+          { locationId: { in: areaIds } },
+        ],
+      },
+    },
+    include: { event: true },
+    orderBy: [{ event: { firstSignalCreatedAt: "desc" } }, { id: "desc" }],
+  });
+  if (alerts.length === 0) return [];
+
+  const recipients = await matchDigestRecipients(prisma, alerts, "daily");
+  return alerts.flatMap((alert) => {
+    const subscriberCount = recipients.get(alert.id)?.length ?? 0;
+    return subscriberCount > 0 ? [{ alert, subscriberCount }] : [];
+  });
 }
 
 /** The link in one recipient's Brief email that unsubscribes them. */
