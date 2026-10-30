@@ -604,7 +604,9 @@ export const mutationTypeDef = gql`
     deleteAnalysisAutomation(id: String!): Boolean!
 
     """Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team."""
+    an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.
+    A manual trigger always regenerates: it bypasses both the 24h regeneration floor and the
+    new-evidence freshness gate (ADR-0008). The floor still governs scheduled automations."""
     requestAnalysis(input: RequestAnalysisInput!): AnalysisRequest!
     """Pipeline: mark a drained request GENERATED after its analysis was
     upserted. Admin / pipeline only."""

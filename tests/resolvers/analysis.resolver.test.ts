@@ -263,18 +263,28 @@ describe("analysis resolver", () => {
     });
   });
 
-  describe("requestAnalysis — force is admin-only (ADR-0008)", () => {
-    const input = (force?: boolean) => ({
-      locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30"), force,
+  describe("requestAnalysis — always forces (manual triggers bypass the 24h floor, ADR-0008)", () => {
+    const input = (force?: boolean, teamId?: string) => ({
+      locationIds: ["a"], windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-06-30"),
+      ...(force === undefined ? {} : { force }),
+      ...(teamId === undefined ? {} : { teamId }),
     });
-    it("rejects a non-admin forcing", async () => {
-      await expect(
-        analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(analyst)),
-      ).rejects.toThrow(/force/i);
-    });
-    it("admin force persists force=true on the new request", async () => {
+    it("persists force=true on a new request even when force is omitted", async () => {
       const prisma = makePrisma();
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
+      expect((res as { force?: boolean }).force).toBe(true);
+      expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
+    });
+    it("forces even when the caller explicitly passes force:false (the field is ignored)", async () => {
+      const prisma = makePrisma();
+      await analysisResolvers.Mutation.requestAnalysis(null, { input: input(false) }, ctx(admin, prisma));
+      expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
+    });
+    it("a non-admin team analyst's team-scoped request is forced (no longer rejected for forcing)", async () => {
+      const prisma = makePrisma();
+      const res = await analysisResolvers.Mutation.requestAnalysis(
+        null, { input: input(undefined, "team-a") }, ctx(analyst, prisma),
+      );
       expect((res as { force?: boolean }).force).toBe(true);
       expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data.force).toBe(true);
     });
@@ -283,7 +293,7 @@ describe("analysis resolver", () => {
       (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
         id: "rq-x", teamId: null, requestedByUserId: null, lastError: null, force: false,
       });
-      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input(true) }, ctx(admin, prisma));
+      const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
       expect((prisma.analysisRequest as { update: ReturnType<typeof vi.fn> }).update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "rq-x" }, data: { force: true } }),
       );
@@ -326,9 +336,11 @@ describe("analysis resolver", () => {
     it("returns the existing PENDING request instead of creating a duplicate", async () => {
       // input() is team-less → admin-only; drive the dedupe path as an admin.
       const prisma = makePrisma();
-      (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "rq-existing", status: "PENDING" });
+      // A stored PENDING is already forced (manual triggers always force now),
+      // so the dedupe returns it as-is rather than upgrading it.
+      (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "rq-existing", status: "PENDING", force: true });
       const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
-      expect(res).toEqual({ id: "rq-existing", status: "PENDING" });
+      expect(res).toEqual({ id: "rq-existing", status: "PENDING", force: true });
       expect((prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
     });
 
@@ -537,7 +549,7 @@ describe("analysis resolver", () => {
       });
       it("dedupes onto another team's pending request without exposing its requester or error", async () => {
         const prisma = makePrisma();
-        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom" };
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: "boom", force: true };
         rq(prisma).findFirst.mockResolvedValueOnce(foreign);
         const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(analyst, prisma));
         expect(res).toMatchObject({ id: "rq-b", teamId: null, requestedByUserId: null, lastError: null });
@@ -546,7 +558,7 @@ describe("analysis resolver", () => {
 
       it("admin sees the pending request as stored", async () => {
         const prisma = makePrisma();
-        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null };
+        const foreign = { id: "rq-b", status: "PENDING", teamId: "team-b", requestedByUserId: "u-b", lastError: null, force: true };
         rq(prisma).findFirst.mockResolvedValueOnce(foreign);
         const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input("team-a") }, ctx(admin, prisma));
         expect(res).toMatchObject({ teamId: "team-b", requestedByUserId: "u-b" });

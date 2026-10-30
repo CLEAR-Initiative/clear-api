@@ -635,13 +635,14 @@ export const analysisResolvers = {
     ) => {
       const user = requireNonWorker(context);
       const { input } = args;
-      // Force bypasses the regeneration gate (ADR-0008) — admin only.
-      const force = input.force ?? false;
-      if (force && !isPlatformAdmin(user)) {
-        throw new GraphQLError("Only a platform admin can force an analysis regeneration", {
-          extensions: { code: "FORBIDDEN" },
-        });
-      }
+      // Manual triggers always regenerate: a human asking for an analysis
+      // bypasses BOTH the 24h regeneration floor AND the new-evidence freshness
+      // gate (ADR-0008). The gate still governs the scheduled automation path
+      // (automations are never forced). Every authorized manual request is
+      // forced regardless of role — the authorization below still decides WHO
+      // may request a frame. `input.force` is retained for backward
+      // compatibility but ignored (a manual trigger is always forced now).
+      const force = true;
       // Authorisation: a team-attributed request requires admin OR a team
       // `analyst` on that team (the team-scoped replacement for the old global
       // analyst); a team-less (platform) request is admin-only.

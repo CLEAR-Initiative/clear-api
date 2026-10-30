@@ -1624,7 +1624,9 @@ analysis current on a cadence (ADR-0007 §5). Admin, or a team analyst on the ow
     <td><code>requestAnalysis</code></td>
     <td><code>AnalysisRequest!</code></td>
     <td>Enqueue an on-demand analysis for a frame (ADR-0007 §4). Dedupes against
-an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
+an existing PENDING request for the same frame. Admin, or a team analyst on the owning team.
+A manual trigger always regenerates: it bypasses both the 24h regeneration floor and the
+new-evidence freshness gate (ADR-0008). The floor still governs scheduled automations.<div class="field-args"><span class="arg"><code>input: RequestAnalysisInput!</code></span></div></td>
   </tr><tr id="mutation-markanalysisrequestgenerated">
     <td><code>markAnalysisRequestGenerated</code></td>
     <td><code>AnalysisRequest!</code></td>
@@ -3440,8 +3442,9 @@ point shows its admin area's name.</td>
   </tr><tr>
     <td><code>force</code></td>
     <td><code>Boolean</code></td>
-    <td>Force a regeneration past the 24h floor + freshness gate (ADR-0008).
-Admin only — a non-admin passing `true` is rejected.</td>
+    <td>Deprecated / ignored: a manual trigger always regenerates now, bypassing
+both the 24h floor and the freshness gate (ADR-0008), for any authorized
+requester. Retained for backward compatibility; its value has no effect.</td>
   </tr></tbody></table><h3 id="type-saveagentworkingmemoryinput"><code>SaveAgentWorkingMemoryInput</code> <span class="type-badge">input</span></h3><p>Replace your Agent working memory. Omitted fields stay unchanged.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>workingMemory</code></td>
     <td><code>String</code></td>
