@@ -15,6 +15,7 @@ import {
   briefWindow,
   buildBriefItemSnapshot,
   computeBriefCounts,
+  computeDigestPreview,
   type BriefCounts,
   defaultBriefTitle,
   orderBriefItems,
@@ -152,6 +153,13 @@ export const briefResolvers = {
     recipientLists: async (_parent: unknown, _args: unknown, context: Context) => {
       requireRole(context, ADMIN);
       return context.prisma.recipientList.findMany({ orderBy: { name: "asc" } });
+    },
+
+    briefDigestPreview: async (_parent: unknown, args: { briefId: string }, context: Context) => {
+      requireRole(context, ADMIN);
+      const row = await context.prisma.brief.findUnique({ where: { id: args.briefId } });
+      if (!row) throw notFound("Brief not found");
+      return computeDigestPreview(context.prisma, row);
     },
   },
 

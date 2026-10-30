@@ -4,7 +4,8 @@ import type { Context } from "../context.js";
 import type { NotificationStatus, PrismaClient } from "../generated/prisma/client.js";
 import { requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
-import { minSeverityFilterFor, severityClearsFloor } from "../utils/alert-severity.js";
+import { minSeverityFilterFor } from "../utils/alert-severity.js";
+import { matchDigestRecipients, type DigestFrequency } from "../services/alert-digest.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification, alertDigest } from "../services/messaging/templates.js";
 import {
@@ -41,7 +42,7 @@ interface AlertNotifyInput {
 
 interface AlertDigestInput {
   alertIds: string[];
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: DigestFrequency;
 }
 
 /**
@@ -344,66 +345,19 @@ export const notificationResolvers = {
 
       if (alerts.length === 0) return 0;
 
-      // Pre-compute the expanded location set (including ancestors) for each alert
-      const alertLocationSets: Map<string, Set<string>> = new Map();
-      const allTypes = new Set<string>();
-      const allExpandedLocationIds = new Set<string>();
+      // Which users the digest reaches, and with which alerts.
+      const recipientsByAlert = await matchDigestRecipients(context.prisma, alerts, frequency);
 
-      for (const alert of alerts) {
-        for (const t of alert.event.types) allTypes.add(t);
-
-        const directIds = [
-          alert.event.originId,
-          alert.event.destinationId,
-          alert.event.locationId,
-        ].filter((id): id is string => id !== null);
-
-        const expanded = new Set(directIds);
-        const locations = await context.prisma.locations.findMany({
-          where: { id: { in: directIds } },
-          select: { ancestorIds: true },
-        });
-        for (const loc of locations) {
-          for (const aid of loc.ancestorIds) expanded.add(aid);
-        }
-        alertLocationSets.set(alert.id, expanded);
-        for (const lid of expanded) allExpandedLocationIds.add(lid);
-      }
-
-      if (allTypes.size === 0 || allExpandedLocationIds.size === 0) return 0;
-
-      // Fetch only subscriptions that match ANY of the alert types AND locations
-      const subscriptions = await context.prisma.userAlertSubscriptions.findMany({
-        where: {
-          active: true,
-          frequency,
-          alertType: { in: [...allTypes] },
-          locationId: { in: [...allExpandedLocationIds] },
-        },
-        select: { userId: true, alertType: true, locationId: true, minSeverity: true },
-      });
-
-      if (subscriptions.length === 0) return 0;
-
-      // For each user, find which alerts match their subscriptions
       // userAlertMap: userId → Set<alertId>
       const userAlertMap = new Map<string, Set<string>>();
-
-      for (const sub of subscriptions) {
-        for (const alert of alerts) {
-          const typesMatch = alert.event.types.includes(sub.alertType);
-          const locationSet = alertLocationSets.get(alert.id);
-          const locationMatch = locationSet?.has(sub.locationId) ?? false;
-          const severityMatch = severityClearsFloor(alert.event.severity, sub.minSeverity);
-
-          if (typesMatch && locationMatch && severityMatch) {
-            let set = userAlertMap.get(sub.userId);
-            if (!set) {
-              set = new Set();
-              userAlertMap.set(sub.userId, set);
-            }
-            set.add(alert.id);
+      for (const [alertId, userIds] of recipientsByAlert) {
+        for (const userId of userIds) {
+          let set = userAlertMap.get(userId);
+          if (!set) {
+            set = new Set();
+            userAlertMap.set(userId, set);
           }
+          set.add(alertId);
         }
       }
 

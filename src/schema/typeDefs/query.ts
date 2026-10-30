@@ -782,5 +782,12 @@ export const queryTypeDef = gql`
 
     """Every Recipient list, by name. Platform admins only."""
     recipientLists: [RecipientList!]!
+
+    """What the automatic daily Alert Digest would send for a Brief's area
+    and window: each published Alert it would include, newest first, with
+    how many daily subscribers it would reach. Alerts no subscriber matches
+    are left out. Reads only: nothing is written or sent. Works on sent
+    Briefs too, against today's subscriptions. Platform admins only."""
+    briefDigestPreview(briefId: String!): [DigestPreviewRow!]!
   }
 `;

@@ -981,6 +981,14 @@ platform admins and analysts.<div class="field-args"><span class="arg"><code>eve
     <td><code>recipientLists</code></td>
     <td><code>[RecipientList!]!</code></td>
     <td>Every Recipient list, by name. Platform admins only.</td>
+  </tr><tr>
+    <td><code>briefDigestPreview</code></td>
+    <td><code>[DigestPreviewRow!]!</code></td>
+    <td>What the automatic daily Alert Digest would send for a Brief's area
+and window: each published Alert it would include, newest first, with
+how many daily subscribers it would reach. Alerts no subscriber matches
+are left out. Reads only: nothing is written or sent. Works on sent
+Briefs too, against today's subscriptions. Platform admins only.<div class="field-args"><span class="arg"><code>briefId: String!</code></span></div></td>
   </tr></tbody>
     </table>
         
@@ -5817,6 +5825,19 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
     <td><code>isPartial</code></td>
     <td><code>Boolean!</code></td>
     <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr></tbody></table><h3 id="type-digestpreviewrow"><code>DigestPreviewRow</code> <span class="type-badge">object</span></h3><p>One Alert the daily Alert Digest would send for a Brief's area and
+window.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>alert</code></td>
+    <td><code>Alert!</code></td>
+    <td>A published Alert in the Brief's area whose Event's first Signal
+falls in the Brief window, the same scope as `Brief.counts`. Its
+title and severity are on `event`.</td>
+  </tr><tr>
+    <td><code>subscriberCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Distinct users with an active daily subscription matching the
+Alert's type, location (or an ancestor of it) and severity floor.
+Always at least 1.</td>
   </tr></tbody></table><h3 id="type-disasterlevel1"><code>DisasterLevel1</code> <span class="type-badge">object</span></h3><p>A level-1 category with its level-2 groups.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
