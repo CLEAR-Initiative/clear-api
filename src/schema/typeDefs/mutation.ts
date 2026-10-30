@@ -1400,11 +1400,33 @@ export const mutationTypeDef = gql`
     24 hours, 7 days or 30 days earlier, by cadence."""
     createBrief(input: CreateBriefInput!): Brief!
 
+    """Edit a draft Brief's text. Only the fields given change. Every
+    mutation on a sent Brief or its items is BAD_USER_INPUT "Brief already
+    sent"."""
+    updateBrief(id: String!, input: UpdateBriefInput!): Brief!
+
+    """Move a draft Brief's window end to now and its start back by the
+    cadence."""
+    refreshBriefWindow(id: String!): Brief!
+
+    """Delete a draft Brief and its items. Sent Briefs are kept."""
+    deleteBrief(id: String!): Boolean!
+
     """Pick an Alert, Event or Signal into a draft Brief, at the end of its
     kind's group. The snapshot is built from the live row; the client never
     supplies it. Picking the same item again returns the existing one.
     NOT_FOUND when the entity doesn't exist."""
     addBriefItem(briefId: String!, kind: BriefItemKind!, entityId: String!): BriefItem!
+
+    """Unpick an item from a draft Brief."""
+    removeBriefItem(itemId: String!): Boolean!
+
+    """Set or clear (null or blank) an item's analyst note."""
+    updateBriefItemNote(itemId: String!, note: String): BriefItem!
+
+    """Reorder one kind's group. \`itemIds\` must list every item of that
+    kind in the Brief exactly once, in the new order."""
+    reorderBriefItems(briefId: String!, kind: BriefItemKind!, itemIds: [String!]!): [BriefItem!]!
 
     """Email the Brief to the caller's own address only, with [TEST] in
     the subject. Changes nothing. False when the email provider refused

@@ -151,4 +151,81 @@ describeIfDb("Briefs (db)", () => {
     expect(after.status).toBe("draft");
     expect(after.sentAt).toBeNull();
   });
+
+  it("edits a draft's text and keeps fields that weren't given", async () => {
+    const b = await newBrief();
+    await Mutation.updateBrief(null, { id: b.id, input: { summary: "**Calm** day" } }, ADMIN);
+    const after = await Mutation.updateBrief(null, { id: b.id, input: { closingNotes: "Next: rains" } }, ADMIN);
+    expect(after).toMatchObject({ title: b.title, summary: "**Calm** day", closingNotes: "Next: rains" });
+  });
+
+  it("refreshBriefWindow moves the window end to now", async () => {
+    const b = await newBrief("weekly");
+    await prisma.brief.update({
+      where: { id: b.id },
+      data: { windowStart: HOURS(24 * 9), windowEnd: HOURS(48) },
+    });
+    const after = await Mutation.refreshBriefWindow(null, { id: b.id }, ADMIN);
+    expect(Math.abs(after.windowEnd.getTime() - Date.now())).toBeLessThan(60_000);
+    expect(after.windowEnd.getTime() - after.windowStart.getTime()).toBe(7 * 24 * 3600 * 1000);
+  });
+
+  it("reorder persists, notes save, and removal unpicks", async () => {
+    const b = await newBrief();
+    const e = await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: eventId }, ADMIN);
+    const a = await Mutation.addBriefItem(null, { briefId: b.id, kind: "alert", entityId: alertId }, ADMIN);
+    // A second event for the group: the alert's event and a fresh one.
+    const other = await prisma.events.create({
+      data: { title: `${RUN} other`, types: ["DR"], firstSignalCreatedAt: HOURS(5), lastSignalCreatedAt: HOURS(5), rank: 0 },
+    });
+    try {
+      const e2 = await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: other.id }, ADMIN);
+      expect(e2.position).toBe(1);
+      await Mutation.reorderBriefItems(null, { briefId: b.id, kind: "event", itemIds: [e2.id, e.id] }, ADMIN);
+      const rows = await prisma.briefItem.findMany({ where: { briefId: b.id, kind: "event" }, orderBy: { position: "asc" } });
+      expect(rows.map((r) => r.id)).toEqual([e2.id, e.id]);
+
+      const noted = await Mutation.updateBriefItemNote(null, { itemId: a.id, note: "Watch this" }, ADMIN);
+      expect(noted.note).toBe("Watch this");
+      expect((await Mutation.updateBriefItemNote(null, { itemId: a.id, note: " " }, ADMIN)).note).toBeNull();
+
+      expect(await Mutation.removeBriefItem(null, { itemId: e2.id }, ADMIN)).toBe(true);
+      expect(await prisma.briefItem.count({ where: { briefId: b.id } })).toBe(2);
+    } finally {
+      await prisma.events.delete({ where: { id: other.id } });
+    }
+  });
+
+  it("a sent Brief rejects every change", async () => {
+    const b = await newBrief();
+    const item = await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: eventId }, ADMIN);
+    await prisma.brief.update({ where: { id: b.id }, data: { status: "sent", sentAt: new Date() } });
+    const attempts = [
+      () => Mutation.updateBrief(null, { id: b.id, input: { summary: "late" } }, ADMIN),
+      () => Mutation.refreshBriefWindow(null, { id: b.id }, ADMIN),
+      () => Mutation.deleteBrief(null, { id: b.id }, ADMIN),
+      () => Mutation.addBriefItem(null, { briefId: b.id, kind: "alert", entityId: alertId }, ADMIN),
+      () => Mutation.removeBriefItem(null, { itemId: item.id }, ADMIN),
+      () => Mutation.updateBriefItemNote(null, { itemId: item.id, note: "late" }, ADMIN),
+      () => Mutation.reorderBriefItems(null, { briefId: b.id, kind: "event", itemIds: [item.id] }, ADMIN),
+    ];
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toMatchObject({
+        message: "Brief already sent",
+        extensions: { code: "BAD_USER_INPUT" },
+      });
+    }
+    const after = await prisma.brief.findUniqueOrThrow({ where: { id: b.id }, include: { items: true } });
+    expect(after.summary).toBe("");
+    expect(after.items).toHaveLength(1);
+    expect(after.items[0].note).toBeNull();
+  });
+
+  it("deleteBrief removes a draft and its items", async () => {
+    const b = await newBrief();
+    await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: eventId }, ADMIN);
+    expect(await Mutation.deleteBrief(null, { id: b.id }, ADMIN)).toBe(true);
+    expect(await prisma.brief.findUnique({ where: { id: b.id } })).toBeNull();
+    expect(await prisma.briefItem.count({ where: { briefId: b.id } })).toBe(0);
+  });
 });

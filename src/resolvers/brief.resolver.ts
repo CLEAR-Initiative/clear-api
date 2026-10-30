@@ -6,6 +6,7 @@
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import type { BriefCadence, BriefItemKind } from "../generated/prisma/enums.js";
 import { requireRole } from "../utils/auth-guard.js";
 import {
@@ -37,6 +38,43 @@ async function loadDraftBrief(prisma: Context["prisma"], id: string) {
   if (!row) throw notFound("Brief not found");
   if (row.status !== "draft") throw badInput("Brief already sent");
   return row;
+}
+
+/**
+ * Write to a draft Brief. The write is conditional on `status = draft`, so a
+ * send that lands between the check and the write can't be overwritten.
+ */
+async function updateDraftBrief(
+  prisma: Context["prisma"],
+  id: string,
+  data: Prisma.briefUpdateManyMutationInput,
+) {
+  await loadDraftBrief(prisma, id);
+  const { count } = await prisma.brief.updateMany({ where: { id, status: "draft" }, data });
+  if (count === 0) throw badInput("Brief already sent");
+  return prisma.brief.findUniqueOrThrow({ where: { id } });
+}
+
+/** Where-clause for an item whose Brief is still a draft. */
+function draftItemWhere(id: string): Prisma.briefItemWhereInput {
+  return { id, brief: { status: "draft" } };
+}
+
+/** Load an item whose Brief may still change. */
+async function loadDraftItem(prisma: Context["prisma"], itemId: string) {
+  const item = await prisma.briefItem.findUnique({
+    where: { id: itemId },
+    include: { brief: { select: { status: true } } },
+  });
+  if (!item) throw notFound("Brief item not found");
+  if (item.brief.status !== "draft") throw badInput("Brief already sent");
+  return item;
+}
+
+interface UpdateBriefInput {
+  title?: string | null;
+  summary?: string | null;
+  closingNotes?: string | null;
 }
 
 interface CreateBriefInput {
@@ -97,6 +135,38 @@ export const briefResolvers = {
       });
     },
 
+    updateBrief: async (
+      _parent: unknown,
+      args: { id: string; input: UpdateBriefInput },
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      const { title, summary, closingNotes } = args.input;
+      if (title != null && !title.trim()) throw badInput("A Brief needs a title");
+      return updateDraftBrief(context.prisma, args.id, {
+        ...(title != null ? { title: title.trim() } : {}),
+        ...(summary != null ? { summary } : {}),
+        ...(closingNotes != null ? { closingNotes } : {}),
+      });
+    },
+
+    refreshBriefWindow: async (_parent: unknown, args: { id: string }, context: Context) => {
+      requireRole(context, ADMIN);
+      const row = await loadDraftBrief(context.prisma, args.id);
+      return updateDraftBrief(context.prisma, args.id, briefWindow(row.cadence));
+    },
+
+    deleteBrief: async (_parent: unknown, args: { id: string }, context: Context) => {
+      requireRole(context, ADMIN);
+      await loadDraftBrief(context.prisma, args.id);
+      // Conditional on draft so a send racing this delete can't lose its record.
+      const { count } = await context.prisma.brief.deleteMany({
+        where: { id: args.id, status: "draft" },
+      });
+      if (count === 0) throw badInput("Brief already sent");
+      return true;
+    },
+
     addBriefItem: async (
       _parent: unknown,
       args: { briefId: string; kind: BriefItemKind; entityId: string },
@@ -126,6 +196,63 @@ export const briefResolvers = {
         create: { briefId, kind, entityId, position, snapshot: { ...snapshot } },
         update: {},
       });
+    },
+
+    removeBriefItem: async (_parent: unknown, args: { itemId: string }, context: Context) => {
+      requireRole(context, ADMIN);
+      await loadDraftItem(context.prisma, args.itemId);
+      const { count } = await context.prisma.briefItem.deleteMany({
+        where: draftItemWhere(args.itemId),
+      });
+      if (count === 0) throw badInput("Brief already sent");
+      return true;
+    },
+
+    updateBriefItemNote: async (
+      _parent: unknown,
+      args: { itemId: string; note?: string | null },
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      await loadDraftItem(context.prisma, args.itemId);
+      const note = args.note?.trim() ? args.note : null;
+      const { count } = await context.prisma.briefItem.updateMany({
+        where: draftItemWhere(args.itemId),
+        data: { note },
+      });
+      if (count === 0) throw badInput("Brief already sent");
+      return context.prisma.briefItem.findUniqueOrThrow({ where: { id: args.itemId } });
+    },
+
+    reorderBriefItems: async (
+      _parent: unknown,
+      args: { briefId: string; kind: BriefItemKind; itemIds: string[] },
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      const { briefId, kind, itemIds } = args;
+      await loadDraftBrief(context.prisma, briefId);
+      const group = await context.prisma.briefItem.findMany({
+        where: { briefId, kind },
+        select: { id: true },
+      });
+      const current = new Set(group.map((i) => i.id));
+      if (
+        itemIds.length !== current.size ||
+        new Set(itemIds).size !== itemIds.length ||
+        !itemIds.every((id) => current.has(id))
+      ) {
+        throw badInput(`itemIds must list every ${kind} item of the Brief exactly once`);
+      }
+      const writes = await context.prisma.$transaction(
+        itemIds.map((id, position) =>
+          context.prisma.briefItem.updateMany({ where: draftItemWhere(id), data: { position } }),
+        ),
+      );
+      if (writes.some((w) => w.count === 0)) throw badInput("Brief already sent");
+      return orderBriefItems(
+        await context.prisma.briefItem.findMany({ where: { briefId, kind } }),
+      );
     },
 
     sendBriefTest: async (_parent: unknown, args: { id: string }, context: Context) => {

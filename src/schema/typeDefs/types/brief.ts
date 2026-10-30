@@ -100,6 +100,16 @@ export const briefTypeDef = gql`
     url: String!
   }
 
+  """Fields to change on a draft Brief; omitted fields are kept."""
+  input UpdateBriefInput {
+    """Must not be blank."""
+    title: String
+    """Markdown-lite."""
+    summary: String
+    """Markdown-lite."""
+    closingNotes: String
+  }
+
   input CreateBriefInput {
     cadence: BriefCadence!
     """A country, state or district (location level 0 to 2)."""

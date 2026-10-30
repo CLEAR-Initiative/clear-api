@@ -136,15 +136,75 @@ describe("sendBriefTest", () => {
   });
 });
 
-describe("addBriefItem", () => {
-  it("is rejected on a sent Brief", async () => {
-    const ctx = buildContext(ADMIN, {
-      brief: { findUnique: vi.fn(async () => ({ ...DRAFT, status: "sent" })) },
+describe("a sent Brief is frozen", () => {
+  const SENT = { ...DRAFT, status: "sent" };
+  const ITEM = { id: "i1", briefId: "b1", kind: "event", brief: { status: "sent" } };
+  const writes = {
+    update: vi.fn(),
+    updateMany: vi.fn(),
+    delete: vi.fn(),
+    deleteMany: vi.fn(),
+    create: vi.fn(),
+    upsert: vi.fn(),
+  };
+  const ctx = () =>
+    buildContext(ADMIN, {
+      brief: { findUnique: vi.fn(async () => SENT), ...writes },
+      briefItem: { findUnique: vi.fn(async () => ITEM), findMany: vi.fn(async () => [ITEM]), ...writes },
+      $transaction: vi.fn(),
     });
+  const M = briefResolvers.Mutation;
+  const cases: Array<[string, (c: Context) => Promise<unknown>]> = [
+    ["updateBrief", (c) => M.updateBrief(null, { id: "b1", input: { summary: "x" } }, c)],
+    ["refreshBriefWindow", (c) => M.refreshBriefWindow(null, { id: "b1" }, c)],
+    ["deleteBrief", (c) => M.deleteBrief(null, { id: "b1" }, c)],
+    ["addBriefItem", (c) => M.addBriefItem(null, { briefId: "b1", kind: "event", entityId: "e1" }, c)],
+    ["removeBriefItem", (c) => M.removeBriefItem(null, { itemId: "i1" }, c)],
+    ["updateBriefItemNote", (c) => M.updateBriefItemNote(null, { itemId: "i1", note: "x" }, c)],
+    ["reorderBriefItems", (c) => M.reorderBriefItems(null, { briefId: "b1", kind: "event", itemIds: ["i1"] }, c)],
+  ];
+
+  it.each(cases)("%s is BAD_USER_INPUT and writes nothing", async (_name, call) => {
+    Object.values(writes).forEach((w) => w.mockReset());
+    const c = ctx();
+    const err = await call(c).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GraphQLError);
+    expect((err as GraphQLError).extensions.code).toBe("BAD_USER_INPUT");
+    expect((err as GraphQLError).message).toBe("Brief already sent");
+    Object.values(writes).forEach((w) => expect(w).not.toHaveBeenCalled());
+    expect(c.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a draft write that loses the race to a send is rejected too", async () => {
+    const c = buildContext(ADMIN, {
+      brief: {
+        findUnique: vi.fn(async () => DRAFT),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+    });
+    expect(await codeOf(M.updateBrief(null, { id: "b1", input: { title: "New" } }, c))).toBe("BAD_USER_INPUT");
+  });
+});
+
+describe("reorderBriefItems", () => {
+  it("rejects a list that isn't exactly the group", async () => {
+    const c = buildContext(ADMIN, {
+      brief: { findUnique: vi.fn(async () => DRAFT) },
+      briefItem: { findMany: vi.fn(async () => [{ id: "i1" }, { id: "i2" }]) },
+    });
+    for (const itemIds of [["i1"], ["i1", "i1"], ["i1", "i3"], ["i1", "i2", "i3"]]) {
+      expect(
+        await codeOf(briefResolvers.Mutation.reorderBriefItems(null, { briefId: "b1", kind: "event", itemIds }, c)),
+      ).toBe("BAD_USER_INPUT");
+    }
+  });
+});
+
+describe("updateBrief", () => {
+  it("rejects a blank title", async () => {
+    const c = buildContext(ADMIN, { brief: { findUnique: vi.fn(async () => DRAFT) } });
     expect(
-      await codeOf(
-        briefResolvers.Mutation.addBriefItem(null, { briefId: "b1", kind: "event", entityId: "e1" }, ctx),
-      ),
+      await codeOf(briefResolvers.Mutation.updateBrief(null, { id: "b1", input: { title: "  " } }, c)),
     ).toBe("BAD_USER_INPUT");
   });
 });

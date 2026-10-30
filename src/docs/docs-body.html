@@ -1953,6 +1953,21 @@ discarded.<div class="field-args"><span class="arg"><code>id: String!</code></sp
     <td><code>Brief!</code></td>
     <td>Start a draft Brief for one area. The window ends now and starts
 24 hours, 7 days or 30 days earlier, by cadence.<div class="field-args"><span class="arg"><code>input: CreateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-updatebrief">
+    <td><code>updateBrief</code></td>
+    <td><code>Brief!</code></td>
+    <td>Edit a draft Brief's text. Only the fields given change. Every
+mutation on a sent Brief or its items is BAD_USER_INPUT &quot;Brief already
+sent&quot;.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-refreshbriefwindow">
+    <td><code>refreshBriefWindow</code></td>
+    <td><code>Brief!</code></td>
+    <td>Move a draft Brief's window end to now and its start back by the
+cadence.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-deletebrief">
+    <td><code>deleteBrief</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a draft Brief and its items. Sent Briefs are kept.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-addbriefitem">
     <td><code>addBriefItem</code></td>
     <td><code>BriefItem!</code></td>
@@ -1960,6 +1975,19 @@ discarded.<div class="field-args"><span class="arg"><code>id: String!</code></sp
 kind's group. The snapshot is built from the live row; the client never
 supplies it. Picking the same item again returns the existing one.
 NOT_FOUND when the entity doesn't exist.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>entityId: String!</code></span></div></td>
+  </tr><tr id="mutation-removebriefitem">
+    <td><code>removeBriefItem</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Unpick an item from a draft Brief.<div class="field-args"><span class="arg"><code>itemId: String!</code></span></div></td>
+  </tr><tr id="mutation-updatebriefitemnote">
+    <td><code>updateBriefItemNote</code></td>
+    <td><code>BriefItem!</code></td>
+    <td>Set or clear (null or blank) an item's analyst note.<div class="field-args"><span class="arg"><code>itemId: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+  </tr><tr id="mutation-reorderbriefitems">
+    <td><code>reorderBriefItems</code></td>
+    <td><code>[BriefItem!]!</code></td>
+    <td>Reorder one kind's group. `itemIds` must list every item of that
+kind in the Brief exactly once, in the new order.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>itemIds: [String!]!</code></span></div></td>
   </tr><tr id="mutation-sendbrieftest">
     <td><code>sendBriefTest</code></td>
     <td><code>Boolean!</code></td>
@@ -3698,6 +3726,18 @@ provide only what you want to change.</p><table class="ref-table"><thead><tr><th
     <td><code>title</code></td>
     <td><code>String</code></td>
     <td>Display name. Blank clears it back to the area list. Omit to leave it.</td>
+  </tr></tbody></table><h3 id="type-updatebriefinput"><code>UpdateBriefInput</code> <span class="type-badge">input</span></h3><p>Fields to change on a draft Brief; omitted fields are kept.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Must not be blank.</td>
+  </tr><tr>
+    <td><code>summary</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
+  </tr><tr>
+    <td><code>closingNotes</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
