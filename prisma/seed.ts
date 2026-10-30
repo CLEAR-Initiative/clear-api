@@ -433,7 +433,7 @@ async function seed() {
   const nyala = loc.nyala!;
 
   // ─── Data Sources ──────────────────────────────────────────────────────────
-  const [dataminr, acled, gdacs, dtm, idmc] = await Promise.all([
+  const [dataminr, acled, gdacs] = await Promise.all([
     prisma.dataSources.create({
       data: {
         name: "dataminr",
@@ -534,7 +534,7 @@ async function seed() {
     },
   });
 
-  console.log("Created 7 data sources + 1 manual source + 1 push feed");
+  console.log("Created 8 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
