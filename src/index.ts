@@ -32,6 +32,7 @@ import { hotlineWebhookRouter } from "./routes/hotline-webhook.js";
 import { logieRouter } from "./routes/logie.js";
 import { usgsRouter } from "./routes/usgs.js";
 import { healthRouter } from "./routes/health.js";
+import { briefsUnsubscribeRouter } from "./routes/briefs-unsubscribe.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 import { startActivityLogTrimWorker } from "./services/activity-log/trim-worker.js";
 
@@ -120,6 +121,10 @@ app.use("/api/usgs", usgsRouter);
 // restart-loop the API); `/health/ready` adds a 2s `SELECT 1` and 503s when
 // Postgres is unreachable. See routes/health.ts.
 app.use("/health", healthRouter);
+
+// Public unsubscribe link from Brief emails (`?token=` is the credential).
+// See routes/briefs-unsubscribe.ts.
+app.use("/briefs", briefsUnsubscribeRouter);
 
 // GraphQL (with multipart upload support)
 app.use(

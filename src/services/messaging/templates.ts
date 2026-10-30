@@ -5,6 +5,7 @@
  * Returns { subject, textBody, htmlBody } for each template type.
  */
 
+import { withLinkSource } from "../../utils/event-link.js";
 import {
   DEFAULT_LOCALE,
   LOCALE_DIRECTION,
@@ -1075,4 +1076,266 @@ export function buildAlertSms(
   if (locationName) body += `\n${locationName}`;
   body += `\n${alertUrl}`;
   return body;
+}
+
+/* ─── Briefs ─────────────────────────────────────────────────────────────── */
+
+/** One picked item as a Brief email shows it. */
+export interface BriefEmailItem {
+  title: string;
+  severity: number | null;
+  locationName: string | null;
+  eventTypes: string[];
+  /** ISO time the item is windowed on. */
+  occurredAt: string;
+  url: string;
+  /** Analyst note, Markdown-lite. */
+  note: string | null;
+}
+
+export interface BriefEmailCount {
+  total: number;
+  bySeverity: Array<{ key: string; count: number }>;
+  byType: Array<{ key: string; count: number }>;
+}
+
+/** Everything a Brief email renders, already ordered. */
+export interface BriefEmailView {
+  title: string;
+  locationName: string;
+  windowStart: Date;
+  windowEnd: Date;
+  /** Markdown-lite. */
+  summary: string;
+  /** Markdown-lite. */
+  closingNotes: string;
+  counts: { alert: BriefEmailCount; event: BriefEmailCount; signal: BriefEmailCount } | null;
+  groups: Array<{ kind: "alert" | "event" | "signal"; items: BriefEmailItem[] }>;
+}
+
+export interface BriefEmailOptions {
+  /** Per-recipient unsubscribe link; null for a test send to oneself. */
+  unsubscribeUrl: string | null;
+  /** Prefix the subject with [TEST]. */
+  isTest: boolean;
+}
+
+const BRIEF_GROUP_LABEL = { alert: "Alerts", event: "Events", signal: "Signals" } as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** Type buckets shown per row of the counts table. */
+const BRIEF_TOP_TYPES = 5;
+
+/** "30 Oct 2026, 08:00 UTC". */
+function briefDateTime(d: Date): string {
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${briefDate(d)}, ${hh}:${mm} UTC`;
+}
+
+/** "30 Oct 2026". */
+function briefDate(d: Date): string {
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+const SAFE_LINK = /^https?:\/\//i;
+
+/**
+ * Inline Markdown-lite on one line of ALREADY-ESCAPED text: links
+ * `[text](https://...)` (http and https only; any other target keeps its
+ * text and loses the link; one level of balanced parentheses in the
+ * target, as in Wikipedia-style URLs), `**bold**` and `*italic*`. Links are swapped for
+ * placeholders first so `*` inside a URL is never read as emphasis.
+ */
+function briefInline(escaped: string): string {
+  const links: string[] = [];
+  // U+E000 (private use) marks a placeholder; drop any already in the text.
+  let out = escaped.replace(//g, "").replace(/\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, text: string, href: string) => {
+    if (!SAFE_LINK.test(href)) return text;
+    links.push(`<a href="${href}" style="color: #2563EB;">${text}</a>`);
+    return `${links.length - 1}`;
+  });
+  out = out
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  return out.replace(/(\d+)/g, (_m, n: string) => links[Number(n)] ?? "");
+}
+
+/**
+ * Markdown-lite to HTML: paragraphs split on blank lines, `- ` bullet
+ * lines grouped into a list, and the inline forms of {@link briefInline}.
+ * The source is escaped before any markup is added, so no HTML in it
+ * survives.
+ */
+export function briefMarkdownLite(source: string, paragraphStyle = ""): string {
+  const style = paragraphStyle ? ` style="${paragraphStyle}"` : "";
+  const blocks: string[] = [];
+  let para: string[] = [];
+  let bullets: string[] = [];
+  const flushPara = () => {
+    if (para.length) blocks.push(`<p${style}>${para.join("<br>")}</p>`);
+    para = [];
+  };
+  const flushBullets = () => {
+    if (bullets.length) {
+      blocks.push(`<ul style="margin: 0 0 12px; padding-left: 20px;">${bullets.map((b) => `<li>${b}</li>`).join("")}</ul>`);
+    }
+    bullets = [];
+  };
+  for (const raw of source.replace(/\r\n?/g, "\n").split("\n")) {
+    const line = raw.trimEnd();
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) {
+      flushPara();
+      bullets.push(briefInline(escapeHtml(bullet[1])));
+    } else if (line.trim() === "") {
+      flushPara();
+      flushBullets();
+    } else {
+      flushBullets();
+      para.push(briefInline(escapeHtml(line.trim())));
+    }
+  }
+  flushPara();
+  flushBullets();
+  return blocks.join("\n");
+}
+
+function briefItemMeta(item: BriefEmailItem, windowStart: Date): string[] {
+  const occurred = new Date(item.occurredAt);
+  return [
+    item.severity != null ? `Severity ${item.severity}` : null,
+    item.locationName,
+    item.eventTypes.length ? item.eventTypes.join(", ") : null,
+    occurred < windowStart ? `from ${briefDate(occurred)}` : null,
+  ].filter((x): x is string => Boolean(x));
+}
+
+function bucketList(buckets: Array<{ key: string; count: number }>, limit?: number): string {
+  const shown = limit ? buckets.slice(0, limit) : buckets;
+  const more = limit && buckets.length > limit ? `, +${buckets.length - limit} more` : "";
+  return shown.map((b) => `${b.key}: ${b.count}`).join(", ") + more;
+}
+
+const H3 = "margin: 24px 0 8px; font-size: 15px; font-weight: 700; color: #171717;";
+const P = "margin: 0 0 12px; font-size: 14px; color: #404040; line-height: 1.5;";
+
+/**
+ * A Brief, as emailed to a Recipient list or as a test to its author.
+ * Fixed sections, in order: title and window, summary, counts, picked items
+ * (Alerts, Events, Signals, each with its note), closing notes. Every string
+ * is escaped in the HTML body: titles, notes and area names come from people
+ * and the pipeline, not from us. Item links carry `from=email`.
+ */
+export function brief(view: BriefEmailView, options: BriefEmailOptions): EmailContent {
+  const windowLine = `${briefDateTime(view.windowStart)} to ${briefDateTime(view.windowEnd)}`;
+  const groups = view.groups.filter((g) => g.items.length > 0);
+  const countRows = view.counts
+    ? (["alert", "event", "signal"] as const).map((kind) => ({ kind, count: view.counts![kind] }))
+    : [];
+
+  // ── Plain text ──
+  const text: string[] = [view.title, `${view.locationName}, ${windowLine}`];
+  if (options.isTest) text.unshift("TEST: sent only to you.");
+  if (view.summary.trim()) text.push(`SUMMARY\n${view.summary.trim()}`);
+  if (countRows.length) {
+    text.push(
+      "COUNTS\n" +
+        countRows
+          .map(({ kind, count }) => {
+            const parts = [`${BRIEF_GROUP_LABEL[kind]}: ${count.total}`];
+            if (count.bySeverity.length) parts.push(`by severity ${bucketList(count.bySeverity)}`);
+            if (count.byType.length) parts.push(`by type ${bucketList(count.byType, BRIEF_TOP_TYPES)}`);
+            return parts.join("; ");
+          })
+          .join("\n"),
+    );
+  }
+  for (const g of groups) {
+    text.push(
+      `${BRIEF_GROUP_LABEL[g.kind].toUpperCase()}\n` +
+        g.items
+          .map((item) => {
+            const meta = briefItemMeta(item, view.windowStart);
+            return [
+              `- ${item.title}`,
+              meta.length ? `  ${meta.join(" · ")}` : null,
+              item.note?.trim() ? `  Note: ${item.note.trim()}` : null,
+              `  ${withLinkSource(item.url, "email")}`,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          })
+          .join("\n"),
+    );
+  }
+  if (!groups.length) text.push("No items picked.");
+  if (view.closingNotes.trim()) text.push(`CLOSING NOTES\n${view.closingNotes.trim()}`);
+  if (options.unsubscribeUrl) text.push(`Unsubscribe from these Briefs: ${options.unsubscribeUrl}`);
+
+  // ── HTML ──
+  const html: string[] = [];
+  if (options.isTest) {
+    html.push(
+      `<p style="margin: 0 0 16px; padding: 8px 12px; background: #FEF3C7; border-radius: 6px; font-size: 13px; color: #92400E;">Test send: only you received this.</p>`,
+    );
+  }
+  html.push(
+    `<h2 style="margin: 0 0 4px; font-size: 20px; font-weight: 700; color: #171717;">${escapeHtml(view.title)}</h2>`,
+    `<p style="margin: 0 0 16px; font-size: 13px; color: #737373;">${escapeHtml(view.locationName)}, ${escapeHtml(windowLine)}</p>`,
+  );
+  if (view.summary.trim()) {
+    html.push(`<h3 style="${H3}">Summary</h3>`, briefMarkdownLite(view.summary, P));
+  }
+  if (countRows.length) {
+    const cell = "padding: 6px 8px; border-top: 1px solid #E5E5E5; font-size: 13px; color: #404040; vertical-align: top;";
+    html.push(
+      `<h3 style="${H3}">Counts</h3>`,
+      `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">` +
+        countRows
+          .map(
+            ({ kind, count }) =>
+              `<tr><td style="${cell} font-weight: 600;">${BRIEF_GROUP_LABEL[kind]}</td>` +
+              `<td style="${cell} text-align: right; font-weight: 600;">${count.total}</td>` +
+              `<td style="${cell}">${escapeHtml(
+                [
+                  count.bySeverity.length ? `Severity ${bucketList(count.bySeverity)}` : "",
+                  count.byType.length ? `Type ${bucketList(count.byType, BRIEF_TOP_TYPES)}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(". "),
+              )}</td></tr>`,
+          )
+          .join("") +
+        `</table>`,
+    );
+  }
+  for (const g of groups) {
+    html.push(
+      `<h3 style="${H3}">${BRIEF_GROUP_LABEL[g.kind]}</h3>`,
+      ...g.items.map((item) => {
+        const meta = briefItemMeta(item, view.windowStart);
+        return `<div style="margin: 0 0 8px; padding: 10px 14px; background: #F5F5F5; border-radius: 6px; border-left: 3px solid #E85D3D;">
+          <a href="${escapeHtml(withLinkSource(item.url, "email"))}" style="font-size: 14px; font-weight: 600; color: #171717; text-decoration: none;">${escapeHtml(item.title)}</a>
+          ${meta.length ? `<p style="margin: 2px 0 0; font-size: 12px; color: #737373;">${escapeHtml(meta.join(" · "))}</p>` : ""}
+          ${item.note?.trim() ? `<div style="margin: 6px 0 0;">${briefMarkdownLite(item.note, "margin: 0; font-size: 13px; color: #404040; line-height: 1.5;")}</div>` : ""}
+        </div>`;
+      }),
+    );
+  }
+  if (!groups.length) html.push(`<p style="${P}">No items picked.</p>`);
+  if (view.closingNotes.trim()) {
+    html.push(`<h3 style="${H3}">Closing notes</h3>`, briefMarkdownLite(view.closingNotes, P));
+  }
+  html.push(
+    `<hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />`,
+    options.unsubscribeUrl
+      ? `<p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">You received this Brief as a member of a CLEAR Recipient list. <a href="${escapeHtml(options.unsubscribeUrl)}" style="color: #A3A3A3;">Unsubscribe</a></p>`
+      : `<p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">A test send of a CLEAR Brief, to you only.</p>`,
+  );
+
+  return {
+    subject: `${options.isTest ? "[TEST] " : ""}${view.title}`,
+    textBody: text.join("\n\n"),
+    htmlBody: wrapHtml("Brief", html.join("\n")),
+  };
 }

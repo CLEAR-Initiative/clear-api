@@ -771,4 +771,16 @@ export const queryTypeDef = gql`
     platform admins and analysts."""
     rejectedCaseUrls(eventId: String!): [String!]!
   }
+
+  # ─── Briefs (platform admin only) ────────────────────────────────────
+  extend type Query {
+    """Briefs, newest first. Platform admins only."""
+    briefs(limit: Int = 50, offset: Int = 0): [Brief!]!
+
+    """One Brief, or null. Platform admins only."""
+    brief(id: String!): Brief
+
+    """Every Recipient list, by name. Platform admins only."""
+    recipientLists: [RecipientList!]!
+  }
 `;

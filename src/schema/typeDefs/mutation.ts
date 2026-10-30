@@ -1393,4 +1393,66 @@ export const mutationTypeDef = gql`
       methodVersion: String
     ): Task!
   }
+
+  # ─── Briefs (platform admin only) ────────────────────────────────────
+  extend type Mutation {
+    """Start a draft Brief for one area. The window ends now and starts
+    24 hours, 7 days or 30 days earlier, by cadence."""
+    createBrief(input: CreateBriefInput!): Brief!
+
+    """Edit a draft Brief's text. Only the fields given change. Every
+    mutation on a sent Brief or its items is BAD_USER_INPUT "Brief already
+    sent"."""
+    updateBrief(id: String!, input: UpdateBriefInput!): Brief!
+
+    """Move a draft Brief's window end to now and its start back by the
+    cadence."""
+    refreshBriefWindow(id: String!): Brief!
+
+    """Delete a draft Brief and its items. Sent Briefs are kept."""
+    deleteBrief(id: String!): Boolean!
+
+    """Pick an Alert, Event or Signal into a draft Brief, at the end of its
+    kind's group. The snapshot is built from the live row; the client never
+    supplies it. Picking the same item again returns the existing one.
+    NOT_FOUND when the entity doesn't exist."""
+    addBriefItem(briefId: String!, kind: BriefItemKind!, entityId: String!): BriefItem!
+
+    """Unpick an item from a draft Brief."""
+    removeBriefItem(itemId: String!): Boolean!
+
+    """Set or clear (null or blank) an item's analyst note."""
+    updateBriefItemNote(itemId: String!, note: String): BriefItem!
+
+    """Reorder one kind's group. \`itemIds\` must list every item of that
+    kind in the Brief exactly once, in the new order."""
+    reorderBriefItems(briefId: String!, kind: BriefItemKind!, itemIds: [String!]!): [BriefItem!]!
+
+    """Email the Brief to the caller's own address only, with [TEST] in
+    the subject. Changes nothing. False when the email provider refused
+    it."""
+    sendBriefTest(id: String!): Boolean!
+
+    """Send a draft Brief to a Recipient list and freeze it. In one
+    transaction it rewrites every item's snapshot from live data (keeping
+    the stored one when the entity is gone), stores the counts and marks
+    the Brief sent; then it emails every member who hasn't unsubscribed,
+    each with their own unsubscribe link. Failed emails are counted, not
+    retried. BAD_USER_INPUT when the Brief is already sent, the list has
+    no one to send to, or the window was refreshed during the send (send
+    again)."""
+    sendBrief(id: String!, recipientListId: String!): BriefSendResult!
+
+    """Create an empty Recipient list. BAD_USER_INPUT when the name is
+    blank or taken."""
+    createRecipientList(name: String!): RecipientList!
+
+    """Add an address to a Recipient list, lower-cased. It need not belong
+    to a CLEAR user. An address already on the list is returned unchanged,
+    so re-adding never clears an unsubscribe."""
+    addRecipientListMember(listId: String!, email: String!): RecipientListMember!
+
+    """Take an address off its Recipient list."""
+    removeRecipientListMember(memberId: String!): Boolean!
+  }
 `;

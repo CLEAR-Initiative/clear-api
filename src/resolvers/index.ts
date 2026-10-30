@@ -38,6 +38,7 @@ import { groundResolvers } from "./ground.resolver.js";
 import { conversationResolvers } from "./conversation.resolver.js";
 import { taskResolvers } from "./task.resolver.js";
 import { metricsResolvers } from "./metrics.resolver.js";
+import { briefResolvers } from "./brief.resolver.js";
 
 export const resolvers: IResolvers[] = [
   scalarResolvers,
@@ -79,4 +80,5 @@ export const resolvers: IResolvers[] = [
   conversationResolvers,
   taskResolvers,
   metricsResolvers,
+  briefResolvers,
 ];

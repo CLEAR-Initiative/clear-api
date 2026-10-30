@@ -969,6 +969,18 @@ Tasks only), so the list is exactly what the caller may decide.<div class="field
     <td>Source URLs already rejected for an Event: a web Worker reads this
 before searching and never proposes one again. The worker role,
 platform admins and analysts.<div class="field-args"><span class="arg"><code>eventId: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>briefs</code></td>
+    <td><code>[Brief!]!</code></td>
+    <td>Briefs, newest first. Platform admins only.<div class="field-args"><span class="arg"><code>limit: Int</code></span><span class="arg"><code>offset: Int</code></span></div></td>
+  </tr><tr>
+    <td><code>brief</code></td>
+    <td><code>Brief</code></td>
+    <td>One Brief, or null. Platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>recipientLists</code></td>
+    <td><code>[RecipientList!]!</code></td>
+    <td>Every Recipient list, by name. Platform admins only.</td>
   </tr></tbody>
     </table>
         
@@ -1940,12 +1952,85 @@ only while LEASED (CONFLICT
 `NOT_LEASED`, FORBIDDEN `NOT_LEASE_OWNER`). If cancellation was
 requested meanwhile the Task becomes CANCELLED and the result is
 discarded.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>leaseToken: String!</code></span><span class="arg"><code>result: JSON!</code></span><span class="arg"><code>usage: TaskUsageInput</code></span><span class="arg"><code>cases: [CaseProposalInput!]</code></span><span class="arg"><code>methodVersion: String</code> — Skill or handler version that produced `cases`; required with them.</span></div></td>
+  </tr><tr id="mutation-createbrief">
+    <td><code>createBrief</code></td>
+    <td><code>Brief!</code></td>
+    <td>Start a draft Brief for one area. The window ends now and starts
+24 hours, 7 days or 30 days earlier, by cadence.<div class="field-args"><span class="arg"><code>input: CreateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-updatebrief">
+    <td><code>updateBrief</code></td>
+    <td><code>Brief!</code></td>
+    <td>Edit a draft Brief's text. Only the fields given change. Every
+mutation on a sent Brief or its items is BAD_USER_INPUT &quot;Brief already
+sent&quot;.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdateBriefInput!</code></span></div></td>
+  </tr><tr id="mutation-refreshbriefwindow">
+    <td><code>refreshBriefWindow</code></td>
+    <td><code>Brief!</code></td>
+    <td>Move a draft Brief's window end to now and its start back by the
+cadence.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-deletebrief">
+    <td><code>deleteBrief</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a draft Brief and its items. Sent Briefs are kept.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-addbriefitem">
+    <td><code>addBriefItem</code></td>
+    <td><code>BriefItem!</code></td>
+    <td>Pick an Alert, Event or Signal into a draft Brief, at the end of its
+kind's group. The snapshot is built from the live row; the client never
+supplies it. Picking the same item again returns the existing one.
+NOT_FOUND when the entity doesn't exist.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>entityId: String!</code></span></div></td>
+  </tr><tr id="mutation-removebriefitem">
+    <td><code>removeBriefItem</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Unpick an item from a draft Brief.<div class="field-args"><span class="arg"><code>itemId: String!</code></span></div></td>
+  </tr><tr id="mutation-updatebriefitemnote">
+    <td><code>updateBriefItemNote</code></td>
+    <td><code>BriefItem!</code></td>
+    <td>Set or clear (null or blank) an item's analyst note.<div class="field-args"><span class="arg"><code>itemId: String!</code></span><span class="arg"><code>note: String</code></span></div></td>
+  </tr><tr id="mutation-reorderbriefitems">
+    <td><code>reorderBriefItems</code></td>
+    <td><code>[BriefItem!]!</code></td>
+    <td>Reorder one kind's group. `itemIds` must list every item of that
+kind in the Brief exactly once, in the new order.<div class="field-args"><span class="arg"><code>briefId: String!</code></span><span class="arg"><code>kind: BriefItemKind!</code></span><span class="arg"><code>itemIds: [String!]!</code></span></div></td>
+  </tr><tr id="mutation-sendbrieftest">
+    <td><code>sendBriefTest</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Email the Brief to the caller's own address only, with [TEST] in
+the subject. Changes nothing. False when the email provider refused
+it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-sendbrief">
+    <td><code>sendBrief</code></td>
+    <td><code>BriefSendResult!</code></td>
+    <td>Send a draft Brief to a Recipient list and freeze it. In one
+transaction it rewrites every item's snapshot from live data (keeping
+the stored one when the entity is gone), stores the counts and marks
+the Brief sent; then it emails every member who hasn't unsubscribed,
+each with their own unsubscribe link. Failed emails are counted, not
+retried. BAD_USER_INPUT when the Brief is already sent, the list has
+no one to send to, or the window was refreshed during the send (send
+again).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>recipientListId: String!</code></span></div></td>
+  </tr><tr id="mutation-createrecipientlist">
+    <td><code>createRecipientList</code></td>
+    <td><code>RecipientList!</code></td>
+    <td>Create an empty Recipient list. BAD_USER_INPUT when the name is
+blank or taken.<div class="field-args"><span class="arg"><code>name: String!</code></span></div></td>
+  </tr><tr id="mutation-addrecipientlistmember">
+    <td><code>addRecipientListMember</code></td>
+    <td><code>RecipientListMember!</code></td>
+    <td>Add an address to a Recipient list, lower-cased. It need not belong
+to a CLEAR user. An address already on the list is returned unchanged,
+so re-adding never clears an unsubscribe.<div class="field-args"><span class="arg"><code>listId: String!</code></span><span class="arg"><code>email: String!</code></span></div></td>
+  </tr><tr id="mutation-removerecipientlistmember">
+    <td><code>removeRecipientListMember</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Take an address off its Recipient list.<div class="field-args"><span class="arg"><code>memberId: String!</code></span></div></td>
   </tr></tbody>
     </table>
 
         <h2 id="types">Types</h2>
         <p>All types in the schema, auto-generated from the running server.</p>
-        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposaldecision"><code>CaseProposalDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed case.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
+        <h3 id="type-datetime"><code>DateTime</code> <span class="type-badge">scalar</span></h3><p>ISO 8601 date-time string (e.g. 2024-01-15T09:30:00.000Z).</p><h3 id="type-geojson"><code>GeoJSON</code> <span class="type-badge">scalar</span></h3><h3 id="type-json"><code>JSON</code> <span class="type-badge">scalar</span></h3><p>Arbitrary JSON value — objects, arrays, strings, numbers, booleans, or null.</p><h3 id="type-upload"><code>Upload</code> <span class="type-badge">scalar</span></h3><p>File upload scalar (via graphql-upload).</p><h3 id="type-alertorderby"><code>AlertOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CREATED_DESC</code></td><td>Newest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by event.firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>Highest event severity first.</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>Lowest event severity first.</td></tr></tbody></table><h3 id="type-alertstatus"><code>AlertStatus</code> <span class="type-badge">enum</span></h3><p>Publication status of an alert.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>published</code></td><td>—</td></tr><tr><td><code>archived</code></td><td>—</td></tr></tbody></table><h3 id="type-analysisrequeststatus"><code>AnalysisRequestStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>GENERATED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr></tbody></table><h3 id="type-briefcadence"><code>BriefCadence</code> <span class="type-badge">enum</span></h3><p>How far back a Brief window reaches from its end.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>daily</code></td><td>The last 24 hours.</td></tr><tr><td><code>weekly</code></td><td>The last 7 days.</td></tr><tr><td><code>monthly</code></td><td>The last 30 days.</td></tr></tbody></table><h3 id="type-briefitemkind"><code>BriefItemKind</code> <span class="type-badge">enum</span></h3><p>Which detection a Brief item points at. Items are grouped by kind,
+shown in the order alert, event, signal.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>alert</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>signal</code></td><td>—</td></tr></tbody></table><h3 id="type-briefstatus"><code>BriefStatus</code> <span class="type-badge">enum</span></h3><p>A Brief is edited while `draft` and frozen once `sent`.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>draft</code></td><td>—</td></tr><tr><td><code>sent</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposaldecision"><code>CaseProposalDecision</code> <span class="type-badge">enum</span></h3><p>The decision a named admin or analyst records on a proposed case.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-caseproposalstate"><code>CaseProposalState</code> <span class="type-badge">enum</span></h3><p>A web Worker writes `proposed` only (V4). A named admin or analyst
 accepts or rejects each case; a rejected one stays, so its URL is never
 proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>proposed</code></td><td>—</td></tr><tr><td><code>accepted</code></td><td>—</td></tr><tr><td><code>rejected</code></td><td>—</td></tr></tbody></table><h3 id="type-channel"><code>Channel</code> <span class="type-badge">enum</span></h3><p>Notification channel for alert subscriptions.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>email</code></td><td>—</td></tr><tr><td><code>sms</code></td><td>—</td></tr></tbody></table><h3 id="type-crisisenrichmentstatus"><code>CrisisEnrichmentStatus</code> <span class="type-badge">enum</span></h3><p>Durable enrichment status for the Dagster drain. PENDING = needs
 (re)enrichment (set on crisis create / event add / event remove);
@@ -2327,6 +2412,18 @@ admin of its organisation, or a platform admin.</td>
     <td><code>expiresAt</code></td>
     <td><code>DateTime</code></td>
     <td>Optional expiration date. Omit for a key that never expires.</td>
+  </tr></tbody></table><h3 id="type-createbriefinput"><code>CreateBriefInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>cadence</code></td>
+    <td><code>BriefCadence!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String!</code></td>
+    <td>A country, state or district (location level 0 to 2).</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Defaults to &quot;&lt;Daily|Weekly|Monthly&gt; Brief, &lt;area name&gt;&quot;.</td>
   </tr></tbody></table><h3 id="type-createbulknotificationsinput"><code>CreateBulkNotificationsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userIds</code></td>
     <td><code>[String!]!</code></td>
@@ -3659,6 +3756,18 @@ provide only what you want to change.</p><table class="ref-table"><thead><tr><th
     <td><code>title</code></td>
     <td><code>String</code></td>
     <td>Display name. Blank clears it back to the area list. Omit to leave it.</td>
+  </tr></tbody></table><h3 id="type-updatebriefinput"><code>UpdateBriefInput</code> <span class="type-badge">input</span></h3><p>Fields to change on a draft Brief; omitted fields are kept.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String</code></td>
+    <td>Must not be blank.</td>
+  </tr><tr>
+    <td><code>summary</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
+  </tr><tr>
+    <td><code>closingNotes</code></td>
+    <td><code>String</code></td>
+    <td>Markdown-lite.</td>
   </tr></tbody></table><h3 id="type-updatecrisispopulationinput"><code>UpdateCrisisPopulationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>populationAffected</code></td>
     <td><code>String</code></td>
@@ -4963,6 +5072,181 @@ while the list swap succeeded). Empty on the happy path.</td>
     <td><code>alertsArchived</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-brief"><code>Brief</code> <span class="type-badge">object</span></h3><p>A Brief: a platform admin's hand-picked summary of one area over one
+Brief window, emailed to a Recipient list. Sending freezes it. Platform
+admins only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>cadence</code></td>
+    <td><code>BriefCadence!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>BriefStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String!</code></td>
+    <td>The area: a country, state or district (locations.id). Not a
+relation: a sent Brief outlives location changes.</td>
+  </tr><tr>
+    <td><code>locationName</code></td>
+    <td><code>String!</code></td>
+    <td>The area's name, frozen when the Brief was created.</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the Brief window: `windowEnd` minus 24h, 7d or 30d.</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the Brief window: when the Brief was created or last
+refreshed.</td>
+  </tr><tr>
+    <td><code>summary</code></td>
+    <td><code>String!</code></td>
+    <td>Markdown-lite: **bold**, *italic*, `- ` bullets and
+[text](https://...) links.</td>
+  </tr><tr>
+    <td><code>closingNotes</code></td>
+    <td><code>String!</code></td>
+    <td>Markdown-lite, like `summary`.</td>
+  </tr><tr>
+    <td><code>items</code></td>
+    <td><code>[BriefItem!]!</code></td>
+    <td>Picked items, ordered by group (alert, event, signal) and then by
+`position` within the group.</td>
+  </tr><tr>
+    <td><code>counts</code></td>
+    <td><code>BriefCounts!</code></td>
+    <td>Signals, Events and Alerts over exactly this Brief's area and
+window, by severity and type, whatever filters a list shows. Live
+for a draft; for a sent Brief, the counts it was sent with.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentById</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sentToListId</code></td>
+    <td><code>String</code></td>
+    <td>The Recipient list it was sent to.</td>
+  </tr><tr>
+    <td><code>sentCount</code></td>
+    <td><code>Int</code></td>
+    <td>Emails accepted by the provider at send.</td>
+  </tr><tr>
+    <td><code>failedCount</code></td>
+    <td><code>Int</code></td>
+    <td>Emails the provider refused at send. Not retried.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefcounts"><code>BriefCounts</code> <span class="type-badge">object</span></h3><p>Counts for a Brief's area and window, with the same semantics as
+`entityStats`: Alerts and Events windowed on their first Signal,
+Signals on publication, the area including everything inside it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signal</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alert</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefitem"><code>BriefItem</code> <span class="type-badge">object</span></h3><p>A detection picked into a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>briefId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>kind</code></td>
+    <td><code>BriefItemKind!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>entityId</code></td>
+    <td><code>String!</code></td>
+    <td>The Alert, Event or Signal id. Not a relation: the item survives
+the entity being merged or deleted.</td>
+  </tr><tr>
+    <td><code>position</code></td>
+    <td><code>Int!</code></td>
+    <td>Order within its kind group, from 0.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>The analyst's note, Markdown-lite.</td>
+  </tr><tr>
+    <td><code>snapshot</code></td>
+    <td><code>BriefItemSnapshot!</code></td>
+    <td>What the Brief shows for the item. Built server-side when the item
+is added, rewritten from live data at send, then frozen.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefitemsnapshot"><code>BriefItemSnapshot</code> <span class="type-badge">object</span></h3><p>A Brief item as the Brief shows it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>title</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>severity</code></td>
+    <td><code>Int</code></td>
+    <td>1 to 5, or null when unknown.</td>
+  </tr><tr>
+    <td><code>locationName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Disaster-type codes. A Signal takes its Events' types.</td>
+  </tr><tr>
+    <td><code>occurredAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the item happened, by the same columns the History list and
+`entityStats` window on: an Alert's or Event's first Signal, a
+Signal's publication. Earlier than `Brief.windowStart` means it was
+picked from before the window.</td>
+  </tr><tr>
+    <td><code>url</code></td>
+    <td><code>String!</code></td>
+    <td>The item's page in the CLEAR app.</td>
+  </tr></tbody></table><h3 id="type-briefsendresult"><code>BriefSendResult</code> <span class="type-badge">object</span></h3><p>What `sendBrief` handed to the email provider.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sent</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider accepted.</td>
+  </tr><tr>
+    <td><code>failed</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider refused. Not retried.</td>
   </tr></tbody></table><h3 id="type-caseproposal"><code>CaseProposal</code> <span class="type-badge">object</span></h3><p>One historical case a web Worker found while enriching an Event (V4):
 a past incident like it, the source that reports it, the figures it gives,
 and the CLEAR Event it describes when CLEAR already holds one. The unit an
@@ -5582,6 +5866,19 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>idType</code></td>
     <td><code>String!</code></td>
     <td>Identifier system: &quot;glide_number&quot; or &quot;clear_id&quot;.</td>
+  </tr></tbody></table><h3 id="type-entitycount"><code>EntityCount</code> <span class="type-badge">object</span></h3><p>One kind of detection's counts in a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bySeverity</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Keys are severities 1 to 5 as strings, &quot;(unknown)&quot; for none.</td>
+  </tr><tr>
+    <td><code>byType</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Disaster-type codes for Events and Alerts; data-source names for
+Signals, as in `entityStats`.</td>
   </tr></tbody></table><h3 id="type-entitystats"><code>EntityStats</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Int!</code></td>
@@ -7197,6 +7494,56 @@ for raw point-locations like &quot;Point 15.62, 30.21&quot;.</td>
     <td><code>lat</code></td>
     <td><code>Float!</code></td>
     <td>Geographic latitude.</td>
+  </tr></tbody></table><h3 id="type-recipientlist"><code>RecipientList</code> <span class="type-badge">object</span></h3><p>A named set of email addresses a Brief is sent to. Addresses need not
+belong to CLEAR users. Platform admins only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Unique.</td>
+  </tr><tr>
+    <td><code>members</code></td>
+    <td><code>[RecipientListMember!]!</code></td>
+    <td>Every address on the list, unsubscribed ones included, by email.</td>
+  </tr><tr>
+    <td><code>recipientCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Addresses a send would reach: members who haven't unsubscribed.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-recipientlistmember"><code>RecipientListMember</code> <span class="type-badge">object</span></h3><p>One address on a Recipient list.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>listId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>email</code></td>
+    <td><code>String!</code></td>
+    <td>Lower-cased.</td>
+  </tr><tr>
+    <td><code>unsubscribedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set when the address followed the unsubscribe link in a Brief
+email. Sends skip it from then on.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-refreshaggregateddatapointsresult"><code>RefreshAggregatedDatapointsResult</code> <span class="type-badge">object</span></h3><p>Summary counts from a `refreshAggregatedDatapoints` run.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>computedBuckets</code></td>
     <td><code>Int!</code></td>
