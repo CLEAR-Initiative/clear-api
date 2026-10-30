@@ -220,8 +220,9 @@ export const analysisTypeDef = gql`
     windowEnd: DateTime
     """Owning team, for a team-scoped on-demand request."""
     teamId: String
-    """Force a regeneration past the 24h floor + freshness gate (ADR-0008).
-    Admin only — a non-admin passing \`true\` is rejected."""
+    """Deprecated / ignored: a manual trigger always regenerates now, bypassing
+    both the 24h floor and the freshness gate (ADR-0008), for any authorized
+    requester. Retained for backward compatibility; its value has no effect."""
     force: Boolean
   }
 `;
