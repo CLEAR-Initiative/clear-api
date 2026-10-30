@@ -354,7 +354,10 @@ Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</
   </tr><tr>
     <td><code>locations</code></td>
     <td><code>[Location!]!</code></td>
-    <td>List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.).<div class="field-args"><span class="arg"><code>level: Int</code></span></div></td>
+    <td>List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)
+and scoped to part of the hierarchy. `within` keeps only locations that are one of the
+given IDs or descend from one, so `locations(level: 2, within: [stateId])` returns that
+state's districts. Omitted or empty means no scope.<div class="field-args"><span class="arg"><code>level: Int</code></span><span class="arg"><code>within: [String!]</code></span></div></td>
   </tr><tr>
     <td><code>location</code></td>
     <td><code>Location</code></td>
