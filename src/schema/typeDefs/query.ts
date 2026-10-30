@@ -119,8 +119,13 @@ export const queryTypeDef = gql`
     """Look up a data source by ID."""
     dataSource(id: String!): DataSource
 
-    """List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)."""
-    locations(level: Int): [Location!]!
+    """
+    List locations, optionally filtered by hierarchy level (0 = country, 1 = state, etc.)
+    and scoped to part of the hierarchy. \`within\` keeps only locations that are one of the
+    given IDs or descend from one, so \`locations(level: 2, within: [stateId])\` returns that
+    state's districts. Omitted or empty means no scope.
+    """
+    locations(level: Int, within: [String!]): [Location!]!
 
     """Look up a location by ID."""
     location(id: String!): Location
