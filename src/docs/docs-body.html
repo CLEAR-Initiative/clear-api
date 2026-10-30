@@ -1238,7 +1238,11 @@ event.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
 creating an ungraded row if none matches (admin/pipeline only). Matching order:
 exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (&gt;= minSimilarity,
 default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span></div></td>
+future lookups hit exactly. Returns the resolved data_sources id.
+When markTrusted is true the resolved source is graded at the maximum
+reliability (4) — used for the publisher of a human-uploaded document, which
+is trusted by virtue of a team member deliberately uploading it. This
+overwrites any existing grade. See clear-pipeline ADR-0004.<div class="field-args"><span class="arg"><code>name: String!</code></span><span class="arg"><code>homepage: String</code></span><span class="arg"><code>minSimilarity: Float</code></span><span class="arg"><code>markTrusted: Boolean</code></span></div></td>
   </tr><tr id="mutation-createlocation">
     <td><code>createLocation</code></td>
     <td><code>Location!</code></td>

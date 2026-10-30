@@ -146,7 +146,12 @@ export const dataSourceResolvers = {
      */
     resolveDataSource: async (
       _parent: unknown,
-      args: { name: string; homepage?: string | null; minSimilarity?: number | null },
+      args: {
+        name: string;
+        homepage?: string | null;
+        minSimilarity?: number | null;
+        markTrusted?: boolean | null;
+      },
       context: Context,
     ): Promise<string> => {
       requireRole(context, ["admin", "pipeline"]);
@@ -163,6 +168,25 @@ export const dataSourceResolvers = {
       const minSim = Math.min(1, Math.max(0, args.minSimilarity ?? 0.6));
       const { prisma } = context;
 
+      // Highest NATO Admiralty reliability grade (1–4). A human-uploaded
+      // document's publisher is marked at this grade: a team member chose to
+      // upload it, so the source it comes from is trusted. Forces the grade
+      // even over an existing expert value — the deliberate upload is the
+      // stronger signal (clear-pipeline ADR-0004 / ADR-0005).
+      const MAX_RELIABILITY = 4;
+      // Grade an already-existing match at the max when the caller asked. The
+      // create path (4) sets reliability inline instead, so this only runs for
+      // the exact / url / fuzzy matches.
+      const trusted = async (id: string): Promise<string> => {
+        if (args.markTrusted) {
+          await prisma.dataSources.update({
+            where: { id },
+            data: { reliability: MAX_RELIABILITY },
+          });
+        }
+        return id;
+      };
+
       // 1. Exact match on the canonical name OR any synonym (case-insensitive).
       const exact = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "data_sources"
@@ -171,7 +195,7 @@ export const dataSourceResolvers = {
                OR EXISTS (SELECT 1 FROM unnest("synonyms") s WHERE lower(s) = lower(${name})))
         LIMIT 1
       `;
-      if (exact.length > 0) return exact[0]!.id;
+      if (exact.length > 0) return trusted(exact[0]!.id);
 
       // 2. Same org under a new name: match on the homepage (infoUrl). Only the
       //    publisher carries a homepage; the LLM-cited source has none. Append
@@ -186,7 +210,7 @@ export const dataSourceResolvers = {
         if (byUrl.length > 0) {
           const id = byUrl[0]!.id;
           await appendSynonym(prisma, id, name);
-          return id;
+          return trusted(id);
         }
       }
 
@@ -210,16 +234,19 @@ export const dataSourceResolvers = {
       if (fuzzy.length > 0) {
         const id = fuzzy[0]!.id;
         await appendSynonym(prisma, id, name);
-        return id;
+        return trusted(id);
       }
 
-      // 4. No match → create an ungraded organisation row (reliability NULL →
-      //    treated as 1 by the data-quality formula until a human grades it).
+      // 4. No match → create the organisation row. Ungraded (reliability NULL →
+      //    treated as 1 by the data-quality formula until a human grades it),
+      //    unless the caller marked it trusted, in which case it starts at the
+      //    max grade.
       const created = await prisma.dataSources.create({
         data: {
           name,
           type: "organisation",
           infoUrl: homepage ?? undefined,
+          reliability: args.markTrusted ? MAX_RELIABILITY : undefined,
         },
       });
       return created.id;

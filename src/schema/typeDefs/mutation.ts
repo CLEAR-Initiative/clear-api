@@ -259,8 +259,12 @@ export const mutationTypeDef = gql`
     creating an ungraded row if none matches (admin/pipeline only). Matching order:
     exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,
     default 0.6) → create. On a URL/fuzzy hit the incoming name is appended as a synonym so
-    future lookups hit exactly. Returns the resolved data_sources id. See clear-pipeline ADR-0004."""
-    resolveDataSource(name: String!, homepage: String, minSimilarity: Float): String!
+    future lookups hit exactly. Returns the resolved data_sources id.
+    When markTrusted is true the resolved source is graded at the maximum
+    reliability (4) — used for the publisher of a human-uploaded document, which
+    is trusted by virtue of a team member deliberately uploading it. This
+    overwrites any existing grade. See clear-pipeline ADR-0004."""
+    resolveDataSource(name: String!, homepage: String, minSimilarity: Float, markTrusted: Boolean): String!
 
     # ─── Locations ─────────────────────────────────────────────────────────────
     """Create a new location."""
