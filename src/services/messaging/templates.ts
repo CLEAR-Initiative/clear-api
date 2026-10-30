@@ -1076,3 +1076,84 @@ export function buildAlertSms(
   body += `\n${alertUrl}`;
   return body;
 }
+
+/* ─── Briefs ─────────────────────────────────────────────────────────────── */
+
+/** One picked item as a Brief email shows it. */
+export interface BriefEmailItem {
+  title: string;
+  severity: number | null;
+  locationName: string | null;
+  eventTypes: string[];
+  /** ISO time the item is windowed on. */
+  occurredAt: string;
+  url: string;
+  note: string | null;
+}
+
+/** Everything a Brief email renders, already ordered. */
+export interface BriefEmailView {
+  title: string;
+  locationName: string;
+  windowStart: Date;
+  windowEnd: Date;
+  groups: Array<{ kind: "alert" | "event" | "signal"; items: BriefEmailItem[] }>;
+}
+
+export interface BriefEmailOptions {
+  /** Per-recipient unsubscribe link; null for a test send to oneself. */
+  unsubscribeUrl: string | null;
+  /** Prefix the subject with [TEST]. */
+  isTest: boolean;
+}
+
+const BRIEF_GROUP_LABEL = { alert: "Alerts", event: "Events", signal: "Signals" } as const;
+
+function briefDate(d: Date): string {
+  return d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+}
+
+/**
+ * A Brief, as emailed to a Recipient list or as a test to its author. Every
+ * interpolated string is escaped in the HTML body: titles, notes and area
+ * names come from people and the pipeline, not from us.
+ */
+export function brief(view: BriefEmailView, options: BriefEmailOptions): EmailContent {
+  const windowLine = `Covers ${briefDate(view.windowStart)} to ${briefDate(view.windowEnd)}`;
+  const groups = view.groups.filter((g) => g.items.length > 0);
+
+  const text = [
+    view.title,
+    `${view.locationName}. ${windowLine}`,
+    ...groups.map(
+      (g) =>
+        `${BRIEF_GROUP_LABEL[g.kind]}\n` +
+        g.items.map((item) => `- ${item.title}\n  ${item.url}`).join("\n"),
+    ),
+    options.unsubscribeUrl ? `Unsubscribe: ${options.unsubscribeUrl}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const html = [
+    `<h2 style="margin: 0 0 4px; font-size: 18px; color: #171717;">${escapeHtml(view.title)}</h2>`,
+    `<p style="margin: 0 0 16px; font-size: 13px; color: #737373;">${escapeHtml(view.locationName)}. ${escapeHtml(windowLine)}</p>`,
+    ...groups.map(
+      (g) =>
+        `<h3 style="margin: 16px 0 8px; font-size: 15px; color: #171717;">${BRIEF_GROUP_LABEL[g.kind]}</h3><ul>` +
+        g.items
+          .map((item) => `<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.title)}</a></li>`)
+          .join("") +
+        "</ul>",
+    ),
+    options.unsubscribeUrl
+      ? `<p style="margin: 24px 0 0; font-size: 12px; color: #A3A3A3;"><a href="${escapeHtml(options.unsubscribeUrl)}">Unsubscribe</a></p>`
+      : "",
+  ].join("\n");
+
+  return {
+    subject: `${options.isTest ? "[TEST] " : ""}${view.title}`,
+    textBody: text,
+    htmlBody: wrapHtml("Brief", html),
+  };
+}

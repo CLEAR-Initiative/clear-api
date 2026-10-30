@@ -2837,3 +2837,93 @@ model caseProposal {
   @@index([taskId])
   @@map("case_proposals")
 }
+
+// ─── Briefs ────────────────────────────────────────────────────────────────
+
+/// How far back a Brief window reaches from its end: 24 hours, 7 days or
+/// 30 days.
+enum BriefCadence {
+  daily
+  weekly
+  monthly
+}
+
+/// A Brief is edited while `draft` and frozen once `sent`.
+enum BriefStatus {
+  draft
+  sent
+}
+
+/// Which detection a picked Brief item points at.
+enum BriefItemKind {
+  alert
+  event
+  signal
+}
+
+/// A Brief: an admin's hand-picked summary of one area over one Brief window
+/// (the last 24h / 7d / 30d ending when it was started or last refreshed),
+/// emailed to a Recipient list. Sending freezes it: item snapshots and counts
+/// are written then and never change again.
+model brief {
+  id           String       @id @default(cuid())
+  cadence      BriefCadence
+  status       BriefStatus  @default(draft)
+  title        String
+  /// Area: one locations.id (country, admin1 or admin2). Plain column, no FK:
+  /// a sent Brief is a record and must survive location pruning (same as
+  /// analysis.locationIds).
+  locationId   String       @map("location_id")
+  /// Display name of the area, frozen at create.
+  locationName String       @map("location_name")
+  windowStart  DateTime     @map("window_start")
+  windowEnd    DateTime     @map("window_end")
+  /// Markdown-lite: **bold**, *italic*, `- ` bullets, [text](https://...).
+  summary      String       @default("")
+  closingNotes String       @default("") @map("closing_notes")
+
+  /// Set at send: { signal|event|alert: { total, bySeverity[{key,count}],
+  /// byType[{key,count}] } }. Null while draft (counts are computed live).
+  countsSnapshot Json? @map("counts_snapshot")
+
+  /// Plain column, no FK: the audit trail survives user deletion.
+  createdById  String    @map("created_by_id")
+  sentAt       DateTime? @map("sent_at")
+  sentById     String?   @map("sent_by_id")
+  /// The Recipient list it was sent to. Plain column, no FK.
+  sentToListId String?   @map("sent_to_list_id")
+  sentCount    Int?      @map("sent_count")
+  failedCount  Int?      @map("failed_count")
+
+  items briefItem[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@map("briefs")
+}
+
+/// A detection picked into a Brief, with an optional analyst note. The
+/// snapshot is what the Brief shows: built server-side on add, rewritten from
+/// live data at send, then frozen.
+model briefItem {
+  id       String        @id @default(cuid())
+  briefId  String        @map("brief_id")
+  brief    brief         @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  kind     BriefItemKind
+  /// alerts / events / signals id. No FK: the pipeline merges and deletes
+  /// entities, and a sent Brief must survive that.
+  entityId String        @map("entity_id")
+  /// Order within its kind group.
+  position Int
+  note     String?
+  /// { title, severity, locationName, eventTypes[], occurredAt, url }.
+  snapshot Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([briefId, kind, entityId])
+  @@map("brief_items")
+}

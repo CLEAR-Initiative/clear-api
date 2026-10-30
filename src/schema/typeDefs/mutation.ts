@@ -1393,4 +1393,22 @@ export const mutationTypeDef = gql`
       methodVersion: String
     ): Task!
   }
+
+  # ─── Briefs (platform admin only) ────────────────────────────────────
+  extend type Mutation {
+    """Start a draft Brief for one area. The window ends now and starts
+    24 hours, 7 days or 30 days earlier, by cadence."""
+    createBrief(input: CreateBriefInput!): Brief!
+
+    """Pick an Alert, Event or Signal into a draft Brief, at the end of its
+    kind's group. The snapshot is built from the live row; the client never
+    supplies it. Picking the same item again returns the existing one.
+    NOT_FOUND when the entity doesn't exist."""
+    addBriefItem(briefId: String!, kind: BriefItemKind!, entityId: String!): BriefItem!
+
+    """Email the Brief to the caller's own address only, with [TEST] in
+    the subject. Changes nothing. False when the email provider refused
+    it."""
+    sendBriefTest(id: String!): Boolean!
+  }
 `;
