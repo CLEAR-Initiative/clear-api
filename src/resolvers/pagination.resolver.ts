@@ -323,10 +323,10 @@ function signalsOrderBy(o?: SignalOrderBy | null): Prisma.signalsOrderByWithRela
 }
 
 // ─── Stats helpers ───────────────────────────────────────────────────────
-type EntityKind = "signal" | "event" | "alert";
-type StatsGroupBy = "none" | "type" | "severity" | "day" | "week" | "month";
+export type EntityKind = "signal" | "event" | "alert";
+export type StatsGroupBy = "none" | "type" | "severity" | "day" | "week" | "month";
 
-interface EntityStatsInput extends CommonFilter {
+export interface EntityStatsInput extends CommonFilter {
   entity: EntityKind;
   groupBy?: StatsGroupBy | null;
 }
@@ -451,6 +451,88 @@ interface SignalsPageInput extends SignalsFilter {
   orderBy?: SignalOrderBy | null;
 }
 
+/**
+ * Counts of Signals, Events or Alerts matching a filter, in total and
+ * bucketed by `groupBy`. The body of the `entityStats` query, without its
+ * auth gate, so Brief counts (brief.resolver.ts) use exactly the same
+ * semantics: Alerts and Events windowed on `firstSignalCreatedAt`,
+ * Signals on `publishedAt`, location including descendants.
+ */
+export async function computeEntityStats(
+  prisma: Context["prisma"],
+  input: EntityStatsInput,
+): Promise<{ total: number; buckets: Array<{ key: string; count: number }> }> {
+  const groupBy: StatsGroupBy = input.groupBy ?? "none";
+
+  // Fast path for groupBy=none — reuse the Prisma `count()` machinery so
+  // we don't have to round-trip through raw SQL.
+  if (groupBy === "none") {
+    let total: number;
+    if (input.entity === "alert") {
+      const where = await buildAlertsWhere(prisma, input as AlertsFilter);
+      total = await prisma.alerts.count({ where });
+    } else if (input.entity === "event") {
+      const where = await buildEventsWhere(prisma, input as EventsFilter);
+      total = await prisma.events.count({ where });
+    } else {
+      const where = await buildSignalsWhere(prisma, input as SignalsFilter);
+      total = await prisma.signals.count({ where });
+    }
+    return { total, buckets: [] };
+  }
+
+  const { table, whereSql, tsCol, typeExpr } = await statsScope(prisma, input);
+
+  // Build the SELECT key expression based on groupBy.
+  let keyExpr: Prisma.Sql;
+  const trunc = truncUnit(groupBy);
+  if (groupBy === "type") {
+    keyExpr = Prisma.raw(typeExpr);
+  } else if (groupBy === "severity") {
+    keyExpr = Prisma.raw(`severity::text`);
+  } else if (trunc) {
+    keyExpr = Prisma.raw(`date_trunc('${trunc}', ${tsCol})`);
+  } else {
+    keyExpr = Prisma.raw("NULL");
+  }
+
+  // Total is a simple COUNT(*) over the same WHERE.
+  const tableSql = Prisma.raw(table);
+  const totalRows = await prisma.$queryRaw<{ c: bigint }[]>(
+    Prisma.sql`SELECT COUNT(*)::bigint AS c FROM ${tableSql} ${whereSql}`,
+  );
+  const total = Number(totalRows[0]?.c ?? 0n);
+
+  // Buckets — note the GROUP BY repeats the key expression because
+  // Postgres can't reference a SELECT alias in GROUP BY portably.
+  const bucketRows = await prisma.$queryRaw<
+    { key: string | Date | null; c: bigint }[]
+  >(
+    Prisma.sql`
+      SELECT ${keyExpr} AS key, COUNT(*)::bigint AS c
+      FROM ${tableSql}
+      ${whereSql}
+      GROUP BY ${keyExpr}
+      ORDER BY c DESC
+      LIMIT 200
+    `,
+  );
+
+  const buckets = bucketRows.map((r) => {
+    let key: string;
+    if (r.key == null) {
+      key = "(unknown)";
+    } else if (r.key instanceof Date && trunc) {
+      key = formatBucketKey(r.key, trunc);
+    } else {
+      key = String(r.key);
+    }
+    return { key, count: Number(r.c) };
+  });
+
+  return { total, buckets };
+}
+
 export const paginationResolvers = {
   Query: {
     alertsPage: async (
@@ -562,76 +644,7 @@ export const paginationResolvers = {
       context: Context,
     ) => {
       requireContentReader(context);
-      const input = args.input;
-      const groupBy: StatsGroupBy = input.groupBy ?? "none";
-
-      // Fast path for groupBy=none — reuse the Prisma `count()` machinery so
-      // we don't have to round-trip through raw SQL.
-      if (groupBy === "none") {
-        let total: number;
-        if (input.entity === "alert") {
-          const where = await buildAlertsWhere(context.prisma, input as AlertsFilter);
-          total = await context.prisma.alerts.count({ where });
-        } else if (input.entity === "event") {
-          const where = await buildEventsWhere(context.prisma, input as EventsFilter);
-          total = await context.prisma.events.count({ where });
-        } else {
-          const where = await buildSignalsWhere(context.prisma, input as SignalsFilter);
-          total = await context.prisma.signals.count({ where });
-        }
-        return { total, buckets: [] };
-      }
-
-      const { table, whereSql, tsCol, typeExpr } = await statsScope(context.prisma, input);
-
-      // Build the SELECT key expression based on groupBy.
-      let keyExpr: Prisma.Sql;
-      const trunc = truncUnit(groupBy);
-      if (groupBy === "type") {
-        keyExpr = Prisma.raw(typeExpr);
-      } else if (groupBy === "severity") {
-        keyExpr = Prisma.raw(`severity::text`);
-      } else if (trunc) {
-        keyExpr = Prisma.raw(`date_trunc('${trunc}', ${tsCol})`);
-      } else {
-        keyExpr = Prisma.raw("NULL");
-      }
-
-      // Total is a simple COUNT(*) over the same WHERE.
-      const tableSql = Prisma.raw(table);
-      const totalRows = await context.prisma.$queryRaw<{ c: bigint }[]>(
-        Prisma.sql`SELECT COUNT(*)::bigint AS c FROM ${tableSql} ${whereSql}`,
-      );
-      const total = Number(totalRows[0]?.c ?? 0n);
-
-      // Buckets — note the GROUP BY repeats the key expression because
-      // Postgres can't reference a SELECT alias in GROUP BY portably.
-      const bucketRows = await context.prisma.$queryRaw<
-        { key: string | Date | null; c: bigint }[]
-      >(
-        Prisma.sql`
-          SELECT ${keyExpr} AS key, COUNT(*)::bigint AS c
-          FROM ${tableSql}
-          ${whereSql}
-          GROUP BY ${keyExpr}
-          ORDER BY c DESC
-          LIMIT 200
-        `,
-      );
-
-      const buckets = bucketRows.map((r) => {
-        let key: string;
-        if (r.key == null) {
-          key = "(unknown)";
-        } else if (r.key instanceof Date && trunc) {
-          key = formatBucketKey(r.key, trunc);
-        } else {
-          key = String(r.key);
-        }
-        return { key, count: Number(r.c) };
-      });
-
-      return { total, buckets };
+      return computeEntityStats(context.prisma, args.input);
     },
   },
 };

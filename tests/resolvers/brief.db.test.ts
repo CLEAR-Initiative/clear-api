@@ -17,6 +17,7 @@ vi.mock("../../src/services/messaging/registry.js", () => ({
 import { prisma } from "../../src/lib/prisma.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
+import { computeEntityStats } from "../../src/resolvers/pagination.resolver.js";
 
 const { briefResolvers } = await import("../../src/resolvers/brief.resolver.js");
 const { Mutation, Query } = briefResolvers;
@@ -227,5 +228,33 @@ describeIfDb("Briefs (db)", () => {
     expect(await Mutation.deleteBrief(null, { id: b.id }, ADMIN)).toBe(true);
     expect(await prisma.brief.findUnique({ where: { id: b.id } })).toBeNull();
     expect(await prisma.briefItem.count({ where: { briefId: b.id } })).toBe(0);
+  });
+
+  it("Brief.counts equals computeEntityStats for the same area and window", async () => {
+    const b = await newBrief();
+    const counts = await briefResolvers.Brief.counts(b, {}, ADMIN);
+    for (const entity of ["signal", "event", "alert"] as const) {
+      const scope = { entity, locationId: COUNTRY, from: b.windowStart, to: b.windowEnd };
+      const sev = await computeEntityStats(prisma, { ...scope, groupBy: "severity" });
+      const type = await computeEntityStats(prisma, { ...scope, groupBy: "type" });
+      expect(counts[entity]).toEqual({ total: sev.total, bySeverity: sev.buckets, byType: type.buckets });
+    }
+    // The seeded rows sit inside the window, under the country via its state.
+    expect(counts.event.total).toBe(1);
+    expect(counts.event.byType).toEqual([{ key: "FL", count: 1 }]);
+    expect(counts.alert.bySeverity).toEqual([{ key: "4", count: 1 }]);
+    expect(counts.signal.byType).toEqual([{ key: `${RUN}-src`, count: 1 }]);
+  });
+
+  it("Brief.counts leaves out what falls outside the window", async () => {
+    const b = await newBrief();
+    const counts = await briefResolvers.Brief.counts(
+      { ...b, windowStart: HOURS(100), windowEnd: HOURS(50) },
+      {},
+      ADMIN,
+    );
+    expect(counts.event.total).toBe(0);
+    expect(counts.signal.total).toBe(0);
+    expect(counts.alert.total).toBe(0);
   });
 });

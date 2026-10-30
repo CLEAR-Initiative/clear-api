@@ -5093,6 +5093,12 @@ refreshed.</td>
     <td>Picked items, ordered by group (alert, event, signal) and then by
 `position` within the group.</td>
   </tr><tr>
+    <td><code>counts</code></td>
+    <td><code>BriefCounts!</code></td>
+    <td>Signals, Events and Alerts over exactly this Brief's area and
+window, by severity and type, whatever filters a list shows. Live
+for a draft; for a sent Brief, the counts it was sent with.</td>
+  </tr><tr>
     <td><code>createdById</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -5123,6 +5129,20 @@ refreshed.</td>
   </tr><tr>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-briefcounts"><code>BriefCounts</code> <span class="type-badge">object</span></h3><p>Counts for a Brief's area and window, with the same semantics as
+`entityStats`: Alerts and Events windowed on their first Signal,
+Signals on publication, the area including everything inside it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signal</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>event</code></td>
+    <td><code>EntityCount!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>alert</code></td>
+    <td><code>EntityCount!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-briefitem"><code>BriefItem</code> <span class="type-badge">object</span></h3><p>A detection picked into a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
@@ -5808,6 +5828,19 @@ Events store arrays of codes (GLIDE or CLEAR IDs).</p><table class="ref-table"><
     <td><code>idType</code></td>
     <td><code>String!</code></td>
     <td>Identifier system: &quot;glide_number&quot; or &quot;clear_id&quot;.</td>
+  </tr></tbody></table><h3 id="type-entitycount"><code>EntityCount</code> <span class="type-badge">object</span></h3><p>One kind of detection's counts in a Brief.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>bySeverity</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Keys are severities 1 to 5 as strings, &quot;(unknown)&quot; for none.</td>
+  </tr><tr>
+    <td><code>byType</code></td>
+    <td><code>[StatsBucket!]!</code></td>
+    <td>Disaster-type codes for Events and Alerts; data-source names for
+Signals, as in `entityStats`.</td>
   </tr></tbody></table><h3 id="type-entitystats"><code>EntityStats</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>total</code></td>
     <td><code>Int!</code></td>

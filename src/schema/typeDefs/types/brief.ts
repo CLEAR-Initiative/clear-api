@@ -51,6 +51,10 @@ export const briefTypeDef = gql`
     """Picked items, ordered by group (alert, event, signal) and then by
     \`position\` within the group."""
     items: [BriefItem!]!
+    """Signals, Events and Alerts over exactly this Brief's area and
+    window, by severity and type, whatever filters a list shows. Live
+    for a draft; for a sent Brief, the counts it was sent with."""
+    counts: BriefCounts!
     createdById: String!
     sentAt: DateTime
     sentById: String
@@ -62,6 +66,25 @@ export const briefTypeDef = gql`
     failedCount: Int
     createdAt: DateTime!
     updatedAt: DateTime!
+  }
+
+  """Counts for a Brief's area and window, with the same semantics as
+  \`entityStats\`: Alerts and Events windowed on their first Signal,
+  Signals on publication, the area including everything inside it."""
+  type BriefCounts {
+    signal: EntityCount!
+    event: EntityCount!
+    alert: EntityCount!
+  }
+
+  """One kind of detection's counts in a Brief."""
+  type EntityCount {
+    total: Int!
+    """Keys are severities 1 to 5 as strings, "(unknown)" for none."""
+    bySeverity: [StatsBucket!]!
+    """Disaster-type codes for Events and Alerts; data-source names for
+    Signals, as in \`entityStats\`."""
+    byType: [StatsBucket!]!
   }
 
   """A detection picked into a Brief."""

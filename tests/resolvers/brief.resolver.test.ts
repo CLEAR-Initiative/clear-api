@@ -208,3 +208,18 @@ describe("updateBrief", () => {
     ).toBe("BAD_USER_INPUT");
   });
 });
+
+describe("Brief.counts", () => {
+  it("returns the frozen counts of a sent Brief without querying", async () => {
+    const snapshot = { signal: { total: 3 }, event: { total: 2 }, alert: { total: 1 } };
+    const $queryRaw = vi.fn();
+    const ctx = buildContext(ADMIN, { $queryRaw });
+    const counts = await briefResolvers.Brief.counts(
+      { ...DRAFT, status: "sent", countsSnapshot: snapshot },
+      {},
+      ctx,
+    );
+    expect(counts).toBe(snapshot);
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+});

@@ -10,6 +10,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import type { BriefCadence, BriefItemKind } from "../generated/prisma/enums.js";
 import { env } from "../utils/env.js";
 import type { BriefEmailView } from "./messaging/templates.js";
+import { computeEntityStats, type EntityKind } from "../resolvers/pagination.resolver.js";
 
 /** Item groups in the order a Brief shows them. */
 export const BRIEF_KIND_ORDER: readonly BriefItemKind[] = ["alert", "event", "signal"];
@@ -192,4 +193,40 @@ export function toBriefEmailView(brief: BriefForEmail, items: readonly ItemForEm
         .map((item) => ({ ...(item.snapshot as BriefItemSnapshot), note: item.note })),
     })),
   };
+}
+
+/** One entity's counts for a Brief: total, by severity, by type. */
+export interface BriefEntityCount {
+  total: number;
+  bySeverity: Array<{ key: string; count: number }>;
+  byType: Array<{ key: string; count: number }>;
+}
+
+/** Counts over a Brief's area and window. Frozen as `countsSnapshot` at send. */
+export interface BriefCounts {
+  signal: BriefEntityCount;
+  event: BriefEntityCount;
+  alert: BriefEntityCount;
+}
+
+/**
+ * Signals, Events and Alerts over exactly the Brief's area and window, by
+ * severity and by type, through `computeEntityStats`: the same semantics as
+ * the `entityStats` query and the History list, independent of any list
+ * filter. For Signals, "type" is the data source, as in `entityStats`.
+ */
+export async function computeBriefCounts(
+  prisma: PrismaClient,
+  scope: { locationId: string; windowStart: Date; windowEnd: Date },
+): Promise<BriefCounts> {
+  const one = async (entity: EntityKind): Promise<BriefEntityCount> => {
+    const base = { entity, locationId: scope.locationId, from: scope.windowStart, to: scope.windowEnd };
+    const [bySeverity, byType] = await Promise.all([
+      computeEntityStats(prisma, { ...base, groupBy: "severity" }),
+      computeEntityStats(prisma, { ...base, groupBy: "type" }),
+    ]);
+    return { total: bySeverity.total, bySeverity: bySeverity.buckets, byType: byType.buckets };
+  };
+  const [signal, event, alert] = await Promise.all([one("signal"), one("event"), one("alert")]);
+  return { signal, event, alert };
 }

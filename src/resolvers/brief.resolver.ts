@@ -12,6 +12,8 @@ import { requireRole } from "../utils/auth-guard.js";
 import {
   briefWindow,
   buildBriefItemSnapshot,
+  computeBriefCounts,
+  type BriefCounts,
   defaultBriefTitle,
   orderBriefItems,
   toBriefEmailView,
@@ -276,6 +278,25 @@ export const briefResolvers = {
       requireRole(context, ADMIN);
       const items = await context.prisma.briefItem.findMany({ where: { briefId: parent.id } });
       return orderBriefItems(items);
+    },
+
+    counts: async (
+      parent: {
+        status: string;
+        locationId: string;
+        windowStart: Date;
+        windowEnd: Date;
+        countsSnapshot: unknown;
+      },
+      _args: unknown,
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      // A sent Brief shows the counts it was sent with.
+      if (parent.status === "sent" && parent.countsSnapshot) {
+        return parent.countsSnapshot as BriefCounts;
+      }
+      return computeBriefCounts(context.prisma, parent);
     },
   },
 
