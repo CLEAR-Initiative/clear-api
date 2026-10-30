@@ -337,4 +337,30 @@ describeIfDb("Briefs (db)", () => {
     });
     await prisma.events.update({ where: { id: eventId }, data: { title: `${RUN} flood` } });
   });
+
+  it("a pick racing a send waits for it and is refused, never landing on the sent Brief", async () => {
+    const b = await newBrief();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    // Stand in for sendBrief: hold the Brief's row lock, freeze, then commit.
+    const send = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM briefs WHERE id = ${b.id} FOR UPDATE`;
+      await tx.brief.update({ where: { id: b.id }, data: { status: "sent" } });
+      locked();
+      await held;
+    });
+    await isLocked;
+    const pick = Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: eventId }, ADMIN);
+    const outcome = pick.then(
+      () => "added",
+      (e: { message: string }) => e.message,
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    await send;
+    expect(await outcome).toBe("Brief already sent");
+    expect(await prisma.briefItem.count({ where: { briefId: b.id } })).toBe(0);
+  });
 });

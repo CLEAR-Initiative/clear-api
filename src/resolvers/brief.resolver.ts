@@ -61,6 +61,22 @@ async function updateDraftBrief(
   return prisma.brief.findUniqueOrThrow({ where: { id } });
 }
 
+/**
+ * Inside a transaction, lock a Brief's row (`FOR UPDATE`) and require it to
+ * still be a draft. `addBriefItem` and `sendBrief` both take this lock, so a
+ * pick can't land on a Brief a send has already frozen, and picks into one
+ * Brief are serialised (no two get the same position).
+ */
+async function lockDraftBrief(tx: Prisma.TransactionClient, id: string) {
+  const rows = await tx.$queryRaw<{ status: string; window_start: Date; window_end: Date }[]>`
+    SELECT status::text AS status, window_start, window_end FROM briefs WHERE id = ${id} FOR UPDATE
+  `;
+  const row = rows[0];
+  if (!row) throw notFound("Brief not found");
+  if (row.status !== "draft") throw badInput("Brief already sent");
+  return { windowStart: row.window_start, windowEnd: row.window_end };
+}
+
 /** Where-clause for an item whose Brief is still a draft. */
 function draftItemWhere(id: string): Prisma.briefItemWhereInput {
   return { id, brief: { status: "draft" } };
@@ -217,17 +233,20 @@ export const briefResolvers = {
       const snapshot = await buildBriefItemSnapshot(context.prisma, kind, entityId);
       if (!snapshot) throw notFound(`No ${kind} with id ${entityId}`);
 
-      const last = await context.prisma.briefItem.aggregate({
-        where: { briefId, kind },
-        _max: { position: true },
-      });
-      const position = (last._max.position ?? -1) + 1;
-      // upsert, not create: a concurrent pick of the same item returns the
-      // row the other request wrote instead of failing on the unique key.
-      return context.prisma.briefItem.upsert({
-        where: { briefId_kind_entityId: { briefId, kind, entityId } },
-        create: { briefId, kind, entityId, position, snapshot: { ...snapshot } },
-        update: {},
+      return context.prisma.$transaction(async (tx) => {
+        await lockDraftBrief(tx, briefId);
+        const again = await tx.briefItem.findUnique({
+          where: { briefId_kind_entityId: { briefId, kind, entityId } },
+        });
+        if (again) return again;
+        const last = await tx.briefItem.aggregate({
+          where: { briefId, kind },
+          _max: { position: true },
+        });
+        const position = (last._max.position ?? -1) + 1;
+        return tx.briefItem.create({
+          data: { briefId, kind, entityId, position, snapshot: { ...snapshot } },
+        });
       });
     },
 
