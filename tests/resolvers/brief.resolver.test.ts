@@ -140,6 +140,16 @@ describe("sendBriefTest", () => {
   });
 });
 
+describe("sendBriefTest delivery failure", () => {
+  it("returns false when the provider throws", async () => {
+    send.mockRejectedValue(new Error("SMTP 550"));
+    const ctx = buildContext(ADMIN, {
+      brief: { findUnique: vi.fn(async () => ({ ...DRAFT, items: [] })) },
+    });
+    expect(await briefResolvers.Mutation.sendBriefTest(null, { id: "b1" }, ctx)).toBe(false);
+  });
+});
+
 describe("a sent Brief is frozen", () => {
   const SENT = { ...DRAFT, status: "sent" };
   const ITEM = { id: "i1", briefId: "b1", kind: "event", brief: { status: "sent" } };

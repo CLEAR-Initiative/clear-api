@@ -458,8 +458,15 @@ export const briefResolvers = {
         unsubscribeUrl: null,
         isTest: true,
       });
-      const provider = await getEmailProvider();
-      return provider.send({ to: user.email, ...content });
+      // Providers throw on some delivery errors and return false on others;
+      // both are a refused test send.
+      try {
+        const provider = await getEmailProvider();
+        return await provider.send({ to: user.email, ...content });
+      } catch (err) {
+        console.error("[BRIEFS] test send failed:", err instanceof Error ? err.message : err);
+        return false;
+      }
     },
   },
 
