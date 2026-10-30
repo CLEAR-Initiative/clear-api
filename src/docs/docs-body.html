@@ -2006,8 +2006,9 @@ transaction it rewrites every item's snapshot from live data (keeping
 the stored one when the entity is gone), stores the counts and marks
 the Brief sent; then it emails every member who hasn't unsubscribed,
 each with their own unsubscribe link. Failed emails are counted, not
-retried. BAD_USER_INPUT when the Brief is already sent or the list has
-no one to send to.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>recipientListId: String!</code></span></div></td>
+retried. BAD_USER_INPUT when the Brief is already sent, the list has
+no one to send to, or the window was refreshed during the send (send
+again).<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>recipientListId: String!</code></span></div></td>
   </tr><tr id="mutation-createrecipientlist">
     <td><code>createRecipientList</code></td>
     <td><code>RecipientList!</code></td>

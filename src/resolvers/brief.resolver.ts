@@ -377,10 +377,19 @@ export const briefResolvers = {
       // the transaction so it only holds the snapshot reads and writes.
       const counts = await computeBriefCounts(prisma, draft);
 
-      // Freeze. The status flip is conditional on draft, so of two racing
-      // sends exactly one freezes and emails.
+      // Freeze under the Brief's row lock: of two racing sends exactly one
+      // freezes and emails, and a pick racing the send waits for it.
       await prisma.$transaction(
         async (tx) => {
+          const locked = await lockDraftBrief(tx, draft.id);
+          // The counts were computed for the window read above. A Refresh to
+          // now in between would freeze counts for the wrong window.
+          if (
+            locked.windowStart.getTime() !== draft.windowStart.getTime() ||
+            locked.windowEnd.getTime() !== draft.windowEnd.getTime()
+          ) {
+            throw badInput("The Brief's window changed while sending. Send it again.");
+          }
           const { count } = await tx.brief.updateMany({
             where: { id: draft.id, status: "draft" },
             data: {

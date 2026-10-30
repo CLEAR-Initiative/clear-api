@@ -1438,8 +1438,9 @@ export const mutationTypeDef = gql`
     the stored one when the entity is gone), stores the counts and marks
     the Brief sent; then it emails every member who hasn't unsubscribed,
     each with their own unsubscribe link. Failed emails are counted, not
-    retried. BAD_USER_INPUT when the Brief is already sent or the list has
-    no one to send to."""
+    retried. BAD_USER_INPUT when the Brief is already sent, the list has
+    no one to send to, or the window was refreshed during the send (send
+    again)."""
     sendBrief(id: String!, recipientListId: String!): BriefSendResult!
 
     """Create an empty Recipient list. BAD_USER_INPUT when the name is

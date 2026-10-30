@@ -280,6 +280,9 @@ describe("sendBrief", () => {
 
   function sendCtx(over: Record<string, unknown> = {}) {
     const tx = {
+      $queryRaw: vi.fn(async () => [
+        { status: "draft", window_start: DRAFT.windowStart, window_end: DRAFT.windowEnd },
+      ]),
       brief: { updateMany: vi.fn(async () => ({ count: 1 })) },
       briefItem: { findMany: vi.fn(async () => []), update: vi.fn() },
       alerts: { findUnique: vi.fn() },
@@ -346,10 +349,24 @@ describe("sendBrief", () => {
 
   it("emails no one when another send froze the Brief first", async () => {
     const { ctx, tx } = sendCtx();
-    tx.brief.updateMany.mockResolvedValue({ count: 0 });
+    tx.$queryRaw.mockResolvedValue([
+      { status: "sent", window_start: DRAFT.windowStart, window_end: DRAFT.windowEnd },
+    ]);
     expect(await codeOf(briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx))).toBe(
       "BAD_USER_INPUT",
     );
+    expect(sendBulk).not.toHaveBeenCalled();
+  });
+
+  it("refuses to freeze counts for a window that was refreshed mid-send", async () => {
+    const { ctx, tx } = sendCtx();
+    tx.$queryRaw.mockResolvedValue([
+      { status: "draft", window_start: new Date("2026-10-30T07:00:00Z"), window_end: new Date("2026-10-31T07:00:00Z") },
+    ]);
+    expect(await codeOf(briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx))).toBe(
+      "BAD_USER_INPUT",
+    );
+    expect(tx.brief.updateMany).not.toHaveBeenCalled();
     expect(sendBulk).not.toHaveBeenCalled();
   });
 
