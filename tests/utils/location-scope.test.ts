@@ -46,11 +46,11 @@ function stubPrisma(overrides: {
  * A `$queryRaw` stub that maps each queried location id to a fixed set of
  * descendant ids (the location itself + descendants), mirroring
  * getLocationIdsWithDescendants's real contract. The id being queried is the
- * first interpolated value the tagged template receives.
+ * first bound value of the `Prisma.Sql` it receives.
  */
 function descendantQueryRaw(map: Record<string, string[]>): ReturnType<typeof vi.fn> {
-  return vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-    const locationId = values[0] as string;
+  return vi.fn(async (query: { values: unknown[] }) => {
+    const locationId = query.values[0] as string;
     const ids = map[locationId] ?? [locationId];
     return ids.map((id) => ({ id }));
   });
