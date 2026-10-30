@@ -85,6 +85,15 @@ const INCIDENT_RANK_OFFSET = 2;
 // hits. Tunable. NB: KB tags are level_2 slugs, so in practice this only catches
 // the fully out-of-interest groups (e.g. "fire", natural-hazard "other").
 const NRC_IRRELEVANT_RANK_OFFSET = 15;
+// A rank PROMOTION (negative offset — same rank-step idiom as the demotions
+// above, in the other direction) for a report chunk that belongs to the team
+// whose analysis is being generated, i.e. one of that team's own uploaded
+// documents (`team_id` is set only on team uploads). A human deliberately
+// uploaded it for this team, so it should carry more weight in that team's
+// analysis — this floats it up a few ranks without excluding the shared corpus.
+// Opt-in per search via `KnowledgebaseFilters.boostTeamUploadsId`; the analysis
+// generator sets it, ordinary KB search leaves it unset. Tunable.
+const TEAM_UPLOAD_RANK_BOOST = 8;
 // FRAME mode: fraction of the result budget reserved for the incident band, so
 // the fresh incident timeline is guaranteed to surface (capped so it can't
 // crowd out the analysis). Rounded up, min 1 when any incidents exist.
@@ -110,6 +119,7 @@ const REPORT_SELECT = `
   "need_sectors"  AS "needSectors",
   "figure_s3_key" AS "figureS3Key",
   "figure_kind"   AS "figureKind",
+  "team_id"       AS "teamId",
   'report'::text  AS "tier",
   NULL::int       AS "_severity",
   "time_range_start" AS "_startedAt"`;
@@ -128,6 +138,7 @@ const INCIDENT_SELECT = `
   ARRAY[]::text[]              AS "needSectors",
   NULL::text                   AS "figureS3Key",
   NULL::text                   AS "figureKind",
+  NULL::text                   AS "teamId",
   'incident'::text             AS "tier",
   "severity"                   AS "_severity",
   "started_at"                 AS "_startedAt"`;
@@ -322,6 +333,12 @@ interface KnowledgebaseFilters {
    *  returns ONLY that team's uploads, never the shared ReliefWeb corpus. Report
    *  tier only (the incident tier has no team column). */
   teamId?: string | null;
+  /** Ranking HINT, not an exclusion filter: promote this team's own uploaded
+   *  documents (report chunks whose `team_id` matches) a few ranks in the
+   *  TOPICAL fusion, so they carry more weight without hiding the shared corpus.
+   *  Unset = no boost. Set by the analysis generator (the team whose analysis is
+   *  being generated); ordinary KB search leaves it unset. Report tier only. */
+  boostTeamUploadsId?: string | null;
 }
 
 interface KnowledgebaseHitRow {
@@ -338,6 +355,10 @@ interface KnowledgebaseHitRow {
   needSectors: string[];
   figureS3Key: string | null;
   figureKind: string | null;
+  /** Owning team (`team_id`) — set only on team-uploaded report chunks; null on
+   *  ReliefWeb corpus chunks and on incident rows. Drives the team-upload
+   *  ranking boost. */
+  teamId: string | null;
   tier: SearchTier;
   /** Incident-only ordering fields (null on report rows). */
   _severity: number | null;
@@ -480,6 +501,13 @@ function nrcDemotion(eventTypes: string[], irrelevant: Set<string>): number {
   return chunkIsAllNrcIrrelevant(eventTypes, irrelevant) ? NRC_IRRELEVANT_RANK_OFFSET : 0;
 }
 
+/** Negative rank offset promoting a report chunk that is one of `boostTeamId`'s
+ *  own uploads (`team_id` match). 0 when no boost is requested or the row isn't
+ *  that team's. Report tier only — incident cards carry no `team_id`. */
+function teamUploadPromotion(teamId: string | null, boostTeamId: string | null | undefined): number {
+  return boostTeamId && teamId === boostTeamId ? -TEAM_UPLOAD_RANK_BOOST : 0;
+}
+
 /** One tier's hybrid retrieval: dense (pgvector `<=>`) + sparse (tsvector),
  *  each capped at CANDIDATES_PER_RETRIEVER, fused with RRF. Each hit carries the
  *  fused `rrf` and `sim` (1 - best dense distance; 0 when it surfaced only via
@@ -598,7 +626,19 @@ async function mergeTopical(
   // Report chunks tag level_2 labels; incident cards tag glide codes — demote
   // each against the set that matches its vocabulary.
   reportHits.forEach((h, i) =>
-    scored.push(toHit(h.row, 1 / (RRF_K + i + 1 + nrcDemotion(h.row.eventTypes, irrelevantLevel2)))),
+    // The team-upload promotion is a negative offset; clamp the denominator at 1
+    // so a boost larger than the base rank can never flip the score's sign.
+    scored.push(
+      toHit(
+        h.row,
+        1 /
+          Math.max(
+            1,
+            RRF_K + i + 1 + nrcDemotion(h.row.eventTypes, irrelevantLevel2) +
+              teamUploadPromotion(h.row.teamId, filters?.boostTeamUploadsId),
+          ),
+      ),
+    ),
   );
   incidentHits
     // Gate only rows that HAVE dense evidence: a null sim means the row surfaced
