@@ -264,7 +264,11 @@ export const briefResolvers = {
         include: { items: true },
       });
       if (!row) throw notFound("Brief not found");
-      const content = briefEmail(toBriefEmailView(row, row.items), {
+      const counts =
+        row.status === "sent" && row.countsSnapshot
+          ? (row.countsSnapshot as unknown as BriefCounts)
+          : await computeBriefCounts(context.prisma, row);
+      const content = briefEmail(toBriefEmailView(row, row.items, counts), {
         unsubscribeUrl: null,
         isTest: true,
       });

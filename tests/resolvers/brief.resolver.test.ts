@@ -2,8 +2,8 @@
  * Unit tests for `brief.resolver.ts`.
  *
  * DB-free: `context.prisma.*` delegates are stubbed per test with `vi.fn()`,
- * and the email provider registry is mocked before the resolver is imported,
- * so nothing reaches SMTP or a database.
+ * and the email provider registry and `computeEntityStats` are mocked before
+ * the resolver is imported, so nothing reaches SMTP or a database.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -15,6 +15,10 @@ const sendBulk = vi.fn();
 vi.mock("../../src/services/messaging/registry.js", () => ({
   getEmailProvider: vi.fn(async () => ({ send, sendBulk })),
 }));
+
+// Counts run raw SQL; the db suite covers them (brief.db.test.ts).
+const computeEntityStats = vi.fn(async () => ({ total: 0, buckets: [] }));
+vi.mock("../../src/resolvers/pagination.resolver.js", () => ({ computeEntityStats }));
 
 const { briefResolvers } = await import("../../src/resolvers/brief.resolver.js");
 import type { Context } from "../../src/context.js";

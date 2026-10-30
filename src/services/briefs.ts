@@ -169,6 +169,8 @@ type BriefForEmail = {
   locationName: string;
   windowStart: Date;
   windowEnd: Date;
+  summary: string;
+  closingNotes: string;
 };
 
 type ItemForEmail = {
@@ -179,13 +181,20 @@ type ItemForEmail = {
 };
 
 /** A Brief and its items as the email template renders them. */
-export function toBriefEmailView(brief: BriefForEmail, items: readonly ItemForEmail[]): BriefEmailView {
+export function toBriefEmailView(
+  brief: BriefForEmail,
+  items: readonly ItemForEmail[],
+  counts: BriefCounts | null,
+): BriefEmailView {
   const ordered = orderBriefItems(items);
   return {
     title: brief.title,
     locationName: brief.locationName,
     windowStart: brief.windowStart,
     windowEnd: brief.windowEnd,
+    summary: brief.summary,
+    closingNotes: brief.closingNotes,
+    counts,
     groups: BRIEF_KIND_ORDER.map((kind) => ({
       kind,
       items: ordered
