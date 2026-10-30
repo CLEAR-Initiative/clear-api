@@ -179,7 +179,17 @@ _Avoid_: subscribers (those are alert subscriptions), mailing list
 **Alert Digest**:
 The automatic `notifyAlertDigest` email of Alert titles to users with daily, weekly or monthly
 alert subscriptions. Nothing calls it today, so it has never gone out. Distinct from a **Brief**,
-which a person composes.
+which a person composes. An Alert goes in a user's digest when one of their active subscriptions
+at that frequency matches its Event's type, its location or an ancestor of it, and its severity
+floor (`matchDigestRecipients`, `src/services/alert-digest.ts`).
+
+**Digest preview**:
+What the daily **Alert Digest** would send for a **Brief**'s area and **Brief window**: each
+published Alert it would include and how many subscribers it would reach
+(`briefDigestPreview`). Read-only: it writes no user alerts or notifications and sends nothing.
+Shown beside a Brief so a person can compare what they picked with what the automatic digest
+would have picked.
+_Avoid_: digest (on its own, that is the **Alert Digest** itself)
 
 ### Product analytics
 
@@ -253,6 +263,7 @@ the platform's own audit record.
 - A **Brief**'s counts cover exactly its area and **Brief window**, with `entityStats` semantics (Alerts and Events on their first Signal, Signals on publication, the area including everything inside it), whatever filters a list shows
 - A picked **Brief** item stores a snapshot of what it showed, built by clear-api from live data, never by a client. Sending rewrites each snapshot from live data once and then freezes the **Brief**: later reclassification by the pipeline never changes a sent Brief, and a sent Brief rejects every edit
 - A **Brief** is emailed only from clear-api, one email per **Recipient list** member who hasn't unsubscribed. Failed emails are counted, never retried automatically
+- A **Digest preview** scopes Alerts like a **Brief**'s counts (published only, first Signal in the **Brief window**, area including everything inside it) and matches them with the same rule as the **Alert Digest** (`matchDigestRecipients`), so the two can't drift. It lists only Alerts with at least one daily subscriber
 
 ## Example dialogue
 

@@ -41,6 +41,7 @@ let alertId = "";
 let signalId = "";
 const briefIds: string[] = [];
 const listIds: string[] = [];
+const subscriptionUsers: string[] = [];
 
 async function insertLocation(id: string, level: number, parentId: string | null, ancestorIds: string[]) {
   await prisma.$executeRaw`
@@ -89,6 +90,7 @@ describeIfDb("Briefs (db)", () => {
   });
 
   afterAll(async () => {
+    await prisma.userAlertSubscriptions.deleteMany({ where: { userId: { in: subscriptionUsers } } });
     await prisma.brief.deleteMany({ where: { id: { in: briefIds } } });
     await prisma.recipientList.deleteMany({ where: { id: { in: listIds } } });
     await prisma.alerts.deleteMany({ where: { eventId } });
@@ -258,6 +260,50 @@ describeIfDb("Briefs (db)", () => {
     expect(counts.event.total).toBe(0);
     expect(counts.signal.total).toBe(0);
     expect(counts.alert.total).toBe(0);
+  });
+
+  it("briefDigestPreview counts daily subscribers per Alert and writes nothing", async () => {
+    const sub = (user: string, data: { frequency: "daily" | "weekly"; minSeverity?: number; alertType?: string }) => {
+      subscriptionUsers.push(`${RUN}-${user}`);
+      return prisma.userAlertSubscriptions.create({
+        data: {
+          userId: `${RUN}-${user}`,
+          locationId: COUNTRY,
+          alertType: data.alertType ?? "FL",
+          minSeverity: data.minSeverity ?? 1,
+          channel: "email",
+          frequency: data.frequency,
+        },
+      });
+    };
+    // Daily, on the country above the Alert's state, floor below severity 4: matches.
+    await sub("daily", { frequency: "daily", minSeverity: 3 });
+    // Each of these misses on one rule.
+    await sub("weekly", { frequency: "weekly" });
+    await sub("floor", { frequency: "daily", minSeverity: 5 });
+    await sub("type", { frequency: "daily", alertType: "EQ" });
+
+    const b = await newBrief();
+    const before = await Promise.all([prisma.userAlerts.count(), prisma.notifications.count()]);
+    send.mockClear();
+    sendBulk.mockClear();
+
+    const rows = await Query.briefDigestPreview(null, { briefId: b.id }, ADMIN);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.alert.id).toBe(alertId);
+    expect(rows[0]!.alert.event.id).toBe(eventId);
+    expect(rows[0]!.subscriberCount).toBe(1);
+    expect(await Promise.all([prisma.userAlerts.count(), prisma.notifications.count()])).toEqual(before);
+    expect(send).not.toHaveBeenCalled();
+    expect(sendBulk).not.toHaveBeenCalled();
+
+    // Outside the window there is nothing to send.
+    await prisma.brief.update({
+      where: { id: b.id },
+      data: { windowStart: HOURS(100), windowEnd: HOURS(50) },
+    });
+    expect(await Query.briefDigestPreview(null, { briefId: b.id }, ADMIN)).toEqual([]);
   });
 
   it("Recipient lists: unique names, lower-cased unique members, count skips unsubscribed", async () => {
