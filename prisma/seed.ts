@@ -472,6 +472,15 @@ async function seed() {
     }),
     prisma.dataSources.create({
       data: {
+        name: "iom_dtm_flash_alerts",
+        type: "api",
+        isActive: true,
+        baseUrl: "https://dtm.iom.int/flash-reports-export",
+        infoUrl: "https://dtm.iom.int/",
+      },
+    }),
+    prisma.dataSources.create({
+      data: {
         name: "idmc",
         type: "api",
         isActive: true,

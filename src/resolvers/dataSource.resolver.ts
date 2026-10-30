@@ -139,7 +139,7 @@ export const dataSourceResolvers = {
      * Matching order (clear-pipeline ADR-0004 §2): exact name/synonym → infoUrl → fuzzy → create.
      *
      * Operates ONLY on `type = 'organisation'` rows: the automated feed rows
-     * (dtm/acled/gdacs/dataminr = "api", field_officer = "manual") referenced by
+     * (dtm/iom_dtm_flash_alerts/acled/gdacs/dataminr = "api", field_officer = "manual") referenced by
      * `signals.sourceId` are never matched or mutated, so report attribution
      * stays cleanly separate from signal ingestion even when names/synonyms
      * overlap (the seed keeps an org "IOM DTM" alongside the api "dtm" feed).
