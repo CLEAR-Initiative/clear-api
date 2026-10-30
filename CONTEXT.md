@@ -156,6 +156,31 @@ Signal with its figures as Estimates; it is evidence an **ImpactPrior** is compu
 itself.
 _Avoid_: web result, search hit, prior case, impact prior
 
+### Briefs
+
+**Brief**:
+A platform admin's hand-picked summary of one area (a country, state or district) over one
+**Brief window**: a title, a Markdown-lite summary and closing notes, counts of the area's
+Signals, Events and Alerts, and picked Alerts, Events and Signals, each with an optional note.
+Emailed to a **Recipient list**. Edited while `draft`; frozen once `sent`. Platform admins only.
+_Avoid_: report (ReliefWeb reports, LogIE PAC reports, the analysis PDF), digest (that is the
+**Alert Digest**)
+
+**Brief window**:
+The rolling period a **Brief** covers: the last 24 hours, 7 days or 30 days by cadence (daily,
+weekly, monthly), ending when the Brief was created or last refreshed. Never a calendar day,
+week or month.
+
+**Recipient list**:
+A named set of email addresses a **Brief** is sent to. Addresses need not belong to CLEAR users;
+each carries its own unsubscribe link.
+_Avoid_: subscribers (those are alert subscriptions), mailing list
+
+**Alert Digest**:
+The automatic `notifyAlertDigest` email of Alert titles to users with daily, weekly or monthly
+alert subscriptions. Nothing calls it today, so it has never gone out. Distinct from a **Brief**,
+which a person composes.
+
 ### Product analytics
 
 **Activity log**:
@@ -224,6 +249,10 @@ the platform's own audit record.
 - A proposed **CaseProposal** is a Review item in clear-mvp's Inbox, and is also decidable from its Event's page. Accepting one writes it into CLEAR as history: a Signal on the matched or a new historical Event, its figures as Estimates
 - An **ImpactPrior** is computed from that history, not reviewed: the median, range and count of the current observed figures of earlier same-hazard Events in the same country (`Event.computedImpactPriors`). Only observed or reported methods count; `not_documented` backfill, model output and prior-derived figures are never a basis The whole-prior proposals and their review (V1–V3) are retired (ADR-0010, 2026-10-08)
 - The **CLEAR Agent** is never a **Worker**; backend-triggered work never runs in clear-mvp (its ADR-0006)
+
+- A **Brief**'s counts cover exactly its area and **Brief window**, with `entityStats` semantics (Alerts and Events on their first Signal, Signals on publication, the area including everything inside it), whatever filters a list shows
+- A picked **Brief** item stores a snapshot of what it showed, built by clear-api from live data, never by a client. Sending rewrites each snapshot from live data once and then freezes the **Brief**: later reclassification by the pipeline never changes a sent Brief, and a sent Brief rejects every edit
+- A **Brief** is emailed only from clear-api, one email per **Recipient list** member who hasn't unsubscribed. Failed emails are counted, never retried automatically
 
 ## Example dialogue
 

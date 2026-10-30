@@ -294,4 +294,47 @@ describeIfDb("Briefs (db)", () => {
       extensions: { code: "NOT_FOUND" },
     });
   });
+
+  it("sendBrief refreshes snapshots, freezes the Brief and skips unsubscribed members", async () => {
+    const list = await Mutation.createRecipientList(null, { name: `${RUN} send` }, ADMIN);
+    listIds.push(list.id);
+    await Mutation.addRecipientListMember(null, { listId: list.id, email: "one@example.org" }, ADMIN);
+    const gone = await Mutation.addRecipientListMember(null, { listId: list.id, email: "two@example.org" }, ADMIN);
+    await prisma.recipientListMember.update({ where: { id: gone.id }, data: { unsubscribedAt: new Date() } });
+
+    const doomed = await prisma.events.create({
+      data: { title: `${RUN} doomed`, types: ["EQ"], firstSignalCreatedAt: HOURS(4), lastSignalCreatedAt: HOURS(4), rank: 0 },
+    });
+    const b = await newBrief();
+    const item = await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: eventId }, ADMIN);
+    const doomedItem = await Mutation.addBriefItem(null, { briefId: b.id, kind: "event", entityId: doomed.id }, ADMIN);
+    await prisma.events.delete({ where: { id: doomed.id } });
+
+    // A reclassification between pick and send is picked up at send...
+    await prisma.events.update({ where: { id: eventId }, data: { title: `${RUN} flood (revised)` } });
+    sendBulk.mockClear();
+    const result = await Mutation.sendBrief(null, { id: b.id, recipientListId: list.id }, ADMIN);
+    expect(result).toEqual({ sent: 1, failed: 0 });
+    const msgs = sendBulk.mock.calls[0][0] as Array<{ to: string; htmlBody: string }>;
+    expect(msgs.map((m) => m.to)).toEqual(["one@example.org"]);
+    expect(msgs[0].htmlBody).toContain(`${RUN} flood (revised)`);
+
+    const sent = await prisma.brief.findUniqueOrThrow({ where: { id: b.id } });
+    expect(sent).toMatchObject({ status: "sent", sentById: `${RUN}-admin`, sentToListId: list.id, sentCount: 1, failedCount: 0 });
+    expect(sent.countsSnapshot).toMatchObject({ event: { total: expect.any(Number) } });
+
+    // ...and nothing after it changes the sent Brief.
+    await prisma.events.update({ where: { id: eventId }, data: { title: `${RUN} flood (later)` } });
+    const items = await briefResolvers.Brief.items(sent, {}, ADMIN);
+    const frozen = items.find((i) => i.id === item.id)!;
+    expect((frozen.snapshot as { title: string }).title).toBe(`${RUN} flood (revised)`);
+    // The deleted entity kept the snapshot it was picked with.
+    expect((items.find((i) => i.id === doomedItem.id)!.snapshot as { title: string }).title).toBe(`${RUN} doomed`);
+    expect(await briefResolvers.Brief.counts(sent, {}, ADMIN)).toEqual(sent.countsSnapshot);
+
+    await expect(Mutation.sendBrief(null, { id: b.id, recipientListId: list.id }, ADMIN)).rejects.toMatchObject({
+      message: "Brief already sent",
+    });
+    await prisma.events.update({ where: { id: eventId }, data: { title: `${RUN} flood` } });
+  });
 });

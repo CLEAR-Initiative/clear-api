@@ -271,3 +271,93 @@ describe("Recipient lists", () => {
     );
   });
 });
+
+describe("sendBrief", () => {
+  const members = [
+    { email: "james@example.org", unsubscribeToken: "tok-james" },
+    { email: "andi@example.org", unsubscribeToken: "tok-andi" },
+  ];
+
+  function sendCtx(over: Record<string, unknown> = {}) {
+    const tx = {
+      brief: { updateMany: vi.fn(async () => ({ count: 1 })) },
+      briefItem: { findMany: vi.fn(async () => []), update: vi.fn() },
+      alerts: { findUnique: vi.fn() },
+      events: { findUnique: vi.fn() },
+      signals: { findUnique: vi.fn() },
+    };
+    const memberFind = vi.fn(async () => members);
+    const briefUpdate = vi.fn();
+    const ctx = buildContext(ADMIN, {
+      brief: {
+        findUnique: vi.fn(async () => DRAFT),
+        findUniqueOrThrow: vi.fn(async () => ({ ...DRAFT, status: "sent", items: [] })),
+        update: briefUpdate,
+      },
+      recipientList: { findUnique: vi.fn(async () => ({ id: "l1" })) },
+      recipientListMember: { findMany: memberFind },
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+      ...over,
+    });
+    return { ctx, tx, memberFind, briefUpdate };
+  }
+
+  it("emails only members who haven't unsubscribed, each with their own unsubscribe link", async () => {
+    sendBulk.mockImplementation(async (msgs: unknown[]) => msgs.map(() => true));
+    const { ctx, tx, memberFind, briefUpdate } = sendCtx();
+
+    expect(await briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx)).toEqual({
+      sent: 2,
+      failed: 0,
+    });
+    expect(memberFind.mock.calls[0][0].where).toEqual({ listId: "l1", unsubscribedAt: null });
+    const msgs = sendBulk.mock.calls[0][0] as Array<{ to: string; textBody: string; htmlBody: string; subject: string }>;
+    expect(msgs.map((m) => m.to)).toEqual(["james@example.org", "andi@example.org"]);
+    expect(msgs[0].htmlBody).toContain("/briefs/unsubscribe?token=tok-james");
+    expect(msgs[1].htmlBody).toContain("/briefs/unsubscribe?token=tok-andi");
+    expect(msgs[0].htmlBody).not.toContain("tok-andi");
+    expect(msgs[0].subject).not.toContain("[TEST]");
+
+    const freeze = tx.brief.updateMany.mock.calls[0][0];
+    expect(freeze.where).toEqual({ id: "b1", status: "draft" });
+    expect(freeze.data).toMatchObject({ status: "sent", sentById: "admin-1", sentToListId: "l1" });
+    expect(freeze.data.countsSnapshot).toHaveProperty("signal");
+    expect(briefUpdate).toHaveBeenCalledWith({ where: { id: "b1" }, data: { sentCount: 2, failedCount: 0 } });
+  });
+
+  it("counts provider refusals as failed, and a provider crash as all failed, without retrying", async () => {
+    sendBulk.mockImplementation(async () => [true, false]);
+    let { ctx } = sendCtx();
+    expect(await briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx)).toEqual({
+      sent: 1,
+      failed: 1,
+    });
+    expect(sendBulk).toHaveBeenCalledTimes(1);
+
+    sendBulk.mockReset();
+    sendBulk.mockRejectedValue(new Error("smtp down"));
+    ({ ctx } = sendCtx());
+    expect(await briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx)).toEqual({
+      sent: 0,
+      failed: 2,
+    });
+    expect(sendBulk).toHaveBeenCalledTimes(1);
+  });
+
+  it("emails no one when another send froze the Brief first", async () => {
+    const { ctx, tx } = sendCtx();
+    tx.brief.updateMany.mockResolvedValue({ count: 0 });
+    expect(await codeOf(briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx))).toBe(
+      "BAD_USER_INPUT",
+    );
+    expect(sendBulk).not.toHaveBeenCalled();
+  });
+
+  it("refuses a list with no one to send to, before freezing", async () => {
+    const { ctx } = sendCtx({ recipientListMember: { findMany: vi.fn(async () => []) } });
+    expect(await codeOf(briefResolvers.Mutation.sendBrief(null, { id: "b1", recipientListId: "l1" }, ctx))).toBe(
+      "BAD_USER_INPUT",
+    );
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});

@@ -109,7 +109,7 @@ function eventSnapshot(event: EventRow): BriefItemSnapshot {
  * no longer exists (the pipeline merges and deletes them).
  */
 export async function buildBriefItemSnapshot(
-  prisma: PrismaClient,
+  prisma: Pick<PrismaClient, "alerts" | "events" | "signals">,
   kind: BriefItemKind,
   entityId: string,
 ): Promise<BriefItemSnapshot | null> {
@@ -238,4 +238,9 @@ export async function computeBriefCounts(
   };
   const [signal, event, alert] = await Promise.all([one("signal"), one("event"), one("alert")]);
   return { signal, event, alert };
+}
+
+/** The link in one recipient's Brief email that unsubscribes them. */
+export function briefUnsubscribeUrl(token: string): string {
+  return `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/briefs/unsubscribe?token=${encodeURIComponent(token)}`;
 }

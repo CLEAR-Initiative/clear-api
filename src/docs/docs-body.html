@@ -1998,6 +1998,16 @@ kind in the Brief exactly once, in the new order.<div class="field-args"><span c
     <td>Email the Brief to the caller's own address only, with [TEST] in
 the subject. Changes nothing. False when the email provider refused
 it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-sendbrief">
+    <td><code>sendBrief</code></td>
+    <td><code>BriefSendResult!</code></td>
+    <td>Send a draft Brief to a Recipient list and freeze it. In one
+transaction it rewrites every item's snapshot from live data (keeping
+the stored one when the entity is gone), stores the counts and marks
+the Brief sent; then it emails every member who hasn't unsubscribed,
+each with their own unsubscribe link. Failed emails are counted, not
+retried. BAD_USER_INPUT when the Brief is already sent or the list has
+no one to send to.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>recipientListId: String!</code></span></div></td>
   </tr><tr id="mutation-createrecipientlist">
     <td><code>createRecipientList</code></td>
     <td><code>RecipientList!</code></td>
@@ -5228,6 +5238,14 @@ picked from before the window.</td>
     <td><code>url</code></td>
     <td><code>String!</code></td>
     <td>The item's page in the CLEAR app.</td>
+  </tr></tbody></table><h3 id="type-briefsendresult"><code>BriefSendResult</code> <span class="type-badge">object</span></h3><p>What `sendBrief` handed to the email provider.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>sent</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider accepted.</td>
+  </tr><tr>
+    <td><code>failed</code></td>
+    <td><code>Int!</code></td>
+    <td>Emails the provider refused. Not retried.</td>
   </tr></tbody></table><h3 id="type-caseproposal"><code>CaseProposal</code> <span class="type-badge">object</span></h3><p>One historical case a web Worker found while enriching an Event (V4):
 a past incident like it, the source that reports it, the figures it gives,
 and the CLEAR Event it describes when CLEAR already holds one. The unit an

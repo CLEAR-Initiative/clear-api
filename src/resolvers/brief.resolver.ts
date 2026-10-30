@@ -11,6 +11,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { BriefCadence, BriefItemKind } from "../generated/prisma/enums.js";
 import { requireRole } from "../utils/auth-guard.js";
 import {
+  briefUnsubscribeUrl,
   briefWindow,
   buildBriefItemSnapshot,
   computeBriefCounts,
@@ -23,6 +24,8 @@ import { getEmailProvider } from "../services/messaging/registry.js";
 import { brief as briefEmail } from "../services/messaging/templates.js";
 
 const ADMIN = ["admin"];
+/** Generous ceiling for the freeze transaction: one read and write per item. */
+const SEND_TRANSACTION_TIMEOUT_MS = 30_000;
 const MAX_BRIEFS_PAGE = 200;
 /** Areas a Brief can cover: country (0), state (1), district (2). */
 const MAX_BRIEF_LOCATION_LEVEL = 2;
@@ -330,6 +333,86 @@ export const briefResolvers = {
       });
       if (count === 0) throw notFound("Recipient list member not found");
       return true;
+    },
+
+    sendBrief: async (
+      _parent: unknown,
+      args: { id: string; recipientListId: string },
+      context: Context,
+    ) => {
+      const user = requireRole(context, ADMIN);
+      const { prisma } = context;
+      const draft = await loadDraftBrief(prisma, args.id);
+      const list = await prisma.recipientList.findUnique({
+        where: { id: args.recipientListId },
+        select: { id: true },
+      });
+      if (!list) throw notFound("Recipient list not found");
+      const members = await prisma.recipientListMember.findMany({
+        where: { listId: list.id, unsubscribedAt: null },
+        select: { email: true, unsubscribeToken: true },
+      });
+      if (members.length === 0) throw badInput("The Recipient list has no one to send to");
+
+      // Counts run raw SQL over the area's descendants: compute them before
+      // the transaction so it only holds the snapshot reads and writes.
+      const counts = await computeBriefCounts(prisma, draft);
+
+      // Freeze. The status flip is conditional on draft, so of two racing
+      // sends exactly one freezes and emails.
+      await prisma.$transaction(
+        async (tx) => {
+          const { count } = await tx.brief.updateMany({
+            where: { id: draft.id, status: "draft" },
+            data: {
+              status: "sent",
+              sentAt: new Date(),
+              sentById: user.id,
+              sentToListId: list.id,
+              countsSnapshot: counts as unknown as Prisma.InputJsonObject,
+            },
+          });
+          if (count === 0) throw badInput("Brief already sent");
+          const items = await tx.briefItem.findMany({ where: { briefId: draft.id } });
+          for (const item of items) {
+            // An entity the pipeline has since merged or deleted keeps the
+            // snapshot it was picked with.
+            const live = await buildBriefItemSnapshot(tx, item.kind, item.entityId);
+            if (live) {
+              await tx.briefItem.update({ where: { id: item.id }, data: { snapshot: { ...live } } });
+            }
+          }
+        },
+        { timeout: SEND_TRANSACTION_TIMEOUT_MS },
+      );
+
+      const frozen = await prisma.brief.findUniqueOrThrow({
+        where: { id: draft.id },
+        include: { items: true },
+      });
+      const view = toBriefEmailView(frozen, frozen.items, counts);
+      const messages = members.map((m) => ({
+        to: m.email,
+        ...briefEmail(view, { unsubscribeUrl: briefUnsubscribeUrl(m.unsubscribeToken), isTest: false }),
+      }));
+
+      // No automatic retry: a resend could email someone twice. Failures
+      // are reported and stored instead.
+      let results: boolean[];
+      try {
+        const provider = await getEmailProvider();
+        results = await provider.sendBulk(messages);
+      } catch (err) {
+        console.error("[BRIEFS] sendBulk failed:", err instanceof Error ? err.message : err);
+        results = messages.map(() => false);
+      }
+      const sent = results.filter(Boolean).length;
+      const failed = messages.length - sent;
+      await prisma.brief.update({
+        where: { id: draft.id },
+        data: { sentCount: sent, failedCount: failed },
+      });
+      return { sent, failed };
     },
 
     sendBriefTest: async (_parent: unknown, args: { id: string }, context: Context) => {

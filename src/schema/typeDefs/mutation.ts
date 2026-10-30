@@ -1433,6 +1433,15 @@ export const mutationTypeDef = gql`
     it."""
     sendBriefTest(id: String!): Boolean!
 
+    """Send a draft Brief to a Recipient list and freeze it. In one
+    transaction it rewrites every item's snapshot from live data (keeping
+    the stored one when the entity is gone), stores the counts and marks
+    the Brief sent; then it emails every member who hasn't unsubscribed,
+    each with their own unsubscribe link. Failed emails are counted, not
+    retried. BAD_USER_INPUT when the Brief is already sent or the list has
+    no one to send to."""
+    sendBrief(id: String!, recipientListId: String!): BriefSendResult!
+
     """Create an empty Recipient list. BAD_USER_INPUT when the name is
     blank or taken."""
     createRecipientList(name: String!): RecipientList!

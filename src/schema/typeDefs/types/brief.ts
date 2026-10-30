@@ -150,6 +150,14 @@ export const briefTypeDef = gql`
     createdAt: DateTime!
   }
 
+  """What \`sendBrief\` handed to the email provider."""
+  type BriefSendResult {
+    """Emails the provider accepted."""
+    sent: Int!
+    """Emails the provider refused. Not retried."""
+    failed: Int!
+  }
+
   """Fields to change on a draft Brief; omitted fields are kept."""
   input UpdateBriefInput {
     """Must not be blank."""
