@@ -977,6 +977,10 @@ platform admins and analysts.<div class="field-args"><span class="arg"><code>eve
     <td><code>brief</code></td>
     <td><code>Brief</code></td>
     <td>One Brief, or null. Platform admins only.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
+    <td><code>recipientLists</code></td>
+    <td><code>[RecipientList!]!</code></td>
+    <td>Every Recipient list, by name. Platform admins only.</td>
   </tr></tbody>
     </table>
         
@@ -1994,6 +1998,21 @@ kind in the Brief exactly once, in the new order.<div class="field-args"><span c
     <td>Email the Brief to the caller's own address only, with [TEST] in
 the subject. Changes nothing. False when the email provider refused
 it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-createrecipientlist">
+    <td><code>createRecipientList</code></td>
+    <td><code>RecipientList!</code></td>
+    <td>Create an empty Recipient list. BAD_USER_INPUT when the name is
+blank or taken.<div class="field-args"><span class="arg"><code>name: String!</code></span></div></td>
+  </tr><tr id="mutation-addrecipientlistmember">
+    <td><code>addRecipientListMember</code></td>
+    <td><code>RecipientListMember!</code></td>
+    <td>Add an address to a Recipient list, lower-cased. It need not belong
+to a CLEAR user. An address already on the list is returned unchanged,
+so re-adding never clears an unsubscribe.<div class="field-args"><span class="arg"><code>listId: String!</code></span><span class="arg"><code>email: String!</code></span></div></td>
+  </tr><tr id="mutation-removerecipientlistmember">
+    <td><code>removeRecipientListMember</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Take an address off its Recipient list.<div class="field-args"><span class="arg"><code>memberId: String!</code></span></div></td>
   </tr></tbody>
     </table>
 
@@ -7456,6 +7475,56 @@ for raw point-locations like &quot;Point 15.62, 30.21&quot;.</td>
     <td><code>lat</code></td>
     <td><code>Float!</code></td>
     <td>Geographic latitude.</td>
+  </tr></tbody></table><h3 id="type-recipientlist"><code>RecipientList</code> <span class="type-badge">object</span></h3><p>A named set of email addresses a Brief is sent to. Addresses need not
+belong to CLEAR users. Platform admins only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>Unique.</td>
+  </tr><tr>
+    <td><code>members</code></td>
+    <td><code>[RecipientListMember!]!</code></td>
+    <td>Every address on the list, unsubscribed ones included, by email.</td>
+  </tr><tr>
+    <td><code>recipientCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Addresses a send would reach: members who haven't unsubscribed.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-recipientlistmember"><code>RecipientListMember</code> <span class="type-badge">object</span></h3><p>One address on a Recipient list.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>listId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>email</code></td>
+    <td><code>String!</code></td>
+    <td>Lower-cased.</td>
+  </tr><tr>
+    <td><code>unsubscribedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>Set when the address followed the unsubscribe link in a Brief
+email. Sends skip it from then on.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-refreshaggregateddatapointsresult"><code>RefreshAggregatedDatapointsResult</code> <span class="type-badge">object</span></h3><p>Summary counts from a `refreshAggregatedDatapoints` run.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>computedBuckets</code></td>
     <td><code>Int!</code></td>

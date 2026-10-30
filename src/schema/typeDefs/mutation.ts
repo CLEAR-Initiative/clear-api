@@ -1432,5 +1432,17 @@ export const mutationTypeDef = gql`
     the subject. Changes nothing. False when the email provider refused
     it."""
     sendBriefTest(id: String!): Boolean!
+
+    """Create an empty Recipient list. BAD_USER_INPUT when the name is
+    blank or taken."""
+    createRecipientList(name: String!): RecipientList!
+
+    """Add an address to a Recipient list, lower-cased. It need not belong
+    to a CLEAR user. An address already on the list is returned unchanged,
+    so re-adding never clears an unsubscribe."""
+    addRecipientListMember(listId: String!, email: String!): RecipientListMember!
+
+    """Take an address off its Recipient list."""
+    removeRecipientListMember(memberId: String!): Boolean!
   }
 `;

@@ -40,6 +40,7 @@ let eventId = "";
 let alertId = "";
 let signalId = "";
 const briefIds: string[] = [];
+const listIds: string[] = [];
 
 async function insertLocation(id: string, level: number, parentId: string | null, ancestorIds: string[]) {
   await prisma.$executeRaw`
@@ -89,6 +90,7 @@ describeIfDb("Briefs (db)", () => {
 
   afterAll(async () => {
     await prisma.brief.deleteMany({ where: { id: { in: briefIds } } });
+    await prisma.recipientList.deleteMany({ where: { id: { in: listIds } } });
     await prisma.alerts.deleteMany({ where: { eventId } });
     await prisma.signals.deleteMany({ where: { sourceId } });
     await prisma.events.deleteMany({ where: { id: eventId } });
@@ -256,5 +258,40 @@ describeIfDb("Briefs (db)", () => {
     expect(counts.event.total).toBe(0);
     expect(counts.signal.total).toBe(0);
     expect(counts.alert.total).toBe(0);
+  });
+
+  it("Recipient lists: unique names, lower-cased unique members, count skips unsubscribed", async () => {
+    const list = await Mutation.createRecipientList(null, { name: `${RUN} team` }, ADMIN);
+    listIds.push(list.id);
+    await expect(Mutation.createRecipientList(null, { name: ` ${RUN} team ` }, ADMIN)).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+
+    const a = await Mutation.addRecipientListMember(null, { listId: list.id, email: "James@Example.org" }, ADMIN);
+    const again = await Mutation.addRecipientListMember(null, { listId: list.id, email: "james@example.ORG" }, ADMIN);
+    expect(again.id).toBe(a.id);
+    expect(a.email).toBe("james@example.org");
+    const b = await Mutation.addRecipientListMember(null, { listId: list.id, email: "andi@example.org" }, ADMIN);
+    expect(b.unsubscribeToken).not.toBe(a.unsubscribeToken);
+
+    const lists = await Query.recipientLists(null, {}, ADMIN);
+    const mine = lists.find((l) => l.id === list.id)!;
+    expect((await briefResolvers.RecipientList.members(mine, {}, ADMIN)).map((m) => m.email)).toEqual([
+      "andi@example.org",
+      "james@example.org",
+    ]);
+    expect(await briefResolvers.RecipientList.recipientCount(mine, {}, ADMIN)).toBe(2);
+
+    await prisma.recipientListMember.update({ where: { id: b.id }, data: { unsubscribedAt: new Date() } });
+    expect(await briefResolvers.RecipientList.recipientCount(mine, {}, ADMIN)).toBe(1);
+    // Re-adding keeps the unsubscribe.
+    const readded = await Mutation.addRecipientListMember(null, { listId: list.id, email: "ANDI@example.org" }, ADMIN);
+    expect(readded.unsubscribedAt).not.toBeNull();
+
+    expect(await Mutation.removeRecipientListMember(null, { memberId: a.id }, ADMIN)).toBe(true);
+    expect(await prisma.recipientListMember.count({ where: { listId: list.id } })).toBe(1);
+    await expect(Mutation.removeRecipientListMember(null, { memberId: a.id }, ADMIN)).rejects.toMatchObject({
+      extensions: { code: "NOT_FOUND" },
+    });
   });
 });

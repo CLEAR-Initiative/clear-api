@@ -227,3 +227,47 @@ describe("Brief.counts", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+describe("Recipient lists", () => {
+  it("adds an address lower-cased, with a fresh unguessable token", async () => {
+    const upsert = vi.fn(async (a) => a.create);
+    const ctx = buildContext(ADMIN, {
+      recipientList: { findUnique: vi.fn(async () => ({ id: "l1" })) },
+      recipientListMember: { upsert },
+    });
+    const m = await briefResolvers.Mutation.addRecipientListMember(
+      null,
+      { listId: "l1", email: "  Andi@Example.ORG " },
+      ctx,
+    );
+    expect(m.email).toBe("andi@example.org");
+    expect(upsert.mock.calls[0][0].where).toEqual({ listId_email: { listId: "l1", email: "andi@example.org" } });
+    expect(upsert.mock.calls[0][0].update).toEqual({});
+    expect(m.unsubscribeToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  });
+
+  it("rejects something that isn't an email address", async () => {
+    const ctx = buildContext(ADMIN, {});
+    for (const email of ["", "andi", "andi@", "@example.org", "a b@example.org"]) {
+      expect(
+        await codeOf(briefResolvers.Mutation.addRecipientListMember(null, { listId: "l1", email }, ctx)),
+      ).toBe("BAD_USER_INPUT");
+    }
+  });
+
+  it("is NOT_FOUND for an unknown list", async () => {
+    const ctx = buildContext(ADMIN, { recipientList: { findUnique: vi.fn(async () => null) } });
+    expect(
+      await codeOf(
+        briefResolvers.Mutation.addRecipientListMember(null, { listId: "nope", email: "a@example.org" }, ctx),
+      ),
+    ).toBe("NOT_FOUND");
+  });
+
+  it("rejects a blank list name", async () => {
+    const ctx = buildContext(ADMIN, {});
+    expect(await codeOf(briefResolvers.Mutation.createRecipientList(null, { name: "  " }, ctx))).toBe(
+      "BAD_USER_INPUT",
+    );
+  });
+});

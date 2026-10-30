@@ -2927,3 +2927,34 @@ model briefItem {
   @@unique([briefId, kind, entityId])
   @@map("brief_items")
 }
+
+/// A named set of email addresses a Brief is sent to. Addresses need not
+/// belong to CLEAR users.
+model recipientList {
+  id          String                @id @default(cuid())
+  name        String                @unique
+  /// Plain column, no FK, like brief.createdById.
+  createdById String                @map("created_by_id")
+  members     recipientListMember[]
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  @@map("recipient_lists")
+}
+
+/// One address on a Recipient list. Each carries its own unsubscribe token,
+/// put in the link of every Brief email it is sent; following it sets
+/// `unsubscribedAt` and later sends skip the address.
+model recipientListMember {
+  id               String        @id @default(cuid())
+  listId           String        @map("list_id")
+  list             recipientList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  /// Lower-cased on write.
+  email            String
+  unsubscribeToken String        @unique @default(cuid()) @map("unsubscribe_token")
+  unsubscribedAt   DateTime?     @map("unsubscribed_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  @@unique([listId, email])
+  @@map("recipient_list_members")
+}

@@ -123,6 +123,33 @@ export const briefTypeDef = gql`
     url: String!
   }
 
+  """A named set of email addresses a Brief is sent to. Addresses need not
+  belong to CLEAR users. Platform admins only."""
+  type RecipientList {
+    id: String!
+    """Unique."""
+    name: String!
+    """Every address on the list, unsubscribed ones included, by email."""
+    members: [RecipientListMember!]!
+    """Addresses a send would reach: members who haven't unsubscribed."""
+    recipientCount: Int!
+    createdById: String!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  """One address on a Recipient list."""
+  type RecipientListMember {
+    id: String!
+    listId: String!
+    """Lower-cased."""
+    email: String!
+    """Set when the address followed the unsubscribe link in a Brief
+    email. Sends skip it from then on."""
+    unsubscribedAt: DateTime
+    createdAt: DateTime!
+  }
+
   """Fields to change on a draft Brief; omitted fields are kept."""
   input UpdateBriefInput {
     """Must not be blank."""

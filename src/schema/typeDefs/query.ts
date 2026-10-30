@@ -779,5 +779,8 @@ export const queryTypeDef = gql`
 
     """One Brief, or null. Platform admins only."""
     brief(id: String!): Brief
+
+    """Every Recipient list, by name. Platform admins only."""
+    recipientLists: [RecipientList!]!
   }
 `;

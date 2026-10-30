@@ -4,9 +4,10 @@
  * and calls `requireRole(context, ["admin"])` before anything else.
  */
 
+import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import type { Prisma } from "../generated/prisma/client.js";
+import { Prisma } from "../generated/prisma/client.js";
 import type { BriefCadence, BriefItemKind } from "../generated/prisma/enums.js";
 import { requireRole } from "../utils/auth-guard.js";
 import {
@@ -73,6 +74,28 @@ async function loadDraftItem(prisma: Context["prisma"], itemId: string) {
   return item;
 }
 
+/** Loose shape check; delivery is the real test. Lower-cased and trimmed. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_LENGTH = 254;
+const MAX_LIST_NAME_LENGTH = 120;
+
+function normaliseEmail(raw: string): string {
+  const email = raw.trim().toLowerCase();
+  if (email.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(email)) {
+    throw badInput("Not a valid email address");
+  }
+  return email;
+}
+
+/** An unguessable token for one member's unsubscribe link. */
+function newUnsubscribeToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+function isUniqueViolation(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
+}
+
 interface UpdateBriefInput {
   title?: string | null;
   summary?: string | null;
@@ -105,6 +128,11 @@ export const briefResolvers = {
     brief: async (_parent: unknown, args: { id: string }, context: Context) => {
       requireRole(context, ADMIN);
       return context.prisma.brief.findUnique({ where: { id: args.id } });
+    },
+
+    recipientLists: async (_parent: unknown, _args: unknown, context: Context) => {
+      requireRole(context, ADMIN);
+      return context.prisma.recipientList.findMany({ orderBy: { name: "asc" } });
     },
   },
 
@@ -257,6 +285,53 @@ export const briefResolvers = {
       );
     },
 
+    createRecipientList: async (_parent: unknown, args: { name: string }, context: Context) => {
+      const user = requireRole(context, ADMIN);
+      const name = args.name.trim();
+      if (!name) throw badInput("A Recipient list needs a name");
+      if (name.length > MAX_LIST_NAME_LENGTH) throw badInput("Recipient list name is too long");
+      try {
+        return await context.prisma.recipientList.create({ data: { name, createdById: user.id } });
+      } catch (e) {
+        if (isUniqueViolation(e)) throw badInput(`A Recipient list named "${name}" already exists`);
+        throw e;
+      }
+    },
+
+    addRecipientListMember: async (
+      _parent: unknown,
+      args: { listId: string; email: string },
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      const email = normaliseEmail(args.email);
+      const list = await context.prisma.recipientList.findUnique({
+        where: { id: args.listId },
+        select: { id: true },
+      });
+      if (!list) throw notFound("Recipient list not found");
+      // An address already on the list is returned as it is: re-adding
+      // never clears an unsubscribe. Remove and add it again to do that.
+      return context.prisma.recipientListMember.upsert({
+        where: { listId_email: { listId: list.id, email } },
+        create: { listId: list.id, email, unsubscribeToken: newUnsubscribeToken() },
+        update: {},
+      });
+    },
+
+    removeRecipientListMember: async (
+      _parent: unknown,
+      args: { memberId: string },
+      context: Context,
+    ) => {
+      requireRole(context, ADMIN);
+      const { count } = await context.prisma.recipientListMember.deleteMany({
+        where: { id: args.memberId },
+      });
+      if (count === 0) throw notFound("Recipient list member not found");
+      return true;
+    },
+
     sendBriefTest: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireRole(context, ADMIN);
       const row = await context.prisma.brief.findUnique({
@@ -301,6 +376,23 @@ export const briefResolvers = {
         return parent.countsSnapshot as BriefCounts;
       }
       return computeBriefCounts(context.prisma, parent);
+    },
+  },
+
+  RecipientList: {
+    members: async (parent: { id: string }, _args: unknown, context: Context) => {
+      requireRole(context, ADMIN);
+      return context.prisma.recipientListMember.findMany({
+        where: { listId: parent.id },
+        orderBy: { email: "asc" },
+      });
+    },
+
+    recipientCount: async (parent: { id: string }, _args: unknown, context: Context) => {
+      requireRole(context, ADMIN);
+      return context.prisma.recipientListMember.count({
+        where: { listId: parent.id, unsubscribedAt: null },
+      });
     },
   },
 
