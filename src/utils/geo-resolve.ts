@@ -400,6 +400,23 @@ async function resolveContainingA2(
 }
 
 /**
+ * The location itself plus every location whose `ancestor_ids` contains it.
+ *
+ * Containment must be written as `"ancestor_ids" @> ARRAY[...]`: that is the
+ * form the GIN index on `ancestor_ids` (`locations_ancestor_ids_idx`) can
+ * answer. The equivalent-looking `$1 = ANY("ancestor_ids")` cannot use it and
+ * scans the whole locations table, on every location-filtered list query.
+ * Exported so the plan test can EXPLAIN exactly this SQL.
+ */
+export function locationIdsWithDescendantsSql(locationId: string): Prisma.Sql {
+  return Prisma.sql`
+    SELECT id FROM "locations"
+    WHERE id = ${locationId}
+       OR "ancestor_ids" @> ARRAY[${locationId}]::text[]
+  `;
+}
+
+/**
  * Get all location IDs that are within the given location
  * (the location itself + all descendants), using the ancestorIds array.
  * Much faster than the recursive CTE approach.
@@ -408,12 +425,9 @@ export async function getLocationIdsWithDescendants(
   prisma: PrismaClient,
   locationId: string,
 ): Promise<string[]> {
-  // Find all locations where ancestorIds contains the target, plus the target itself
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
-    SELECT id FROM "locations"
-    WHERE id = ${locationId}
-       OR ${locationId} = ANY("ancestor_ids")
-  `;
+  const rows = await prisma.$queryRaw<{ id: string }[]>(
+    locationIdsWithDescendantsSql(locationId),
+  );
   return rows.map((r) => r.id);
 }
 
