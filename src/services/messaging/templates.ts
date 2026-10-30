@@ -1142,13 +1142,14 @@ const SAFE_LINK = /^https?:\/\//i;
 /**
  * Inline Markdown-lite on one line of ALREADY-ESCAPED text: links
  * `[text](https://...)` (http and https only; any other target keeps its
- * text and loses the link), `**bold**` and `*italic*`. Links are swapped for
+ * text and loses the link; one level of balanced parentheses in the
+ * target, as in Wikipedia-style URLs), `**bold**` and `*italic*`. Links are swapped for
  * placeholders first so `*` inside a URL is never read as emphasis.
  */
 function briefInline(escaped: string): string {
   const links: string[] = [];
   // U+E000 (private use) marks a placeholder; drop any already in the text.
-  let out = escaped.replace(//g, "").replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
+  let out = escaped.replace(//g, "").replace(/\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_m, text: string, href: string) => {
     if (!SAFE_LINK.test(href)) return text;
     links.push(`<a href="${href}" style="color: #2563EB;">${text}</a>`);
     return `${links.length - 1}`;

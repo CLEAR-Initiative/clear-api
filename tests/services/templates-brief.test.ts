@@ -143,6 +143,12 @@ describe("briefMarkdownLite", () => {
     expect(html).not.toContain("<b>");
   });
 
+  it("keeps balanced parentheses in a link target", () => {
+    const html = briefMarkdownLite("[source](https://example.org/Flood_(2026)) after");
+    expect(html).toContain('href="https://example.org/Flood_(2026)"');
+    expect(html).toContain(">source</a> after");
+  });
+
   it("ignores emphasis markers inside link URLs", () => {
     const html = briefMarkdownLite("[a](https://x.test/*not*/here)");
     expect(html).toContain('href="https://x.test/*not*/here"');
