@@ -19,7 +19,10 @@ export type UnsubscribeClient = {
       where: { unsubscribeToken: string };
       select: { id: true; unsubscribedAt: true; list: { select: { name: true } } };
     }) => Promise<{ id: string; unsubscribedAt: Date | null; list: { name: string } } | null>;
-    update: (args: { where: { id: string }; data: { unsubscribedAt: Date } }) => Promise<unknown>;
+    updateMany: (args: {
+      where: { id: string; unsubscribedAt: null };
+      data: { unsubscribedAt: Date };
+    }) => Promise<unknown>;
   };
 };
 
@@ -68,8 +71,9 @@ export function createBriefsUnsubscribeRouter(
       return;
     }
     if (!member.unsubscribedAt) {
-      await client.recipientListMember.update({
-        where: { id: member.id },
+      // Conditional, so two clicks racing keep the first time.
+      await client.recipientListMember.updateMany({
+        where: { id: member.id, unsubscribedAt: null },
         data: { unsubscribedAt: new Date() },
       });
     }

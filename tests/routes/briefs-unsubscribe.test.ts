@@ -17,7 +17,7 @@ import {
 
 const findUnique = vi.fn();
 const update = vi.fn();
-const client = { recipientListMember: { findUnique, update } } as unknown as UnsubscribeClient;
+const client = { recipientListMember: { findUnique, updateMany: update } } as unknown as UnsubscribeClient;
 
 describe("GET /briefs/unsubscribe", () => {
   let server: Server;
@@ -53,7 +53,7 @@ describe("GET /briefs/unsubscribe", () => {
     expect(body).toContain("CLEAR &lt;team&gt;");
     expect(findUnique.mock.calls[0][0].where).toEqual({ unsubscribeToken: "tok-1" });
     expect(update).toHaveBeenCalledTimes(1);
-    expect(update.mock.calls[0][0].where).toEqual({ id: "m1" });
+    expect(update.mock.calls[0][0].where).toEqual({ id: "m1", unsubscribedAt: null });
     expect(update.mock.calls[0][0].data.unsubscribedAt).toBeInstanceOf(Date);
   });
 
