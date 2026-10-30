@@ -268,6 +268,12 @@ export const knowledgebaseTypeDef = gql`
     shared ReliefWeb corpus — use it to show a team just its own uploads.
     Report tier only. Omit to search everything the reader may see."""
     teamId: ID
+    """Ranking HINT, not an exclusion: give this team's own uploaded documents
+    (\`team_id\` match) more weight by promoting them a few ranks in the TOPICAL
+    fusion — the shared corpus is still searched and returned. Set by the
+    analysis generator to the team whose analysis is being generated so its
+    uploads carry extra weight; ordinary search omits it. Report tier only."""
+    boostTeamUploadsId: ID
   }
 
   """One report (not a chunk) matched by \`searchReports\` — the Cap 3 read

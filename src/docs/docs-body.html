@@ -3314,6 +3314,14 @@ the charts/maps/tables most relevant to a question, then read
 this team (`team_id` match). Set only on team uploads, so this EXCLUDES the
 shared ReliefWeb corpus — use it to show a team just its own uploads.
 Report tier only. Omit to search everything the reader may see.</td>
+  </tr><tr>
+    <td><code>boostTeamUploadsId</code></td>
+    <td><code>ID</code></td>
+    <td>Ranking HINT, not an exclusion: give this team's own uploaded documents
+(`team_id` match) more weight by promoting them a few ranks in the TOPICAL
+fusion — the shared corpus is still searched and returned. Set by the
+analysis generator to the team whose analysis is being generated so its
+uploads carry extra weight; ordinary search omits it. Report tier only.</td>
   </tr></tbody></table><h3 id="type-localetranslationinput"><code>LocaleTranslationInput</code> <span class="type-badge">input</span></h3><p>Per-locale payload accepted by upsertTranslations. data mirrors the
 canonical entity's JSON shape exactly for the given locale — e.g. for
 a crisis it carries the localized title/summary/scenarios/needs with

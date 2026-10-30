@@ -178,6 +178,55 @@ describe("searchKnowledgebase — ADR-0006 review fixes (E1/E2/E7)", () => {
   });
 });
 
+describe("searchKnowledgebase — team-upload boost (boostTeamUploadsId)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("promotes a team's own uploaded chunk above a stronger-ranked non-team chunk", async () => {
+    // r_other ranks higher by dense distance; r_team is the boost team's own
+    // upload one rank lower. The promotion (−8 ranks) overtakes the 1-rank gap.
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_other", "report", { _dist: 0.1 }),                      // dense rank 0, no team
+        row("r_team", "report", { _dist: 0.15, teamId: "team-a" }),    // dense rank 1, team upload
+      ],
+    });
+    const out = await search(
+      null,
+      { query: "wash", filters: { ...FILTERS, boostTeamUploadsId: "team-a" }, limit: 10, mode: "TOPICAL" },
+      ctx(q),
+    );
+    const order = out.map((h) => h.id);
+    expect(order.indexOf("r_team")).toBeLessThan(order.indexOf("r_other")); // boosted above
+    expect(order).toContain("r_other"); // a hint, not an exclusion — corpus still returned
+  });
+
+  it("leaves order unchanged when no boost team is set (the field is opt-in)", async () => {
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_other", "report", { _dist: 0.1 }),
+        row("r_team", "report", { _dist: 0.15, teamId: "team-a" }),
+      ],
+    });
+    const out = await search(null, { query: "wash", filters: FILTERS, limit: 10, mode: "TOPICAL" }, ctx(q));
+    expect(out.map((h) => h.id)).toEqual(["r_other", "r_team"]); // stronger dense rank wins, no boost
+  });
+
+  it("does not boost another team's uploads", async () => {
+    const q = makeQueryRawUnsafe({
+      reportDense: [
+        row("r_other", "report", { _dist: 0.1 }),
+        row("r_team_b", "report", { _dist: 0.15, teamId: "team-b" }),  // different team
+      ],
+    });
+    const out = await search(
+      null,
+      { query: "wash", filters: { ...FILTERS, boostTeamUploadsId: "team-a" }, limit: 10, mode: "TOPICAL" },
+      ctx(q),
+    );
+    expect(out.map((h) => h.id)).toEqual(["r_other", "r_team_b"]); // team-b not promoted for team-a
+  });
+});
+
 describe("searchKnowledgebase — NRC relevance demotion", () => {
   beforeEach(() => vi.clearAllMocks());
 
