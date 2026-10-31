@@ -2012,9 +2012,10 @@ kind in the Brief exactly once, in the new order.<div class="field-args"><span c
   </tr><tr id="mutation-sendbrieftest">
     <td><code>sendBriefTest</code></td>
     <td><code>Boolean!</code></td>
-    <td>Email the Brief to the caller's own address only, with [TEST] in
-the subject. Changes nothing. False when the email provider refused
-it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Email the Brief to one address, with [TEST] in the subject and no
+unsubscribe link. `to` defaults to the caller's own address (also
+when blank). Changes nothing. False when the email provider refused
+it.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>to: String</code></span></div></td>
   </tr><tr id="mutation-sendbrief">
     <td><code>sendBrief</code></td>
     <td><code>BriefSendResult!</code></td>
