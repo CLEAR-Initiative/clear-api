@@ -82,6 +82,9 @@ _Avoid_: latency, lag, response time; computing it anywhere but clear-api
 
 **Location precision**:
 How finely CLEAR placed the **ingested Signals** it located in a period: each counts once under the level of its location (none, country, state, district, or point: a level-4 landmark or coordinate point), per source and ISO week of the instant it was located (`processedAt`, else `collectedAt`). **District or finer** (district + point) is the headline share, because grouping keys on district. The location is the Signal's general location, or for displacement its origin, else its destination; a Signal a person corrected is read at the location the pipeline gave it, not the corrected point. Location challenges filed in the period are reported by status as a correctness proxy. Served as counts by the admin-only `locationPrecisionMetrics` query; clear-mvp's `/metrics` page only formats it. See ADR-0012.
+
+**Metric granularity**:
+The bucket a metric series is read in: `DAY` (UTC calendar day), `WEEK` (ISO week from Monday 00:00 UTC, the default) or `MONTH` (UTC calendar month). A series has one zero-filled row per bucket the range touches, labelled `2026-10-29`, `2026-W44` or `2026-10`, with a bucket the range only partly covers marked `isPartial`. The instant that buckets a row is the metric's own (first ingested Signal for time to detection, located-at for location precision). `weekly` remains the `WEEK` case. See ADR-0014.
 _Avoid_: geocoding accuracy (precision is how fine, not whether right); computing it anywhere but clear-api
 
 ### Agent conversations

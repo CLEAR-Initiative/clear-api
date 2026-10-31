@@ -14,6 +14,8 @@ export const locationPrecisionMetricsTypeDef = gql`
     locationId: String
     """Only these sources, by \`DataSource.name\` (e.g. \`sudan-war-x\`). Defaults to every source."""
     sourceNames: [String!]
+    """Bucket size of \`series\`. Defaults to \`WEEK\`."""
+    granularity: MetricGranularity
   }
 
   """
@@ -43,6 +45,28 @@ export const locationPrecisionMetricsTypeDef = gql`
     weekly: [LocationPrecisionWeek!]!
     """Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists."""
     corrections: LocationCorrectionCounts!
+    """The bucket size \`series\` was read in."""
+    granularity: MetricGranularity!
+    """Each source in \`bySource\` per bucket of \`granularity\` (ADR-0014): zero-filled over every bucket the range touches, in \`bySource\` order then ascending. With \`WEEK\` it equals \`weekly\` row for row."""
+    series: [LocationPrecisionBucket!]!
+  }
+
+  """One source's ingested Signals located in one bucket of the requested granularity, by the level of their location."""
+  type LocationPrecisionBucket {
+    """Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month."""
+    start: DateTime!
+    """\`2026-10-29\` for a day, \`2026-W44\` for an ISO week, \`2026-10\` for a month."""
+    label: String!
+    """\`DataSource.name\`."""
+    source: String!
+    total: Int!
+    noLocation: Int!
+    country: Int!
+    state: Int!
+    district: Int!
+    point: Int!
+    """True when the range covers only part of the bucket, e.g. the current one."""
+    isPartial: Boolean!
   }
 
   """Ingested Signals of one source in range, by the level of their location."""

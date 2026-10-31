@@ -97,3 +97,6 @@ handling.
   thousand rows for a year; no index is needed beyond the existing ones.
 - When an analyst-checked sample exists, `corrections` gains a measured
   companion rather than changing meaning.
+- The weekly rows are the `WEEK` case of the bucket rule in ADR-0014; `series`
+  reads the same tally per source by day, week or month (`granularity`). The
+  29 Oct 2026 deploy is only visible by day: 31% before it that day, 60% after.

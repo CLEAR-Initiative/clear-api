@@ -30,7 +30,16 @@
  */
 
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
-import { isoWeekLabel, resolveRange, startOfIsoWeek } from "./detection-metrics.js";
+import {
+  bucketIndex,
+  bucketsOf,
+  resolveGranularity,
+  resolveRange,
+  startOfBucket,
+  startOfIsoWeek,
+  type Bucket,
+  type Granularity,
+} from "./detection-metrics.js";
 
 export const LEVELS = ["noLocation", "country", "state", "district", "point"] as const;
 export type Level = (typeof LEVELS)[number];
@@ -39,7 +48,6 @@ export const CORRECTION_STATUSES = ["open", "accepted", "corrected", "declined",
 export type CorrectionStatus = (typeof CORRECTION_STATUSES)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_MS = 7 * DAY_MS;
 
 /** One (source, UTC day, level) cell, as the query aggregates Signals. */
 export interface LocationPrecisionRow {
@@ -76,6 +84,10 @@ export interface LocationPrecisionMetrics {
   /** Source by ISO week, zero-filled over every week the range touches, in `bySource` order then ascending weeks. */
   weekly: Array<{ isoWeek: string; weekStart: Date; source: string; isPartial: boolean } & LevelCounts>;
   corrections: Record<CorrectionStatus, number>;
+  /** The bucket size `series` was read in. */
+  granularity: Granularity;
+  /** Source by bucket of `granularity` (ADR-0014), zero-filled, in `bySource` order then ascending; equal to `weekly` for WEEK. */
+  series: Array<Bucket & { source: string } & LevelCounts>;
 }
 
 export interface LocationPrecisionMetricsInput {
@@ -83,6 +95,8 @@ export interface LocationPrecisionMetricsInput {
   to?: Date | string | null;
   locationId?: string | null;
   sourceNames?: string[] | null;
+  /** Bucket size of `series`; defaults to WEEK. */
+  granularity?: Granularity | null;
 }
 
 /** The bucket a location level falls in; anything finer than a district is a point. */
@@ -104,27 +118,23 @@ function emptyCounts(): LevelCounts {
   return { total: 0, noLocation: 0, country: 0, state: 0, district: 0, point: 0 };
 }
 
-/** The metric over the aggregated cells. Pure, so the shape is unit-tested without a database. */
+/** The metric over the aggregated cells, with `series` read at `granularity` (ADR-0014). Pure, so the shape is unit-tested without a database. */
 export function summarise(
   rows: LocationPrecisionRow[],
   corrections: LocationCorrectionRow[],
   range: { from: Date; to: Date },
+  granularity: Granularity = "WEEK",
 ): LocationPrecisionMetrics {
-  const weeks: Array<{ start: number; isoWeek: string; isPartial: boolean }> = [];
-  const weekIndex = new Map<number, number>();
-  const lastWeek = startOfIsoWeek(range.to).getTime();
-  for (let start = startOfIsoWeek(range.from).getTime(); start <= lastWeek; start += WEEK_MS) {
-    weekIndex.set(start, weeks.length);
-    weeks.push({
-      start,
-      isoWeek: isoWeekLabel(new Date(start)),
-      // `to` is inclusive, so a range ending at Sunday 23:59:59.999 covers its week.
-      isPartial: start < range.from.getTime() || start + WEEK_MS > range.to.getTime() + 1,
-    });
-  }
+  // `weekly` is always ISO weeks, for the cards that predate `series`; `series`
+  // is the same tally at the requested granularity (identical rows for WEEK).
+  const weekBuckets = bucketsOf(range, "WEEK");
+  const weekIndex = bucketIndex(weekBuckets);
+  const seriesBuckets = bucketsOf(range, granularity);
+  const seriesIndex = bucketIndex(seriesBuckets);
 
   const totals = new Map<string, LevelCounts>();
   const perWeek = new Map<string, LevelCounts[]>();
+  const perBucket = new Map<string, LevelCounts[]>();
   let signalsInRange = 0;
   for (const row of rows) {
     const n = Number(row.count) || 0;
@@ -136,17 +146,28 @@ export function summarise(
       totals.set(row.source, total);
       perWeek.set(
         row.source,
-        weeks.map(() => emptyCounts()),
+        weekBuckets.map(() => emptyCounts()),
+      );
+      perBucket.set(
+        row.source,
+        seriesBuckets.map(() => emptyCounts()),
       );
     }
     total.total += n;
     total[bucket] += n;
     signalsInRange += n;
-    const i = weekIndex.get(startOfIsoWeek(new Date(row.day * DAY_MS)).getTime());
-    if (i !== undefined) {
-      const week = perWeek.get(row.source)![i]!;
+    const at = new Date(row.day * DAY_MS);
+    const w = weekIndex.get(startOfIsoWeek(at).getTime());
+    if (w !== undefined) {
+      const week = perWeek.get(row.source)![w]!;
       week.total += n;
       week[bucket] += n;
+    }
+    const i = seriesIndex.get(startOfBucket(at, granularity).getTime());
+    if (i !== undefined) {
+      const cell = perBucket.get(row.source)![i]!;
+      cell.total += n;
+      cell[bucket] += n;
     }
   }
 
@@ -155,16 +176,21 @@ export function summarise(
     .sort((a, b) => b.total - a.total || a.source.localeCompare(b.source));
 
   const weekly: LocationPrecisionMetrics["weekly"] = [];
+  const series: LocationPrecisionMetrics["series"] = [];
   for (const { source } of bySource) {
-    const counts = perWeek.get(source)!;
-    weeks.forEach((week, i) => {
+    const weekCounts = perWeek.get(source)!;
+    weekBuckets.forEach((week, i) => {
       weekly.push({
-        isoWeek: week.isoWeek,
-        weekStart: new Date(week.start),
+        isoWeek: week.label,
+        weekStart: week.start,
         source,
         isPartial: week.isPartial,
-        ...counts[i]!,
+        ...weekCounts[i]!,
       });
+    });
+    const bucketCounts = perBucket.get(source)!;
+    seriesBuckets.forEach((bucket, i) => {
+      series.push({ start: bucket.start, label: bucket.label, isPartial: bucket.isPartial, source, ...bucketCounts[i]! });
     });
   }
 
@@ -174,7 +200,7 @@ export function summarise(
     if (bucket) correctionCounts[bucket] += Number(row.count) || 0;
   }
 
-  return { from: range.from, to: range.to, signalsInRange, bySource, weekly, corrections: correctionCounts };
+  return { from: range.from, to: range.to, signalsInRange, bySource, weekly, corrections: correctionCounts, granularity, series };
 }
 
 /**
@@ -266,9 +292,10 @@ export async function computeLocationPrecisionMetrics(
   now: Date = new Date(),
 ): Promise<LocationPrecisionMetrics> {
   const range = resolveRange({ from: input.from, to: input.to }, now);
+  const granularity = resolveGranularity(input.granularity);
   const locationId = input.locationId || null;
   const sourceNames = normaliseSourceNames(input.sourceNames);
   const rows = await fetchLocationPrecisionRows(prisma, range, locationId, sourceNames);
   const corrections = await fetchLocationCorrectionRows(prisma, range, locationId, sourceNames);
-  return summarise(rows, corrections, range);
+  return summarise(rows, corrections, range, granularity);
 }

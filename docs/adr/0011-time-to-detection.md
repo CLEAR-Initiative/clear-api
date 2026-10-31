@@ -91,6 +91,8 @@ zero-filled, with a partly covered week marked `isPartial`.
 - A pipeline that starts writing a precision flag on `publishedAt` lets the
   date-only test move from the midnight heuristic to that flag, without
   changing the definition.
+- The weekly rows are the `WEEK` case of the bucket rule in ADR-0014; `series`
+  reads the same tally by day, week or month (`granularity`).
 - The query reads every live ingested Signal link once per call. It is an
   admin page called on demand; if it gets slow, an index on
   `signal_to_events(event_id)` or a stored first-ingested time is the next

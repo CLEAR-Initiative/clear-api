@@ -168,3 +168,55 @@ describe("computeLocationPrecisionMetrics", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+describe("summarise series (ADR-0014)", () => {
+  const r = range("2026-10-26T00:00:00Z", "2026-11-08T23:59:59.999Z");
+  const rows = [
+    { source: "sudan-war-x", day: day("2026-10-27"), level: 2, count: 3 },
+    { source: "sudan-war-x", day: day("2026-10-27"), level: 1, count: 4 },
+    { source: "sudan-war-x", day: day("2026-11-03"), level: 4, count: 5 },
+    { source: "dataminr", day: day("2026-10-26"), level: 4, count: 6 },
+  ];
+
+  it("equals weekly row for row at WEEK, the default", () => {
+    const m = summarise(rows, [], r);
+    expect(m.granularity).toBe("WEEK");
+    expect(m.series).toEqual(m.weekly.map(({ isoWeek, weekStart, ...rest }) => ({ start: weekStart, label: isoWeek, ...rest })));
+  });
+
+  it("gives every source every day, zero-filled, in bySource order then ascending", () => {
+    const m = summarise(rows, [], r, "DAY");
+    expect(m.granularity).toBe("DAY");
+    expect(m.series).toHaveLength(14 * 2);
+    expect(m.series.slice(0, 14).every((b) => b.source === "sudan-war-x")).toBe(true);
+    expect(m.series[1]).toMatchObject({
+      label: "2026-10-27",
+      start: new Date("2026-10-27T00:00:00Z"),
+      source: "sudan-war-x",
+      total: 7,
+      state: 4,
+      district: 3,
+      isPartial: false,
+    });
+    expect(m.series[8]).toMatchObject({ label: "2026-11-03", source: "sudan-war-x", total: 5, point: 5 });
+    expect(m.series[14]).toMatchObject({ label: "2026-10-26", source: "dataminr", total: 6, point: 6 });
+    expect(m.series[15]).toMatchObject({ label: "2026-10-27", source: "dataminr", total: 0 });
+    // The weekly rows are unaffected by the granularity.
+    expect(m.weekly.map((w) => `${w.source} ${w.isoWeek}`)).toEqual([
+      "sudan-war-x 2026-W44",
+      "sudan-war-x 2026-W45",
+      "dataminr 2026-W44",
+      "dataminr 2026-W45",
+    ]);
+  });
+
+  it("buckets by calendar month, marking a month the range only partly covers", () => {
+    const m = summarise(rows, [], r, "MONTH");
+    expect(m.series.map((b) => [b.source, b.label, b.total, b.isPartial])).toEqual([
+      ["sudan-war-x", "2026-10", 7, true],
+      ["sudan-war-x", "2026-11", 5, true],
+      ["dataminr", "2026-10", 6, true],
+      ["dataminr", "2026-11", 0, true],
+    ]);
+  });
+});

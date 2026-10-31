@@ -35,11 +35,21 @@ describe("detectionMetrics", () => {
     const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
     const m = await detectionMetrics(
       null,
-      { input: { from: new Date("2026-09-28T00:00:00Z"), to: new Date("2026-10-11T23:59:59.999Z"), locationId: "loc-sdn" } },
+      {
+        input: {
+          from: new Date("2026-09-28T00:00:00Z"),
+          to: new Date("2026-10-11T23:59:59.999Z"),
+          locationId: "loc-sdn",
+          granularity: "DAY",
+        },
+      },
       ctx,
     );
     expect(m.from.toISOString()).toBe("2026-09-28T00:00:00.000Z");
     expect(m.weekly.map((w) => w.isoWeek)).toEqual(["2026-W40", "2026-W41"]);
+    expect(m.granularity).toBe("DAY");
+    expect(m.series).toHaveLength(14);
+    expect(m.series[0]!.label).toBe("2026-09-28");
     expect(m.exclusions).toHaveLength(5);
     const [, ...values] = $queryRaw.mock.calls[0] as unknown as [unknown, ...unknown[]];
     expect(JSON.stringify(values)).toContain("loc-sdn");
@@ -77,6 +87,7 @@ describe("locationPrecisionMetrics", () => {
           to: new Date("2026-11-08T23:59:59.999Z"),
           locationId: "loc-sdn",
           sourceNames: ["sudan-war-x"],
+          granularity: "MONTH",
         },
       },
       ctx,
@@ -84,6 +95,8 @@ describe("locationPrecisionMetrics", () => {
     expect(m.from.toISOString()).toBe("2026-10-26T00:00:00.000Z");
     expect(m.bySource).toEqual([]);
     expect(m.weekly).toEqual([]);
+    expect(m.granularity).toBe("MONTH");
+    expect(m.series).toEqual([]);
     expect(m.corrections).toEqual({ open: 0, accepted: 0, corrected: 0, declined: 0, superseded: 0 });
     expect($queryRaw).toHaveBeenCalledTimes(2);
     for (const call of $queryRaw.mock.calls as unknown as Array<[unknown, ...unknown[]]>) {
