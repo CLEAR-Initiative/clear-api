@@ -108,6 +108,25 @@ describe("computeMetricSeries", () => {
     ]);
   });
 
+  it("zero-fills an ungrouped series when no source has a row in range", async () => {
+    const empty = () => ({ $queryRaw: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]) }) as unknown as PrismaClient;
+    const ungrouped = await computeMetricSeries(empty(), { metric: "DISTRICT_OR_FINER", ...range, granularity: "DAY" }, now);
+    expect(ungrouped.groups).toEqual([]);
+    expect(ungrouped.buckets.map((b) => [b.label, b.group, b.numerator, b.denominator, b.isPartial])).toEqual([
+      ["2026-10-05", null, 0, 0, false],
+      ["2026-10-06", null, 0, 0, false],
+      ["2026-10-07", null, 0, 0, false],
+      ["2026-10-08", null, 0, 0, false],
+      ["2026-10-09", null, 0, 0, false],
+      ["2026-10-10", null, 0, 0, false],
+      ["2026-10-11", null, 0, 0, false],
+    ]);
+    // Grouped, there is no group to fill: an empty run is the honest answer.
+    const grouped = await computeMetricSeries(empty(), { metric: "DISTRICT_OR_FINER", ...range, granularity: "DAY", groupBy: "SOURCE" }, now);
+    expect(grouped.groups).toEqual([]);
+    expect(grouped.buckets).toEqual([]);
+  });
+
   it("passes the location and the sources through to the owning query", async () => {
     const { prisma, $queryRaw } = prismaFor("signals");
     await computeMetricSeries(prisma, { metric: "DISTRICT_OR_FINER", ...range, locationId: "loc-sdn", sourceNames: ["sudan-war-x"], groupBy: "SOURCE" }, now);
