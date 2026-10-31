@@ -575,6 +575,15 @@ range (default: the last 12 ISO weeks), optionally one location and some
 sources. Counts only. Admin only. Refuses an inverted range or one over
 364 days with BAD_USER_INPUT. See `LocationPrecisionMetrics` and ADR-0012.<div class="field-args"><span class="arg"><code>input: LocationPrecisionMetricsInput</code></span></div></td>
   </tr><tr>
+    <td><code>agentMetrics</code></td>
+    <td><code>AgentMetrics!</code></td>
+    <td>CLEAR Agent usage: cost, latency, turns, Conversations, users, tool
+calls and the pages questions came from, over a range (default: the last
+12 ISO weeks). A turn is an Answer with recorded usage. Counts, sums and
+averages only. Admin only. Refuses an inverted range or one over 364 days
+with BAD_USER_INPUT. Selecting `recentQuestions` is logged as
+`conversation.admin_read`. See `AgentMetrics` and ADR-0013.<div class="field-args"><span class="arg"><code>input: AgentMetricsInput</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -2169,6 +2178,14 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
     <td><code>text</code></td>
     <td><code>String</code></td>
     <td>Optional textual feedback.</td>
+  </tr></tbody></table><h3 id="type-agentmetricsinput"><code>AgentMetricsInput</code> <span class="type-badge">input</span></h3><p>The range to measure CLEAR Agent usage over. Both fields are optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
   </tr></tbody></table><h3 id="type-alertdigestinput"><code>AlertDigestInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>alertIds</code></td>
     <td><code>[String!]!</code></td>
@@ -4564,6 +4581,158 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>costUsd</code></td>
     <td><code>Float!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-agentmetrics"><code>AgentMetrics</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a range: what it cost, how fast it answered, how much
+it was used and what for. The unit is a **turn**: one Answer with the usage
+clear-mvp recorded for it. A turn is in range when its usage was recorded in
+the range (server time, as the daily budget counts). Counts, sums and
+averages only; clear-mvp formats them. See ADR-0013.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns in range: Answers with recorded usage.</td>
+  </tr><tr>
+    <td><code>turnsUnrecorded</code></td>
+    <td><code>Int!</code></td>
+    <td>Answers written in range (by `createdAt`) whose usage was never recorded: failed turns, or a lost record. Not in any other number here.</td>
+  </tr><tr>
+    <td><code>conversations</code></td>
+    <td><code>Int!</code></td>
+    <td>Conversations with at least one turn in range.</td>
+  </tr><tr>
+    <td><code>newConversations</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, Conversations created in range.</td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>Int!</code></td>
+    <td>Users with at least one turn in range.</td>
+  </tr><tr>
+    <td><code>totalCostUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Sum of the turns' cost, USD.</td>
+  </tr><tr>
+    <td><code>costPerTurnUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Mean cost of a turn, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>costPerTurnP95Usd</code></td>
+    <td><code>Float</code></td>
+    <td>95th percentile (nearest rank) cost of a turn, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>costPerConversationUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Total cost over the Conversations with a turn in range, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>latencyMedianMs</code></td>
+    <td><code>Float</code></td>
+    <td>Median turn latency, milliseconds, over turns that recorded one. Null with none.</td>
+  </tr><tr>
+    <td><code>latencyP95Ms</code></td>
+    <td><code>Float</code></td>
+    <td>95th percentile (nearest rank) turn latency, milliseconds. Null with none.</td>
+  </tr><tr>
+    <td><code>totalInputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request.</td>
+  </tr><tr>
+    <td><code>totalOutputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>Sum of output tokens over the turns.</td>
+  </tr><tr>
+    <td><code>inputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean input tokens per turn. Null with no turns.</td>
+  </tr><tr>
+    <td><code>outputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean output tokens per turn. Null with no turns.</td>
+  </tr><tr>
+    <td><code>toolCallsPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean tool calls per turn, from the Answers' stored parts. Null with no turns.</td>
+  </tr><tr>
+    <td><code>turnsWithoutTools</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns that called no tool.</td>
+  </tr><tr>
+    <td><code>turnsWithManyToolCalls</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns with more than 5 tool calls: the tool-thrash signal.</td>
+  </tr><tr>
+    <td><code>budgetLimitUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>The daily per-user Agent budget in force, USD.</td>
+  </tr><tr>
+    <td><code>budgetHits</code></td>
+    <td><code>Int!</code></td>
+    <td>User-days (one user, one UTC day) whose recorded spend reached the budget.</td>
+  </tr><tr>
+    <td><code>byModel</code></td>
+    <td><code>[AgentModelUsage!]!</code></td>
+    <td>Turns by the model that answered, most turns first. `unknown` when none was recorded.</td>
+  </tr><tr>
+    <td><code>byTool</code></td>
+    <td><code>[AgentToolUsage!]!</code></td>
+    <td>Tool calls by tool, most calls first.</td>
+  </tr><tr>
+    <td><code>byPage</code></td>
+    <td><code>[AgentPageUsage!]!</code></td>
+    <td>Turns by the page they were asked from (the first segment of the preceding user turn's route, ids left out), most turns first. `unknown` when no view was sent.</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[AgentWeek!]!</code></td>
+    <td>Turns per ISO week of their usage record, ascending, one row per week the range touches (zero-filled).</td>
+  </tr><tr>
+    <td><code>recentQuestions</code></td>
+    <td><code>[AgentQuestion!]!</code></td>
+    <td>The newest questions asked in range (user turns by `createdAt`), newest first, each cut to 160 characters, without the user. Reading them is logged as `conversation.admin_read`, so select this field only when the questions will be shown.<div class="field-args"><span class="arg"><code>first: Int</code> — How many to return (1–50, default 20).</span></div></td>
+  </tr></tbody></table><h3 id="type-agentmodelusage"><code>AgentModelUsage</code> <span class="type-badge">object</span></h3><p>Turns one model answered in range.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>The model, as clear-mvp recorded it (e.g. `anthropic/claude-sonnet-5-5`).</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentpageusage"><code>AgentPageUsage</code> <span class="type-badge">object</span></h3><p>Turns asked from one page.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>page</code></td>
+    <td><code>String!</code></td>
+    <td>The first segment of the route, e.g. `/map`, `/dashboard`, `/event`; `unknown` when no view was sent.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentquestion"><code>AgentQuestion</code> <span class="type-badge">object</span></h3><p>One question a user asked the Agent, without the user.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>askedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>question</code></td>
+    <td><code>String!</code></td>
+    <td>The question's text, cut to 160 characters.</td>
+  </tr><tr>
+    <td><code>page</code></td>
+    <td><code>String!</code></td>
+    <td>The page it was asked from, as in `byPage`.</td>
   </tr></tbody></table><h3 id="type-agentrouteusage"><code>AgentRouteUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>route</code></td>
     <td><code>String!</code></td>
@@ -4576,6 +4745,18 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>distinctUsers</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-agenttoolusage"><code>AgentToolUsage</code> <span class="type-badge">object</span></h3><p>Calls to one tool in range.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>tool</code></td>
+    <td><code>String!</code></td>
+    <td>The tool's name, e.g. `clear_list_events`, `navigate`, `nrc_find`.</td>
+  </tr><tr>
+    <td><code>calls</code></td>
+    <td><code>Int!</code></td>
+    <td>Calls, over all turns.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns that called it at least once.</td>
   </tr></tbody></table><h3 id="type-agentusagestats"><code>AgentUsageStats</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a window, from usage metadata only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>from</code></td>
     <td><code>DateTime!</code></td>
@@ -4617,6 +4798,54 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>byDay</code></td>
     <td><code>[AgentDailyUsage!]!</code></td>
     <td>Per UTC day, ascending.</td>
+  </tr></tbody></table><h3 id="type-agentweek"><code>AgentWeek</code> <span class="type-badge">object</span></h3><p>Agent usage in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W42`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>conversations</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costPerTurnUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Mean cost of a turn this week, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>latencyMedianMs</code></td>
+    <td><code>Float</code></td>
+    <td>Median turn latency this week, milliseconds. Null with no turns.</td>
+  </tr><tr>
+    <td><code>inputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean input tokens per turn this week. Null with no turns.</td>
+  </tr><tr>
+    <td><code>toolCallsPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean tool calls per turn this week. Null with no turns.</td>
+  </tr><tr>
+    <td><code>models</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The models that answered this week, sorted. A change from one week to the next marks a model change on a chart.</td>
   </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
 Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>

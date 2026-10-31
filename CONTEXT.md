@@ -92,6 +92,13 @@ asked, what the Agent answered, and what it drew on to answer (tools run, Source
 cited). Owned by that user.
 _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
 
+**Turn**:
+One Answer the **CLEAR Agent** gave in a **Conversation**, with the usage clear-mvp recorded for
+it (model, tokens, cost, latency). The unit of the Agent's budget and of `agentMetrics`
+(ADR-0013): a turn belongs to the day and week its usage was recorded in.
+_Avoid_: request (one turn makes several model requests), message (a turn is the Answer plus its
+usage, not any one stored message), step (one model call inside a turn)
+
 ### Estimates
 
 **Estimate**:

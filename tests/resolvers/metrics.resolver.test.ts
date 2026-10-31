@@ -101,3 +101,40 @@ describe("locationPrecisionMetrics", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+const { agentMetrics } = metricsResolvers.Query;
+
+describe("agentMetrics", () => {
+  it("is FORBIDDEN to every role but admin, and UNAUTHENTICATED signed out, without a query", async () => {
+    for (const role of ["analyst", "viewer", "pending", "worker", "pipeline"]) {
+      const { ctx, $queryRaw } = context({ id: "u", role });
+      await expect(agentMetrics(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect($queryRaw).not.toHaveBeenCalled();
+    }
+    const { ctx } = context(null);
+    await expect(agentMetrics(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("measures the given range for an admin, with the budget in force", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    const m = await agentMetrics(
+      null,
+      { input: { from: new Date("2026-09-28T00:00:00Z"), to: new Date("2026-10-11T23:59:59.999Z") } },
+      ctx,
+    );
+    expect(m.from.toISOString()).toBe("2026-09-28T00:00:00.000Z");
+    expect(m.weekly.map((w) => w.isoWeek)).toEqual(["2026-W40", "2026-W41"]);
+    expect(m.turns).toBe(0);
+    expect(m.budgetLimitUsd).toBeGreaterThan(0);
+    // The turns and the unrecorded count, both over the range.
+    expect($queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a span over 364 days with BAD_USER_INPUT before querying", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    await expect(
+      agentMetrics(null, { input: { from: "2025-01-01T00:00:00Z", to: "2026-06-01T00:00:00Z" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+});
