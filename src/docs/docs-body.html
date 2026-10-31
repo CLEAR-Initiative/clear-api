@@ -599,6 +599,13 @@ metric's own query row for row. Counts only. Admin only. Refuses a
 grouping the metric lacks, an inverted range or one over 364 days with
 BAD_USER_INPUT. See `MetricSeries` and ADR-0015.<div class="field-args"><span class="arg"><code>input: MetricSeriesInput!</code></span></div></td>
   </tr><tr>
+    <td><code>metricAnnotations</code></td>
+    <td><code>[MetricAnnotation!]!</code></td>
+    <td>The changes that should move a metric (deploys, imports, prompt
+changes), oldest first, in a range and optionally for one metric, drawn
+as markers on the /metrics charts. Admin only. See `MetricAnnotation`
+and ADR-0016.<div class="field-args"><span class="arg"><code>input: MetricAnnotationsInput</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -1284,6 +1291,18 @@ event.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
     <td><code>deleteDataSource</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a data source.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-createmetricannotation">
+    <td><code>createMetricAnnotation</code></td>
+    <td><code>MetricAnnotation!</code></td>
+    <td>Record a change that should move a metric, as a marker on the /metrics
+charts (ADR-0016). Admin only; logged as `metric_annotation.create`.
+Refuses an empty label, a non-http link, no metric or an unknown one with
+BAD_USER_INPUT.<div class="field-args"><span class="arg"><code>input: CreateMetricAnnotationInput!</code></span></div></td>
+  </tr><tr id="mutation-deletemetricannotation">
+    <td><code>deleteMetricAnnotation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Remove a metric annotation. Admin only; logged as
+`metric_annotation.delete`. NOT_FOUND when there is none with that id.<div class="field-args"><span class="arg"><code>id: ID!</code></span></div></td>
   </tr><tr id="mutation-resolvedatasource">
     <td><code>resolveDataSource</code></td>
     <td><code>String!</code></td>
@@ -2808,6 +2827,26 @@ any team member on that team instead of a global admin. Purely an
 authorisation hint — the signal itself has no team column; team affiliation
 is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr></tbody></table><h3 id="type-createmetricannotationinput"><code>CreateMetricAnnotationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>at</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the change reached this environment (UTC).</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>Short label on the chart, at most 120 characters.</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>At most 1000 characters.</td>
+  </tr><tr>
+    <td><code>link</code></td>
+    <td><code>String</code></td>
+    <td>An http(s) URL, at most 500 characters.</td>
+  </tr><tr>
+    <td><code>metricKeys</code></td>
+    <td><code>[MetricKey!]!</code></td>
+    <td>At least one registry metric.</td>
   </tr></tbody></table><h3 id="type-createnotificationinput"><code>CreateNotificationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
     <td><code>String!</code></td>
@@ -3524,6 +3563,18 @@ field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type
     <td><code>granularity</code></td>
     <td><code>MetricGranularity</code></td>
     <td>Bucket size of `series`. Defaults to `WEEK`.</td>
+  </tr></tbody></table><h3 id="type-metricannotationsinput"><code>MetricAnnotationsInput</code> <span class="type-badge">input</span></h3><p>The range and metric to list annotations for. Every field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Only annotations at or after this instant.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>Only annotations at or before this instant.</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey</code></td>
+    <td>Only annotations tagged with this metric.</td>
   </tr></tbody></table><h3 id="type-metricseriesinput"><code>MetricSeriesInput</code> <span class="type-badge">input</span></h3><p>The metric, range, bucket size and grouping to read a series for. Only `metric` is required.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>metric</code></td>
     <td><code>MetricKey!</code></td>
@@ -7729,6 +7780,40 @@ submitted or filed by hand), not retracted, not dummy.</p><table class="ref-tabl
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in at least once during the
 calendar month.</td>
+  </tr></tbody></table><h3 id="type-metricannotation"><code>MetricAnnotation</code> <span class="type-badge">object</span></h3><p>A change that should move a metric, drawn as a marker on the admin /metrics
+charts (ADR-0016): a deploy, a data import, a prompt change. Rows are per
+environment, because a change reaches dev and prod at different instants.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>at</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the change reached this environment (UTC).</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>Short label on the chart.</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>What changed and why it should move the metric.</td>
+  </tr><tr>
+    <td><code>link</code></td>
+    <td><code>String</code></td>
+    <td>Where to read more: a pull request, a ticket, an ADR.</td>
+  </tr><tr>
+    <td><code>metricKeys</code></td>
+    <td><code>[MetricKey!]!</code></td>
+    <td>The registry metrics the change bears on (ADR-0015); at least one.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-metricbucket"><code>MetricBucket</code> <span class="type-badge">object</span></h3><p>One bucket of one group. The metric is `numerator / denominator`; a bucket with a zero denominator measured nothing.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>start</code></td>
     <td><code>DateTime!</code></td>

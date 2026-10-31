@@ -1,5 +1,5 @@
 import type { Context } from "../context.js";
-import { logActivityOrThrow } from "../utils/activity-log.js";
+import { logActivity, logActivityOrThrow } from "../utils/activity-log.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import {
@@ -17,6 +17,13 @@ import {
   type LocationPrecisionMetricsInput,
 } from "../services/location-precision-metrics.js";
 import { computeMetricSeries, metricDefinitions, type MetricSeriesInput } from "../services/metric-registry.js";
+import {
+  createMetricAnnotation,
+  deleteMetricAnnotation,
+  listMetricAnnotations,
+  type MetricAnnotationInput,
+  type MetricAnnotationsFilter,
+} from "../services/metric-annotations.js";
 
 /** Platform metrics for the admin /metrics page in clear-mvp. Admin only. */
 export const metricsResolvers = {
@@ -54,6 +61,39 @@ export const metricsResolvers = {
     metricSeries: async (_parent: unknown, args: { input: MetricSeriesInput }, context: Context) => {
       requireRole(context, ["admin"]);
       return computeMetricSeries(context.prisma, args.input);
+    },
+    /** The changes drawn as markers on the charts (ADR-0016). */
+    metricAnnotations: async (_parent: unknown, args: { input?: MetricAnnotationsFilter | null }, context: Context) => {
+      requireRole(context, ["admin"]);
+      return listMetricAnnotations(context.prisma, args.input ?? {});
+    },
+  },
+  Mutation: {
+    /** Record a change that should move a metric; logged as `metric_annotation.create`. */
+    createMetricAnnotation: async (_parent: unknown, args: { input: MetricAnnotationInput }, context: Context) => {
+      const admin = requireRole(context, ["admin"]);
+      const row = await createMetricAnnotation(context.prisma, args.input, admin.id);
+      await logActivity(context.prisma, {
+        userId: admin.id,
+        action: "metric_annotation.create",
+        resourceType: "metric_annotation",
+        resourceId: row.id,
+        metadata: { at: row.at.toISOString(), label: row.label, metricKeys: row.metricKeys },
+      });
+      return row;
+    },
+    /** Remove a marker; logged as `metric_annotation.delete`. */
+    deleteMetricAnnotation: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const admin = requireRole(context, ["admin"]);
+      const row = await deleteMetricAnnotation(context.prisma, args.id);
+      await logActivity(context.prisma, {
+        userId: admin.id,
+        action: "metric_annotation.delete",
+        resourceType: "metric_annotation",
+        resourceId: row.id,
+        metadata: { at: row.at.toISOString(), label: row.label, metricKeys: row.metricKeys },
+      });
+      return true;
     },
   },
   AgentMetrics: {

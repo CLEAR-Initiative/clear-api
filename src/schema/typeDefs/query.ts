@@ -344,6 +344,12 @@ export const queryTypeDef = gql`
     grouping the metric lacks, an inverted range or one over 364 days with
     BAD_USER_INPUT. See \`MetricSeries\` and ADR-0015."""
     metricSeries(input: MetricSeriesInput!): MetricSeries!
+
+    """The changes that should move a metric (deploys, imports, prompt
+    changes), oldest first, in a range and optionally for one metric, drawn
+    as markers on the /metrics charts. Admin only. See \`MetricAnnotation\`
+    and ADR-0016."""
+    metricAnnotations(input: MetricAnnotationsInput): [MetricAnnotation!]!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which

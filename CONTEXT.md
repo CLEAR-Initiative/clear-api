@@ -88,6 +88,9 @@ The bucket a metric series is read in: `DAY` (UTC calendar day), `WEEK` (ISO wee
 
 **Metric registry**:
 The list of metrics the admin `/metrics` page can plot over time, one entry per `MetricKey` (`DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY`, `DISTRICT_OR_FINER`), each with its name, Notion dimension, unit, method text, time basis and whether it can be grouped by source. `metricDefinitions` lists it; `metricSeries` reads any entry as a share per bucket (numerator and denominator) by day, ISO week or calendar month, optionally grouped. The registry defines nothing: every entry reads from the service that owns the metric, so the generic series equals the metric's own query. See ADR-0015.
+
+**Metric annotation**:
+A change that should move a metric (a deploy, a data import, a prompt version), stored as a row with an instant, a label, the `MetricKey` values it bears on, and an optional description and link; drawn as a marker on the `/metrics` charts in the bucket holding its instant. Rows are per environment, admin only, and every write is activity-logged. `metricAnnotations` lists them; `createMetricAnnotation` and `deleteMetricAnnotation` write them. See ADR-0016.
 _Avoid_: geocoding accuracy (precision is how fine, not whether right); computing it anywhere but clear-api
 
 ### Agent conversations
