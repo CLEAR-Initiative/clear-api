@@ -22,6 +22,8 @@ const LOCATION_PRECISION_METRICS = `
       signalsInRange
       bySource { source total noLocation country state district point }
       weekly { isoWeek weekStart source total noLocation country state district point isPartial }
+      granularity
+      series { start label source total noLocation country state district point isPartial }
       corrections { open accepted corrected declined superseded }
     }
   }
@@ -102,9 +104,52 @@ describe("locationPrecisionMetrics schema contract", () => {
           isPartial: false,
         },
       ],
+      granularity: "WEEK",
+      series: [
+        {
+          start: "2026-10-26T00:00:00.000Z",
+          label: "2026-W44",
+          source: "sudan-war-x",
+          total: 6,
+          noLocation: 2,
+          country: 0,
+          state: 1,
+          district: 3,
+          point: 0,
+          isPartial: false,
+        },
+        {
+          start: "2026-10-26T00:00:00.000Z",
+          label: "2026-W44",
+          source: "dataminr",
+          total: 5,
+          noLocation: 0,
+          country: 0,
+          state: 0,
+          district: 0,
+          point: 5,
+          isPartial: false,
+        },
+      ],
       corrections: { open: 2, accepted: 0, corrected: 0, declined: 1, superseded: 0 },
     });
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the series by day per source when asked", async () => {
+    const { result } = await run(
+      { id: "a", role: "admin" },
+      { input: { from: "2026-10-26T00:00:00.000Z", to: "2026-11-01T23:59:59.999Z", granularity: "DAY" } },
+    );
+    expect(result.errors).toBeUndefined();
+    const m = result.data?.locationPrecisionMetrics as { granularity: string; series: Array<Record<string, unknown>> };
+    expect(m.granularity).toBe("DAY");
+    expect(m.series).toHaveLength(14);
+    expect(m.series.slice(0, 7).map((b) => b.source)).toEqual(Array<string>(7).fill("sudan-war-x"));
+    expect(m.series[1]).toMatchObject({ label: "2026-10-27", source: "sudan-war-x", total: 3, district: 3, isPartial: false });
+    expect(m.series[2]).toMatchObject({ label: "2026-10-28", source: "sudan-war-x", total: 3, state: 1, noLocation: 2 });
+    expect(m.series[7]).toMatchObject({ label: "2026-10-26", source: "dataminr", total: 5, point: 5 });
+    expect(m.series[13]).toMatchObject({ label: "2026-11-01", source: "dataminr", total: 0 });
   });
 
   it("accepts no input at all", async () => {

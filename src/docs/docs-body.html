@@ -2085,7 +2085,8 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgranularity"><code>MetricGranularity</code> <span class="type-badge">enum</span></h3><p>The bucket a metric series is read in (ADR-0014): a UTC calendar day, an
+ISO week from Monday 00:00 UTC, or a UTC calendar month.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
 work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
 classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
 grouped, then changed (content revision or retraction flip), so its events
@@ -3020,6 +3021,10 @@ optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>Only Events whose origin, destination or general location is this location or inside it.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size of `series`. Defaults to `WEEK`.</td>
   </tr></tbody></table><h3 id="type-entitystatsinput"><code>EntityStatsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entity</code></td>
     <td><code>EntityKind!</code></td>
@@ -3500,6 +3505,10 @@ field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type
     <td><code>sourceNames</code></td>
     <td><code>[String!]</code></td>
     <td>Only these sources, by `DataSource.name` (e.g. `sudan-war-x`). Defaults to every source.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size of `series`. Defaults to `WEEK`.</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -5988,6 +5997,34 @@ Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline A
     <td><code>uniqueUsers</code></td>
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in on this date.</td>
+  </tr></tbody></table><h3 id="type-detectionbucket"><code>DetectionBucket</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one bucket of the requested granularity.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range in this bucket, counted plus excluded.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled in this bucket.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket, e.g. the current one.</td>
   </tr></tbody></table><h3 id="type-detectionexclusion"><code>DetectionExclusion</code> <span class="type-badge">object</span></h3><p>Events in range left out of time to detection for one reason.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reason</code></td>
     <td><code>DetectionExclusionReason!</code></td>
@@ -6053,6 +6090,14 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
     <td><code>exclusions</code></td>
     <td><code>[DetectionExclusion!]!</code></td>
     <td>Events in range not measured, by reason: exactly 4 rows, one per reason.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size `series` was read in.</td>
+  </tr><tr>
+    <td><code>series</code></td>
+    <td><code>[DetectionBucket!]!</code></td>
+    <td>The same tally as `weekly` per bucket of `granularity` (ADR-0014): zero-filled over every bucket the range touches, ascending. With `WEEK` it equals `weekly` row for row.</td>
   </tr></tbody></table><h3 id="type-detectionweek"><code>DetectionWeek</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>isoWeek</code></td>
     <td><code>String!</code></td>
@@ -7481,6 +7526,46 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-locationprecisionbucket"><code>LocationPrecisionBucket</code> <span class="type-badge">object</span></h3><p>One source's ingested Signals located in one bucket of the requested granularity, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket, e.g. the current one.</td>
   </tr></tbody></table><h3 id="type-locationprecisionmetrics"><code>LocationPrecisionMetrics</code> <span class="type-badge">object</span></h3><p>Location precision: how finely CLEAR placed the Signals it ingested, per
 source and ISO week. Each ingested Signal in range counts once under the
 level of its location (general location, or for displacement its origin,
@@ -7516,6 +7601,14 @@ submitted or filed by hand), not retracted, not dummy.</p><table class="ref-tabl
     <td><code>corrections</code></td>
     <td><code>LocationCorrectionCounts!</code></td>
     <td>Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size `series` was read in.</td>
+  </tr><tr>
+    <td><code>series</code></td>
+    <td><code>[LocationPrecisionBucket!]!</code></td>
+    <td>Each source in `bySource` per bucket of `granularity` (ADR-0014): zero-filled over every bucket the range touches, in `bySource` order then ascending. With `WEEK` it equals `weekly` row for row.</td>
   </tr></tbody></table><h3 id="type-locationprecisionsource"><code>LocationPrecisionSource</code> <span class="type-badge">object</span></h3><p>Ingested Signals of one source in range, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>source</code></td>
     <td><code>String!</code></td>
