@@ -331,6 +331,19 @@ export const queryTypeDef = gql`
     with BAD_USER_INPUT. Selecting \`recentQuestions\` is logged as
     \`conversation.admin_read\`. See \`AgentMetrics\` and ADR-0013."""
     agentMetrics(input: AgentMetricsInput): AgentMetrics!
+
+    """The metrics the admin /metrics page can plot over time, in registry
+    order: key, name, dimension, unit, method text, time basis and whether the
+    series can be grouped by source. Admin only. See ADR-0015."""
+    metricDefinitions: [MetricDefinition!]!
+
+    """One metric over a range as a share per bucket (numerator and
+    denominator) by day, ISO week or calendar month, optionally grouped by
+    source. Read from the service that owns the metric, so it equals that
+    metric's own query row for row. Counts only. Admin only. Refuses a
+    grouping the metric lacks, an inverted range or one over 364 days with
+    BAD_USER_INPUT. See \`MetricSeries\` and ADR-0015."""
+    metricSeries(input: MetricSeriesInput!): MetricSeries!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which

@@ -584,6 +584,21 @@ averages only. Admin only. Refuses an inverted range or one over 364 days
 with BAD_USER_INPUT. Selecting `recentQuestions` is logged as
 `conversation.admin_read`. See `AgentMetrics` and ADR-0013.<div class="field-args"><span class="arg"><code>input: AgentMetricsInput</code></span></div></td>
   </tr><tr>
+    <td><code>metricDefinitions</code></td>
+    <td><code>[MetricDefinition!]!</code></td>
+    <td>The metrics the admin /metrics page can plot over time, in registry
+order: key, name, dimension, unit, method text, time basis and whether the
+series can be grouped by source. Admin only. See ADR-0015.</td>
+  </tr><tr>
+    <td><code>metricSeries</code></td>
+    <td><code>MetricSeries!</code></td>
+    <td>One metric over a range as a share per bucket (numerator and
+denominator) by day, ISO week or calendar month, optionally grouped by
+source. Read from the service that owns the metric, so it equals that
+metric's own query row for row. Counts only. Admin only. Refuses a
+grouping the metric lacks, an inverted range or one over 364 days with
+BAD_USER_INPUT. See `MetricSeries` and ADR-0015.<div class="field-args"><span class="arg"><code>input: MetricSeriesInput!</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -2085,8 +2100,8 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgranularity"><code>MetricGranularity</code> <span class="type-badge">enum</span></h3><p>The bucket a metric series is read in (ADR-0014): a UTC calendar day, an
-ISO week from Monday 00:00 UTC, or a UTC calendar month.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-metricdimension"><code>MetricDimension</code> <span class="type-badge">enum</span></h3><p>The Notion Metrics table's dimension a metric sits under.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>TIMELINESS</code></td><td>—</td></tr><tr><td><code>ACCURACY</code></td><td>—</td></tr><tr><td><code>COVERAGE</code></td><td>—</td></tr><tr><td><code>RELIABILITY</code></td><td>—</td></tr><tr><td><code>USEFULNESS</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgranularity"><code>MetricGranularity</code> <span class="type-badge">enum</span></h3><p>The bucket a metric series is read in (ADR-0014): a UTC calendar day, an
+ISO week from Monday 00:00 UTC, or a UTC calendar month.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgroupby"><code>MetricGroupBy</code> <span class="type-badge">enum</span></h3><p>How a series can be split into groups.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>SOURCE</code></td><td>One series per data source (`DataSource.name`), most Signals first.</td></tr></tbody></table><h3 id="type-metrickey"><code>MetricKey</code> <span class="type-badge">enum</span></h3><p>A metric the admin /metrics page can plot over time (ADR-0015). Each value is one registry entry in clear-api.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DETECTED_BY_NEXT_DAY</code></td><td>Share of measured Events first signalled on the onset day or the day after (ADR-0011).</td></tr><tr><td><code>DETECTED_SAME_DAY</code></td><td>Share of measured Events first signalled on the onset day (ADR-0011).</td></tr><tr><td><code>DISTRICT_OR_FINER</code></td><td>Share of located ingested Signals placed at a district or a point inside one (ADR-0012).</td></tr></tbody></table><h3 id="type-metricunit"><code>MetricUnit</code> <span class="type-badge">enum</span></h3><p>What a metric's denominator counts.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>EVENTS</code></td><td>—</td></tr><tr><td><code>SIGNALS</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
 work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
 classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
 grouped, then changed (content revision or retraction flip), so its events
@@ -3509,6 +3524,34 @@ field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type
     <td><code>granularity</code></td>
     <td><code>MetricGranularity</code></td>
     <td>Bucket size of `series`. Defaults to `WEEK`.</td>
+  </tr></tbody></table><h3 id="type-metricseriesinput"><code>MetricSeriesInput</code> <span class="type-badge">input</span></h3><p>The metric, range, bucket size and grouping to read a series for. Only `metric` is required.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size (ADR-0014). Defaults to `WEEK`.</td>
+  </tr><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start of the ISO week 11 weeks before `to`'s week.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only rows in this location or inside it, as the owning query reads it.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name`; only for metrics that can be grouped by source.</td>
+  </tr><tr>
+    <td><code>groupBy</code></td>
+    <td><code>MetricGroupBy</code></td>
+    <td>Split the series into groups. Refused with BAD_USER_INPUT for a metric that cannot be grouped.</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -7686,6 +7729,88 @@ submitted or filed by hand), not retracted, not dummy.</p><table class="ref-tabl
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in at least once during the
 calendar month.</td>
+  </tr></tbody></table><h3 id="type-metricbucket"><code>MetricBucket</code> <span class="type-badge">object</span></h3><p>One bucket of one group. The metric is `numerator / denominator`; a bucket with a zero denominator measured nothing.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket.</td>
+  </tr><tr>
+    <td><code>group</code></td>
+    <td><code>String</code></td>
+    <td>The group this bucket belongs to; null for an ungrouped series.</td>
+  </tr><tr>
+    <td><code>numerator</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>denominator</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-metricdefinition"><code>MetricDefinition</code> <span class="type-badge">object</span></h3><p>What a client needs to list, group and explain a metric.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>key</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>The metric's name, as the Notion Metrics table names it.</td>
+  </tr><tr>
+    <td><code>dimension</code></td>
+    <td><code>MetricDimension!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>MetricUnit!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String!</code></td>
+    <td>The method in one paragraph: what counts, over what.</td>
+  </tr><tr>
+    <td><code>timeBasis</code></td>
+    <td><code>String!</code></td>
+    <td>The instant that puts a row in a bucket.</td>
+  </tr><tr>
+    <td><code>groupable</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the series can be read with `groupBy: SOURCE`.</td>
+  </tr><tr>
+    <td><code>adr</code></td>
+    <td><code>String!</code></td>
+    <td>The ADR that owns the definition, e.g. `ADR-0012`.</td>
+  </tr></tbody></table><h3 id="type-metricseries"><code>MetricSeries</code> <span class="type-badge">object</span></h3><p>One metric over a range as a share per bucket, read from the service that
+owns the metric's definition, so it never disagrees with the metric's own
+query (ADR-0015). Counts only; shares are the caller's to compute.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size the series was read in.</td>
+  </tr><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groups</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Group names in the owning query's order; empty when ungrouped.</td>
+  </tr><tr>
+    <td><code>buckets</code></td>
+    <td><code>[MetricBucket!]!</code></td>
+    <td>Group by group, ascending buckets within each, zero-filled over every bucket the range touches.</td>
   </tr></tbody></table><h3 id="type-nlreportsearch"><code>NlReportSearch</code> <span class="type-badge">object</span></h3><p>Result of `searchReportsNaturalLanguage` — the parsed interpretation plus
 the matching reports, so the caller sees both the answer and how the question
 was understood.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
