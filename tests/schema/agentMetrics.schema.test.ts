@@ -53,7 +53,8 @@ const TURNS = [
     userId: "u1",
     conversationCreatedAt: new Date("2026-10-06T08:00:00Z"),
     model: "anthropic/claude-sonnet-5-5",
-    inputTokens: 55000,
+    // Past a 32-bit Int: the totals are Floats so a year of turns still serves.
+    inputTokens: 3_000_000_000,
     outputTokens: 3000,
     costUsd: 0.14,
     latencyMs: 25000,
@@ -75,6 +76,7 @@ async function run(user: { id: string; role: string } | null, variables: Record<
   const $queryRaw = vi.fn(async (...call: unknown[]) => {
     const sql = sqlOf(call);
     if (sql.includes('"usage_recorded_at" IS NULL')) return [{ count: 2 }];
+    if (sql.includes("GROUP BY")) return [{ userId: "u1", day: new Date("2026-10-06T00:00:00Z"), spentUsd: 0.14 }];
     if (sql.includes("'user'") && sql.includes("LIMIT") && !sql.includes("LATERAL")) return QUESTIONS;
     return TURNS;
   });
@@ -110,12 +112,12 @@ describe("agentMetrics schema contract", () => {
       totalCostUsd: 0.14,
       costPerTurnUsd: 0.14,
       latencyMedianMs: 25000,
-      totalInputTokens: 55000,
+      totalInputTokens: 3_000_000_000,
       toolCallsPerTurn: 2,
       turnsWithoutTools: 0,
       turnsWithManyToolCalls: 0,
       budgetHits: 0,
-      byModel: [{ model: "anthropic/claude-sonnet-5-5", turns: 1, costUsd: 0.14, inputTokens: 55000, outputTokens: 3000 }],
+      byModel: [{ model: "anthropic/claude-sonnet-5-5", turns: 1, costUsd: 0.14, inputTokens: 3_000_000_000, outputTokens: 3000 }],
       byTool: [
         { tool: "clear_count", calls: 1, turns: 1 },
         { tool: "clear_list_events", calls: 1, turns: 1 },
@@ -127,8 +129,8 @@ describe("agentMetrics schema contract", () => {
       expect.objectContaining({ isoWeek: "2026-W41", weekStart: "2026-10-05T00:00:00.000Z", isPartial: false, turns: 1, models: ["anthropic/claude-sonnet-5-5"] }),
     ]);
     expect(m.recentQuestions).toBeUndefined();
-    // Turns and the unrecorded count: never the questions.
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    // Turns, the unrecorded count and user-day spend: never the questions.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
     expect(prisma.activityLogs.create).not.toHaveBeenCalled();
   });
 
@@ -142,7 +144,7 @@ describe("agentMetrics schema contract", () => {
     expect(m.recentQuestions).toEqual([
       { askedAt: "2026-10-06T08:59:00.000Z", question: "What's new in the last 24 hours?", page: "/dashboard" },
     ]);
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(4);
     expect(prisma.activityLogs.create).toHaveBeenCalledTimes(1);
     const [{ data }] = prisma.activityLogs.create.mock.calls[0] as unknown as [{ data: Record<string, unknown> }];
     expect(data).toMatchObject({

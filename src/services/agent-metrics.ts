@@ -55,6 +55,19 @@ export interface AgentTurnRow {
   route: string | null;
 }
 
+/**
+ * One user's recorded spend on one UTC day, over the whole day up to the end
+ * of the range: what the daily budget compares against. Fetched apart from
+ * the turns because a range starting mid-day would otherwise miss the spend
+ * before it and under-count budget hits.
+ */
+export interface UserDaySpendRow {
+  userId: string;
+  /** Midnight UTC of the day. */
+  day: Date;
+  spentUsd: number;
+}
+
 export interface AgentMetrics {
   from: Date;
   to: Date;
@@ -114,6 +127,12 @@ export interface AgentQuestion {
 export interface AgentMetricsOptions {
   /** The daily per-user budget, so user-days that reached it can be counted. */
   budgetLimitUsd: number;
+  /**
+   * Each touched user-day's spend over its whole day (see {@link UserDaySpendRow}).
+   * When absent, hits are counted from the in-range turns alone, which
+   * under-counts on a range that starts mid-day.
+   */
+  userDaySpend?: UserDaySpendRow[];
 }
 
 /** The first path segment of a route (`/event/abc` is `/event`); ids never reach the metric. */
@@ -170,12 +189,21 @@ export function summarise(
       .map((r) => r.conversationId),
   );
 
-  // Budget hits: user-days whose recorded spend reached the limit. The
-  // budget is checked before a turn, so a day can end a little over it.
+  // Budget hits: user-days with a turn in range whose spend over the whole
+  // day reached the limit, as `myAgentBudget` sums it. The budget is checked
+  // before a turn, so a day can end a little over it.
   const spendByUserDay = new Map<string, number>();
   for (const r of rows) {
     const key = `${r.userId}:${utcDay(r.usageRecordedAt)}`;
     spendByUserDay.set(key, (spendByUserDay.get(key) ?? 0) + (r.costUsd ?? 0));
+  }
+  if (options.userDaySpend) {
+    for (const d of options.userDaySpend) {
+      const key = `${d.userId}:${utcDay(d.day)}`;
+      // Only days the range touched: a day with spend before `from` and no
+      // turn in range is not this range's business.
+      if (spendByUserDay.has(key)) spendByUserDay.set(key, d.spentUsd);
+    }
   }
   let budgetHits = 0;
   for (const spent of spendByUserDay.values()) if (spent >= options.budgetLimitUsd) budgetHits++;
@@ -311,6 +339,26 @@ export async function fetchAgentTurns(prisma: PrismaClient, range: { from: Date;
   `;
 }
 
+/**
+ * Each user's recorded spend per UTC day, from the start of `from`'s day to
+ * `to`: the whole of every day the range touches, so a range starting
+ * mid-day still sees the morning's spend when counting budget hits.
+ */
+export async function fetchUserDaySpend(prisma: PrismaClient, range: { from: Date; to: Date }): Promise<UserDaySpendRow[]> {
+  const dayStart = new Date(utcDay(range.from) * DAY_MS);
+  return prisma.$queryRaw<UserDaySpendRow[]>`
+    SELECT c."user_id" AS "userId",
+      date_trunc('day', a."usage_recorded_at") AS "day",
+      COALESCE(SUM(a."cost_usd"), 0)::float8 AS "spentUsd"
+    FROM "conversation_messages" a
+    JOIN "conversations" c ON c."id" = a."conversation_id"
+    WHERE a."role" = 'assistant'
+      AND a."usage_recorded_at" >= ${dayStart}
+      AND a."usage_recorded_at" <= ${range.to}
+    GROUP BY c."user_id", date_trunc('day', a."usage_recorded_at")
+  `;
+}
+
 /** Answers written in range whose usage was never recorded. */
 export async function countUnrecordedTurns(prisma: PrismaClient, range: { from: Date; to: Date }): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ count: number }>>`
@@ -363,9 +411,10 @@ export async function computeAgentMetrics(
   now: Date = new Date(),
 ): Promise<AgentMetrics> {
   const range = resolveRange(input, now);
-  const [rows, turnsUnrecorded] = await Promise.all([
+  const [rows, turnsUnrecorded, userDaySpend] = await Promise.all([
     fetchAgentTurns(prisma, range),
     countUnrecordedTurns(prisma, range),
+    fetchUserDaySpend(prisma, range),
   ]);
-  return summarise(rows, range, { ...options, turnsUnrecorded });
+  return summarise(rows, range, { ...options, turnsUnrecorded, userDaySpend });
 }

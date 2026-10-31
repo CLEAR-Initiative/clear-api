@@ -150,6 +150,15 @@ describeIfDb("agent usage metrics against the real schema", () => {
     ]);
   });
 
+  it("counts a budget hit from the whole day when the range starts after some of the day's spend", async () => {
+    // From 09:03 on 10-06: A's 0.1 turn (recorded 09:01) is before `from`, the 0.3 one (09:06) inside.
+    const m = await computeAgentMetrics(prisma, { from: "2026-10-06T09:03:00.000Z", to: RANGE.to }, { budgetLimitUsd: 0.4 });
+    expect(m.turns).toBe(3);
+    expect(m.totalCostUsd).toBeCloseTo(1.0);
+    // A's day reached 0.4 in full, B's 10-14 reached 0.5: two hits, though only 0.3 of A's is in range.
+    expect(m.budgetHits).toBe(2);
+  });
+
   it("lists the recent questions newest first, cut, with the page and without the user", async () => {
     const rows = await fetchRecentQuestions(prisma, { from: at(RANGE.from), to: at(RANGE.to) }, 3);
     expect(rows.map((r) => [r.question, r.route, r.conversationId])).toEqual([

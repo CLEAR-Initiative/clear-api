@@ -43,10 +43,10 @@ export const agentMetricsTypeDef = gql`
     latencyMedianMs: Float
     """95th percentile (nearest rank) turn latency, milliseconds. Null with none."""
     latencyP95Ms: Float
-    """Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request."""
-    totalInputTokens: Int!
-    """Sum of output tokens over the turns."""
-    totalOutputTokens: Int!
+    """Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request. A Float: a year of turns overflows a 32-bit Int."""
+    totalInputTokens: Float!
+    """Sum of output tokens over the turns. A Float, as \`totalInputTokens\`."""
+    totalOutputTokens: Float!
     """Mean input tokens per turn. Null with no turns."""
     inputTokensPerTurn: Float
     """Mean output tokens per turn. Null with no turns."""
@@ -82,8 +82,10 @@ export const agentMetricsTypeDef = gql`
     model: String!
     turns: Int!
     costUsd: Float!
-    inputTokens: Int!
-    outputTokens: Int!
+    """Summed input tokens. A Float, as \`AgentMetrics.totalInputTokens\`."""
+    inputTokens: Float!
+    """Summed output tokens. A Float, as \`AgentMetrics.totalInputTokens\`."""
+    outputTokens: Float!
   }
 
   """Calls to one tool in range."""

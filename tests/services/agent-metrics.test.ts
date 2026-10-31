@@ -164,6 +164,20 @@ describe("summarise", () => {
     expect(m.weekly[1]!.costUsd).toBeCloseTo(0.7);
   });
 
+  it("counts budget hits over each touched day's whole spend, not only the part in range", () => {
+    // The range starts mid-day: u1 spent 0.3 before `from` and 0.15 after.
+    const range = { from: new Date("2026-10-06T12:00:00Z"), to: new Date("2026-10-06T23:59:59.999Z") };
+    const rows = [turn({ at: "2026-10-06T15:00:00Z", costUsd: 0.15 })];
+    const whole = [{ userId: "u1", day: new Date("2026-10-06T00:00:00Z"), spentUsd: 0.45 }];
+    expect(summarise(rows, range, { budgetLimitUsd: 0.4 }).budgetHits).toBe(0);
+    expect(summarise(rows, range, { budgetLimitUsd: 0.4, userDaySpend: whole }).budgetHits).toBe(1);
+    // A day with spend but no turn in range is not this range's hit.
+    const untouched = [...whole, { userId: "u2", day: new Date("2026-10-06T00:00:00Z"), spentUsd: 9 }];
+    expect(summarise(rows, range, { budgetLimitUsd: 0.4, userDaySpend: untouched }).budgetHits).toBe(1);
+    // The other numbers stay in range.
+    expect(summarise(rows, range, { budgetLimitUsd: 0.4, userDaySpend: whole }).totalCostUsd).toBeCloseTo(0.15);
+  });
+
   it("marks the weeks the range only partly covers", () => {
     const m = summarise([], { from: new Date("2026-10-07T00:00:00Z"), to: new Date("2026-10-14T12:00:00Z") }, { budgetLimitUsd: 2 });
     expect(m.weekly.map((w) => [w.isoWeek, w.isPartial])).toEqual([

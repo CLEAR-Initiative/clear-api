@@ -126,8 +126,8 @@ describe("agentMetrics", () => {
     expect(m.weekly.map((w) => w.isoWeek)).toEqual(["2026-W40", "2026-W41"]);
     expect(m.turns).toBe(0);
     expect(m.budgetLimitUsd).toBeGreaterThan(0);
-    // The turns and the unrecorded count, both over the range.
-    expect($queryRaw).toHaveBeenCalledTimes(2);
+    // The turns, the unrecorded count and each touched user-day's spend.
+    expect($queryRaw).toHaveBeenCalledTimes(3);
   });
 
   it("refuses a span over 364 days with BAD_USER_INPUT before querying", async () => {

@@ -4639,12 +4639,12 @@ averages only; clear-mvp formats them. See ADR-0013.</p><table class="ref-table"
     <td>95th percentile (nearest rank) turn latency, milliseconds. Null with none.</td>
   </tr><tr>
     <td><code>totalInputTokens</code></td>
-    <td><code>Int!</code></td>
-    <td>Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request.</td>
+    <td><code>Float!</code></td>
+    <td>Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request. A Float: a year of turns overflows a 32-bit Int.</td>
   </tr><tr>
     <td><code>totalOutputTokens</code></td>
-    <td><code>Int!</code></td>
-    <td>Sum of output tokens over the turns.</td>
+    <td><code>Float!</code></td>
+    <td>Sum of output tokens over the turns. A Float, as `totalInputTokens`.</td>
   </tr><tr>
     <td><code>inputTokensPerTurn</code></td>
     <td><code>Float</code></td>
@@ -4707,12 +4707,12 @@ averages only; clear-mvp formats them. See ADR-0013.</p><table class="ref-table"
     <td>—</td>
   </tr><tr>
     <td><code>inputTokens</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
+    <td><code>Float!</code></td>
+    <td>Summed input tokens. A Float, as `AgentMetrics.totalInputTokens`.</td>
   </tr><tr>
     <td><code>outputTokens</code></td>
-    <td><code>Int!</code></td>
-    <td>—</td>
+    <td><code>Float!</code></td>
+    <td>Summed output tokens. A Float, as `AgentMetrics.totalInputTokens`.</td>
   </tr></tbody></table><h3 id="type-agentpageusage"><code>AgentPageUsage</code> <span class="type-badge">object</span></h3><p>Turns asked from one page.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>page</code></td>
     <td><code>String!</code></td>
