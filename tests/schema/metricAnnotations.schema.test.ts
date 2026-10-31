@@ -44,9 +44,11 @@ async function run(user: { id: string; role: string } | null, query: string, var
   const prisma = {
     metricAnnotations: {
       findMany: vi.fn(async () => [ROW]),
-      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "ann-1" ? ROW : null)),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...ROW, ...data, id: "ann-2" })),
-      delete: vi.fn(async () => ROW),
+      delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+        if (where.id !== "ann-1") throw Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
+        return ROW;
+      }),
     },
     activityLogs: { create: vi.fn(async () => ({})) },
   };
