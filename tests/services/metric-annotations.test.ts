@@ -82,6 +82,8 @@ describe("validateAnnotation", () => {
     expectBadInput(() => validateAnnotation({ ...ok, link: "https://?" }), /`link` must be an http/);
     expectBadInput(() => validateAnnotation({ ...ok, link: "https://" }), /`link` must be an http/);
     expectBadInput(() => validateAnnotation({ ...ok, link: `https://example.org/${"x".repeat(500)}` }), /`link` must be an http/);
+    expectBadInput(() => validateAnnotation({ ...ok, metricKeys: [] }), /at least one metric/);
+    expectBadInput(() => validateAnnotation({ ...ok, metricKeys: ["DISTRICT_OR_FINER", "NOPE"] }), /Unknown metric key: NOPE/);
   });
 
   it("reads a link the way the URL parser does", () => {
@@ -91,8 +93,6 @@ describe("validateAnnotation", () => {
     expect(isHttpUrl("https:// example.org")).toBe(false);
     expect(isHttpUrl("javascript:alert(1)")).toBe(false);
     expect(isHttpUrl("example.org/no-scheme")).toBe(false);
-    expectBadInput(() => validateAnnotation({ ...ok, metricKeys: [] }), /at least one metric/);
-    expectBadInput(() => validateAnnotation({ ...ok, metricKeys: ["DISTRICT_OR_FINER", "NOPE"] }), /Unknown metric key: NOPE/);
   });
 });
 
