@@ -468,6 +468,7 @@ export const signalLocationChallengeResolvers = {
             originId: true,
             destinationId: true,
             locationId: true,
+            locationCorrectedAt: true,
             countries: { select: { id: true } },
           },
         });
@@ -490,6 +491,9 @@ export const signalLocationChallengeResolvers = {
             originId: null,
             destinationId: null,
             locationCorrectedAt: decided.decidedAt,
+            // The first correction keeps what the pipeline placed, so location
+            // precision (ADR-0012) measures the pipeline, not this point.
+            ...(current.locationCorrectedAt == null ? { pipelineLocationId: shownLocation(current) } : {}),
             ...(countryId ? { countries: { set: [{ id: countryId }] } } : {}),
           },
         });

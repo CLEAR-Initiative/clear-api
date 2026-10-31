@@ -315,6 +315,14 @@ export const queryTypeDef = gql`
     an inverted range or one over 364 days with BAD_USER_INPUT. See
     \`DetectionMetrics\` and ADR-0011."""
     detectionMetrics(input: DetectionMetricsInput): DetectionMetrics!
+
+    """Location precision: how finely CLEAR placed the Signals it ingested, by
+    the level of each Signal's location (none, country, state, district,
+    point), per source and ISO week of the instant it was located, over a
+    range (default: the last 12 ISO weeks), optionally one location and some
+    sources. Counts only. Admin only. Refuses an inverted range or one over
+    364 days with BAD_USER_INPUT. See \`LocationPrecisionMetrics\` and ADR-0012."""
+    locationPrecisionMetrics(input: LocationPrecisionMetricsInput): LocationPrecisionMetrics!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which

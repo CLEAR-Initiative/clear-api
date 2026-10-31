@@ -53,3 +53,51 @@ describe("detectionMetrics", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+const { locationPrecisionMetrics } = metricsResolvers.Query;
+
+describe("locationPrecisionMetrics", () => {
+  it("is FORBIDDEN to every role but admin, and UNAUTHENTICATED signed out, without a query", async () => {
+    for (const role of ["analyst", "viewer", "pending", "worker", "pipeline"]) {
+      const { ctx, $queryRaw } = context({ id: "u", role });
+      await expect(locationPrecisionMetrics(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect($queryRaw).not.toHaveBeenCalled();
+    }
+    const { ctx } = context(null);
+    await expect(locationPrecisionMetrics(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("measures the given range, location and sources for an admin", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    const m = await locationPrecisionMetrics(
+      null,
+      {
+        input: {
+          from: new Date("2026-10-26T00:00:00Z"),
+          to: new Date("2026-11-08T23:59:59.999Z"),
+          locationId: "loc-sdn",
+          sourceNames: ["sudan-war-x"],
+        },
+      },
+      ctx,
+    );
+    expect(m.from.toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    expect(m.bySource).toEqual([]);
+    expect(m.weekly).toEqual([]);
+    expect(m.corrections).toEqual({ open: 0, accepted: 0, corrected: 0, declined: 0, superseded: 0 });
+    expect($queryRaw).toHaveBeenCalledTimes(2);
+    for (const call of $queryRaw.mock.calls as unknown as Array<[unknown, ...unknown[]]>) {
+      const [, ...values] = call;
+      expect(JSON.stringify(values)).toContain("loc-sdn");
+      expect(JSON.stringify(values)).toContain("sudan-war-x");
+    }
+  });
+
+  it("refuses a span over 364 days with BAD_USER_INPUT before querying", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    await expect(
+      locationPrecisionMetrics(null, { input: { from: "2025-01-01T00:00:00Z", to: "2026-06-01T00:00:00Z" } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+});
