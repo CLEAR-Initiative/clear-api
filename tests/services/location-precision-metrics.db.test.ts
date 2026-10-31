@@ -19,6 +19,7 @@ const ABROAD = `${RUN}-abroad`;
 const USER = `${RUN}-user`;
 const X = `${RUN}-x`;
 const DM = `${RUN}-dm`;
+const FIXED = `${RUN}-fixed`;
 const sourceIds: Record<string, string> = {};
 const signalIds: string[] = [];
 let n = 0;
@@ -37,6 +38,7 @@ async function signal(opts: {
   manual?: boolean;
   retracted?: boolean;
   isDummy?: boolean;
+  locationCorrectedAt?: string;
 }) {
   const s = await prisma.signals.create({
     data: {
@@ -52,6 +54,7 @@ async function signal(opts: {
       submittedById: opts.history ? USER : null,
       retracted: opts.retracted ?? false,
       isDummy: opts.isDummy ?? false,
+      locationCorrectedAt: opts.locationCorrectedAt ? at(opts.locationCorrectedAt) : null,
     },
   });
   signalIds.push(s.id);
@@ -68,7 +71,7 @@ describeIfDb("location precision against the real schema", () => {
              (${DISTRICT}, 'Testville', 2, ${STATE}, ARRAY[${COUNTRY}, ${STATE}]::text[], ST_GeomFromText('POINT(0 0)', 4326)),
              (${POINT}, 'Test market', 4, ${DISTRICT}, ARRAY[${COUNTRY}, ${STATE}, ${DISTRICT}]::text[], ST_GeomFromText('POINT(0.1 0.1)', 4326))`;
     await prisma.user.create({ data: { id: USER, name: "Analyst", email: `${RUN}@example.org`, role: "analyst" } });
-    for (const name of [X, DM]) {
+    for (const name of [X, DM, FIXED]) {
       const source = await prisma.dataSources.create({ data: { name, type: "test" } });
       sourceIds[name] = source.id;
     }
@@ -142,5 +145,33 @@ describeIfDb("location precision against the real schema", () => {
     const dmOnly = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [DM] });
     expect(dmOnly.bySource.map((s) => s.source)).toEqual([DM]);
     expect(dmOnly.corrections).toEqual({ open: 0, accepted: 0, corrected: 0, declined: 0, superseded: 0 });
+  });
+
+  it("reads a Signal a person corrected at the location the pipeline gave it", async () => {
+    const located = { source: FIXED, processedAt: "2026-10-27T10:00:00Z", collectedAt: "2026-10-27T09:00:00Z" };
+    // The pipeline put it at the state; an accepted challenge wrote a point.
+    const accepted = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-02T10:00:00Z" });
+    // The pipeline found nothing; the admin placed a point.
+    const unlocated = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-02T10:00:00Z" });
+    // Corrected twice: the first applied challenge holds the pipeline's location.
+    const twice = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-04T10:00:00Z" });
+    await prisma.signalLocationChallenges.createMany({
+      data: [
+        { signalId: accepted, createdBy: USER, status: "declined", createdAt: at("2026-10-28T10:00:00Z"), decidedAt: at("2026-10-29T10:00:00Z"), previousLocationId: STATE },
+        { signalId: accepted, createdBy: USER, status: "accepted", createdAt: at("2026-11-01T10:00:00Z"), decidedAt: at("2026-11-02T10:00:00Z"), previousLocationId: STATE },
+        { signalId: unlocated, createdBy: USER, status: "corrected", createdAt: at("2026-11-01T10:00:00Z"), decidedAt: at("2026-11-02T10:00:00Z"), previousLocationId: null },
+        { signalId: twice, createdBy: USER, status: "accepted", createdAt: at("2026-10-28T10:00:00Z"), decidedAt: at("2026-10-29T10:00:00Z"), previousLocationId: COUNTRY },
+        { signalId: twice, createdBy: USER, status: "corrected", createdAt: at("2026-11-03T10:00:00Z"), decidedAt: at("2026-11-04T10:00:00Z"), previousLocationId: POINT },
+      ],
+    });
+
+    const range = { from: "2026-10-26T00:00:00Z", to: "2026-11-08T23:59:59.999Z" };
+    const fixed = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [FIXED] });
+    expect(fixed.bySource).toEqual([{ source: FIXED, total: 3, noLocation: 1, country: 1, state: 1, district: 0, point: 0 }]);
+
+    // The location filter reads the same location: the human point is not in the district.
+    const inDistrict = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [FIXED], locationId: DISTRICT });
+    expect(inDistrict.bySource).toEqual([]);
+    expect(inDistrict.corrections).toEqual({ open: 0, accepted: 0, corrected: 0, declined: 0, superseded: 0 });
   });
 });

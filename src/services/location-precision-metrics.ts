@@ -9,7 +9,10 @@
  * `point` (a level-4 landmark or coordinate point; there is no level 3).
  * "District or finer" is `district + point`. The location is the Signal's
  * general location, or for a displacement Signal its origin (where the
- * incident happened), else its destination.
+ * incident happened), else its destination. A Signal a person corrected (an
+ * accepted or corrected Location challenge) is read at the location the
+ * pipeline gave it, the first applied challenge's `previousLocationId`, not
+ * the point the person wrote.
  *
  * A Signal is **in range** by the instant it was last located: `processedAt`
  * (the drain that resolves text-only sources sets it) or, with none,
@@ -174,6 +177,22 @@ export function summarise(
   return { from: range.from, to: range.to, signalsInRange, bySource, weekly, corrections: correctionCounts };
 }
 
+/**
+ * The location the pipeline gave the Signal `s`: its own location fields, or,
+ * once a person corrected it, the location the first applied Location
+ * challenge recorded when it was filed. A human point would measure the
+ * person, not the pipeline, and lift the Signal's original week.
+ */
+const PIPELINE_LOCATION = Prisma.sql`CASE
+  WHEN s."location_corrected_at" IS NULL THEN COALESCE(s."location_id", s."origin_id", s."destination_id")
+  ELSE (
+    SELECT c0."previous_location_id" FROM "signal_location_challenges" c0
+    WHERE c0."signal_id" = s."id" AND c0."status" IN ('accepted', 'corrected')
+    ORDER BY c0."decided_at" ASC NULLS LAST, c0."created_at" ASC
+    LIMIT 1
+  )
+END`;
+
 /** `WHERE` clauses shared by both queries: the Signal's source and location. */
 function filters(locationId: string | null, sourceNames: string[]) {
   const inSources = sourceNames.length > 0 ? Prisma.sql`AND ds."name" IN (${Prisma.join(sourceNames)})` : Prisma.empty;
@@ -205,7 +224,7 @@ export async function fetchLocationPrecisionRows(
       COUNT(*)::int AS "count"
     FROM "signals" s
     JOIN "data_sources" ds ON ds."id" = s."source_id"
-    LEFT JOIN "locations" l ON l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
+    LEFT JOIN "locations" l ON l."id" = ${PIPELINE_LOCATION}
     WHERE s."submitted_by_id" IS NULL
       AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
       AND NOT s."retracted"
@@ -231,7 +250,7 @@ export async function fetchLocationCorrectionRows(
     FROM "signal_location_challenges" c
     JOIN "signals" s ON s."id" = c."signal_id"
     JOIN "data_sources" ds ON ds."id" = s."source_id"
-    LEFT JOIN "locations" l ON l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
+    LEFT JOIN "locations" l ON l."id" = ${PIPELINE_LOCATION}
     WHERE c."created_at" >= ${range.from}
       AND c."created_at" <= ${range.to}
       ${inSources}

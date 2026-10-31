@@ -22,7 +22,9 @@ export const locationPrecisionMetricsTypeDef = gql`
   level of its location (general location, or for displacement its origin,
   else its destination): no location, country (0), state (1), district (2)
   or point (a level-4 landmark or coordinate point). "District or finer" is
-  district plus point. Counts only; shares are the caller's. See ADR-0012.
+  district plus point. A Signal a person corrected counts at the location the
+  pipeline gave it, not the corrected point. Counts only; shares are the
+  caller's. See ADR-0012.
 
   A Signal is in range by the instant it was last located: \`processedAt\`,
   or with none \`collectedAt\`. Ingested means brought in by a pipeline (not
