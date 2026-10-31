@@ -42,6 +42,20 @@ export interface MetricAnnotationInput {
 
 const badInput = (message: string) => new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
 
+/** An absolute http(s) URL with a host, as the URL parser reads it; a bare scheme or `https://?` is not one. */
+export function isHttpUrl(value: string): boolean {
+  if (value.length > MAX_LINK_LENGTH) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Prisma's "record to delete does not exist", whichever client class raised it. */
+const isRecordNotFound = (err: unknown) => typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2025";
+
 function toDate(value: Date | string, name: string): Date {
   const at = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(at.getTime())) throw badInput(`\`${name}\` must be a valid date-time, e.g. 2026-10-29T18:33:00Z.`);
@@ -65,9 +79,7 @@ export function validateAnnotation(input: MetricAnnotationInput): {
     throw badInput(`\`description\` must be at most ${MAX_DESCRIPTION_LENGTH} characters.`);
   }
   const link = input.link?.trim() || null;
-  if (link && (link.length > MAX_LINK_LENGTH || !/^https?:\/\/\S+$/i.test(link))) {
-    throw badInput("`link` must be an http(s) URL.");
-  }
+  if (link && !isHttpUrl(link)) throw badInput("`link` must be an http(s) URL.");
   const metricKeys = [...new Set((input.metricKeys ?? []).map((key) => key.trim()).filter(Boolean))];
   if (metricKeys.length === 0) throw badInput("`metricKeys` must name at least one metric.");
   const unknown = metricKeys.filter((key) => !(METRIC_KEYS as readonly string[]).includes(key));
@@ -96,10 +108,16 @@ export async function createMetricAnnotation(prisma: PrismaClient, input: Metric
   return prisma.metricAnnotations.create({ data: { ...data, createdById } });
 }
 
-/** Remove an annotation; NOT_FOUND when there is none with that id. */
+/**
+ * Remove an annotation and return it; NOT_FOUND when there is none with that
+ * id. One statement, so two requests racing to delete the same row get one
+ * success and one NOT_FOUND rather than two successes or a bare Prisma error.
+ */
 export async function deleteMetricAnnotation(prisma: PrismaClient, id: string): Promise<MetricAnnotation> {
-  const existing = await prisma.metricAnnotations.findUnique({ where: { id } });
-  if (!existing) throw new GraphQLError("Metric annotation not found", { extensions: { code: "NOT_FOUND" } });
-  await prisma.metricAnnotations.delete({ where: { id } });
-  return existing;
+  try {
+    return await prisma.metricAnnotations.delete({ where: { id } });
+  } catch (err) {
+    if (isRecordNotFound(err)) throw new GraphQLError("Metric annotation not found", { extensions: { code: "NOT_FOUND" } });
+    throw err;
+  }
 }

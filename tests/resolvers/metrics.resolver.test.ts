@@ -204,7 +204,6 @@ function annotationContext(user: { id: string; role: string } | null) {
   const prisma = {
     metricAnnotations: {
       findMany: vi.fn(async () => [row]),
-      findUnique: vi.fn(async () => row),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...row, ...data })),
       delete: vi.fn(async () => row),
     },
