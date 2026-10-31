@@ -1428,10 +1428,11 @@ export const mutationTypeDef = gql`
     kind in the Brief exactly once, in the new order."""
     reorderBriefItems(briefId: String!, kind: BriefItemKind!, itemIds: [String!]!): [BriefItem!]!
 
-    """Email the Brief to the caller's own address only, with [TEST] in
-    the subject. Changes nothing. False when the email provider refused
+    """Email the Brief to one address, with [TEST] in the subject and no
+    unsubscribe link. \`to\` defaults to the caller's own address (also
+    when blank). Changes nothing. False when the email provider refused
     it."""
-    sendBriefTest(id: String!): Boolean!
+    sendBriefTest(id: String!, to: String): Boolean!
 
     """Send a draft Brief to a Recipient list and freeze it. In one
     transaction it rewrites every item's snapshot from live data (keeping
