@@ -323,6 +323,14 @@ export const queryTypeDef = gql`
     sources. Counts only. Admin only. Refuses an inverted range or one over
     364 days with BAD_USER_INPUT. See \`LocationPrecisionMetrics\` and ADR-0012."""
     locationPrecisionMetrics(input: LocationPrecisionMetricsInput): LocationPrecisionMetrics!
+
+    """CLEAR Agent usage: cost, latency, turns, Conversations, users, tool
+    calls and the pages questions came from, over a range (default: the last
+    12 ISO weeks). A turn is an Answer with recorded usage. Counts, sums and
+    averages only. Admin only. Refuses an inverted range or one over 364 days
+    with BAD_USER_INPUT. Selecting \`recentQuestions\` is logged as
+    \`conversation.admin_read\`. See \`AgentMetrics\` and ADR-0013."""
+    agentMetrics(input: AgentMetricsInput): AgentMetrics!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which
