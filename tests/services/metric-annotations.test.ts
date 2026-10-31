@@ -10,6 +10,7 @@ import {
   MAX_LABEL_LENGTH,
   createMetricAnnotation,
   deleteMetricAnnotation,
+  isHttpUrl,
   listMetricAnnotations,
   validateAnnotation,
 } from "../../src/services/metric-annotations.js";
@@ -37,12 +38,16 @@ const ROW = {
   createdAt: new Date("2026-10-31T17:00:00Z"),
 };
 
-function prismaMock(overrides: Partial<Record<"findMany" | "findUnique" | "create" | "delete", unknown>> = {}) {
+const notFound = () => Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
+
+function prismaMock(overrides: Partial<Record<"findMany" | "create" | "delete", unknown>> = {}) {
   const metricAnnotations = {
     findMany: vi.fn(async () => [ROW]),
-    findUnique: vi.fn(async () => ROW),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...ROW, ...data })),
-    delete: vi.fn(async () => ROW),
+    delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+      if (where.id !== ROW.id) throw notFound();
+      return ROW;
+    }),
     ...overrides,
   };
   return { prisma: { metricAnnotations } as unknown as PrismaClient, metricAnnotations };
@@ -74,6 +79,18 @@ describe("validateAnnotation", () => {
     expectBadInput(() => validateAnnotation({ ...ok, label: "x".repeat(MAX_LABEL_LENGTH + 1) }), /at most 120/);
     expectBadInput(() => validateAnnotation({ ...ok, link: "ftp://example.org" }), /`link` must be an http/);
     expectBadInput(() => validateAnnotation({ ...ok, link: "not a url" }), /`link` must be an http/);
+    expectBadInput(() => validateAnnotation({ ...ok, link: "https://?" }), /`link` must be an http/);
+    expectBadInput(() => validateAnnotation({ ...ok, link: "https://" }), /`link` must be an http/);
+    expectBadInput(() => validateAnnotation({ ...ok, link: `https://example.org/${"x".repeat(500)}` }), /`link` must be an http/);
+  });
+
+  it("reads a link the way the URL parser does", () => {
+    expect(isHttpUrl("https://github.com/CLEAR-Initiative/clear-api/pull/294")).toBe(true);
+    expect(isHttpUrl("http://localhost:3000/metrics")).toBe(true);
+    expect(isHttpUrl("https://?")).toBe(false);
+    expect(isHttpUrl("https:// example.org")).toBe(false);
+    expect(isHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isHttpUrl("example.org/no-scheme")).toBe(false);
     expectBadInput(() => validateAnnotation({ ...ok, metricKeys: [] }), /at least one metric/);
     expectBadInput(() => validateAnnotation({ ...ok, metricKeys: ["DISTRICT_OR_FINER", "NOPE"] }), /Unknown metric key: NOPE/);
   });
@@ -128,12 +145,12 @@ describe("createMetricAnnotation and deleteMetricAnnotation", () => {
     expect(metricAnnotations.create).not.toHaveBeenCalled();
   });
 
-  it("deletes an existing row and returns it, and is NOT_FOUND otherwise", async () => {
+  it("deletes in one statement and returns the row, NOT_FOUND when Prisma finds nothing to delete, other errors as they are", async () => {
     const { prisma, metricAnnotations } = prismaMock();
     expect(await deleteMetricAnnotation(prisma, "ann-1")).toEqual(ROW);
     expect(metricAnnotations.delete).toHaveBeenCalledWith({ where: { id: "ann-1" } });
-    const missing = prismaMock({ findUnique: vi.fn(async () => null) });
-    await expect(deleteMetricAnnotation(missing.prisma, "nope")).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
-    expect(missing.metricAnnotations.delete).not.toHaveBeenCalled();
+    await expect(deleteMetricAnnotation(prisma, "nope")).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+    const broken = prismaMock({ delete: vi.fn(async () => { throw new Error("connection lost"); }) });
+    await expect(deleteMetricAnnotation(broken.prisma, "ann-1")).rejects.toThrow("connection lost");
   });
 });
