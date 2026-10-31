@@ -39,6 +39,7 @@ async function signal(opts: {
   retracted?: boolean;
   isDummy?: boolean;
   locationCorrectedAt?: string;
+  pipelineLocationId?: string | null;
 }) {
   const s = await prisma.signals.create({
     data: {
@@ -55,6 +56,7 @@ async function signal(opts: {
       retracted: opts.retracted ?? false,
       isDummy: opts.isDummy ?? false,
       locationCorrectedAt: opts.locationCorrectedAt ? at(opts.locationCorrectedAt) : null,
+      pipelineLocationId: opts.pipelineLocationId ?? null,
     },
   });
   signalIds.push(s.id);
@@ -149,21 +151,13 @@ describeIfDb("location precision against the real schema", () => {
 
   it("reads a Signal a person corrected at the location the pipeline gave it", async () => {
     const located = { source: FIXED, processedAt: "2026-10-27T10:00:00Z", collectedAt: "2026-10-27T09:00:00Z" };
-    // The pipeline put it at the state; an accepted challenge wrote a point.
-    const accepted = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-02T10:00:00Z" });
+    const corrected = { ...located, locationId: POINT, locationCorrectedAt: "2026-11-02T10:00:00Z" };
+    // The pipeline put it at the state; a correction wrote a point.
+    await signal({ ...corrected, pipelineLocationId: STATE });
+    // The pipeline put it in another country.
+    await signal({ ...corrected, pipelineLocationId: ABROAD });
     // The pipeline found nothing; the admin placed a point.
-    const unlocated = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-02T10:00:00Z" });
-    // Corrected twice: the first applied challenge holds the pipeline's location.
-    const twice = await signal({ ...located, locationId: POINT, locationCorrectedAt: "2026-11-04T10:00:00Z" });
-    await prisma.signalLocationChallenges.createMany({
-      data: [
-        { signalId: accepted, createdBy: USER, status: "declined", createdAt: at("2026-10-28T10:00:00Z"), decidedAt: at("2026-10-29T10:00:00Z"), previousLocationId: STATE },
-        { signalId: accepted, createdBy: USER, status: "accepted", createdAt: at("2026-11-01T10:00:00Z"), decidedAt: at("2026-11-02T10:00:00Z"), previousLocationId: STATE },
-        { signalId: unlocated, createdBy: USER, status: "corrected", createdAt: at("2026-11-01T10:00:00Z"), decidedAt: at("2026-11-02T10:00:00Z"), previousLocationId: null },
-        { signalId: twice, createdBy: USER, status: "accepted", createdAt: at("2026-10-28T10:00:00Z"), decidedAt: at("2026-10-29T10:00:00Z"), previousLocationId: COUNTRY },
-        { signalId: twice, createdBy: USER, status: "corrected", createdAt: at("2026-11-03T10:00:00Z"), decidedAt: at("2026-11-04T10:00:00Z"), previousLocationId: POINT },
-      ],
-    });
+    await signal({ ...corrected, pipelineLocationId: null });
 
     const range = { from: "2026-10-26T00:00:00Z", to: "2026-11-08T23:59:59.999Z" };
     const fixed = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [FIXED] });
@@ -172,6 +166,7 @@ describeIfDb("location precision against the real schema", () => {
     // The location filter reads the same location: the human point is not in the district.
     const inDistrict = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [FIXED], locationId: DISTRICT });
     expect(inDistrict.bySource).toEqual([]);
-    expect(inDistrict.corrections).toEqual({ open: 0, accepted: 0, corrected: 0, declined: 0, superseded: 0 });
+    const inCountry = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [FIXED], locationId: COUNTRY });
+    expect(inCountry.bySource).toEqual([{ source: FIXED, total: 1, noLocation: 0, country: 0, state: 1, district: 0, point: 0 }]);
   });
 });

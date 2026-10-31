@@ -135,6 +135,7 @@ describeIfDb("Location challenges against the real schema", () => {
     expect(signal.locationId).toBe(decided!.appliedLocationId);
     expect(signal).toMatchObject({ originId: null, destinationId: null });
     expect(signal.locationCorrectedAt).toBeInstanceOf(Date);
+    expect(signal.pipelineLocationId).toBe(SOURCE_POINT_ID);
     expect(signal.countries).toEqual([{ id: COUNTRY_ID }]);
     expect(signal.generalLocation).toMatchObject({
       name: "Test market",

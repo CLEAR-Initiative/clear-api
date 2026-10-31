@@ -29,7 +29,9 @@ instant it was located**.
   displacement Signal its origin (where the incident happened), else its
   destination. A Signal a person corrected (`locationCorrectedAt` set by an
   accepted or corrected Location challenge) is read at the location the
-  pipeline gave it: the `previousLocationId` of its first applied challenge.
+  pipeline gave it: `pipelineLocationId`, which the first correction fills
+  with the location it overwrote (Signals corrected before the column existed
+  are backfilled from their first applied challenge's `previousLocationId`).
   The point the person wrote would measure the person, and would lift the
   Signal's original week without any geocoding change.
 - **Located at**: `processedAt`, the time the drain last processed the Signal

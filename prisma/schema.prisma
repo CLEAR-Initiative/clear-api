@@ -500,6 +500,7 @@ model locations {
   signalOrigins      signals[] @relation("SignalOrigin")
   signalDestinations signals[] @relation("SignalDestination")
   signalLocations    signals[] @relation("SignalLocation")
+  signalPipelineLocations signals[] @relation("SignalPipelineLocation")
   signalCountries    signals[] @relation("SignalCountries")
 
   // Reverse relations for Location challenges
@@ -708,6 +709,13 @@ model signals {
   /// person corrected it). From then on a source revision
   /// (updateSignalContent) keeps the corrected location and countries.
   locationCorrectedAt DateTime? @map("location_corrected_at")
+
+  /// The location the pipeline gave this Signal (general location, else
+  /// origin, else destination), kept when the first accepted Location
+  /// challenge overwrote it, so location precision (ADR-0012) measures the
+  /// pipeline rather than the person. Null while the Signal is uncorrected.
+  pipelineLocationId String?    @map("pipeline_location_id")
+  pipelineLocation   locations? @relation("SignalPipelineLocation", fields: [pipelineLocationId], references: [id], onDelete: SetNull)
 
   /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
   /// Additive enrichment for comparison against the source's coords —

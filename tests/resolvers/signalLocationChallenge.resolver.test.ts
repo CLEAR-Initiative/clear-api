@@ -456,6 +456,7 @@ describe("Mutation.decideSignalLocationChallenge: ACCEPT and CORRECT", () => {
         originId: null,
         destinationId: null,
         locationCorrectedAt: expect.any(Date),
+        pipelineLocationId: "P-in",
         countries: { set: [{ id: "SD" }] },
       },
     });
@@ -479,6 +480,14 @@ describe("Mutation.decideSignalLocationChallenge: ACCEPT and CORRECT", () => {
     expect(createPointLocation).toHaveBeenCalledWith(expect.anything(), 12.05, 24.88);
     expect(findOrCreateLandmarkL4).not.toHaveBeenCalled();
     expect(signalsUpdate.mock.calls[0]![0].data.locationId).toBe("P-plain");
+  });
+
+  it("a second correction keeps the location the pipeline gave the signal", async () => {
+    const { ctx, signalsUpdate } = decideCtx(TEAM_ADMIN, OPEN, {
+      locked: { ...SIGNAL, locationCorrectedAt: new Date("2026-10-29T00:00:00Z"), countries: [{ id: "SD" }] },
+    });
+    await decideSignalLocationChallenge(null, { id: "C1", decision: "ACCEPT" }, ctx);
+    expect(signalsUpdate.mock.calls[0]![0].data).not.toHaveProperty("pipelineLocationId");
   });
 
   it("CORRECT writes the admin's point instead and records it as corrected", async () => {
