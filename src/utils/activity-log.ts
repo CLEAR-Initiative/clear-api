@@ -21,6 +21,8 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
  * forces every call site to compile against it.
  */
 export type ActivityAction =
+  | "metric_annotation.create"
+  | "metric_annotation.delete"
   | "auth.login"
   | "auth.logout"
   | "signal.create_manual"
@@ -62,6 +64,7 @@ export type ActivityAction =
  * on in the dashboard ("all crisis activity for user X").
  */
 export type ActivityResourceType =
+  | "metric_annotation"
   | "signal"
   | "event"
   | "alert"

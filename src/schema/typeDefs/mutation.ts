@@ -255,6 +255,16 @@ export const mutationTypeDef = gql`
     """Delete a data source."""
     deleteDataSource(id: String!): Boolean!
 
+    """Record a change that should move a metric, as a marker on the /metrics
+    charts (ADR-0016). Admin only; logged as \`metric_annotation.create\`.
+    Refuses an empty label, a non-http link, no metric or an unknown one with
+    BAD_USER_INPUT."""
+    createMetricAnnotation(input: CreateMetricAnnotationInput!): MetricAnnotation!
+
+    """Remove a metric annotation. Admin only; logged as
+    \`metric_annotation.delete\`. NOT_FOUND when there is none with that id."""
+    deleteMetricAnnotation(id: ID!): Boolean!
+
     """Idempotently resolve an organisation/source name to a data_sources id,
     creating an ungraded row if none matches (admin/pipeline only). Matching order:
     exact name/synonym → infoUrl (when homepage given) → pg_trgm fuzzy (>= minSimilarity,

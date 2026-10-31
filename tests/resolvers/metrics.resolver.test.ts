@@ -186,3 +186,75 @@ describe("metricDefinitions and metricSeries", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+const { metricAnnotations } = metricsResolvers.Query;
+const { createMetricAnnotation: createAnnotation, deleteMetricAnnotation: deleteAnnotation } = metricsResolvers.Mutation;
+
+function annotationContext(user: { id: string; role: string } | null) {
+  const row = {
+    id: "ann-1",
+    at: new Date("2026-10-29T18:33:00Z"),
+    label: "Geocoding inside the model's area",
+    description: null,
+    link: null,
+    metricKeys: ["DISTRICT_OR_FINER"],
+    createdById: "a",
+    createdAt: new Date("2026-10-31T17:00:00Z"),
+  };
+  const prisma = {
+    metricAnnotations: {
+      findMany: vi.fn(async () => [row]),
+      findUnique: vi.fn(async () => row),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...row, ...data })),
+      delete: vi.fn(async () => row),
+    },
+    activityLogs: { create: vi.fn(async () => ({})) },
+  };
+  const ctx = { prisma: prisma as unknown as Context["prisma"], user: user as Context["user"], session: null, authMethod: user ? "session" : null } as Context;
+  return { ctx, prisma };
+}
+
+describe("metricAnnotations, createMetricAnnotation and deleteMetricAnnotation", () => {
+  it("are FORBIDDEN to every role but admin, and UNAUTHENTICATED signed out, without touching the database", async () => {
+    for (const role of ["analyst", "viewer", "pending", "worker", "pipeline"]) {
+      const { ctx, prisma } = annotationContext({ id: "u", role });
+      await expect(metricAnnotations(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      await expect(
+        createAnnotation(null, { input: { at: "2026-10-29T18:33:00Z", label: "x", metricKeys: ["DISTRICT_OR_FINER"] } }, ctx),
+      ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      await expect(deleteAnnotation(null, { id: "ann-1" }, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect(prisma.metricAnnotations.findMany).not.toHaveBeenCalled();
+      expect(prisma.metricAnnotations.create).not.toHaveBeenCalled();
+      expect(prisma.metricAnnotations.delete).not.toHaveBeenCalled();
+    }
+    const { ctx } = annotationContext(null);
+    await expect(metricAnnotations(null, {}, ctx)).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("list, create and delete for an admin, logging each write", async () => {
+    const { ctx, prisma } = annotationContext({ id: "a", role: "admin" });
+    expect(await metricAnnotations(null, { input: { metric: "DISTRICT_OR_FINER" } }, ctx)).toHaveLength(1);
+    const created = await createAnnotation(
+      null,
+      { input: { at: "2026-10-31T13:13:00Z", label: "Prompt v3", metricKeys: ["DISTRICT_OR_FINER"], link: "https://example.org/pr/152" } },
+      ctx,
+    );
+    expect(created).toMatchObject({ label: "Prompt v3", createdById: "a" });
+    expect(prisma.activityLogs.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ userId: "a", action: "metric_annotation.create", resourceType: "metric_annotation", resourceId: "ann-1" }),
+    });
+    expect(await deleteAnnotation(null, { id: "ann-1" }, ctx)).toBe(true);
+    expect(prisma.activityLogs.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ userId: "a", action: "metric_annotation.delete", resourceId: "ann-1" }),
+    });
+  });
+
+  it("refuses an invalid annotation with BAD_USER_INPUT before writing or logging", async () => {
+    const { ctx, prisma } = annotationContext({ id: "a", role: "admin" });
+    await expect(createAnnotation(null, { input: { at: "2026-10-31T13:13:00Z", label: "x", metricKeys: ["NOPE"] } }, ctx)).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+    expect(prisma.metricAnnotations.create).not.toHaveBeenCalled();
+    expect(prisma.activityLogs.create).not.toHaveBeenCalled();
+  });
+});

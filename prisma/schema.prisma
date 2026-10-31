@@ -136,6 +136,34 @@ model user {
 /// surface activity stats and per-user usage. Logging is best-effort:
 /// the `logActivity()` helper swallows any error so a write failure can
 /// never break the original action.
+/// A change that should move a metric, drawn as a marker on the admin /metrics
+/// charts (ADR-0016). Rows are per environment: a deploy reaches dev and prod
+/// at different instants, so each database carries its own markers.
+model metricAnnotations {
+  id String @id @default(cuid())
+
+  /// When the change reached this environment (UTC).
+  at DateTime
+
+  /// Short label on the chart, e.g. "Geocoding inside the model's area".
+  label String
+
+  /// What changed and why it should move the metric; optional.
+  description String?
+
+  /// Where to read more: a pull request, a ticket, an ADR; optional.
+  link String?
+
+  /// The registry keys (`MetricKey` values, ADR-0015) the change bears on; at least one.
+  metricKeys String[] @map("metric_keys")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([at])
+  @@map("metric_annotations")
+}
+
 model activityLogs {
   id String @id @default(cuid())
 
