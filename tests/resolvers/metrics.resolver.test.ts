@@ -151,3 +151,38 @@ describe("agentMetrics", () => {
     expect($queryRaw).not.toHaveBeenCalled();
   });
 });
+
+const { metricDefinitions: metricDefinitionsQuery, metricSeries } = metricsResolvers.Query;
+
+describe("metricDefinitions and metricSeries", () => {
+  it("are FORBIDDEN to every role but admin, and UNAUTHENTICATED signed out, without a query", async () => {
+    for (const role of ["analyst", "viewer", "pending", "worker", "pipeline"]) {
+      const { ctx, $queryRaw } = context({ id: "u", role });
+      expect(() => metricDefinitionsQuery(null, {}, ctx)).toThrowError(expect.objectContaining({ extensions: { code: "FORBIDDEN" } }));
+      await expect(metricSeries(null, { input: { metric: "DISTRICT_OR_FINER" } }, ctx)).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect($queryRaw).not.toHaveBeenCalled();
+    }
+    const { ctx } = context(null);
+    await expect(metricSeries(null, { input: { metric: "DISTRICT_OR_FINER" } }, ctx)).rejects.toMatchObject({ extensions: { code: "UNAUTHENTICATED" } });
+  });
+
+  it("list the registry and read a grouped series for an admin", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    expect(metricDefinitionsQuery(null, {}, ctx).map((d) => d.key)).toEqual(["DETECTED_BY_NEXT_DAY", "DETECTED_SAME_DAY", "DISTRICT_OR_FINER"]);
+    const s = await metricSeries(
+      null,
+      { input: { metric: "DISTRICT_OR_FINER", from: new Date("2026-10-26T00:00:00Z"), to: new Date("2026-11-01T23:59:59.999Z"), granularity: "DAY", groupBy: "SOURCE" } },
+      ctx,
+    );
+    expect(s).toMatchObject({ metric: "DISTRICT_OR_FINER", granularity: "DAY", groups: [], buckets: [] });
+    expect($queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a grouping the metric lacks with BAD_USER_INPUT before querying", async () => {
+    const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
+    await expect(metricSeries(null, { input: { metric: "DETECTED_SAME_DAY", groupBy: "SOURCE" } }, ctx)).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+});

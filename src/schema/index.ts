@@ -7,6 +7,7 @@ import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { detectionMetricsTypeDef } from "./typeDefs/types/detectionMetrics.js";
 import { locationPrecisionMetricsTypeDef } from "./typeDefs/types/locationPrecisionMetrics.js";
 import { agentMetricsTypeDef } from "./typeDefs/types/agentMetrics.js";
+import { metricSeriesTypeDef } from "./typeDefs/types/metricSeries.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
@@ -52,6 +53,7 @@ export const typeDefs = [
   detectionMetricsTypeDef,
   locationPrecisionMetricsTypeDef,
   agentMetricsTypeDef,
+  metricSeriesTypeDef,
   signalTypeDef,
   signalLocationChallengeTypeDef,
   eventTypeDef,

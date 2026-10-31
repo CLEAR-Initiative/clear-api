@@ -85,6 +85,9 @@ How finely CLEAR placed the **ingested Signals** it located in a period: each co
 
 **Metric granularity**:
 The bucket a metric series is read in: `DAY` (UTC calendar day), `WEEK` (ISO week from Monday 00:00 UTC, the default) or `MONTH` (UTC calendar month). A series has one zero-filled row per bucket the range touches, labelled `2026-10-29`, `2026-W44` or `2026-10`, with a bucket the range only partly covers marked `isPartial`. The instant that buckets a row is the metric's own (first ingested Signal for time to detection, located-at for location precision). `weekly` remains the `WEEK` case. See ADR-0014.
+
+**Metric registry**:
+The list of metrics the admin `/metrics` page can plot over time, one entry per `MetricKey` (`DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY`, `DISTRICT_OR_FINER`), each with its name, Notion dimension, unit, method text, time basis and whether it can be grouped by source. `metricDefinitions` lists it; `metricSeries` reads any entry as a share per bucket (numerator and denominator) by day, ISO week or calendar month, optionally grouped. The registry defines nothing: every entry reads from the service that owns the metric, so the generic series equals the metric's own query. See ADR-0015.
 _Avoid_: geocoding accuracy (precision is how fine, not whether right); computing it anywhere but clear-api
 
 ### Agent conversations

@@ -16,6 +16,7 @@ import {
   computeLocationPrecisionMetrics,
   type LocationPrecisionMetricsInput,
 } from "../services/location-precision-metrics.js";
+import { computeMetricSeries, metricDefinitions, type MetricSeriesInput } from "../services/metric-registry.js";
 
 /** Platform metrics for the admin /metrics page in clear-mvp. Admin only. */
 export const metricsResolvers = {
@@ -43,6 +44,16 @@ export const metricsResolvers = {
     ): Promise<AgentMetrics> => {
       requireRole(context, ["admin"]);
       return computeAgentMetrics(context.prisma, args.input ?? {}, { budgetLimitUsd: env.AGENT_DAILY_BUDGET_USD });
+    },
+    /** The metric registry (ADR-0015): what the page can plot, and how each is read. */
+    metricDefinitions: (_parent: unknown, _args: unknown, context: Context) => {
+      requireRole(context, ["admin"]);
+      return metricDefinitions();
+    },
+    /** One metric's series, read from the service that owns it (ADR-0015). */
+    metricSeries: async (_parent: unknown, args: { input: MetricSeriesInput }, context: Context) => {
+      requireRole(context, ["admin"]);
+      return computeMetricSeries(context.prisma, args.input);
     },
   },
   AgentMetrics: {
