@@ -566,6 +566,15 @@ ISO weeks) and optionally one location. Counts only. Admin only. Refuses
 an inverted range or one over 364 days with BAD_USER_INPUT. See
 `DetectionMetrics` and ADR-0011.<div class="field-args"><span class="arg"><code>input: DetectionMetricsInput</code></span></div></td>
   </tr><tr>
+    <td><code>locationPrecisionMetrics</code></td>
+    <td><code>LocationPrecisionMetrics!</code></td>
+    <td>Location precision: how finely CLEAR placed the Signals it ingested, by
+the level of each Signal's location (none, country, state, district,
+point), per source and ISO week of the instant it was located, over a
+range (default: the last 12 ISO weeks), optionally one location and some
+sources. Counts only. Admin only. Refuses an inverted range or one over
+364 days with BAD_USER_INPUT. See `LocationPrecisionMetrics` and ADR-0012.<div class="field-args"><span class="arg"><code>input: LocationPrecisionMetricsInput</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -3456,6 +3465,23 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>String</code></td>
     <td>Display name of the place, at most 500 characters. Without one the
 point shows its admin area's name.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionmetricsinput"><code>LocationPrecisionMetricsInput</code> <span class="type-badge">input</span></h3><p>The range, place and sources to measure location precision over. Every
+field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Signals whose location is this location or inside it. A Signal with no location cannot be placed, so it is left out when this is set.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name` (e.g. `sudan-war-x`). Defaults to every source.</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -7171,6 +7197,26 @@ Pass current: false to include the full history.<div class="field-args"><span cl
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>Last write — useful for tracking admin polygon (re-)loads.</td>
+  </tr></tbody></table><h3 id="type-locationcorrectioncounts"><code>LocationCorrectionCounts</code> <span class="type-badge">object</span></h3><p>Location challenges filed in range, by status.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>open</code></td>
+    <td><code>Int!</code></td>
+    <td>Awaiting a decision (status `consideration`).</td>
+  </tr><tr>
+    <td><code>accepted</code></td>
+    <td><code>Int!</code></td>
+    <td>The analyst's proposed point was written onto the Signal.</td>
+  </tr><tr>
+    <td><code>corrected</code></td>
+    <td><code>Int!</code></td>
+    <td>The decider placed a different point.</td>
+  </tr><tr>
+    <td><code>declined</code></td>
+    <td><code>Int!</code></td>
+    <td>Declined: the location stood.</td>
+  </tr><tr>
+    <td><code>superseded</code></td>
+    <td><code>Int!</code></td>
+    <td>Replaced by a newer challenge on the same Signal.</td>
   </tr></tbody></table><h3 id="type-locationmetadata"><code>LocationMetadata</code> <span class="type-badge">object</span></h3><p>Arbitrary per-location metadata keyed by type. History is preserved:
 writes close the current row (set validTo = now()) and insert a new one.
 The CURRENT value for a (location, type) is the row where validTo is null.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -7205,6 +7251,107 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-locationprecisionmetrics"><code>LocationPrecisionMetrics</code> <span class="type-badge">object</span></h3><p>Location precision: how finely CLEAR placed the Signals it ingested, per
+source and ISO week. Each ingested Signal in range counts once under the
+level of its location (general location, or for displacement its origin,
+else its destination): no location, country (0), state (1), district (2)
+or point (a level-4 landmark or coordinate point). &quot;District or finer&quot; is
+district plus point. Counts only; shares are the caller's. See ADR-0012.
+
+A Signal is in range by the instant it was last located: `processedAt`,
+or with none `collectedAt`. Ingested means brought in by a pipeline (not
+submitted or filed by hand), not retracted, not dummy.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>signalsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Ingested Signals located in range, under the filters.</td>
+  </tr><tr>
+    <td><code>bySource</code></td>
+    <td><code>[LocationPrecisionSource!]!</code></td>
+    <td>One row per source with a Signal in range, most Signals first.</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[LocationPrecisionWeek!]!</code></td>
+    <td>Each source in `bySource` by ISO week of the instant its Signals were located, zero-filled over every week the range touches, ascending.</td>
+  </tr><tr>
+    <td><code>corrections</code></td>
+    <td><code>LocationCorrectionCounts!</code></td>
+    <td>Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionsource"><code>LocationPrecisionSource</code> <span class="type-badge">object</span></h3><p>Ingested Signals of one source in range, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>All of the source's ingested Signals in range.</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals with no location at all.</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a country (level 0).</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a state or province (level 1).</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a district (level 2).</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a point: a level-4 landmark or coordinate point inside a district.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionweek"><code>LocationPrecisionWeek</code> <span class="type-badge">object</span></h3><p>One source's ingested Signals located in one ISO week, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W44`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
   </tr></tbody></table><h3 id="type-maupoint"><code>MauPoint</code> <span class="type-badge">object</span></h3><p>One month in a MAU time series.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>month</code></td>
     <td><code>String!</code></td>
