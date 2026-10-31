@@ -17,7 +17,7 @@
 
 import { GraphQLError } from "graphql";
 import type { PrismaClient } from "../generated/prisma/client.js";
-import { computeDetectionMetrics, resolveGranularity, type Granularity } from "./detection-metrics.js";
+import { bucketsOf, computeDetectionMetrics, resolveGranularity, type Granularity } from "./detection-metrics.js";
 import { computeLocationPrecisionMetrics } from "./location-precision-metrics.js";
 
 export const METRIC_KEYS = ["DETECTED_BY_NEXT_DAY", "DETECTED_SAME_DAY", "DISTRICT_OR_FINER"] as const;
@@ -141,7 +141,21 @@ const districtOrFiner: RegistryEntry["series"] = async (prisma, input, now) => {
       })),
     };
   }
-  // Ungrouped: every source added up per bucket, in bucket order.
+  // Ungrouped: every source added up per bucket, in bucket order. With no
+  // source in range the owning query has no rows to add, so the zero-filled
+  // run of buckets the contract promises is built here.
+  if (m.series.length === 0) {
+    return {
+      ...base,
+      groups: [],
+      buckets: bucketsOf({ from: m.from, to: m.to }, m.granularity).map((bucket) => ({
+        ...bucket,
+        group: null,
+        numerator: 0,
+        denominator: 0,
+      })),
+    };
+  }
   const totals = new Map<number, MetricBucket>();
   for (const row of m.series) {
     const key = row.start.getTime();
