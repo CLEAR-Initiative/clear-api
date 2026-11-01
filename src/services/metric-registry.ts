@@ -14,7 +14,7 @@
  * GraphQL enum. The entry's text is what clear-mvp's selector and method
  * notes show, and what the Notion Metrics table quotes. Time to alert,
  * source health and events escalated (ADR-0017) joined the first three under
- * Exponential #1266.
+ * Exponential #1266; the grouping and recall proxies (ADR-0018) under #1267.
  */
 
 import { GraphQLError } from "graphql";
@@ -28,7 +28,9 @@ import {
   type Granularity,
 } from "./detection-metrics.js";
 import { computeEscalationMetrics } from "./escalation-metrics.js";
+import { computeSignalsGrouped, computeSingleSignalEvents } from "./grouping-metrics.js";
 import { computeLocationPrecisionMetrics } from "./location-precision-metrics.js";
+import { computeRecallMetrics } from "./recall-metrics.js";
 import { computeSourceHealthMetrics } from "./source-health-metrics.js";
 import { computeTimeToAlertMetrics } from "./time-to-alert-metrics.js";
 
@@ -38,6 +40,9 @@ export const METRIC_KEYS = [
   "ALERTED_BY_NEXT_DAY",
   "ALERTED_SAME_DAY",
   "DISTRICT_OR_FINER",
+  "SIGNALS_GROUPED",
+  "EVENTS_WITH_ONE_SIGNAL",
+  "ACLED_EVENTS_ALERTED",
   "SOURCES_ON_SCHEDULE",
   "EVENTS_ESCALATED",
 ] as const;
@@ -47,8 +52,8 @@ export type MetricKey = (typeof METRIC_KEYS)[number];
 export const METRIC_DIMENSIONS = ["TIMELINESS", "ACCURACY", "COVERAGE", "RELIABILITY", "USEFULNESS"] as const;
 export type MetricDimension = (typeof METRIC_DIMENSIONS)[number];
 
-/** What a metric's denominator counts: Events, Signals, or source-days (one per expected source per measured day). */
-export const METRIC_UNITS = ["EVENTS", "SIGNALS", "SOURCE_DAYS"] as const;
+/** What a metric's denominator counts: Events, Signals, source-days (one per expected source per measured day), or ACLED events. */
+export const METRIC_UNITS = ["EVENTS", "SIGNALS", "SOURCE_DAYS", "ACLED_EVENTS"] as const;
 export type MetricUnit = (typeof METRIC_UNITS)[number];
 
 export const METRIC_GROUP_BYS = ["SOURCE"] as const;
@@ -80,7 +85,7 @@ export interface MetricSeries {
   granularity: Granularity;
   from: Date;
   to: Date;
-  /** Group names in the owning query's order: most Signals first for Signal metrics, the expected-cadence list for Sources on schedule; empty when ungrouped. */
+  /** Group names in the owning query's order: most rows (Signals or Events) first, the expected-cadence list for Sources on schedule; empty when ungrouped. */
   groups: string[];
   /** Group by group, ascending buckets within each, zero-filled over every bucket the range touches. */
   buckets: MetricBucket[];
@@ -157,63 +162,36 @@ function addUp(buckets: MetricBucket[], range: { from: Date; to: Date }, granula
   return [...totals.values()].sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
-const sourcesOnSchedule: RegistryEntry["series"] = async (prisma, input, now) => {
-  const m = await computeSourceHealthMetrics(
-    prisma,
-    { from: input.from, to: input.to, sourceNames: input.sourceNames, granularity: input.granularity },
-    now,
-  );
-  const base = { metric: "SOURCES_ON_SCHEDULE" as const, granularity: m.granularity, from: m.from, to: m.to };
-  const perSource = m.series.map((row) => ({
-    start: row.start,
-    label: row.label,
-    isPartial: row.isPartial,
-    group: row.source,
-    numerator: row.onScheduleDays,
-    denominator: row.days,
-  }));
-  if (input.groupBy === "SOURCE") return { ...base, groups: m.bySource.map((row) => row.source), buckets: perSource };
-  return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
-};
+/** The input every per-source service accepts; a service that ignores a field (source health and the location) still receives it. */
+type PerSourceInput = Pick<MetricSeriesInput, "from" | "to" | "locationId" | "sourceNames" | "granularity">;
 
-const districtOrFiner: RegistryEntry["series"] = async (prisma, input, now) => {
-  const m = await computeLocationPrecisionMetrics(
-    prisma,
-    {
-      from: input.from,
-      to: input.to,
-      locationId: input.locationId,
-      sourceNames: input.sourceNames,
-      granularity: input.granularity,
-    },
-    now,
-  );
-  const base = { metric: "DISTRICT_OR_FINER" as const, granularity: m.granularity, from: m.from, to: m.to };
-  if (input.groupBy === "SOURCE") {
-    return {
-      ...base,
-      groups: m.bySource.map((row) => row.source),
-      buckets: m.series.map((row) => ({
-        start: row.start,
-        label: row.label,
-        isPartial: row.isPartial,
-        group: row.source,
-        numerator: row.district + row.point,
-        denominator: row.total,
-      })),
-    };
-  }
-  // Ungrouped: every source added up per bucket, in bucket order.
-  const perSource = m.series.map((row) => ({
-    start: row.start,
-    label: row.label,
-    isPartial: row.isPartial,
-    group: row.source,
-    numerator: row.district + row.point,
-    denominator: row.total,
-  }));
-  return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
-};
+/**
+ * A share per source read from the service that owns it: grouped, the
+ * service's rows per source in its `bySource` order; ungrouped, the sources
+ * added up per bucket. `pick` names the numerator and the denominator. One
+ * mapping for every per-source reader.
+ */
+function perSourceShare<Row extends Bucket & { source: string }>(
+  metric: MetricKey,
+  compute: (
+    prisma: PrismaClient,
+    input: PerSourceInput,
+    now: Date,
+  ) => Promise<{ granularity: Granularity; from: Date; to: Date; bySource: Array<{ source: string }>; series: Row[] }>,
+  pick: (row: Row) => { numerator: number; denominator: number },
+): RegistryEntry["series"] {
+  return async (prisma, input, now) => {
+    const m = await compute(
+      prisma,
+      { from: input.from, to: input.to, locationId: input.locationId, sourceNames: input.sourceNames, granularity: input.granularity },
+      now,
+    );
+    const base = { metric, granularity: m.granularity, from: m.from, to: m.to };
+    const perSource = m.series.map((row) => ({ start: row.start, label: row.label, isPartial: row.isPartial, group: row.source, ...pick(row) }));
+    if (input.groupBy === "SOURCE") return { ...base, groups: m.bySource.map((row) => row.source), buckets: perSource };
+    return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
+  };
+}
 
 const REGISTRY: Record<MetricKey, RegistryEntry> = {
   DETECTED_BY_NEXT_DAY: {
@@ -278,7 +256,46 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     groupable: true,
     locationScoped: true,
     adr: "ADR-0012",
-    series: districtOrFiner,
+    series: perSourceShare("DISTRICT_OR_FINER", computeLocationPrecisionMetrics, (row) => ({ numerator: row.district + row.point, denominator: row.total })),
+  },
+  SIGNALS_GROUPED: {
+    key: "SIGNALS_GROUPED",
+    name: "Signals grouped",
+    dimension: "ACCURACY",
+    unit: "SIGNALS",
+    description:
+      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping, each Signal once. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists. The location filter keeps the Signals whose current location is in the place. The newest buckets read low until grouping has caught up with them (ADR-0018).",
+    timeBasis: "The Signal's publishedAt.",
+    groupable: true,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: perSourceShare("SIGNALS_GROUPED", computeSignalsGrouped, (row) => ({ numerator: row.numerator, denominator: row.denominator })),
+  },
+  EVENTS_WITH_ONE_SIGNAL: {
+    key: "EVENTS_WITH_ONE_SIGNAL",
+    name: "Events with one signal",
+    dimension: "ACCURACY",
+    unit: "EVENTS",
+    description:
+      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged. The location filter keeps the Events any of whose places is in the place. The newest buckets read high until grouping has caught up with them (ADR-0018).",
+    timeBasis: "The Event's first ingested Signal: its publishedAt.",
+    groupable: true,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: perSourceShare("EVENTS_WITH_ONE_SIGNAL", computeSingleSignalEvents, (row) => ({ numerator: row.numerator, denominator: row.denominator })),
+  },
+  ACLED_EVENTS_ALERTED: {
+    key: "ACLED_EVENTS_ALERTED",
+    name: "ACLED events alerted nearby",
+    dimension: "COVERAGE",
+    unit: "ACLED_EVENTS",
+    description:
+      "Share of ACLED events (ACLED's Signals, one per event, by event date) whose district held a CLEAR Alert dated within three UTC days either side, on an Event with at least one ingested Signal from a source other than ACLED. An Event is dated by a day-precise onset, else by its first Signal, and is in the district through any of its places. A recall proxy: ACLED stands in for ground truth and only what CLEAR found through its other feeds counts; an ACLED event with no district counts as not alerted. The newest three days cannot yet hold their Alerts and ACLED releases weekly, so the newest week reads low (ADR-0018).",
+    timeBasis: "The ACLED event date: the Signal's publishedAt.",
+    groupable: false,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: ungroupedShare("ACLED_EVENTS_ALERTED", computeRecallMetrics, (b) => ({ numerator: b.alerted, denominator: b.groundTruth })),
   },
   SOURCES_ON_SCHEDULE: {
     key: "SOURCES_ON_SCHEDULE",
@@ -291,7 +308,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     groupable: true,
     locationScoped: false,
     adr: "ADR-0017",
-    series: sourcesOnSchedule,
+    series: perSourceShare("SOURCES_ON_SCHEDULE", computeSourceHealthMetrics, (row) => ({ numerator: row.onScheduleDays, denominator: row.days })),
   },
   EVENTS_ESCALATED: {
     key: "EVENTS_ESCALATED",

@@ -381,6 +381,23 @@ export function ingestedSignal(alias: string): Prisma.Sql {
   );
 }
 
+/**
+ * The `WHERE` clause that keeps the Signals (aliased `alias`, a code-owned
+ * name) whose current location (general, else origin, else destination) is
+ * `locationId` or inside it; empty for no location. Signal-based metrics read
+ * a Signal where it is now; location precision alone reads a corrected Signal
+ * where the pipeline put it (ADR-0012).
+ */
+export function signalsInLocation(locationId: string | null, alias = "s"): Prisma.Sql {
+  if (!locationId) return Prisma.empty;
+  const place = Prisma.raw(`COALESCE(${alias}."location_id", ${alias}."origin_id", ${alias}."destination_id")`);
+  return Prisma.sql`AND EXISTS (
+        SELECT 1 FROM "locations" l
+        WHERE l."id" = ${place}
+          AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
+      )`;
+}
+
 /** Source names as a caller gave them: trimmed, empty ones dropped, duplicates removed. */
 export function normaliseSourceNames(sourceNames: string[] | null | undefined): string[] {
   return [...new Set((sourceNames ?? []).map((name) => name.trim()).filter(Boolean))];

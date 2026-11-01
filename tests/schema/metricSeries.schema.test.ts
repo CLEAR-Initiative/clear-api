@@ -74,12 +74,16 @@ describe("metricDefinitions schema contract", () => {
       "ALERTED_BY_NEXT_DAY",
       "ALERTED_SAME_DAY",
       "DISTRICT_OR_FINER",
+      "SIGNALS_GROUPED",
+      "EVENTS_WITH_ONE_SIGNAL",
+      "ACLED_EVENTS_ALERTED",
       "SOURCES_ON_SCHEDULE",
       "EVENTS_ESCALATED",
     ]);
     expect(defs[4]).toMatchObject({ name: "At district or finer", dimension: "ACCURACY", unit: "SIGNALS", groupable: true, adr: "ADR-0012" });
     expect(defs[0]).toMatchObject({ locationScoped: true });
-    expect(defs[5]).toMatchObject({ name: "Sources on schedule", dimension: "RELIABILITY", unit: "SOURCE_DAYS", groupable: true, locationScoped: false, adr: "ADR-0017" });
+    expect(defs[7]).toMatchObject({ name: "ACLED events alerted nearby", dimension: "COVERAGE", unit: "ACLED_EVENTS", groupable: false, locationScoped: true, adr: "ADR-0018" });
+    expect(defs[8]).toMatchObject({ name: "Sources on schedule", dimension: "RELIABILITY", unit: "SOURCE_DAYS", groupable: true, locationScoped: false, adr: "ADR-0017" });
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect((await run({ id: "u", role: "analyst" }, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
     expect((await run(null, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("UNAUTHENTICATED");
@@ -135,6 +139,20 @@ describe("metricSeries schema contract", () => {
       ["2026-10-17", "dataminr", 0, 1],
       ["2026-10-18", "dataminr", 0, 1],
     ]);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the recall proxy ungrouped by week from day rows", async () => {
+    const { result, prisma } = await run(
+      admin,
+      METRIC_SERIES,
+      { input: { metric: "ACLED_EVENTS_ALERTED", granularity: "WEEK", ...range } },
+      [[{ day: day("2026-10-27"), groundTruth: 20, alerted: 8 }, { day: day("2026-10-30"), groundTruth: 5, alerted: 1 }]],
+    );
+    expect(result.errors).toBeUndefined();
+    const s = result.data?.metricSeries as { groups: string[]; buckets: Array<Record<string, unknown>> };
+    expect(s.groups).toEqual([]);
+    expect(s.buckets).toEqual([{ start: "2026-10-26T00:00:00.000Z", label: "2026-W44", isPartial: false, group: null, numerator: 9, denominator: 25 }]);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
