@@ -36,14 +36,45 @@ in its description and served by the same `metricSeries` contract.
   left out, as in time to detection.
 - **ACLED events alerted nearby** (`ACLED_EVENTS_ALERTED`, Coverage, unit
   ACLED events): each ACLED Signal is one ACLED event, dated by `publishedAt`
-  and placed at a point; its district is the level-2 location among its
-  location and ancestors. It counts as alerted nearby when its district held
-  a CLEAR Alert whose Event's onset (or, without one, first Signal) lies
-  within `RECALL_WINDOW_DAYS` (3) either side, and that Event holds at least
-  one ingested Signal from a source other than ACLED, so only what CLEAR
-  found through its other feeds counts. An ACLED event with no district
-  counts as not alerted. The reference feed and the window are constants in
-  `src/services/recall-metrics.ts`.
+  (the event date at 00:00 UTC) and placed at a point; its district is the
+  level-2 location among its location and ancestors. It counts as alerted
+  nearby when its district held a CLEAR Alert whose Event is dated within
+  `RECALL_WINDOW_DAYS` (3) UTC days either side and holds at least one
+  ingested Signal from a source other than ACLED, so only what CLEAR found
+  through its other feeds counts. An Event is dated by its onset when that is
+  day-precise, else by its first Signal: a week- or month-precise onset is
+  not a date, as ADR-0011 and ADR-0017 hold, and would credit the ACLED
+  events around the 1st of the month instead of the ones the Event covers.
+  An Event is in a district through any of its places (general location,
+  origin, destination), as every Event metric reads places. An ACLED event
+  with no district counts as not alerted. The reference feed and the window
+  are constants in `src/services/recall-metrics.ts`; a test holds that the
+  reference feed is one of the expected feeds of ADR-0017, so a rename is
+  made in one place and source health flags ACLED when it stops delivering.
+
+**Scope and edges.** The location filter reads each proxy's own object:
+Signals grouped and the ACLED reference set keep the Signals whose current
+location (general, else origin, else destination) is in the place; Events
+with one Signal keeps the Events any of whose places is in it. Location
+precision alone reads a corrected Signal where the pipeline put it
+(ADR-0012); grouping keys on where a Signal is now. A Signal linked to two
+Events counts once, grouped when either Event gives it company. Under a
+location filter an ACLED event with no location is not in the location at
+all. The newest buckets of all three read before grouping and alerting have
+caught up: low for Signals grouped and the recall proxy (whose last three
+days cannot yet hold their Alerts, while ACLED releases weekly), high for
+Events with one Signal; `isPartial` says only whether the range covers the
+bucket, so the descriptions say this instead.
+
+**Query shape.** The recall query makes one pass over the alerted Events in
+the window (their districts and days) and tests each ACLED event against
+that set; the first draft tested every ACLED row against every Event, which
+measured 9.7 s on a synthetic 100k-row database. Both grouping queries and
+the first-ingested-Signal CTEs look `signal_to_events` up by Event, which
+only the unique `(signal_id, event_id)` index served; the migration in this
+change adds `signal_to_events(event_id)`, the step ADR-0011 named for when a
+metric got slow (measured 83 s to 0.3 s for Signals grouped once the planner
+stops hashing the sub-plan).
 
 Neither grouping proxy is a judgement. A high grouped share can be good
 merging or over-merging; a high single-Signal share can be under-merging or
@@ -77,3 +108,7 @@ served twice.
   beside the recorded rate rather than being removed.
 - The recall proxy's window and reference feed are reviewed in code; a
   second reference dataset (OCHA situation reports) would be a second entry.
+- A renamed or silent ACLED feed empties the reference set: every bucket
+  reads 0 of 0, which the page shows as no reading, not 0%; source health
+  shows ACLED late at the same time.
+- `signal_to_events(event_id)` is indexed from this change on.

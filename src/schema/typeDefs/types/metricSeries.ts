@@ -46,7 +46,7 @@ export const metricSeriesTypeDef = gql`
 
   """How a series can be split into groups."""
   enum MetricGroupBy {
-    """One series per data source (\`DataSource.name\`), in the owning query's order: most Signals first for Signal metrics, the expected-cadence list for Sources on schedule."""
+    """One series per data source (\`DataSource.name\`), in the owning query's order: most rows (Signals or Events) first, the expected-cadence list for Sources on schedule."""
     SOURCE
   }
 

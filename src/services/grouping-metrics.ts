@@ -15,7 +15,13 @@
  * single-Signal share can mean under-merging or many isolated reports. Read
  * them beside the correctness sample when one exists. Ingested means what
  * time to detection means: not an accepted web case, not filed by hand, not
- * retracted, not dummy. The API returns counts only.
+ * retracted, not dummy. The location filter reads each proxy's own object:
+ * Signals grouped keeps the Signals whose current location is in the place,
+ * Events with one Signal keeps the Events any of whose places is in it, as
+ * every Event metric does. A Signal linked to two Events counts once, grouped
+ * when either Event gives it company. The newest buckets read before grouping
+ * has caught up with them: low for Signals grouped, high for Events with one
+ * Signal. The API returns counts only.
  */
 
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
@@ -27,6 +33,7 @@ import {
   normaliseSourceNames,
   resolveGranularity,
   resolveRange,
+  signalsInLocation,
   startOfBucket,
   type Bucket,
   type Granularity,
@@ -99,17 +106,6 @@ export function foldSourceDays(rows: SourceDayRow[], range: { from: Date; to: Da
     bySource,
     series: bySource.flatMap(({ source }) => totals.get(source)!.cells),
   };
-}
-
-/** The `WHERE` clause that keeps the Signals (aliased `s`) whose location is `locationId` or inside it. */
-function signalsInLocation(locationId: string | null): Prisma.Sql {
-  return locationId
-    ? Prisma.sql`AND EXISTS (
-        SELECT 1 FROM "locations" l
-        WHERE l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
-          AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
-      )`
-    : Prisma.empty;
 }
 
 const inSources = (sourceNames: string[], column: Prisma.Sql) =>

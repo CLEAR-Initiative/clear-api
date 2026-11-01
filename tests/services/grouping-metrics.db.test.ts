@@ -80,7 +80,7 @@ describeIfDb("grouping proxies against the real schema", () => {
 
   it("reads grouped Signals per source and single-Signal Events per first source", async () => {
     // An Event of two ingested Signals from two sources: both grouped; first source X.
-    await event({ firstSignalAt: "2026-10-12T09:00:00Z", signals: [{ source: X, at: "2026-10-12T09:00:00Z" }, { source: DM, at: "2026-10-12T10:00:00Z" }] });
+    const shared = await event({ firstSignalAt: "2026-10-12T09:00:00Z", signals: [{ source: X, at: "2026-10-12T09:00:00Z" }, { source: DM, at: "2026-10-12T10:00:00Z" }] });
     // An Event of one ingested Signal plus a retracted one and a manual one: not grouped; a single-Signal Event under DM.
     await event({
       firstSignalAt: "2026-10-13T09:00:00Z",
@@ -94,33 +94,51 @@ describeIfDb("grouping proxies against the real schema", () => {
     await event({ firstSignalAt: "2026-10-14T09:00:00Z", signals: [{ source: X, at: "2026-10-14T09:00:00Z" }] });
     // An Event of two X Signals, one a history case: the ingested one has no ingested company.
     await event({ firstSignalAt: "2026-10-15T09:00:00Z", signals: [{ source: X, at: "2026-10-15T09:00:00Z" }, { source: X, at: "2026-10-15T09:10:00Z", history: true }] });
-    // Abroad: out of the country's scope for both metrics.
-    await event({ firstSignalAt: "2026-10-16T09:00:00Z", locationId: ABROAD, signals: [{ source: X, at: "2026-10-16T09:00:00Z", locationId: ABROAD }, { source: DM, at: "2026-10-16T09:00:00Z", locationId: ABROAD }] });
+    // Abroad: out of the country's scope for both metrics; X first, DM half an hour later.
+    await event({ firstSignalAt: "2026-10-16T09:00:00Z", locationId: ABROAD, signals: [{ source: X, at: "2026-10-16T09:00:00Z", locationId: ABROAD }, { source: DM, at: "2026-10-16T09:30:00Z", locationId: ABROAD }] });
     // Before the range.
     await event({ firstSignalAt: "2026-10-05T09:00:00Z", signals: [{ source: X, at: "2026-10-05T09:00:00Z" }, { source: DM, at: "2026-10-05T09:00:00Z" }] });
+    // An ingested Signal not yet linked to any Event: not through grouping, so not in the denominator.
+    await prisma.signals.create({
+      data: { sourceId: sourceIds[X]!, externalId: `${RUN}-${n++}`, rawData: {}, publishedAt: at("2026-10-13T12:00:00Z"), collectedAt: at("2026-10-13T12:00:00Z"), locationId: DISTRICT },
+    });
+    // A Signal linked to two Events, its own and the first: counted once, grouped through the first; its own
+    // Event holds exactly one ingested Signal, under X.
+    const own = await event({ firstSignalAt: "2026-10-14T12:00:00Z", signals: [] });
+    await prisma.signals.create({
+      data: {
+        sourceId: sourceIds[X]!,
+        externalId: `${RUN}-${n++}`,
+        rawData: {},
+        publishedAt: at("2026-10-14T12:00:00Z"),
+        collectedAt: at("2026-10-14T12:00:00Z"),
+        locationId: DISTRICT,
+        signalEvents: { create: [{ eventId: shared, collectedAt: at("2026-10-14T12:00:00Z") }, { eventId: own, collectedAt: at("2026-10-14T12:00:00Z") }] },
+      },
+    });
 
     const input = { from: "2026-10-12T00:00:00Z", to: "2026-10-18T23:59:59.999Z", locationId: COUNTRY, sourceNames: [X, DM], granularity: "WEEK" as const };
     const grouped = await computeSignalsGrouped(prisma, input);
     expect(grouped.bySource).toEqual([
-      { source: X, numerator: 1, denominator: 3 },
+      { source: X, numerator: 2, denominator: 4 },
       { source: DM, numerator: 1, denominator: 2 },
     ]);
     expect(grouped.series.map((r) => [r.source, r.label, r.numerator, r.denominator])).toEqual([
-      [X, "2026-W42", 1, 3],
+      [X, "2026-W42", 2, 4],
       [DM, "2026-W42", 1, 2],
     ]);
 
     const single = await computeSingleSignalEvents(prisma, input);
     expect(single.bySource).toEqual([
-      { source: X, numerator: 2, denominator: 3 },
+      { source: X, numerator: 3, denominator: 4 },
       { source: DM, numerator: 1, denominator: 1 },
     ]);
 
     // Without the location, the Event abroad joins both reads.
     expect((await computeSignalsGrouped(prisma, { ...input, locationId: null })).bySource).toEqual([
-      { source: X, numerator: 2, denominator: 4 },
+      { source: X, numerator: 3, denominator: 5 },
       { source: DM, numerator: 2, denominator: 3 },
     ]);
-    expect((await computeSingleSignalEvents(prisma, { ...input, locationId: null, sourceNames: [X] })).bySource).toEqual([{ source: X, numerator: 2, denominator: 4 }]);
+    expect((await computeSingleSignalEvents(prisma, { ...input, locationId: null, sourceNames: [X] })).bySource).toEqual([{ source: X, numerator: 3, denominator: 5 }]);
   });
 });
