@@ -57,6 +57,9 @@ describe("fetchRecallRows and computeRecallMetrics", () => {
     expect(sql).toContain('FROM "alerts" al');
     // One pass over the alerted Events, dated by a day-precise onset else the first Signal, through any place.
     expect(sql).toContain("alerted AS (");
+    expect(sql).toContain("generate_series(?::int, ?::int)");
+    expect(sql).toContain('LEFT JOIN alerted a ON a."district" = r."district" AND a."day" = r."day"');
+    expect(values).toContain(-RECALL_WINDOW_DAYS);
     expect(sql).toContain(`e."started_at_accuracy" = 'DAY'`);
     expect(sql).toContain('(VALUES (e."location_id"), (e."origin_id"), (e."destination_id"))');
     expect(values).toContain(GROUND_TRUTH_SOURCE);
