@@ -46,16 +46,26 @@ async function reference(dateIso: string, locationId: string | null) {
   });
 }
 
-/** A CLEAR Event with an Alert, located somewhere, with the Signals given. */
-async function alerted(opts: { onset: string; locationId: string; signals: Array<{ source: string; manual?: boolean }> }) {
+/** A CLEAR Event with an Alert, placed somewhere (a general location and/or an origin), with the Signals given. */
+async function alerted(opts: {
+  onset: string;
+  onsetAccuracy?: "DAY" | "WEEK" | "MONTH" | "YEAR";
+  /** The Event's first Signal; the onset unless said otherwise. */
+  firstSignalAt?: string;
+  locationId?: string;
+  originId?: string;
+  signals: Array<{ source: string; manual?: boolean }>;
+}) {
   const e = await prisma.events.create({
     data: {
       types: ["CE"],
       startedAt: at(opts.onset),
-      firstSignalCreatedAt: at(opts.onset),
-      lastSignalCreatedAt: at(opts.onset),
+      startedAtAccuracy: opts.onsetAccuracy,
+      firstSignalCreatedAt: at(opts.firstSignalAt ?? opts.onset),
+      lastSignalCreatedAt: at(opts.firstSignalAt ?? opts.onset),
       rank: 0,
-      locationId: opts.locationId,
+      locationId: opts.locationId ?? null,
+      originId: opts.originId ?? null,
     },
   });
   eventIds.push(e.id);
@@ -68,7 +78,7 @@ async function alerted(opts: { onset: string; locationId: string; signals: Array
         rawData: s.manual ? { manual: true, createdBy: USER } : {},
         publishedAt: at(opts.onset),
         collectedAt: at(opts.onset),
-        locationId: opts.locationId,
+        locationId: opts.locationId ?? opts.originId ?? null,
         signalEvents: { create: { eventId: e.id, collectedAt: at(opts.onset) } },
       },
     });
@@ -105,17 +115,22 @@ describeIfDb("detection recall proxy against the real schema", () => {
     // CLEAR Alerts: one from the feed in the district on the 13th; one the
     // reference feed alone drove on the 15th (its reference Signal is a
     // reference event too, at the district itself); one from the feed but in
-    // the other district on the 17th; one from a manual Signal only on the 18th.
+    // the other district on the 17th; one from a manual Signal only on the
+    // 18th; one with a month-precise onset (stored as the 1st) first seen on
+    // the 20th, which dates it the 20th; one placed in the other district
+    // with its origin in the district, on the 14th, which is in the district.
     await alerted({ onset: "2026-10-13T00:00:00Z", locationId: DISTRICT, signals: [{ source: FEED }] });
     await alerted({ onset: "2026-10-15T00:00:00Z", locationId: DISTRICT, signals: [{ source: REF }] });
     await alerted({ onset: "2026-10-17T00:00:00Z", locationId: OTHER_DISTRICT, signals: [{ source: FEED }] });
     await alerted({ onset: "2026-10-18T00:00:00Z", locationId: DISTRICT, signals: [{ source: FEED, manual: true }] });
+    await alerted({ onset: "2026-10-01T00:00:00Z", onsetAccuracy: "MONTH", firstSignalAt: "2026-10-20T00:00:00Z", locationId: DISTRICT, signals: [{ source: FEED }] });
+    await alerted({ onset: "2026-10-14T00:00:00Z", locationId: OTHER_DISTRICT, originId: DISTRICT, signals: [{ source: FEED }] });
     // Reference events, placed at the point under the district unless said otherwise.
     await reference("2026-10-12T00:00:00Z", POINT); // the 13th's Alert is within one day: alerted
-    await reference("2026-10-14T00:00:00Z", POINT); // the 13th is within one day too: alerted
-    await reference("2026-10-15T00:00:00Z", POINT); // only the reference-driven Alert: not alerted
-    await reference("2026-10-17T00:00:00Z", POINT); // the other district's Alert: not alerted
-    await reference("2026-10-18T00:00:00Z", POINT); // a manual-only Alert: not alerted
+    await reference("2026-10-14T00:00:00Z", POINT); // the 13th and the origin-in-district 14th: alerted
+    await reference("2026-10-15T00:00:00Z", POINT); // the 14th through its origin is within one day: alerted
+    await reference("2026-10-17T00:00:00Z", POINT); // the other district's Alert; the 20th is three days off: not alerted
+    await reference("2026-10-18T00:00:00Z", POINT); // a manual-only Alert; the 20th is two days off: not alerted
     await reference("2026-10-13T00:00:00Z", null); // no location, so no district: not alerted
     await reference("2026-10-13T00:00:00Z", ABROAD); // abroad: out of the country's scope
     await reference("2026-10-20T00:00:00Z", POINT); // after the range
@@ -123,12 +138,12 @@ describeIfDb("detection recall proxy against the real schema", () => {
     const range = { from: at("2026-10-12T00:00:00Z"), to: at("2026-10-18T23:59:59.999Z") };
     const rows = await fetchRecallRows(prisma, range, COUNTRY, REF, 1);
     const m = summariseRecall(rows, range, "DAY");
-    expect(m).toMatchObject({ groundTruth: 6, alerted: 2 });
+    expect(m).toMatchObject({ groundTruth: 6, alerted: 4 });
     expect(m.series.map((b) => [b.label, b.groundTruth, b.alerted])).toEqual([
       ["2026-10-12", 1, 1],
       ["2026-10-13", 0, 0],
       ["2026-10-14", 1, 1],
-      ["2026-10-15", 2, 0],
+      ["2026-10-15", 2, 2],
       ["2026-10-16", 0, 0],
       ["2026-10-17", 1, 0],
       ["2026-10-18", 1, 0],
@@ -136,10 +151,10 @@ describeIfDb("detection recall proxy against the real schema", () => {
 
     // Without the location, the reference events with no district and abroad join the denominator only.
     const everywhere = summariseRecall(await fetchRecallRows(prisma, range, null, REF, 1), range, "WEEK");
-    expect(everywhere.alerted).toBe(2);
-    expect(everywhere.groundTruth).toBeGreaterThanOrEqual(8);
+    expect(everywhere).toMatchObject({ groundTruth: 8, alerted: 4 });
 
-    // A wider window reaches both reference events of the 15th from the 13th's Alert.
-    expect(summariseRecall(await fetchRecallRows(prisma, range, COUNTRY, REF, 3), range, "WEEK").alerted).toBe(4);
+    // A wider window reaches the 17th and the 18th from the Event dated the 20th by its first Signal; were
+    // its month-precise onset read as 1 October, neither would be credited.
+    expect(summariseRecall(await fetchRecallRows(prisma, range, COUNTRY, REF, 3), range, "WEEK").alerted).toBe(6);
   });
 });

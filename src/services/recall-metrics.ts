@@ -3,24 +3,34 @@
  * recorded, how many did CLEAR raise an Alert for from its other feeds?
  *
  * ACLED stands in for ground truth: each of its Signals is one ACLED event,
- * dated by `publishedAt` and placed at a point under a district. An ACLED
- * event counts as **alerted nearby** when its district held a CLEAR Alert
- * whose Event's onset (or, without one, first Signal) lies within
- * `RECALL_WINDOW_DAYS` either side of the ACLED date, and that Event holds
- * at least one ingested Signal from a source other than ACLED, so that only
- * what CLEAR found on its own counts. An ACLED event with no district cannot
- * be matched and counts as not alerted. Retracted and dummy Signals take no
- * part. The location filter keeps the ACLED events in the location. The API
- * returns counts only.
+ * dated by `publishedAt` (the event date at 00:00 UTC) and placed at a point
+ * under a district. An ACLED event counts as **alerted nearby** when its
+ * district held a CLEAR Alert whose Event is dated within `RECALL_WINDOW_DAYS`
+ * UTC days either side of the ACLED date and holds at least one ingested
+ * Signal from a source other than ACLED, so that only what CLEAR found on its
+ * own counts. An Event is dated by its onset when that is day-precise, else
+ * by its first Signal, as the sibling metrics refuse to do day arithmetic on
+ * a week- or month-precise onset; it is in a district when any of its places
+ * (general location, origin, destination) is in it, as every Event metric
+ * reads places. An ACLED event with no district cannot be matched and counts
+ * as not alerted; under a location filter it is not in the location at all.
+ * Retracted and dummy Signals take no part. The newest `RECALL_WINDOW_DAYS`
+ * cannot yet hold their Alerts, and ACLED releases weekly, so the newest week
+ * reads low until both catch up. The API returns counts only.
+ *
+ * The query makes one pass over the alerted Events in the window (their
+ * districts and days) and tests each ACLED event against that set, rather
+ * than scanning Events once per ACLED row.
  */
 
-import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
+import type { PrismaClient } from "../generated/prisma/client.js";
 import {
   bucketIndex,
   bucketsOf,
   ingestedSignal,
   resolveGranularity,
   resolveRange,
+  signalsInLocation,
   startOfBucket,
   type Bucket,
   type DetectionMetricsInput,
@@ -90,46 +100,59 @@ export async function fetchRecallRows(
   source: string = GROUND_TRUTH_SOURCE,
   windowDays: number = RECALL_WINDOW_DAYS,
 ): Promise<RecallDayRow[]> {
-  const inLocation = locationId
-    ? Prisma.sql`AND EXISTS (
-        SELECT 1 FROM "locations" l
-        WHERE l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
-          AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
-      )`
-    : Prisma.empty;
+  // The alerted Events worth reading: dated within the window of any reference day in range, with a day's slack for the day arithmetic.
+  const since = new Date(range.from.getTime() - (windowDays + 1) * DAY_MS);
+  const until = new Date(range.to.getTime() + (windowDays + 1) * DAY_MS);
   return prisma.$queryRaw<RecallDayRow[]>`
     WITH reference AS (
-      SELECT s."id", s."published_at",
-        (SELECT l2."id" FROM "locations" l2
-          WHERE l2."level" = 2 AND (l2."id" = l."id" OR l2."id" = ANY(l."ancestor_ids"))
-          LIMIT 1) AS "district"
+      SELECT FLOOR(EXTRACT(EPOCH FROM s."published_at") / 86400)::int AS "day", d."district"
       FROM "signals" s
       JOIN "data_sources" ds ON ds."id" = s."source_id" AND ds."name" = ${source}
       LEFT JOIN "locations" l ON l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
+      LEFT JOIN LATERAL (
+        SELECT l2."id" AS "district" FROM "locations" l2
+        WHERE l2."level" = 2 AND (l2."id" = l."id" OR l2."id" = ANY(l."ancestor_ids"))
+        LIMIT 1
+      ) d ON true
       WHERE NOT s."retracted"
         AND NOT s."isDummy"
         AND s."published_at" >= ${range.from}
         AND s."published_at" <= ${range.to}
-        ${inLocation}
+        ${signalsInLocation(locationId)}
+    ),
+    alerted AS (
+      SELECT DISTINCT dl."district",
+        FLOOR(EXTRACT(EPOCH FROM COALESCE(
+          CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
+          e."first_signal_created_at")) / 86400)::int AS "day"
+      FROM "alerts" al
+      JOIN "events" e ON e."id" = al."event_id"
+      CROSS JOIN LATERAL (VALUES (e."location_id"), (e."origin_id"), (e."destination_id")) AS p("place_id")
+      JOIN "locations" el ON el."id" = p."place_id"
+      JOIN LATERAL (
+        SELECT l2."id" AS "district" FROM "locations" l2
+        WHERE l2."level" = 2 AND (l2."id" = el."id" OR l2."id" = ANY(el."ancestor_ids"))
+        LIMIT 1
+      ) dl ON true
+      WHERE NOT e."isDummy"
+        AND COALESCE(
+          CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
+          e."first_signal_created_at") BETWEEN ${since} AND ${until}
+        AND EXISTS (
+          SELECT 1 FROM "signal_to_events" se
+          JOIN "signals" o ON o."id" = se."signal_id"
+          JOIN "data_sources" od ON od."id" = o."source_id"
+          WHERE se."event_id" = e."id"
+            AND od."name" <> ${source}
+            AND ${ingestedSignal("o")}
+        )
     )
-    SELECT FLOOR(EXTRACT(EPOCH FROM r."published_at") / 86400)::int AS "day",
+    SELECT r."day",
       COUNT(*)::int AS "groundTruth",
       COUNT(*) FILTER (WHERE r."district" IS NOT NULL AND EXISTS (
-        SELECT 1 FROM "alerts" al
-        JOIN "events" e ON e."id" = al."event_id"
-        JOIN "locations" el ON el."id" = COALESCE(e."location_id", e."origin_id", e."destination_id")
-        WHERE NOT e."isDummy"
-          AND (el."id" = r."district" OR r."district" = ANY(el."ancestor_ids"))
-          AND COALESCE(e."started_at", e."first_signal_created_at")
-            BETWEEN r."published_at" - make_interval(days => ${windowDays}) AND r."published_at" + make_interval(days => ${windowDays})
-          AND EXISTS (
-            SELECT 1 FROM "signal_to_events" se
-            JOIN "signals" o ON o."id" = se."signal_id"
-            JOIN "data_sources" od ON od."id" = o."source_id"
-            WHERE se."event_id" = e."id"
-              AND od."name" <> ${source}
-              AND ${ingestedSignal("o")}
-          )
+        SELECT 1 FROM alerted a
+        WHERE a."district" = r."district"
+          AND a."day" BETWEEN r."day" - ${windowDays} AND r."day" + ${windowDays}
       ))::int AS "alerted"
     FROM reference r
     GROUP BY 1

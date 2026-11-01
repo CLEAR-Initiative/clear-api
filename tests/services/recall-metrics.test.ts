@@ -6,12 +6,19 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 import { GROUND_TRUTH_SOURCE, RECALL_WINDOW_DAYS, computeRecallMetrics, fetchRecallRows, summariseRecall } from "../../src/services/recall-metrics.js";
+import { EXPECTED_CADENCE_DAYS } from "../../src/services/source-health-metrics.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const at = (iso: string) => new Date(iso);
 const day = (iso: string) => Math.floor(Date.parse(`${iso}T12:00:00Z`) / DAY_MS);
 // ISO week 2026-W44: Monday 26 October to Sunday 1 November.
 const range = { from: at("2026-10-26T00:00:00Z"), to: at("2026-11-01T23:59:59.999Z") };
+
+describe("GROUND_TRUTH_SOURCE", () => {
+  it("is one of the expected feeds, so a rename happens in one place and source health flags it when silent", () => {
+    expect(Object.keys(EXPECTED_CADENCE_DAYS)).toContain(GROUND_TRUTH_SOURCE);
+  });
+});
 
 describe("summariseRecall", () => {
   it("folds the day rows into buckets, zero-filled, keeping rows outside them in the totals", () => {
@@ -43,9 +50,15 @@ describe("fetchRecallRows and computeRecallMetrics", () => {
     expect(m.series).toHaveLength(7);
     const [strings, ...values] = $queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     const sql = strings.join("?");
-    expect(sql).toContain("make_interval(days => ?)");
+    // The alerted Events are read from four days before the range to four days after it (the window plus a day's slack).
+    expect(JSON.stringify(values)).toContain("2026-10-22T00:00:00.000Z");
+    expect(JSON.stringify(values)).toContain("2026-11-05T23:59:59.999Z");
     expect(sql).toContain('l2."level" = 2');
     expect(sql).toContain('FROM "alerts" al');
+    // One pass over the alerted Events, dated by a day-precise onset else the first Signal, through any place.
+    expect(sql).toContain("alerted AS (");
+    expect(sql).toContain(`e."started_at_accuracy" = 'DAY'`);
+    expect(sql).toContain('(VALUES (e."location_id"), (e."origin_id"), (e."destination_id"))');
     expect(values).toContain(GROUND_TRUTH_SOURCE);
     expect(values).toContain(RECALL_WINDOW_DAYS);
     expect(JSON.stringify(values)).toContain("loc-sdn");

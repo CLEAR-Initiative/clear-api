@@ -1180,6 +1180,7 @@ model signalEvents {
 
   /// A signal can only be linked to a given event once.
   @@unique([signalId, eventId])
+  @@index([eventId])
   @@map("signal_to_events")
 }
 
