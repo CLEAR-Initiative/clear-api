@@ -369,18 +369,28 @@ export function summarise(
  * `rawData.manual` is true). `locationId` keeps the Events whose origin, destination or
  * general location is that location or inside it, as `eventsByLocation` does.
  */
-export async function fetchDetectionEvents(
-  prisma: PrismaClient,
-  range: { from: Date; to: Date },
-  locationId: string | null,
-): Promise<DetectionEventRow[]> {
-  const inLocation = locationId
+/**
+ * The `WHERE` clause that keeps the Events (aliased `e`) whose origin,
+ * destination or general location is `locationId` or inside it, as
+ * `eventsByLocation` reads it; empty for no location. Shared by every
+ * Event-based metric so they scope alike.
+ */
+export function eventsInLocation(locationId: string | null): Prisma.Sql {
+  return locationId
     ? Prisma.sql`AND EXISTS (
         SELECT 1 FROM "locations" l
         WHERE l."id" IN (e."origin_id", e."destination_id", e."location_id")
           AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
       )`
     : Prisma.empty;
+}
+
+export async function fetchDetectionEvents(
+  prisma: PrismaClient,
+  range: { from: Date; to: Date },
+  locationId: string | null,
+): Promise<DetectionEventRow[]> {
+  const inLocation = eventsInLocation(locationId);
   return prisma.$queryRaw<DetectionEventRow[]>`
     WITH first_ingested AS (
       SELECT se."event_id", MIN(s."published_at") AS "at"

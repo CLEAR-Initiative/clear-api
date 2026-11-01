@@ -7,8 +7,16 @@ export const metricSeriesTypeDef = gql`
     DETECTED_BY_NEXT_DAY
     """Share of measured Events first signalled on the onset day (ADR-0011)."""
     DETECTED_SAME_DAY
+    """Share of measured Alerts raised on the Event's onset day or the day after (ADR-0017)."""
+    ALERTED_BY_NEXT_DAY
+    """Share of measured Alerts raised on the Event's onset day (ADR-0017)."""
+    ALERTED_SAME_DAY
     """Share of located ingested Signals placed at a district or a point inside one (ADR-0012)."""
     DISTRICT_OR_FINER
+    """Share of source-days on which an expected data feed was within its cadence (ADR-0017)."""
+    SOURCES_ON_SCHEDULE
+    """Share of Events a user escalated to the team, an interim usefulness proxy (ADR-0017)."""
+    EVENTS_ESCALATED
   }
 
   """The Notion Metrics table's dimension a metric sits under."""
@@ -24,6 +32,8 @@ export const metricSeriesTypeDef = gql`
   enum MetricUnit {
     EVENTS
     SIGNALS
+    """One per expected data source per measured UTC day."""
+    SOURCE_DAYS
   }
 
   """How a series can be split into groups."""

@@ -168,7 +168,15 @@ describe("metricDefinitions and metricSeries", () => {
 
   it("list the registry and read a grouped series for an admin", async () => {
     const { ctx, $queryRaw } = context({ id: "a", role: "admin" });
-    expect(metricDefinitionsQuery(null, {}, ctx).map((d) => d.key)).toEqual(["DETECTED_BY_NEXT_DAY", "DETECTED_SAME_DAY", "DISTRICT_OR_FINER"]);
+    expect(metricDefinitionsQuery(null, {}, ctx).map((d) => d.key)).toEqual([
+      "DETECTED_BY_NEXT_DAY",
+      "DETECTED_SAME_DAY",
+      "ALERTED_BY_NEXT_DAY",
+      "ALERTED_SAME_DAY",
+      "DISTRICT_OR_FINER",
+      "SOURCES_ON_SCHEDULE",
+      "EVENTS_ESCALATED",
+    ]);
     const s = await metricSeries(
       null,
       { input: { metric: "DISTRICT_OR_FINER", from: new Date("2026-10-26T00:00:00Z"), to: new Date("2026-11-01T23:59:59.999Z"), granularity: "DAY", groupBy: "SOURCE" } },
