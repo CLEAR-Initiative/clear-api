@@ -18,9 +18,11 @@
  * cannot yet hold their Alerts, and ACLED releases weekly, so the newest week
  * reads low until both catch up. The API returns counts only.
  *
- * The query makes one pass over the alerted Events in the window (their
- * districts and days) and tests each ACLED event against that set, rather
- * than scanning Events once per ACLED row.
+ * The query makes one pass over the alerted Events in the window, expands
+ * each into the (district, day) pairs it covers, and joins the ACLED events
+ * to that set on equality, which Postgres hashes: 0.2 s for twelve weeks on
+ * dev. A correlated test against the same set was re-run per ACLED row (24 s
+ * inlined, 3.4 s materialised), so the match is a join, not a sub-select.
  */
 
 import type { PrismaClient } from "../generated/prisma/client.js";
@@ -105,15 +107,13 @@ export async function fetchRecallRows(
   const until = new Date(range.to.getTime() + (windowDays + 1) * DAY_MS);
   return prisma.$queryRaw<RecallDayRow[]>`
     WITH reference AS (
-      SELECT FLOOR(EXTRACT(EPOCH FROM s."published_at") / 86400)::int AS "day", d."district"
+      SELECT FLOOR(EXTRACT(EPOCH FROM s."published_at") / 86400)::int AS "day",
+        CASE WHEN l."level" = 2 THEN l."id"
+          ELSE (SELECT l2."id" FROM "locations" l2 WHERE l2."level" = 2 AND l2."id" = ANY(l."ancestor_ids") LIMIT 1)
+        END AS "district"
       FROM "signals" s
       JOIN "data_sources" ds ON ds."id" = s."source_id" AND ds."name" = ${source}
       LEFT JOIN "locations" l ON l."id" = COALESCE(s."location_id", s."origin_id", s."destination_id")
-      LEFT JOIN LATERAL (
-        SELECT l2."id" AS "district" FROM "locations" l2
-        WHERE l2."level" = 2 AND (l2."id" = l."id" OR l2."id" = ANY(l."ancestor_ids"))
-        LIMIT 1
-      ) d ON true
       WHERE NOT s."retracted"
         AND NOT s."isDummy"
         AND s."published_at" >= ${range.from}
@@ -121,19 +121,18 @@ export async function fetchRecallRows(
         ${signalsInLocation(locationId)}
     ),
     alerted AS (
-      SELECT DISTINCT dl."district",
+      SELECT DISTINCT
+        CASE WHEN el."level" = 2 THEN el."id"
+          ELSE (SELECT l2."id" FROM "locations" l2 WHERE l2."level" = 2 AND l2."id" = ANY(el."ancestor_ids") LIMIT 1)
+        END AS "district",
         FLOOR(EXTRACT(EPOCH FROM COALESCE(
           CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
-          e."first_signal_created_at")) / 86400)::int AS "day"
+          e."first_signal_created_at")) / 86400)::int + g."offset" AS "day"
       FROM "alerts" al
       JOIN "events" e ON e."id" = al."event_id"
       CROSS JOIN LATERAL (VALUES (e."location_id"), (e."origin_id"), (e."destination_id")) AS p("place_id")
       JOIN "locations" el ON el."id" = p."place_id"
-      JOIN LATERAL (
-        SELECT l2."id" AS "district" FROM "locations" l2
-        WHERE l2."level" = 2 AND (l2."id" = el."id" OR l2."id" = ANY(el."ancestor_ids"))
-        LIMIT 1
-      ) dl ON true
+      CROSS JOIN generate_series(${-windowDays}, ${windowDays}) AS g("offset")
       WHERE NOT e."isDummy"
         AND COALESCE(
           CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
@@ -149,12 +148,9 @@ export async function fetchRecallRows(
     )
     SELECT r."day",
       COUNT(*)::int AS "groundTruth",
-      COUNT(*) FILTER (WHERE r."district" IS NOT NULL AND EXISTS (
-        SELECT 1 FROM alerted a
-        WHERE a."district" = r."district"
-          AND a."day" BETWEEN r."day" - ${windowDays} AND r."day" + ${windowDays}
-      ))::int AS "alerted"
+      COUNT(*) FILTER (WHERE a."district" IS NOT NULL)::int AS "alerted"
     FROM reference r
+    LEFT JOIN alerted a ON a."district" = r."district" AND a."day" = r."day"
     GROUP BY 1
   `;
 }

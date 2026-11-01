@@ -67,9 +67,12 @@ Events with one Signal; `isPartial` says only whether the range covers the
 bucket, so the descriptions say this instead.
 
 **Query shape.** The recall query makes one pass over the alerted Events in
-the window (their districts and days) and tests each ACLED event against
-that set; the first draft tested every ACLED row against every Event, which
-measured 9.7 s on a synthetic 100k-row database. Both grouping queries and
+the window, expands each into the (district, day) pairs its window covers,
+and joins the ACLED events to that set on equality, which Postgres hashes:
+0.2 s for twelve weeks and 0.4 s for a year on dev. The first draft tested
+every ACLED row against every Event (9.7 s on a synthetic 100k-row
+database); a correlated test against the precomputed set was still re-run
+per ACLED row (24 s inlined, 3.4 s materialised), so the match is a join. Both grouping queries and
 the first-ingested-Signal CTEs look `signal_to_events` up by Event, which
 only the unique `(signal_id, event_id)` index served; the migration in this
 change adds `signal_to_events(event_id)`, the step ADR-0011 named for when a
