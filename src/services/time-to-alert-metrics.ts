@@ -3,13 +3,19 @@
  * raised an Alert for it, in whole UTC days. One hop past time to detection
  * (ADR-0011), on the same discipline.
  *
- * An Alert in range is **counted** when its Event has a day-precise onset on
- * or before the Alert's creation day. Every other Alert in range is
- * **excluded** under exactly one reason, checked in this order:
+ * An Alert in range is **counted** when its creation instant is real and its
+ * Event has a day-precise onset on or before the Alert's creation day. Every
+ * other Alert in range is **excluded** under exactly one reason, checked in
+ * this order:
  *
- * 1. `NO_ONSET` — the Event has no onset to measure from.
- * 2. `COARSE_ONSET` — the onset is known to the week, month or year only.
- * 3. `BEFORE_ONSET` — the Alert predates the onset day, a data error.
+ * 1. `BACKFILLED_TIMESTAMP` — the Alert predates its `createdAt` column:
+ *    every Alert that existed when migration
+ *    `20260513000000_add_alert_and_location_timestamps` ran was stamped with
+ *    that run's instant (read from `_prisma_migrations`), so when it was
+ *    raised is unknown.
+ * 2. `NO_ONSET` — the Event has no onset to measure from.
+ * 3. `COARSE_ONSET` — the onset is known to the week, month or year only.
+ * 4. `BEFORE_ONSET` — the Alert predates the onset day, a data error.
  *
  * Days = UTC calendar days from the onset to the Alert's `createdAt`: same
  * day = 0, next day = 1. An Alert is in range when its `createdAt` is. Every
@@ -34,8 +40,11 @@ import {
   type Granularity,
 } from "./detection-metrics.js";
 
-export const ALERT_EXCLUSION_REASONS = ["NO_ONSET", "COARSE_ONSET", "BEFORE_ONSET"] as const;
+export const ALERT_EXCLUSION_REASONS = ["BACKFILLED_TIMESTAMP", "NO_ONSET", "COARSE_ONSET", "BEFORE_ONSET"] as const;
 export type AlertExclusionReason = (typeof ALERT_EXCLUSION_REASONS)[number];
+
+/** The migration that added `alerts.created_at`; Alerts stamped with its run instant have no real creation instant. */
+export const ALERT_TIMESTAMPS_MIGRATION = "20260513000000_add_alert_and_location_timestamps";
 
 /** One Alert in range, as the metric needs it. */
 export interface AlertRow {
@@ -45,6 +54,8 @@ export interface AlertRow {
   startedAt: Date | null;
   /** Precision of `startedAt`; null means day-precise (legacy rows). */
   startedAtAccuracy?: "DAY" | "WEEK" | "MONTH" | "YEAR" | null;
+  /** True when `createdAt` is the timestamp migration's run instant rather than when the Alert was raised. */
+  backfilled?: boolean | null;
 }
 
 export type AlertClassification =
@@ -78,6 +89,7 @@ export type TimeToAlertInput = DetectionMetricsInput;
 
 /** Counted with its whole days from onset, or excluded with its reason. */
 export function classifyAlert(row: AlertRow): AlertClassification {
+  if (row.backfilled) return { counted: false, reason: "BACKFILLED_TIMESTAMP" };
   if (!row.startedAt) return { counted: false, reason: "NO_ONSET" };
   if (row.startedAtAccuracy && row.startedAtAccuracy !== "DAY") return { counted: false, reason: "COARSE_ONSET" };
   const days = utcDay(row.createdAt) - utcDay(row.startedAt);
@@ -126,15 +138,27 @@ export function summariseAlerts(rows: AlertRow[], range: { from: Date; to: Date 
 }
 
 /**
- * The Alerts raised in range with their Event's onset. `locationId` keeps the
- * Alerts whose Event's origin, destination or general location is that
+ * The Alerts raised in range with their Event's onset, and whether their
+ * `createdAt` is the timestamp migration's run instant (its `started_at` to
+ * `finished_at` in `_prisma_migrations`, per environment, with a second's
+ * margin because `created_at` keeps milliseconds and the migration log
+ * microseconds). `locationId` keeps
+ * the Alerts whose Event's origin, destination or general location is that
  * location or inside it, as time to detection does.
  */
 export async function fetchAlertRows(prisma: PrismaClient, range: { from: Date; to: Date }, locationId: string | null): Promise<AlertRow[]> {
   return prisma.$queryRaw<AlertRow[]>`
-    SELECT a."created_at" AS "createdAt", e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy"
+    WITH stamp AS (
+      SELECT MIN(m."started_at") AS "started_at", MAX(m."finished_at") AS "finished_at"
+      FROM "_prisma_migrations" m
+      WHERE m."migration_name" = ${ALERT_TIMESTAMPS_MIGRATION} AND m."rolled_back_at" IS NULL
+    )
+    SELECT a."created_at" AS "createdAt", e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+      COALESCE((a."created_at" AT TIME ZONE 'UTC')
+        BETWEEN stamp."started_at" - interval '1 second' AND stamp."finished_at" + interval '1 second', false) AS "backfilled"
     FROM "alerts" a
     JOIN "events" e ON e."id" = a."event_id"
+    CROSS JOIN stamp
     WHERE NOT e."isDummy"
       AND a."created_at" >= ${range.from}
       AND a."created_at" <= ${range.to}

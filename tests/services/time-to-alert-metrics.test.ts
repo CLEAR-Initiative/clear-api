@@ -22,6 +22,11 @@ describe("classifyAlert", () => {
       reason: "COARSE_ONSET",
     });
     expect(classifyAlert({ createdAt: at("2026-10-26T09:00:00Z"), startedAt: at("2026-10-27T00:00:00Z") })).toEqual({ counted: false, reason: "BEFORE_ONSET" });
+    // A backfilled creation instant beats every other reason: nothing about when it was raised is known.
+    expect(classifyAlert({ createdAt: at("2026-05-14T07:30:07Z"), startedAt: at("2026-05-14T00:00:00Z"), backfilled: true })).toEqual({
+      counted: false,
+      reason: "BACKFILLED_TIMESTAMP",
+    });
   });
 });
 
@@ -36,12 +41,15 @@ describe("summariseAlerts", () => {
     // A month-precise onset, Thursday 29; an Alert before its onset day, Monday 26.
     { createdAt: at("2026-10-29T13:00:00Z"), startedAt: at("2026-10-01T00:00:00Z"), startedAtAccuracy: "MONTH" },
     { createdAt: at("2026-10-26T09:00:00Z"), startedAt: at("2026-10-27T00:00:00Z") },
+    // A backfilled creation instant, Friday 30: in range, never counted.
+    { createdAt: at("2026-10-30T10:00:00Z"), startedAt: at("2026-10-30T00:00:00Z"), backfilled: true },
   ];
 
   it("buckets Alerts by the day they were raised, zero-filling the range", () => {
     const m = summariseAlerts(rows, range, "DAY");
-    expect(m).toMatchObject({ alertsInRange: 6, counted: 3, sameDay: 1, byNextDay: 2, granularity: "DAY" });
+    expect(m).toMatchObject({ alertsInRange: 7, counted: 3, sameDay: 1, byNextDay: 2, granularity: "DAY" });
     expect(m.exclusions).toEqual([
+      { reason: "BACKFILLED_TIMESTAMP", count: 1 },
       { reason: "NO_ONSET", count: 1 },
       { reason: "COARSE_ONSET", count: 1 },
       { reason: "BEFORE_ONSET", count: 1 },
@@ -51,7 +59,7 @@ describe("summariseAlerts", () => {
       ["2026-10-27", 1, 1, 1, 1],
       ["2026-10-28", 3, 2, 0, 1],
       ["2026-10-29", 1, 0, 0, 0],
-      ["2026-10-30", 0, 0, 0, 0],
+      ["2026-10-30", 1, 0, 0, 0],
       ["2026-10-31", 0, 0, 0, 0],
       ["2026-11-01", 0, 0, 0, 0],
     ]);
@@ -61,8 +69,8 @@ describe("summariseAlerts", () => {
   it("reads ISO weeks by default, and keeps an Alert outside the buckets in the totals only", () => {
     const m = summariseAlerts([...rows, { createdAt: at("2026-11-03T10:00:00Z"), startedAt: at("2026-11-03T00:00:00Z") }], range);
     expect(m.granularity).toBe("WEEK");
-    expect(m.series.map((b) => [b.label, b.alertsInRange, b.counted, b.sameDay, b.byNextDay, b.isPartial])).toEqual([["2026-W44", 6, 3, 1, 2, false]]);
-    expect(m).toMatchObject({ alertsInRange: 7, counted: 4, sameDay: 2, byNextDay: 3 });
+    expect(m.series.map((b) => [b.label, b.alertsInRange, b.counted, b.sameDay, b.byNextDay, b.isPartial])).toEqual([["2026-W44", 7, 3, 1, 2, false]]);
+    expect(m).toMatchObject({ alertsInRange: 8, counted: 4, sameDay: 2, byNextDay: 3 });
   });
 });
 
@@ -76,6 +84,8 @@ describe("computeTimeToAlertMetrics", () => {
     const [strings, ...values] = $queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     expect(strings.join("?")).toContain('FROM "alerts" a');
     expect(strings.join("?")).toContain('NOT e."isDummy"');
+    expect(strings.join("?")).toContain('FROM "_prisma_migrations" m');
+    expect(values).toContain("20260513000000_add_alert_and_location_timestamps");
     expect(JSON.stringify(values)).toContain("loc-sdn");
   });
 
