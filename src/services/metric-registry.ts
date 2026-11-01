@@ -14,7 +14,7 @@
  * GraphQL enum. The entry's text is what clear-mvp's selector and method
  * notes show, and what the Notion Metrics table quotes. Time to alert,
  * source health and events escalated (ADR-0017) joined the first three under
- * Exponential #1266.
+ * Exponential #1266; the grouping and recall proxies (ADR-0018) under #1267.
  */
 
 import { GraphQLError } from "graphql";
@@ -28,7 +28,9 @@ import {
   type Granularity,
 } from "./detection-metrics.js";
 import { computeEscalationMetrics } from "./escalation-metrics.js";
+import { computeSignalsGrouped, computeSingleSignalEvents } from "./grouping-metrics.js";
 import { computeLocationPrecisionMetrics } from "./location-precision-metrics.js";
+import { computeRecallMetrics } from "./recall-metrics.js";
 import { computeSourceHealthMetrics } from "./source-health-metrics.js";
 import { computeTimeToAlertMetrics } from "./time-to-alert-metrics.js";
 
@@ -38,6 +40,9 @@ export const METRIC_KEYS = [
   "ALERTED_BY_NEXT_DAY",
   "ALERTED_SAME_DAY",
   "DISTRICT_OR_FINER",
+  "SIGNALS_GROUPED",
+  "EVENTS_WITH_ONE_SIGNAL",
+  "ACLED_EVENTS_ALERTED",
   "SOURCES_ON_SCHEDULE",
   "EVENTS_ESCALATED",
 ] as const;
@@ -47,8 +52,8 @@ export type MetricKey = (typeof METRIC_KEYS)[number];
 export const METRIC_DIMENSIONS = ["TIMELINESS", "ACCURACY", "COVERAGE", "RELIABILITY", "USEFULNESS"] as const;
 export type MetricDimension = (typeof METRIC_DIMENSIONS)[number];
 
-/** What a metric's denominator counts: Events, Signals, or source-days (one per expected source per measured day). */
-export const METRIC_UNITS = ["EVENTS", "SIGNALS", "SOURCE_DAYS"] as const;
+/** What a metric's denominator counts: Events, Signals, source-days (one per expected source per measured day), or ACLED events. */
+export const METRIC_UNITS = ["EVENTS", "SIGNALS", "SOURCE_DAYS", "ACLED_EVENTS"] as const;
 export type MetricUnit = (typeof METRIC_UNITS)[number];
 
 export const METRIC_GROUP_BYS = ["SOURCE"] as const;
@@ -176,6 +181,28 @@ const sourcesOnSchedule: RegistryEntry["series"] = async (prisma, input, now) =>
   return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
 };
 
+function sourceShare(metric: "SIGNALS_GROUPED" | "EVENTS_WITH_ONE_SIGNAL"): RegistryEntry["series"] {
+  const compute = metric === "SIGNALS_GROUPED" ? computeSignalsGrouped : computeSingleSignalEvents;
+  return async (prisma, input, now) => {
+    const m = await compute(
+      prisma,
+      { from: input.from, to: input.to, locationId: input.locationId, sourceNames: input.sourceNames, granularity: input.granularity },
+      now,
+    );
+    const base = { metric, granularity: m.granularity, from: m.from, to: m.to };
+    const perSource = m.series.map((row) => ({
+      start: row.start,
+      label: row.label,
+      isPartial: row.isPartial,
+      group: row.source,
+      numerator: row.numerator,
+      denominator: row.denominator,
+    }));
+    if (input.groupBy === "SOURCE") return { ...base, groups: m.bySource.map((row) => row.source), buckets: perSource };
+    return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
+  };
+}
+
 const districtOrFiner: RegistryEntry["series"] = async (prisma, input, now) => {
   const m = await computeLocationPrecisionMetrics(
     prisma,
@@ -279,6 +306,45 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     locationScoped: true,
     adr: "ADR-0012",
     series: districtOrFiner,
+  },
+  SIGNALS_GROUPED: {
+    key: "SIGNALS_GROUPED",
+    name: "Signals grouped",
+    dimension: "ACCURACY",
+    unit: "SIGNALS",
+    description:
+      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists (ADR-0018).",
+    timeBasis: "The Signal's publishedAt.",
+    groupable: true,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: sourceShare("SIGNALS_GROUPED"),
+  },
+  EVENTS_WITH_ONE_SIGNAL: {
+    key: "EVENTS_WITH_ONE_SIGNAL",
+    name: "Events with one signal",
+    dimension: "ACCURACY",
+    unit: "EVENTS",
+    description:
+      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged (ADR-0018).",
+    timeBasis: "The Event's first ingested Signal: its publishedAt.",
+    groupable: true,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: sourceShare("EVENTS_WITH_ONE_SIGNAL"),
+  },
+  ACLED_EVENTS_ALERTED: {
+    key: "ACLED_EVENTS_ALERTED",
+    name: "ACLED events alerted nearby",
+    dimension: "COVERAGE",
+    unit: "ACLED_EVENTS",
+    description:
+      "Share of ACLED events (ACLED's Signals, one per event, by event date) whose district held a CLEAR Alert within three days either side, on an Event with at least one ingested Signal from a source other than ACLED. A recall proxy: ACLED stands in for ground truth and only what CLEAR found through its other feeds counts; an ACLED event with no district counts as not alerted (ADR-0018).",
+    timeBasis: "The ACLED event date: the Signal's publishedAt.",
+    groupable: false,
+    locationScoped: true,
+    adr: "ADR-0018",
+    series: ungroupedShare("ACLED_EVENTS_ALERTED", computeRecallMetrics, (b) => ({ numerator: b.alerted, denominator: b.groundTruth })),
   },
   SOURCES_ON_SCHEDULE: {
     key: "SOURCES_ON_SCHEDULE",

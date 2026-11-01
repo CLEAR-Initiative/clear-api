@@ -13,6 +13,12 @@ export const metricSeriesTypeDef = gql`
     ALERTED_SAME_DAY
     """Share of located ingested Signals placed at a district or a point inside one (ADR-0012)."""
     DISTRICT_OR_FINER
+    """Share of ingested Signals whose Event holds another ingested Signal, a grouping proxy (ADR-0018)."""
+    SIGNALS_GROUPED
+    """Share of Events holding exactly one ingested Signal, a grouping proxy (ADR-0018)."""
+    EVENTS_WITH_ONE_SIGNAL
+    """Share of ACLED events whose district held a CLEAR Alert from another feed within three days, a recall proxy (ADR-0018)."""
+    ACLED_EVENTS_ALERTED
     """Share of source-days on which an expected data feed was within its cadence (ADR-0017)."""
     SOURCES_ON_SCHEDULE
     """Share of Events a user escalated to the team, an interim usefulness proxy (ADR-0017)."""
@@ -34,6 +40,8 @@ export const metricSeriesTypeDef = gql`
     SIGNALS
     """One per expected data source per measured UTC day."""
     SOURCE_DAYS
+    """One ACLED event: the reference dataset's Signal."""
+    ACLED_EVENTS
   }
 
   """How a series can be split into groups."""

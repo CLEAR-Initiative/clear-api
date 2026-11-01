@@ -174,6 +174,9 @@ describe("metricDefinitions and metricSeries", () => {
       "ALERTED_BY_NEXT_DAY",
       "ALERTED_SAME_DAY",
       "DISTRICT_OR_FINER",
+      "SIGNALS_GROUPED",
+      "EVENTS_WITH_ONE_SIGNAL",
+      "ACLED_EVENTS_ALERTED",
       "SOURCES_ON_SCHEDULE",
       "EVENTS_ESCALATED",
     ]);
