@@ -19,7 +19,14 @@
 
 import { GraphQLError } from "graphql";
 import type { PrismaClient } from "../generated/prisma/client.js";
-import { bucketsOf, computeDetectionMetrics, resolveGranularity, type Granularity } from "./detection-metrics.js";
+import {
+  bucketsOf,
+  computeDetectionMetrics,
+  resolveGranularity,
+  type Bucket,
+  type DetectionMetricsInput,
+  type Granularity,
+} from "./detection-metrics.js";
 import { computeEscalationMetrics } from "./escalation-metrics.js";
 import { computeLocationPrecisionMetrics } from "./location-precision-metrics.js";
 import { computeSourceHealthMetrics } from "./source-health-metrics.js";
@@ -73,7 +80,7 @@ export interface MetricSeries {
   granularity: Granularity;
   from: Date;
   to: Date;
-  /** Group names in the owning query's order (most Signals first); empty when ungrouped. */
+  /** Group names in the owning query's order: most Signals first for Signal metrics, the expected-cadence list for Sources on schedule; empty when ungrouped. */
   groups: string[];
   /** Group by group, ascending buckets within each, zero-filled over every bucket the range touches. */
   buckets: MetricBucket[];
@@ -91,6 +98,8 @@ export interface MetricDefinition {
   timeBasis: string;
   /** True when the series can be read per data source (`groupBy: SOURCE`). */
   groupable: boolean;
+  /** True when `locationId` scopes the series; false for a metric that reads every country, which clients should label. */
+  locationScoped: boolean;
   /** The ADR that owns the definition. */
   adr: string;
 }
@@ -102,27 +111,25 @@ interface RegistryEntry extends MetricDefinition {
 
 const badInput = (message: string) => new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
 
-function detectionShare(metric: "DETECTED_BY_NEXT_DAY" | "DETECTED_SAME_DAY"): RegistryEntry["series"] {
+/**
+ * An ungrouped share read from the service that owns it: the service's
+ * series rows in bucket order, with `pick` naming the numerator and the
+ * denominator. One mapping for every Event-based reader.
+ */
+function ungroupedShare<Row extends Bucket>(
+  metric: MetricKey,
+  compute: (prisma: PrismaClient, input: DetectionMetricsInput, now: Date) => Promise<{ granularity: Granularity; from: Date; to: Date; series: Row[] }>,
+  pick: (row: Row) => { numerator: number; denominator: number },
+): RegistryEntry["series"] {
   return async (prisma, input, now) => {
-    const m = await computeDetectionMetrics(
-      prisma,
-      { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity },
-      now,
-    );
+    const m = await compute(prisma, { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity }, now);
     return {
       metric,
       granularity: m.granularity,
       from: m.from,
       to: m.to,
       groups: [],
-      buckets: m.series.map((bucket) => ({
-        start: bucket.start,
-        label: bucket.label,
-        isPartial: bucket.isPartial,
-        group: null,
-        numerator: metric === "DETECTED_SAME_DAY" ? bucket.sameDay : bucket.byNextDay,
-        denominator: bucket.counted,
-      })),
+      buckets: m.series.map((row) => ({ start: row.start, label: row.label, isPartial: row.isPartial, group: null, ...pick(row) })),
     };
   };
 }
@@ -150,31 +157,6 @@ function addUp(buckets: MetricBucket[], range: { from: Date; to: Date }, granula
   return [...totals.values()].sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
-function alertShare(metric: "ALERTED_BY_NEXT_DAY" | "ALERTED_SAME_DAY"): RegistryEntry["series"] {
-  return async (prisma, input, now) => {
-    const m = await computeTimeToAlertMetrics(
-      prisma,
-      { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity },
-      now,
-    );
-    return {
-      metric,
-      granularity: m.granularity,
-      from: m.from,
-      to: m.to,
-      groups: [],
-      buckets: m.series.map((bucket) => ({
-        start: bucket.start,
-        label: bucket.label,
-        isPartial: bucket.isPartial,
-        group: null,
-        numerator: metric === "ALERTED_SAME_DAY" ? bucket.sameDay : bucket.byNextDay,
-        denominator: bucket.counted,
-      })),
-    };
-  };
-}
-
 const sourcesOnSchedule: RegistryEntry["series"] = async (prisma, input, now) => {
   const m = await computeSourceHealthMetrics(
     prisma,
@@ -192,29 +174,6 @@ const sourcesOnSchedule: RegistryEntry["series"] = async (prisma, input, now) =>
   }));
   if (input.groupBy === "SOURCE") return { ...base, groups: m.bySource.map((row) => row.source), buckets: perSource };
   return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
-};
-
-const eventsEscalated: RegistryEntry["series"] = async (prisma, input, now) => {
-  const m = await computeEscalationMetrics(
-    prisma,
-    { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity },
-    now,
-  );
-  return {
-    metric: "EVENTS_ESCALATED",
-    granularity: m.granularity,
-    from: m.from,
-    to: m.to,
-    groups: [],
-    buckets: m.series.map((bucket) => ({
-      start: bucket.start,
-      label: bucket.label,
-      isPartial: bucket.isPartial,
-      group: null,
-      numerator: bucket.escalated,
-      denominator: bucket.events,
-    })),
-  };
 };
 
 const districtOrFiner: RegistryEntry["series"] = async (prisma, input, now) => {
@@ -266,8 +225,9 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
       "Share of measured Events whose first ingested Signal arrived on the onset day or the day after. An Event is measured when it has a day-precise onset and a first ingested Signal with a time of day on or after the onset day; every other Event in range is excluded under one reason (ADR-0011).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: false,
+    locationScoped: true,
     adr: "ADR-0011",
-    series: detectionShare("DETECTED_BY_NEXT_DAY"),
+    series: ungroupedShare("DETECTED_BY_NEXT_DAY", computeDetectionMetrics, (b) => ({ numerator: b.byNextDay, denominator: b.counted })),
   },
   DETECTED_SAME_DAY: {
     key: "DETECTED_SAME_DAY",
@@ -278,8 +238,9 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
       "Share of measured Events whose first ingested Signal arrived on the onset day. Measured as for 'Detected by next day' (ADR-0011).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: false,
+    locationScoped: true,
     adr: "ADR-0011",
-    series: detectionShare("DETECTED_SAME_DAY"),
+    series: ungroupedShare("DETECTED_SAME_DAY", computeDetectionMetrics, (b) => ({ numerator: b.sameDay, denominator: b.counted })),
   },
   ALERTED_BY_NEXT_DAY: {
     key: "ALERTED_BY_NEXT_DAY",
@@ -287,11 +248,12 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "TIMELINESS",
     unit: "EVENTS",
     description:
-      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017).",
+      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its creation instant is real and its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason, including the Alerts whose createdAt was backfilled when the column was added in May 2026. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017).",
     timeBasis: "The instant the Alert was raised: its createdAt.",
     groupable: false,
+    locationScoped: true,
     adr: "ADR-0017",
-    series: alertShare("ALERTED_BY_NEXT_DAY"),
+    series: ungroupedShare("ALERTED_BY_NEXT_DAY", computeTimeToAlertMetrics, (b) => ({ numerator: b.byNextDay, denominator: b.counted })),
   },
   ALERTED_SAME_DAY: {
     key: "ALERTED_SAME_DAY",
@@ -301,8 +263,9 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     description: "Share of measured Alerts raised on the Event's onset day. Measured as for 'Alerted by next day' (ADR-0017).",
     timeBasis: "The instant the Alert was raised: its createdAt.",
     groupable: false,
+    locationScoped: true,
     adr: "ADR-0017",
-    series: alertShare("ALERTED_SAME_DAY"),
+    series: ungroupedShare("ALERTED_SAME_DAY", computeTimeToAlertMetrics, (b) => ({ numerator: b.sameDay, denominator: b.counted })),
   },
   DISTRICT_OR_FINER: {
     key: "DISTRICT_OR_FINER",
@@ -313,6 +276,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
       "Share of ingested Signals placed at a district (admin-2) or at a point inside one, out of every ingested Signal located in the bucket; the rest sit at state or country level or have no location. Grouping keys on district, so this is the share grouping can use. A Signal a person corrected counts at the location the pipeline gave it (ADR-0012).",
     timeBasis: "The instant the Signal was last located: processedAt, else collectedAt.",
     groupable: true,
+    locationScoped: true,
     adr: "ADR-0012",
     series: districtOrFiner,
   },
@@ -322,9 +286,10 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "RELIABILITY",
     unit: "SOURCE_DAYS",
     description:
-      "Share of source-days on which an expected data feed was within its cadence. On each UTC day a source is on schedule when it delivered an ingested Signal that day or within its cadence before it: daily for dataminr, sudan-war-x and darfur24, weekly for ACLED, fortnightly for IDMC and Sudan Witness, monthly for DTM. Only days that have ended are judged, and only the listed feeds; the location filter does not apply (ADR-0017).",
+      "Share of source-days on which an expected data feed was within its cadence. On each UTC day a source is on schedule when it delivered an ingested Signal within the last N days, N being its cadence: daily for dataminr, sudan-war-x and darfur24 (a delivery that very day), weekly for ACLED, fortnightly for IDMC and Sudan Witness. Only days that have ended are judged, and only the listed feeds; the location filter does not apply, so the reading covers every country (ADR-0017).",
     timeBasis: "Each UTC day of the range; a delivery is the Signal's collectedAt.",
     groupable: true,
+    locationScoped: false,
     adr: "ADR-0017",
     series: sourcesOnSchedule,
   },
@@ -337,8 +302,9 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
       "Share of Events a user escalated to the team, out of every Event whose first Signal arrived in the bucket. An interim usefulness proxy until actionability is recorded: an analyst escalating an Event is a decision that it mattered (ADR-0017).",
     timeBasis: "The Event's firstSignalCreatedAt.",
     groupable: false,
+    locationScoped: true,
     adr: "ADR-0017",
-    series: eventsEscalated,
+    series: ungroupedShare("EVENTS_ESCALATED", computeEscalationMetrics, (b) => ({ numerator: b.escalated, denominator: b.events })),
   },
 };
 

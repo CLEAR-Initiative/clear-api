@@ -6,8 +6,9 @@
  * `EXPECTED_CADENCE_DAYS` lists the feeds CLEAR expects and how often each
  * should deliver at least one ingested Signal. A source is **on schedule on a
  * UTC day** when it delivered an ingested Signal, by `collectedAt` (the
- * instant CLEAR received it), on that day or on one of the `cadence − 1` days
- * before it. A bucket's measure for a source is on-schedule days over days
+ * instant CLEAR received it), within the last N days, N being its cadence:
+ * that day or one of the N − 1 days before it, so a daily feed must deliver
+ * that very day. A bucket's measure for a source is on-schedule days over days
  * measured, where the days measured are the bucket's days inside the range
  * that have ended before `now`: a day is judged once it is over. Ungrouped,
  * every expected source's days add up: the share of expected source-days met.
@@ -23,6 +24,8 @@ import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import {
   bucketIndex,
   bucketsOf,
+  ingestedSignal,
+  normaliseSourceNames,
   resolveGranularity,
   resolveRange,
   startOfBucket,
@@ -30,15 +33,18 @@ import {
   type Bucket,
   type Granularity,
 } from "./detection-metrics.js";
-import { normaliseSourceNames } from "./location-precision-metrics.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The feeds CLEAR expects, by `dataSources.name`, and the most days that may
- * pass between two deliveries while the feed counts as on schedule. The
- * order is the order the series lists sources in. Revise it when a feed is
- * added, retired or changes its rhythm; the ADR records the reasoning.
+ * pass between two deliveries while the feed counts as on schedule. These are
+ * the feeds the Dagster pipeline polls (`clear-pipeline`,
+ * `src/clear_pipeline/defs/signals/connectors.py`) less GDACS, which is
+ * event-driven and silent when nothing happens; DTM has no live poller and is
+ * not listed. The order is the order the series lists sources in. A unit test
+ * pins the list, so adding, retiring or re-timing a feed is a deliberate
+ * change in review; the ADR records the reasoning.
  */
 export const EXPECTED_CADENCE_DAYS: Readonly<Record<string, number>> = {
   dataminr: 1,
@@ -47,7 +53,6 @@ export const EXPECTED_CADENCE_DAYS: Readonly<Record<string, number>> = {
   acled: 7,
   idmc: 14,
   sudan_witness: 14,
-  dtm: 31,
 };
 
 /** One day on which a source delivered at least one ingested Signal. */
@@ -139,7 +144,8 @@ export function summariseSourceHealth(
 /**
  * The days on which each expected source delivered an ingested Signal, from
  * the longest cadence before the range (so a delivery just before it counts
- * for its first days) to the range's end. Ingested means what time to
+ * for its first days) to the end of the range's last UTC day, since that
+ * whole day is judged once it has ended. Ingested means what time to
  * detection means: not an accepted web case, not filed by hand, not
  * retracted, not dummy.
  */
@@ -151,17 +157,15 @@ export async function fetchSourceDeliveryRows(
   if (sources.length === 0) return [];
   const lookback = Math.max(...sources.map((s) => s.cadenceDays)) - 1;
   const from = new Date(utcDay(range.from) * DAY_MS - lookback * DAY_MS);
+  const until = new Date((utcDay(range.to) + 1) * DAY_MS);
   return prisma.$queryRaw<SourceDeliveryRow[]>`
     SELECT ds."name" AS "source", FLOOR(EXTRACT(EPOCH FROM s."collected_at") / 86400)::int AS "day"
     FROM "signals" s
     JOIN "data_sources" ds ON ds."id" = s."source_id"
     WHERE ds."name" IN (${Prisma.join(sources.map((s) => s.source))})
       AND s."collected_at" >= ${from}
-      AND s."collected_at" <= ${range.to}
-      AND s."submitted_by_id" IS NULL
-      AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
-      AND NOT s."retracted"
-      AND NOT s."isDummy"
+      AND s."collected_at" < ${until}
+      AND ${ingestedSignal("s")}
     GROUP BY 1, 2
   `;
 }

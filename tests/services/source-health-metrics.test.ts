@@ -21,6 +21,14 @@ const range = { from: at("2026-10-26T00:00:00Z"), to: at("2026-11-01T23:59:59.99
 // Friday morning: Monday to Thursday have ended.
 const now = at("2026-10-30T09:00:00Z");
 
+describe("EXPECTED_CADENCE_DAYS", () => {
+  it("is the pipeline's polled feeds, so a change here is a deliberate one", () => {
+    // clear-pipeline, src/clear_pipeline/defs/signals/connectors.py: dataminr, acled, gdacs (event-driven, not
+    // measured), darfur24, idmc, sudan_witness, manual channels (not measured), sudan-war-x. DTM has no live poller.
+    expect(EXPECTED_CADENCE_DAYS).toEqual({ dataminr: 1, "sudan-war-x": 1, darfur24: 1, acled: 7, idmc: 14, sudan_witness: 14 });
+  });
+});
+
 describe("expectedSources", () => {
   it("lists the expected feeds in order, or the asked-for subset of them, ignoring names outside the list", () => {
     expect(expectedSources(null).map((s) => s.source)).toEqual(Object.keys(EXPECTED_CADENCE_DAYS));
@@ -101,6 +109,9 @@ describe("fetchSourceDeliveryRows and computeSourceHealthMetrics", () => {
     expect(json).toContain("dataminr");
     // Six days before Monday 26: a delivery on Tuesday 20 still covers the Monday.
     expect(json).toContain("2026-10-20T00:00:00.000Z");
+    // To the end of the range's last UTC day, exclusive: the whole of Sunday 1 November is judged.
+    expect(json).toContain("2026-11-02T00:00:00.000Z");
+    expect(strings.join("?")).toContain('s."collected_at" < ?');
     expect(await fetchSourceDeliveryRows(prisma, range, [])).toEqual([]);
     expect($queryRaw).toHaveBeenCalledTimes(1);
   });

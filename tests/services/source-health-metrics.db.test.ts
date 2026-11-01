@@ -7,13 +7,14 @@
  */
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
-import { fetchSourceDeliveryRows, summariseSourceHealth } from "../../src/services/source-health-metrics.js";
+import { EXPECTED_CADENCE_DAYS, computeSourceHealthMetrics, fetchSourceDeliveryRows, summariseSourceHealth } from "../../src/services/source-health-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
 
 const RUN = `sh-db-${Date.now()}`;
 const USER = `${RUN}-user`;
 const DAILY = `${RUN}-daily`;
 const WEEKLY = `${RUN}-weekly`;
+const OTHER = `${RUN}-other`;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const sourceIds: Record<string, string> = {};
 let n = 0;
@@ -39,7 +40,7 @@ async function delivery(source: string, collectedAt: string, opts: { history?: b
 describeIfDb("source health against the real schema", () => {
   beforeAll(async () => {
     await prisma.user.create({ data: { id: USER, name: "Analyst", email: `${RUN}@example.org`, role: "analyst" } });
-    for (const name of [DAILY, WEEKLY]) {
+    for (const name of [DAILY, WEEKLY, OTHER]) {
       const source = await prisma.dataSources.create({ data: { name, type: "test" } });
       sourceIds[name] = source.id;
     }
@@ -62,6 +63,10 @@ describeIfDb("source health against the real schema", () => {
     await delivery(DAILY, "2026-10-16T09:00:00Z", { isDummy: true });
     await delivery(DAILY, "2026-10-17T09:00:00Z");
     await delivery(DAILY, "2026-10-18T23:30:00Z");
+    // Just after the range's last day ends: not read, even though it is within the lookback of nothing.
+    await delivery(DAILY, "2026-10-19T00:30:00Z");
+    // A source that is not asked for delivers every day and must not appear.
+    await delivery(OTHER, "2026-10-14T09:00:00Z");
     // The weekly feed: 5 October is before the lookback and must not be read;
     // 7 October covers 12 and 13; 16 October covers 16 to 18.
     await delivery(WEEKLY, "2026-10-05T09:00:00Z");
@@ -91,5 +96,9 @@ describeIfDb("source health against the real schema", () => {
     ]);
     expect(m.series.filter((r) => r.source === DAILY).map((r) => r.onScheduleDays)).toEqual([1, 0, 0, 0, 0, 1, 1]);
     expect(m.series.filter((r) => r.source === WEEKLY).map((r) => r.onScheduleDays)).toEqual([1, 1, 0, 0, 1, 1, 1]);
+
+    // The service end to end reads the expected feeds, none of which exists here: every measured day is late.
+    const whole = await computeSourceHealthMetrics(prisma, { from: range.from, to: range.to, granularity: "WEEK" }, at("2026-10-19T06:00:00Z"));
+    expect(whole.bySource.map((s) => [s.source, s.onScheduleDays, s.days])).toEqual(Object.keys(EXPECTED_CADENCE_DAYS).map((source) => [source, 0, 7]));
   });
 });

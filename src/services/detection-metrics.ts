@@ -370,6 +370,23 @@ export function summarise(
  * general location is that location or inside it, as `eventsByLocation` does.
  */
 /**
+ * The predicate that makes a Signal (aliased `alias`, a code-owned name) an
+ * ingested one: brought in by a pipeline (not an accepted web case, not filed
+ * by hand) and live (not retracted, not dummy). The one definition every
+ * Signal-based metric reads, so a change to what "ingested" means is made once.
+ */
+export function ingestedSignal(alias: string): Prisma.Sql {
+  return Prisma.raw(
+    `${alias}."submitted_by_id" IS NULL AND ${alias}."raw_data"->>'manual' IS DISTINCT FROM 'true' AND NOT ${alias}."retracted" AND NOT ${alias}."isDummy"`,
+  );
+}
+
+/** Source names as a caller gave them: trimmed, empty ones dropped, duplicates removed. */
+export function normaliseSourceNames(sourceNames: string[] | null | undefined): string[] {
+  return [...new Set((sourceNames ?? []).map((name) => name.trim()).filter(Boolean))];
+}
+
+/**
  * The `WHERE` clause that keeps the Events (aliased `e`) whose origin,
  * destination or general location is `locationId` or inside it, as
  * `eventsByLocation` reads it; empty for no location. Shared by every
@@ -396,10 +413,7 @@ export async function fetchDetectionEvents(
       SELECT se."event_id", MIN(s."published_at") AS "at"
       FROM "signal_to_events" se
       JOIN "signals" s ON s."id" = se."signal_id"
-      WHERE s."submitted_by_id" IS NULL
-        AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
-        AND NOT s."retracted"
-        AND NOT s."isDummy"
+      WHERE ${ingestedSignal("s")}
       GROUP BY se."event_id"
     )
     SELECT e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",

@@ -15,7 +15,7 @@ import type { Context } from "../../src/context.js";
 
 const METRIC_DEFINITIONS = `
   query MetricDefinitions {
-    metricDefinitions { key name dimension unit description timeBasis groupable adr }
+    metricDefinitions { key name dimension unit description timeBasis groupable locationScoped adr }
   }
 `;
 
@@ -78,7 +78,8 @@ describe("metricDefinitions schema contract", () => {
       "EVENTS_ESCALATED",
     ]);
     expect(defs[4]).toMatchObject({ name: "At district or finer", dimension: "ACCURACY", unit: "SIGNALS", groupable: true, adr: "ADR-0012" });
-    expect(defs[5]).toMatchObject({ name: "Sources on schedule", dimension: "RELIABILITY", unit: "SOURCE_DAYS", groupable: true, adr: "ADR-0017" });
+    expect(defs[0]).toMatchObject({ locationScoped: true });
+    expect(defs[5]).toMatchObject({ name: "Sources on schedule", dimension: "RELIABILITY", unit: "SOURCE_DAYS", groupable: true, locationScoped: false, adr: "ADR-0017" });
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect((await run({ id: "u", role: "analyst" }, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
     expect((await run(null, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("UNAUTHENTICATED");

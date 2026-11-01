@@ -33,6 +33,8 @@ import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import {
   bucketIndex,
   bucketsOf,
+  ingestedSignal,
+  normaliseSourceNames,
   resolveGranularity,
   resolveRange,
   startOfBucket,
@@ -40,6 +42,8 @@ import {
   type Bucket,
   type Granularity,
 } from "./detection-metrics.js";
+
+export { normaliseSourceNames };
 
 export const LEVELS = ["noLocation", "country", "state", "district", "point"] as const;
 export type Level = (typeof LEVELS)[number];
@@ -246,10 +250,7 @@ export async function fetchLocationPrecisionRows(
     FROM "signals" s
     JOIN "data_sources" ds ON ds."id" = s."source_id"
     LEFT JOIN "locations" l ON l."id" = ${PIPELINE_LOCATION}
-    WHERE s."submitted_by_id" IS NULL
-      AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
-      AND NOT s."retracted"
-      AND NOT s."isDummy"
+    WHERE ${ingestedSignal("s")}
       AND COALESCE(s."processed_at", s."collected_at") >= ${range.from}
       AND COALESCE(s."processed_at", s."collected_at") <= ${range.to}
       ${inSources}
@@ -278,11 +279,6 @@ export async function fetchLocationCorrectionRows(
       ${inLocation}
     GROUP BY 1
   `;
-}
-
-/** Source names as the query uses them: trimmed, non-empty, unique. */
-export function normaliseSourceNames(sourceNames: string[] | null | undefined): string[] {
-  return [...new Set((sourceNames ?? []).map((name) => name.trim()).filter(Boolean))];
 }
 
 /** Location precision over the requested range, location and sources. */

@@ -38,26 +38,38 @@ same `metricSeries` contract, defined as follows.
   still raised when it was created, and one the pipeline created already
   archived (a suppressed stale Event) is a late Alert, not no Alert. Dummy
   Events take no part. The location filter is the Event's, as for time to
-  detection. The Notion row's median is not served: a median is not a share,
+  detection. One more exclusion, `BACKFILLED_TIMESTAMP`: the Alerts that
+  existed when migration `20260513000000_add_alert_and_location_timestamps`
+  added the column were all stamped with that run's instant (13–14 May 2026
+  on dev; prod has its own), so when they were raised is unknown. The
+  service reads the run's window from `_prisma_migrations` and excludes
+  them, so the deploy week does not read as a cliff of late Alerts. The Notion row's median is not served: a median is not a share,
   and the by-next-day share answers the same question in the same shape as
   detection, so the two can be read side by side.
 - **Sources on schedule** (`SOURCES_ON_SCHEDULE`, Reliability, unit
   source-days, groupable by source). `EXPECTED_CADENCE_DAYS` in
   `src/services/source-health-metrics.ts` lists the feeds CLEAR expects and
   the most days that may pass between two deliveries: dataminr, sudan-war-x
-  and darfur24 daily; ACLED weekly; IDMC and Sudan Witness fortnightly; DTM
-  monthly. On each UTC day a source is **on schedule** when it delivered an
-  ingested Signal (by `collectedAt`, the instant CLEAR received it) that day
-  or within the cadence before it. A bucket's measure for a source is
-  on-schedule days over days measured; only days that have ended before now
-  are judged, so a feed is never marked late for a day still running.
-  Ungrouped, every expected source's days add up: the share of expected
-  source-days met. Sources outside the list are not measured: organisation
-  rows, manual channels (field officers, WhatsApp, e-mail) and event-driven
-  feeds such as GDACS that are silent when nothing happens. The location
-  filter does not apply. The list lives in code, not in `data_sources`,
+  and darfur24 daily; ACLED weekly; IDMC and Sudan Witness fortnightly. These
+  are the feeds the Dagster pipeline polls
+  (`clear-pipeline/src/clear_pipeline/defs/signals/connectors.py`) less
+  GDACS, which is event-driven and silent when nothing happens; DTM has no
+  live poller (its Signals are hand imports) and is not listed. On each UTC
+  day a source is **on schedule** when it delivered an ingested Signal (by
+  `collectedAt`, the instant CLEAR received it) within the last N days, N
+  being its cadence, so a daily feed must deliver that very day. A bucket's
+  measure for a source is on-schedule days over days measured; only days
+  that have ended before now are judged, so a feed is never marked late for
+  a day still running. Ungrouped, every expected source's days add up: the
+  share of expected source-days met. Sources outside the list are not
+  measured: organisation rows, manual channels (field officers, WhatsApp,
+  e-mail) and event-driven feeds. The location filter does not apply, and the
+  registry says so: `MetricDefinition.locationScoped` is false for this
+  metric, so a client can drop the country filter from its reading and label
+  it as every country. The list lives in code, not in `data_sources`,
   because it is a statement of expectation the team revises in review, not a
-  property of the source row.
+  property of the source row; a unit test pins it, so adding, retiring or
+  re-timing a feed is a deliberate change.
 - **Events escalated** (`EVENTS_ESCALATED`, Usefulness, unit Events). The
   share of Events a user escalated (`escalateEvent`, which also raises the
   Alert), out of every non-dummy Event whose `firstSignalCreatedAt` falls in
@@ -83,8 +95,10 @@ defines nothing. Counts only; shares are the caller's.
   created-archived Alerts (suppressed stale Events) would vanish rather than
   read as late.
 - **Cadence as a column on `data_sources`.** Editable by admins, but then an
-  unset column silently drops a feed from the measure; a reviewed list fails
-  loudly in a test when a feed is added without a cadence.
+  unset column silently drops a feed from the measure, and `isActive` says
+  whether a source may be written to, not how often it should deliver. A
+  list in code is reviewed against the pipeline's connectors and pinned by a
+  test.
 - **A `delivered this week` share per source.** Reads 14% for a healthy
   weekly feed on daily buckets; judging each day against the feed's own
   cadence reads 100% for any healthy feed at any bucket size.
@@ -96,7 +110,11 @@ defines nothing. Counts only; shares are the caller's.
 - The Notion rows Time to alert and Source health become Tracked with
   baselines and Chart links; Actionability gets its interim proxy noted.
 - clear-mvp shows the registry's English names and `n = N` for source-days
-  until its messages carry the four new keys and the unit.
+  until its messages carry the four new keys and the unit, and should read
+  `locationScoped` to show Sources on schedule as every country when a
+  country is selected.
+- Alerts created before 13 May 2026 are excluded from time to alert, so the
+  shares read from that deploy onwards only.
 - A new feed needs an `EXPECTED_CADENCE_DAYS` entry to be measured; a
   retired feed needs its entry removed, or it reads as permanently late.
 - When #1268 records acknowledgements and actionability, Events escalated is

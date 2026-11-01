@@ -57,6 +57,7 @@ describe("metricDefinitions", () => {
       ["Sources on schedule", "RELIABILITY", "SOURCE_DAYS", true, "ADR-0017"],
       ["Events escalated", "USEFULNESS", "EVENTS", false, "ADR-0017"],
     ]);
+    expect(defs.filter((d) => !d.locationScoped).map((d) => d.key)).toEqual(["SOURCES_ON_SCHEDULE"]);
     for (const d of defs) {
       expect(d.description.length).toBeGreaterThan(40);
       expect(d.timeBasis.length).toBeGreaterThan(10);

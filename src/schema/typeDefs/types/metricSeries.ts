@@ -38,7 +38,7 @@ export const metricSeriesTypeDef = gql`
 
   """How a series can be split into groups."""
   enum MetricGroupBy {
-    """One series per data source (\`DataSource.name\`), most Signals first."""
+    """One series per data source (\`DataSource.name\`), in the owning query's order: most Signals first for Signal metrics, the expected-cadence list for Sources on schedule."""
     SOURCE
   }
 
@@ -55,6 +55,8 @@ export const metricSeriesTypeDef = gql`
     timeBasis: String!
     """True when the series can be read with \`groupBy: SOURCE\`."""
     groupable: Boolean!
+    """True when \`locationId\` scopes the series. False for a metric that reads every country (Sources on schedule): clients should drop the country filter from its reading and label it so."""
+    locationScoped: Boolean!
     """The ADR that owns the definition, e.g. \`ADR-0012\`."""
     adr: String!
   }
@@ -68,7 +70,7 @@ export const metricSeriesTypeDef = gql`
     from: DateTime
     """End of the range, inclusive. Defaults to now."""
     to: DateTime
-    """Only rows in this location or inside it, as the owning query reads it."""
+    """Only rows in this location or inside it, as the owning query reads it. Ignored by a metric whose definition has \`locationScoped: false\`."""
     locationId: String
     """Only these sources, by \`DataSource.name\`; only for metrics that can be grouped by source."""
     sourceNames: [String!]

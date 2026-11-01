@@ -61,8 +61,9 @@ describeIfDb("events escalated against the real schema", () => {
     await event({ firstSignalAt: "2026-10-12T09:00:00Z", escalatedBy: [USERS[0]!] });
     await event({ firstSignalAt: "2026-10-12T10:00:00Z", escalatedBy: USERS });
     await event({ firstSignalAt: "2026-10-14T09:00:00Z" });
-    // Not in the metric: a dummy Event, an Event after the range; abroad is out of the country's scope only.
+    // Not in the metric: a dummy Event, an Event before the range, one after it; abroad is out of the country's scope only.
     await event({ firstSignalAt: "2026-10-14T11:00:00Z", escalatedBy: [USERS[0]!], isDummy: true });
+    await event({ firstSignalAt: "2026-10-05T09:00:00Z", escalatedBy: [USERS[0]!] });
     await event({ firstSignalAt: "2026-10-20T09:00:00Z", escalatedBy: [USERS[0]!] });
     await event({ firstSignalAt: "2026-10-15T09:00:00Z", escalatedBy: [USERS[1]!], locationId: ABROAD });
 
