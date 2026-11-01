@@ -132,7 +132,7 @@ export async function fetchRecallRows(
       JOIN "events" e ON e."id" = al."event_id"
       CROSS JOIN LATERAL (VALUES (e."location_id"), (e."origin_id"), (e."destination_id")) AS p("place_id")
       JOIN "locations" el ON el."id" = p."place_id"
-      CROSS JOIN generate_series(${-windowDays}, ${windowDays}) AS g("offset")
+      CROSS JOIN generate_series(${-windowDays}::int, ${windowDays}::int) AS g("offset")
       WHERE NOT e."isDummy"
         AND COALESCE(
           CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
