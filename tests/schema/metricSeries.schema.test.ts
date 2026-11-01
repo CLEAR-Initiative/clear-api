@@ -15,7 +15,7 @@ import type { Context } from "../../src/context.js";
 
 const METRIC_DEFINITIONS = `
   query MetricDefinitions {
-    metricDefinitions { key name dimension unit description timeBasis groupable adr }
+    metricDefinitions { key name dimension unit description timeBasis groupable locationScoped adr }
   }
 `;
 
@@ -68,8 +68,18 @@ describe("metricDefinitions schema contract", () => {
     const { result, prisma } = await run(admin, METRIC_DEFINITIONS, {}, []);
     expect(result.errors).toBeUndefined();
     const defs = result.data?.metricDefinitions as Array<Record<string, unknown>>;
-    expect(defs.map((d) => d.key)).toEqual(["DETECTED_BY_NEXT_DAY", "DETECTED_SAME_DAY", "DISTRICT_OR_FINER"]);
-    expect(defs[2]).toMatchObject({ name: "At district or finer", dimension: "ACCURACY", unit: "SIGNALS", groupable: true, adr: "ADR-0012" });
+    expect(defs.map((d) => d.key)).toEqual([
+      "DETECTED_BY_NEXT_DAY",
+      "DETECTED_SAME_DAY",
+      "ALERTED_BY_NEXT_DAY",
+      "ALERTED_SAME_DAY",
+      "DISTRICT_OR_FINER",
+      "SOURCES_ON_SCHEDULE",
+      "EVENTS_ESCALATED",
+    ]);
+    expect(defs[4]).toMatchObject({ name: "At district or finer", dimension: "ACCURACY", unit: "SIGNALS", groupable: true, adr: "ADR-0012" });
+    expect(defs[0]).toMatchObject({ locationScoped: true });
+    expect(defs[5]).toMatchObject({ name: "Sources on schedule", dimension: "RELIABILITY", unit: "SOURCE_DAYS", groupable: true, locationScoped: false, adr: "ADR-0017" });
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect((await run({ id: "u", role: "analyst" }, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
     expect((await run(null, METRIC_DEFINITIONS, {}, [])).result.errors?.[0]?.extensions?.code).toBe("UNAUTHENTICATED");
@@ -102,6 +112,30 @@ describe("metricSeries schema contract", () => {
     expect(s.groups).toEqual([]);
     expect(s.buckets).toHaveLength(12);
     expect(s.buckets.every((b) => b.group === null)).toBe(true);
+  });
+
+  it("reads sources on schedule per source by day over a week that has ended", async () => {
+    // ISO week 2026-W42, long over, so every day is judged whatever the clock says.
+    const week = { from: "2026-10-12T00:00:00.000Z", to: "2026-10-18T23:59:59.999Z" };
+    const { result, prisma } = await run(
+      admin,
+      METRIC_SERIES,
+      { input: { metric: "SOURCES_ON_SCHEDULE", granularity: "DAY", ...week, groupBy: "SOURCE", sourceNames: ["dataminr"] } },
+      [[{ source: "dataminr", day: day("2026-10-12") }, { source: "dataminr", day: day("2026-10-13") }, { source: "dataminr", day: day("2026-10-15") }]],
+    );
+    expect(result.errors).toBeUndefined();
+    const s = result.data?.metricSeries as { groups: string[]; buckets: Array<Record<string, unknown>> };
+    expect(s.groups).toEqual(["dataminr"]);
+    expect(s.buckets.map((b) => [b.label, b.group, b.numerator, b.denominator])).toEqual([
+      ["2026-10-12", "dataminr", 1, 1],
+      ["2026-10-13", "dataminr", 1, 1],
+      ["2026-10-14", "dataminr", 0, 1],
+      ["2026-10-15", "dataminr", 1, 1],
+      ["2026-10-16", "dataminr", 0, 1],
+      ["2026-10-17", "dataminr", 0, 1],
+      ["2026-10-18", "dataminr", 0, 1],
+    ]);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it("refuses an unknown metric at validation, a grouping the metric lacks, and a non-admin", async () => {

@@ -7,8 +7,16 @@ export const metricSeriesTypeDef = gql`
     DETECTED_BY_NEXT_DAY
     """Share of measured Events first signalled on the onset day (ADR-0011)."""
     DETECTED_SAME_DAY
+    """Share of measured Alerts raised on the Event's onset day or the day after (ADR-0017)."""
+    ALERTED_BY_NEXT_DAY
+    """Share of measured Alerts raised on the Event's onset day (ADR-0017)."""
+    ALERTED_SAME_DAY
     """Share of located ingested Signals placed at a district or a point inside one (ADR-0012)."""
     DISTRICT_OR_FINER
+    """Share of source-days on which an expected data feed was within its cadence (ADR-0017)."""
+    SOURCES_ON_SCHEDULE
+    """Share of Events a user escalated to the team, an interim usefulness proxy (ADR-0017)."""
+    EVENTS_ESCALATED
   }
 
   """The Notion Metrics table's dimension a metric sits under."""
@@ -24,11 +32,13 @@ export const metricSeriesTypeDef = gql`
   enum MetricUnit {
     EVENTS
     SIGNALS
+    """One per expected data source per measured UTC day."""
+    SOURCE_DAYS
   }
 
   """How a series can be split into groups."""
   enum MetricGroupBy {
-    """One series per data source (\`DataSource.name\`), most Signals first."""
+    """One series per data source (\`DataSource.name\`), in the owning query's order: most Signals first for Signal metrics, the expected-cadence list for Sources on schedule."""
     SOURCE
   }
 
@@ -45,6 +55,8 @@ export const metricSeriesTypeDef = gql`
     timeBasis: String!
     """True when the series can be read with \`groupBy: SOURCE\`."""
     groupable: Boolean!
+    """True when \`locationId\` scopes the series. False for a metric that reads every country (Sources on schedule): clients should drop the country filter from its reading and label it so."""
+    locationScoped: Boolean!
     """The ADR that owns the definition, e.g. \`ADR-0012\`."""
     adr: String!
   }
@@ -58,7 +70,7 @@ export const metricSeriesTypeDef = gql`
     from: DateTime
     """End of the range, inclusive. Defaults to now."""
     to: DateTime
-    """Only rows in this location or inside it, as the owning query reads it."""
+    """Only rows in this location or inside it, as the owning query reads it. Ignored by a metric whose definition has \`locationScoped: false\`."""
     locationId: String
     """Only these sources, by \`DataSource.name\`; only for metrics that can be grouped by source."""
     sourceNames: [String!]
