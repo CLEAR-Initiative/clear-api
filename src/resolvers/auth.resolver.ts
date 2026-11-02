@@ -6,6 +6,7 @@ import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
 import {
   MIN_PASSWORD_LENGTH,
+  buildAppResetUrl,
   resetPasswordWithToken,
   sendPasswordResetEmail,
 } from "../services/password-reset.js";
@@ -134,8 +135,9 @@ export const authResolvers = {
       // Always resolves true regardless of whether the address exists,
       // is throttled, or the mail send failed — see
       // `sendPasswordResetEmail`. Never branch on the return value here
-      // or the enumeration guarantee is lost.
-      await sendPasswordResetEmail(context.prisma, args.email);
+      // or the enumeration guarantee is lost. The CLEAR app calls this, so
+      // the link lands on the app's reset page, not the Developer Portal.
+      await sendPasswordResetEmail(context.prisma, args.email, buildAppResetUrl);
       return true;
     },
 

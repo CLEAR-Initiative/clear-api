@@ -18,7 +18,7 @@ vi.mock("../../src/services/messaging/index.js", () => ({
   getEmailProvider: vi.fn(async () => ({ send: sendMock })),
   templates: {
     emailVerification: () => ({ subject: "verify", textBody: "t", htmlBody: "<p>" }),
-    passwordReset: () => ({ subject: "reset", textBody: "t", htmlBody: "<p>" }),
+    passwordReset: (_name: string, url: string) => ({ subject: "reset", textBody: url, htmlBody: "<p>" }),
   },
 }));
 
@@ -193,6 +193,21 @@ describe("Mutation.requestPasswordReset", () => {
     expect(create).toHaveBeenCalledOnce();
     expect(create.mock.calls[0][0].data.identifier).toBe("password-reset:a@b.dev");
     expect(sendMock).toHaveBeenCalledOnce();
+  });
+
+  it("emails a link to the app's reset page, not the Developer Portal", async () => {
+    const ctx = buildContext(null, {
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", name: "A" }) },
+      verification: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({ id: "v1" }),
+      },
+    });
+    await requestPasswordReset(null, { email: "a@b.dev" }, ctx);
+    const url = new URL(sendMock.mock.calls[0][0].textBody);
+    expect(url.pathname).toBe("/auth/reset-password");
+    expect(url.searchParams.get("token")).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

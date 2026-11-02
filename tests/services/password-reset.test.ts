@@ -32,6 +32,7 @@ import {
   MIN_PASSWORD_LENGTH,
   PASSWORD_RESET_IDENTIFIER_PREFIX,
   RESET_THROTTLE_MS,
+  buildAppResetUrl,
   buildResetUrl,
   findValidResetToken,
   issueResetToken,
@@ -47,6 +48,14 @@ const asPrisma = (stub: PrismaStub) => stub as unknown as PrismaClient;
 beforeEach(() => {
   sendMock.mockReset();
   sendMock.mockResolvedValue(undefined);
+});
+
+describe("buildAppResetUrl", () => {
+  it("points at the app's reset page on the frontend host", () => {
+    const url = new URL(buildAppResetUrl("abc123"));
+    expect(url.pathname).toBe("/auth/reset-password");
+    expect(url.searchParams.get("token")).toBe("abc123");
+  });
 });
 
 describe("buildResetUrl", () => {
@@ -185,6 +194,22 @@ describe("sendPasswordResetEmail", () => {
     expect(sendMock).toHaveBeenCalledOnce();
     expect(sendMock.mock.calls[0][0].to).toBe("a@b.dev");
     expect(sendMock.mock.calls[0][0].textBody).toContain("/portal/reset-password?token=");
+  });
+
+  it("mails the link from the given builder when a caller passes one", async () => {
+    const prisma = asPrisma({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", name: "A" }) },
+      verification: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({ id: "v1" }),
+      },
+    });
+
+    await sendPasswordResetEmail(prisma, "a@b.dev", buildAppResetUrl);
+
+    expect(sendMock.mock.calls[0][0].textBody).toContain("/auth/reset-password?token=");
+    expect(sendMock.mock.calls[0][0].textBody).not.toContain("/portal/");
   });
 
   it("normalises the address so casing and padding resolve to one account", async () => {
