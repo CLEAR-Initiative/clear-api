@@ -34,6 +34,7 @@ import {
   launchRun,
 } from "../utils/dagster-client.js";
 import { syncEventCards } from "../services/event-card.js";
+import { resolvePipelineIso3 } from "./pipelineCountry.resolver.js";
 import {
   EMBEDDING_DIMENSIONS,
   embedQuery,
@@ -156,15 +157,25 @@ const DAGSTER_TAG_S3_KEY = "clear.s3_key";
 const DAGSTER_TAG_TEAM_ID = "clear.team_id";
 const DAGSTER_TAG_UPLOADED_BY = "clear.uploaded_by_user_id";
 
-// Dagster job name — must match the @job in
-// dagster-quickstart/src/dagster_quickstart/defs/knowledgebase/manual_ingest.py.
-const MANUAL_INGEST_JOB_NAME = "process_manual_document_job";
+// A manual upload is a PUSH KB source (ADR-0013): we stage the PDF + a staged-
+// document marker into the `manual/` S3 namespace the pipeline's ManualConnector
+// owns, then launch the source-neutral downstream for the document's country
+// partition. `kb_pdf_text` discovers the staged doc from the marker — so manual
+// uploads flow through the identical text→chunks→enrich→upsert→datapoints→
+// aggregations→situation chain as ReliefWeb (retiring `manual_ingest`).
+const KB_DOWNSTREAM_JOB_NAME = "kb_downstream_job";
+// Dagster derives `context.partition_key` from this run tag.
+const DAGSTER_PARTITION_TAG = "dagster/partition";
 
-// S3 prefix under which uploaded PDFs land. Mirrors the prefix the
-// Dagster manual flow already writes its debug artefacts to
-// (reliefweb/kb/manual/…), keeping every "manual ingest" artefact
-// under one namespace in the bucket.
-const MANUAL_UPLOAD_S3_PREFIX = "reliefweb/manual-uploads";
+// Manual-source S3 layout — MUST byte-match
+// providers/kb_sources/paths.py for source="manual", format_slug="upload"
+// (the pipeline's ManualConnector lists `manualReportsPrefix` for the marker).
+const MANUAL_SOURCE = "manual";
+const MANUAL_SLUG = "upload";
+const manualReportsPrefix = (iso3: string): string =>
+  `${MANUAL_SOURCE}/reports/${iso3}/${MANUAL_SLUG}/`;
+const manualPdfKey = (iso3: string, reportId: string, filename: string): string =>
+  `${MANUAL_SOURCE}/pdfs/${iso3}/${MANUAL_SLUG}/${reportId}/${filename}`;
 
 interface KnowledgebaseIngestJob {
   runId: string;
@@ -1336,6 +1347,7 @@ export const knowledgebaseResolvers = {
         title: string;
         sourceUrl?: string | null;
         publishedAt: Date;
+        countryIso3: string;
         teamId?: string | null;
         analysisAutomationId?: string | null;
       },
@@ -1347,6 +1359,20 @@ export const knowledgebaseResolvers = {
       // a team member uploads on behalf of their team. `user` is the uploader,
       // attributed onto the ingest run below.
       const { user, via } = await requireTeamContentWriter(context, args.teamId);
+
+      // Resolve + validate the target country partition BEFORE spending any
+      // S3/Dagster work. Must be a pipeline country — the downstream is
+      // country-partitioned, so an unknown iso3 could never launch (fail loudly
+      // with an actionable message instead). `iso3` is the lowercase Dagster
+      // partition key.
+      const iso3 = resolvePipelineIso3(args.countryIso3);
+      if (!iso3) {
+        throw new GraphQLError(
+          `uploadKnowledgebaseDocument: countryIso3 must be a pipeline country iso3 ` +
+            `(got ${JSON.stringify(args.countryIso3)})`,
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
+      }
 
       // When attaching to an automation, validate ownership BEFORE spending any
       // S3/Dagster work: the automation must exist, and a team writer may only
@@ -1403,7 +1429,7 @@ export const knowledgebaseResolvers = {
       // launchRun (not via this mutation).
       const sha = createHash("sha256").update(buffer).digest("hex").slice(0, 12);
       const reportId = `manual:${sha}`;
-      const s3Key = `${MANUAL_UPLOAD_S3_PREFIX}/${reportId}.pdf`;
+      const s3Key = manualPdfKey(iso3, reportId, filename);
 
       const s3 = getS3();
       await s3.send(
@@ -1438,6 +1464,36 @@ export const knowledgebaseResolvers = {
         });
       }
 
+      // Stage a KbRawDocument marker under the manual source's namespace. The
+      // pipeline's source-neutral `kb_pdf_text` discovers it (one JSONL line, the
+      // snake_case shape `reliefweb_fetch` writes), so the upload flows through
+      // the identical downstream. Written on BOTH paths (offline + launched) so a
+      // later manual launch can still pick it up. publisher_* are left null — the
+      // datapoint extractor identifies the publisher from the document text.
+      const publishedAtIso = args.publishedAt.toISOString();
+      const stagedDoc = {
+        source: MANUAL_SOURCE,
+        report_id: reportId,
+        pdf_s3_key: s3Key,
+        title: args.title,
+        published_at: publishedAtIso,
+        source_url: args.sourceUrl ?? null,
+        publisher_name: null,
+        publisher_homepage: null,
+        country_iso3: iso3,
+        filename,
+        extra: { uploaded_by_user_id: user.id, team_id: args.teamId ?? null },
+      };
+      const markerKey = `${manualReportsPrefix(iso3)}${Date.now()}-${sha}.staged.jsonl`;
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: env.S3_BUCKET,
+          Key: markerKey,
+          Body: `${JSON.stringify(stagedDoc)}\n`,
+          ContentType: "application/x-ndjson",
+        }),
+      );
+
       // When DAGSTER_URL is unset (dev-only offline case), stage the
       // upload and return a synthetic UNKNOWN-status job. The client
       // still gets the report_id / s3_key so it can display the
@@ -1455,24 +1511,9 @@ export const knowledgebaseResolvers = {
         };
       }
 
-      const publishedAtIso = args.publishedAt.toISOString();
-      const runConfig = {
-        ops: {
-          process_manual_document: {
-            config: {
-              s3_key: s3Key,
-              report_id: reportId,
-              report_title: args.title,
-              source_url: args.sourceUrl ?? "",
-              published_at: publishedAtIso,
-              // Attribution carried into the ingest op (optional config fields).
-              team_id: args.teamId ?? "",
-              uploaded_by_user_id: user.id,
-            },
-          },
-        },
-      };
       const tags: Record<string, string> = {
+        // Selects the country partition kb_downstream_job runs for.
+        [DAGSTER_PARTITION_TAG]: iso3,
         [DAGSTER_TAG_REPORT_ID]: reportId,
         [DAGSTER_TAG_REPORT_TITLE]: args.title,
         [DAGSTER_TAG_S3_KEY]: s3Key,
@@ -1482,7 +1523,9 @@ export const knowledgebaseResolvers = {
       };
 
       try {
-        const { runId } = await launchRun(MANUAL_INGEST_JOB_NAME, runConfig, tags);
+        // The kb_* assets take no run config; the partition tag selects the
+        // country, and kb_pdf_text discovers the staged doc from the marker.
+        const { runId } = await launchRun(KB_DOWNSTREAM_JOB_NAME, {}, tags);
         return {
           runId,
           // Dagster's initial status is QUEUED — the poll query will

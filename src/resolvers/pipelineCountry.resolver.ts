@@ -24,6 +24,21 @@ const PIPELINE_COUNTRIES: ReadonlyArray<{
   { name: "Venezuela", iso3: "VEN", pcode: "VE", bbox: [-73.4, 0.6, -59.8, 12.3] },
 ];
 
+/**
+ * Resolve a user-supplied country code to the canonical lowercase iso3 the KB
+ * pipeline uses as its Dagster partition key, or `null` when it isn't one of the
+ * pipeline countries. Case-insensitive; accepts the iso3 (e.g. "SDN"/"sdn").
+ * Used by `uploadKnowledgebaseDocument` to validate the target partition before
+ * launching `kb_downstream_job`, so an upload can never target a non-existent
+ * country partition.
+ */
+export function resolvePipelineIso3(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const want = code.trim().toUpperCase();
+  const hit = PIPELINE_COUNTRIES.find((c) => c.iso3 === want);
+  return hit ? hit.iso3.toLowerCase() : null;
+}
+
 export const pipelineCountryResolvers = {
   Query: {
     pipelineCountries: (_parent: unknown, _args: unknown, context: Context) => {
