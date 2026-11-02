@@ -39,6 +39,20 @@ export function resolvePipelineIso3(code: string | null | undefined): string | n
   return hit ? hit.iso3.toLowerCase() : null;
 }
 
+/**
+ * Resolve a level-0 location's admin-0 pcode (ISO-2, e.g. "SD") to the canonical
+ * lowercase iso3 partition key, or `null` when it isn't a pipeline country.
+ * Case-insensitive. The pcode is the name-independent key the pipeline resolves
+ * countries by (the backfilled location name is often the long official form),
+ * so this is the robust way to map a frame's country location to its partition.
+ */
+export function resolvePipelineIso3ByPcode(pcode: string | null | undefined): string | null {
+  if (!pcode) return null;
+  const want = pcode.trim().toUpperCase();
+  const hit = PIPELINE_COUNTRIES.find((c) => c.pcode.toUpperCase() === want);
+  return hit ? hit.iso3.toLowerCase() : null;
+}
+
 export const pipelineCountryResolvers = {
   Query: {
     pipelineCountries: (_parent: unknown, _args: unknown, context: Context) => {

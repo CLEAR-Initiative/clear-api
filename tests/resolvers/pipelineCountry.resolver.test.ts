@@ -9,6 +9,7 @@ import { GraphQLError } from "graphql";
 import {
   pipelineCountryResolvers,
   resolvePipelineIso3,
+  resolvePipelineIso3ByPcode,
 } from "../../src/resolvers/pipelineCountry.resolver.js";
 import type { Context } from "../../src/context.js";
 
@@ -77,5 +78,20 @@ describe("resolvePipelineIso3", () => {
     expect(resolvePipelineIso3("")).toBeNull();
     expect(resolvePipelineIso3(null)).toBeNull();
     expect(resolvePipelineIso3(undefined)).toBeNull();
+  });
+});
+
+describe("resolvePipelineIso3ByPcode", () => {
+  it("maps an admin-0 pcode (case-insensitive) to the lowercase iso3", () => {
+    expect(resolvePipelineIso3ByPcode("SD")).toBe("sdn");
+    expect(resolvePipelineIso3ByPcode("af")).toBe("afg");
+    expect(resolvePipelineIso3ByPcode(" VE ")).toBe("ven");
+  });
+
+  it("returns null for an unknown or missing pcode", () => {
+    expect(resolvePipelineIso3ByPcode("US")).toBeNull();
+    expect(resolvePipelineIso3ByPcode("SDN")).toBeNull(); // iso3, not pcode
+    expect(resolvePipelineIso3ByPcode(null)).toBeNull();
+    expect(resolvePipelineIso3ByPcode(undefined)).toBeNull();
   });
 });

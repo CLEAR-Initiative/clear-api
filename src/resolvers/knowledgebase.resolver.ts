@@ -34,7 +34,7 @@ import {
   launchRun,
 } from "../utils/dagster-client.js";
 import { syncEventCards } from "../services/event-card.js";
-import { resolvePipelineIso3 } from "./pipelineCountry.resolver.js";
+import { resolvePipelineIso3, resolvePipelineIso3ByPcode } from "./pipelineCountry.resolver.js";
 import {
   EMBEDDING_DIMENSIONS,
   embedQuery,
@@ -176,6 +176,42 @@ const manualReportsPrefix = (iso3: string): string =>
   `${MANUAL_SOURCE}/reports/${iso3}/${MANUAL_SLUG}/`;
 const manualPdfKey = (iso3: string, reportId: string, filename: string): string =>
   `${MANUAL_SOURCE}/pdfs/${iso3}/${MANUAL_SLUG}/${reportId}/${filename}`;
+
+/**
+ * Derive the pipeline-country iso3 for an analysis frame from its locations.
+ * Each frame location's country is its level-0 ancestor, so look up every
+ * level-0 location among the frame locations + their ancestors and map each by
+ * admin-0 pcode to a pipeline iso3. Returns the single distinct match, or `null`
+ * when the frame resolves to zero or more than one pipeline country (ambiguous
+ * — the caller then requires an explicit `countryIso3`). pcode-based so it's
+ * robust to the long official country names the location backfill uses.
+ */
+async function deriveIso3FromFrame(
+  context: Context,
+  locationIds: string[],
+): Promise<string | null> {
+  if (!locationIds.length) return null;
+  const frameLocs = await context.prisma.locations.findMany({
+    where: { id: { in: locationIds } },
+    select: { id: true, ancestorIds: true },
+  });
+  const candidateIds = new Set<string>();
+  for (const loc of frameLocs) {
+    candidateIds.add(loc.id);
+    for (const ancestorId of loc.ancestorIds) candidateIds.add(ancestorId);
+  }
+  if (!candidateIds.size) return null;
+  const countries = await context.prisma.locations.findMany({
+    where: { id: { in: [...candidateIds] }, level: 0 },
+    select: { pCode: true },
+  });
+  const iso3s = new Set<string>();
+  for (const country of countries) {
+    const iso3 = resolvePipelineIso3ByPcode(country.pCode);
+    if (iso3) iso3s.add(iso3);
+  }
+  return iso3s.size === 1 ? [...iso3s][0]! : null;
+}
 
 interface KnowledgebaseIngestJob {
   runId: string;
@@ -1347,7 +1383,7 @@ export const knowledgebaseResolvers = {
         title: string;
         sourceUrl?: string | null;
         publishedAt: Date;
-        countryIso3: string;
+        countryIso3?: string | null;
         teamId?: string | null;
         analysisAutomationId?: string | null;
       },
@@ -1360,28 +1396,15 @@ export const knowledgebaseResolvers = {
       // attributed onto the ingest run below.
       const { user, via } = await requireTeamContentWriter(context, args.teamId);
 
-      // Resolve + validate the target country partition BEFORE spending any
-      // S3/Dagster work. Must be a pipeline country — the downstream is
-      // country-partitioned, so an unknown iso3 could never launch (fail loudly
-      // with an actionable message instead). `iso3` is the lowercase Dagster
-      // partition key.
-      const iso3 = resolvePipelineIso3(args.countryIso3);
-      if (!iso3) {
-        throw new GraphQLError(
-          `uploadKnowledgebaseDocument: countryIso3 must be a pipeline country iso3 ` +
-            `(got ${JSON.stringify(args.countryIso3)})`,
-          { extensions: { code: "BAD_USER_INPUT" } },
-        );
-      }
-
-      // When attaching to an automation, validate ownership BEFORE spending any
-      // S3/Dagster work: the automation must exist, and a team writer may only
-      // attach to their own team's automation. System-owned automations
-      // (teamId null) are admin-only.
+      // Load the attached automation first (if any): its ownership is validated
+      // here (a team writer may only attach to their own team's automation;
+      // system-owned ones are admin-only), and its frame locations are what the
+      // country partition is derived from below.
+      let automation: { teamId: string | null; locationIds: string[] } | null = null;
       if (args.analysisAutomationId) {
-        const automation = await context.prisma.analysisAutomation.findUnique({
+        automation = await context.prisma.analysisAutomation.findUnique({
           where: { id: args.analysisAutomationId },
-          select: { teamId: true },
+          select: { teamId: true, locationIds: true },
         });
         if (!automation) {
           throw new GraphQLError(
@@ -1395,6 +1418,35 @@ export const knowledgebaseResolvers = {
             { extensions: { code: "FORBIDDEN" } },
           );
         }
+      }
+
+      // Resolve the target country partition BEFORE spending any S3/Dagster
+      // work. An explicit `countryIso3` wins; otherwise it's derived from the
+      // automation's frame (its locations' level-0 ancestor → pcode → iso3), so
+      // a normal frame-attached upload needs no explicit value. Must resolve to
+      // a pipeline country (the downstream is country-partitioned) — fail loudly
+      // otherwise, so an upload can never target a non-existent partition.
+      // `iso3` is the lowercase Dagster partition key.
+      let iso3: string | null = null;
+      if (args.countryIso3) {
+        iso3 = resolvePipelineIso3(args.countryIso3);
+        if (!iso3) {
+          throw new GraphQLError(
+            `uploadKnowledgebaseDocument: countryIso3 must be a pipeline country iso3 ` +
+              `(got ${JSON.stringify(args.countryIso3)})`,
+            { extensions: { code: "BAD_USER_INPUT" } },
+          );
+        }
+      } else if (automation) {
+        iso3 = await deriveIso3FromFrame(context, automation.locationIds);
+      }
+      if (!iso3) {
+        throw new GraphQLError(
+          "uploadKnowledgebaseDocument: could not resolve the document's country — " +
+            "attach it to an analysis automation (its frame's country is used), or pass " +
+            "a pipeline-country `countryIso3`.",
+          { extensions: { code: "BAD_USER_INPUT" } },
+        );
       }
 
       const upload = await args.file;
