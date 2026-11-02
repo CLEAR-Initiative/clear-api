@@ -6,7 +6,11 @@
 import { describe, it, expect } from "vitest";
 import { GraphQLError } from "graphql";
 
-import { pipelineCountryResolvers } from "../../src/resolvers/pipelineCountry.resolver.js";
+import {
+  pipelineCountryResolvers,
+  resolvePipelineIso3,
+  resolvePipelineIso3ByPcode,
+} from "../../src/resolvers/pipelineCountry.resolver.js";
 import type { Context } from "../../src/context.js";
 
 function ctx(user: { id: string; role: string } | null): Context {
@@ -58,5 +62,36 @@ describe("pipelineCountries", () => {
     );
     expect(second[0].name).toBe("Sudan");
     expect(second[0].bbox[0]).toBe(21.8);
+  });
+});
+
+describe("resolvePipelineIso3", () => {
+  it("resolves a pipeline iso3 to the lowercase partition key, case-insensitively", () => {
+    expect(resolvePipelineIso3("SDN")).toBe("sdn");
+    expect(resolvePipelineIso3("sdn")).toBe("sdn");
+    expect(resolvePipelineIso3("  Afg ")).toBe("afg");
+  });
+
+  it("returns null for a non-pipeline or missing country", () => {
+    expect(resolvePipelineIso3("USA")).toBeNull(); // not a pipeline country
+    expect(resolvePipelineIso3("SD")).toBeNull(); // pcode, not iso3
+    expect(resolvePipelineIso3("")).toBeNull();
+    expect(resolvePipelineIso3(null)).toBeNull();
+    expect(resolvePipelineIso3(undefined)).toBeNull();
+  });
+});
+
+describe("resolvePipelineIso3ByPcode", () => {
+  it("maps an admin-0 pcode (case-insensitive) to the lowercase iso3", () => {
+    expect(resolvePipelineIso3ByPcode("SD")).toBe("sdn");
+    expect(resolvePipelineIso3ByPcode("af")).toBe("afg");
+    expect(resolvePipelineIso3ByPcode(" VE ")).toBe("ven");
+  });
+
+  it("returns null for an unknown or missing pcode", () => {
+    expect(resolvePipelineIso3ByPcode("US")).toBeNull();
+    expect(resolvePipelineIso3ByPcode("SDN")).toBeNull(); // iso3, not pcode
+    expect(resolvePipelineIso3ByPcode(null)).toBeNull();
+    expect(resolvePipelineIso3ByPcode(undefined)).toBeNull();
   });
 });

@@ -683,6 +683,13 @@ export const mutationTypeDef = gql`
       title: String!
       sourceUrl: String
       publishedAt: DateTime!
+      """Optional ISO3 country code (e.g. \`"SDN"\`) the document is about —
+      selects the knowledge-base country partition it is ingested into
+      (\`kb_downstream_job\`). When omitted, the country is derived from the
+      analysis automation's frame (its locations' level-0 ancestor), so a normal
+      frame-attached upload needs no explicit value. Required only when there is
+      no automation to derive from. Must resolve to a pipeline country."""
+      countryIso3: String
       """Team to attribute the upload to. Required for a non-admin uploader
       (must be a team they belong to); optional for a global admin."""
       teamId: ID
