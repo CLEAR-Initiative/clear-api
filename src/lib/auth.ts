@@ -34,7 +34,11 @@ export const auth = betterAuth({
         // i.e. on successful self-signup via /api/auth/sign-up/email.
         // Ack email, CRM prospects sync and maintainer notification —
         // all best-effort, see services/signup.ts.
-        after: async (user) => {
+        // Invite acceptance and the seed create users through the internal
+        // adapter, which passes no endpoint context, so invitees are not
+        // treated as Developer sign-ups.
+        after: async (user, ctx) => {
+          if (ctx?.path !== "/sign-up/email") return;
           await onDeveloperSignedUp(user);
         },
       },
