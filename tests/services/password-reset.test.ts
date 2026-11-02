@@ -40,6 +40,7 @@ import {
   sendPasswordResetEmail,
 } from "../../src/services/password-reset.js";
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
+import { env } from "../../src/utils/env.js";
 
 type PrismaStub = Record<string, Record<string, ReturnType<typeof vi.fn>>>;
 
@@ -53,6 +54,8 @@ beforeEach(() => {
 describe("buildAppResetUrl", () => {
   it("points at the app's reset page on the frontend host", () => {
     const url = new URL(buildAppResetUrl("abc123"));
+    expect(new URL(env.FRONTEND_URL).origin).not.toBe(new URL(env.BETTER_AUTH_URL).origin);
+    expect(url.origin).toBe(new URL(env.FRONTEND_URL).origin);
     expect(url.pathname).toBe("/auth/reset-password");
     expect(url.searchParams.get("token")).toBe("abc123");
   });
