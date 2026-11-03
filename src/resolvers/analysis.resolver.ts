@@ -59,6 +59,8 @@ interface UpsertAnalysisInput extends FrameInput {
   sourceReportIds: string[];
   generatedByModel: string;
   generationCostUsd?: number | null;
+  generationInputTokens?: number | null;
+  generationOutputTokens?: number | null;
   schemaVersion: string;
   /** Bypass the 24h regeneration floor (ADR-0008). */
   force?: boolean | null;
@@ -513,6 +515,8 @@ export const analysisResolvers = {
             sourceReportIds: input.sourceReportIds,
             generatedByModel: input.generatedByModel,
             generationCostUsd: input.generationCostUsd ?? null,
+            generationInputTokens: input.generationInputTokens ?? null,
+            generationOutputTokens: input.generationOutputTokens ?? null,
             schemaVersion: input.schemaVersion,
             validFrom: now,
             lastSyncedAt: now,

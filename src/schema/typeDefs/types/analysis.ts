@@ -43,6 +43,11 @@ export const analysisTypeDef = gql`
 
     generatedByModel: String!
     generationCostUsd: Float
+    """Token usage of the LLM generation, summed across component calls
+    (provider-reported). Null for deterministic-only runs. USD cost is derived
+    from these where current prices are known — none is frozen on the row."""
+    generationInputTokens: Int
+    generationOutputTokens: Int
     generatedAt: DateTime!
 
     """Last time any trigger checked this frame (manual sync or automation),
@@ -82,6 +87,10 @@ export const analysisTypeDef = gql`
     sourceReportIds: [String!]!
     generatedByModel: String!
     generationCostUsd: Float
+    """Provider-reported token usage of the generation, summed across component
+    calls. Optional — omitted for deterministic-only runs."""
+    generationInputTokens: Int
+    generationOutputTokens: Int
     schemaVersion: String!
     """Bypass the 24h regeneration floor (ADR-0008). The pipeline sets this for
     an admin-forced request. Omitted/false: a write within 24h of the current
