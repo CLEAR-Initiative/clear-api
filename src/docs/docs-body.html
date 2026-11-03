@@ -4373,6 +4373,15 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td><code>Float</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Provider-reported token usage of the generation, summed across component
+calls. Optional — omitted for deterministic-only runs.</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
     <td><code>schemaVersion</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -5213,6 +5222,16 @@ many aggregated-datapoints rows, so there is no single bucket reference.</td>
   </tr><tr>
     <td><code>generationCostUsd</code></td>
     <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Token usage of the LLM generation, summed across component calls
+(provider-reported). Null for deterministic-only runs. USD cost is derived
+from these where current prices are known — none is frozen on the row.</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>generatedAt</code></td>

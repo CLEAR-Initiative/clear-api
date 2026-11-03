@@ -1995,6 +1995,13 @@ model analysis {
 
   generatedByModel  String   @map("generated_by_model")
   generationCostUsd Float?   @map("generation_cost_usd")
+  /// Token usage of the LLM generation, summed across the component calls
+  /// (provider-reported input/output counts). Null for deterministic-only runs
+  /// or when the provider reported no usage. USD cost is derived from these
+  /// downstream where current prices are known — no volatile price is frozen on
+  /// the row (the native-Anthropic generation returns tokens, not cost).
+  generationInputTokens  Int? @map("generation_input_tokens")
+  generationOutputTokens Int? @map("generation_output_tokens")
   generatedAt       DateTime @default(now()) @map("generated_at")
 
   /// Last time any trigger CHECKED this frame (manual sync or automation),
