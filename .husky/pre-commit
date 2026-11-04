@@ -8,6 +8,19 @@
 # Skips work when no relevant files are staged so a docs-only or
 # config-only commit doesn't pay the build cost.
 
+# Secret scan (gitleaks) — block a commit that contains a secret. Runs first,
+# before the docs logic, so it covers every commit. CI (.github/workflows/
+# gitleaks.yml) + GitHub push-protection enforce this where a local hook can be
+# bypassed. Skips cleanly if gitleaks isn't installed.
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --redact --config .gitleaks.toml; then
+    echo "[pre-commit] gitleaks found a potential secret — commit blocked. If it's a false positive, add its fingerprint to .gitleaksignore." >&2
+    exit 1
+  fi
+elif [ -z "$SKIP_GITLEAKS" ]; then
+  echo "[pre-commit] gitleaks not installed — skipping local secret scan (CI still enforces). Install: brew install gitleaks" >&2
+fi
+
 SCHEMA_PATTERN='^src/(schema/|resolvers/|docs/)'
 
 # Honour --no-verify; nothing to do for an empty commit either.

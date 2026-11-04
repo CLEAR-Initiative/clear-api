@@ -1,0 +1,30 @@
+# gitleaks configuration — secret scanning for this repo.
+#
+# Used by:
+#   - the pre-commit hook (.pre-commit-config.yaml) — scans staged changes
+#   - CI (.github/workflows/gitleaks.yml) — scans on PR/push
+#
+# Extends gitleaks' built-in ruleset; the allowlist below only suppresses
+# KNOWN non-secrets (example placeholders, lockfiles) so real secrets still fire.
+# Pre-existing historical findings, if any, go in .gitleaksignore (by fingerprint),
+# never here.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project allowlist — non-secret placeholders only"
+
+# Files that legitimately contain secret-SHAPED but fake values.
+paths = [
+  '''\.env\.example$''',          # documented placeholders, not real values
+  '''\.gitleaks\.toml$''',        # this file (contains example patterns)
+  '''(^|/)uv\.lock$''',           # dependency hashes, not secrets
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)bun\.lockb?$''',
+]
+
+# Obvious placeholder tokens used in examples/docs — never real secrets.
+regexes = [
+  '''(?i)(your[-_ ]?(api[-_ ]?key|secret|token|password)|changeme|placeholder|example[-_ ]?(key|secret|token)|xxxx+|<[a-z0-9_-]+>|redacted)''',
+]
