@@ -580,6 +580,14 @@ export const mutationTypeDef = gql`
       input: UpsertReportDatapointsInput!
     ): UpsertReportDatapointsResult!
 
+    """Upsert the analysis module's final numbers for one analysis
+    generation (clear-pipeline \`analysis_numbers_extract\`). Keyed on
+    \`analysisId\` (one row per generation) — idempotent replace-in-place.
+    Admin / pipeline only."""
+    upsertAnalysisDatapoints(
+      input: UpsertAnalysisDatapointsInput!
+    ): UpsertAnalysisDatapointsResult!
+
     """Insert a fresh situation-analysis snapshot for
     (\`input.countryLocationId\`, \`input.windowStart\`,
     \`input.windowEnd\`) and stamp \`validTo = now()\` on the

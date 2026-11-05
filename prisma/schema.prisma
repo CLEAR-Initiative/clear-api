@@ -1848,6 +1848,53 @@ model aggregatedDatapoint {
   @@map("aggregated_datapoints")
 }
 
+/// The analysis module's final numbers for ONE analysis generation (clear-
+/// pipeline `analysis_numbers_extract`). A dedicated, frame-numbers store
+/// separate from `aggregated_datapoints` so analysis-sourced figures never
+/// collide with the KB report-aggregation path (no edits to the live
+/// `refreshAggregatedDatapoints` resolver).
+///
+/// Identity is `analysis_id` (non-null, unique): one row per generation. The
+/// frame + window live on the parent `analyses` row (reachable via the FK), and
+/// bitemporality is the analyses chain's — each generation is a new `analyses`
+/// row and thus a new `analysis_datapoints` row; "current numbers" are those of
+/// the current (`valid_to IS NULL`) analyses row.
+model analysisDatapoint {
+  id String @id @default(cuid())
+
+  /// The analysis generation these figures belong to. Unique → one row per
+  /// generation; ON DELETE CASCADE since the figures are owned by the analysis.
+  analysisId String   @unique @map("analysis_id")
+  analysis   analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  /// Final figures. Same QualityEnvelope leaf structure as
+  /// `aggregated_datapoints.data` (value + quality + per-figure provenance);
+  /// multi-location frames key figures by location inside the blob.
+  data Json
+
+  /// Report ids that fed these figures (denormalised provenance). Web gap-fill
+  /// evidence is cited per-figure inside `data`, not here.
+  contributingReportIds String[] @map("contributing_report_ids")
+
+  /// Coarse provenance of the figures: "kb" | "aggregated" | "web" (mixed rows
+  /// mark the dominant origin). Per-figure detail lives in `data`.
+  origin String?
+
+  /// Freshness / quality metadata, surfaced as columns like
+  /// `aggregated_datapoints` — nullable because analysis-extracted numbers may
+  /// not carry source dates / a bucket quality score.
+  newestSourceAt   DateTime? @map("newest_source_at")
+  oldestSourceAt   DateTime? @map("oldest_source_at")
+  dataQualityScore Float?    @map("data_quality_score")
+  reportCount      Int?      @map("report_count")
+
+  /// Matches the analysis output `schema_version` (re-key on version bumps).
+  schemaVersion String   @map("schema_version")
+  computedAt    DateTime @default(now()) @map("computed_at")
+
+  @@map("analysis_datapoints")
+}
+
 /// Pre-computed situation-analysis snapshot per (country × year).
 /// Consumed by the situation-analysis dashboard as a single-row read;
 /// regenerated weekly by the Dagster `weekly_situation_analyses` asset
@@ -2023,6 +2070,11 @@ model analysis {
   /// Per-locale translation overlays; cascade-delete with the row. Written
   /// by the generation pipeline (Phase 3); unused until then.
   translations translations[]
+
+  /// The analysis module's extracted + aggregated final figures for this
+  /// generation (clear-pipeline analysis_numbers_extract). At most one current
+  /// row; history accrues via the analyses chain itself.
+  analysisDatapoint analysisDatapoint?
 
   /// Partial unique index lives in the migration SQL — Prisma can't express
   /// partial or NULLS-NOT-DISTINCT indexes:

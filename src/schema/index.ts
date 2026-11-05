@@ -37,6 +37,7 @@ import { gazetteerTypeDef } from "./typeDefs/types/gazetteer.js";
 import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
 import { situationAnalysisTypeDef } from "./typeDefs/types/situationAnalysis.js";
 import { analysisTypeDef } from "./typeDefs/types/analysis.js";
+import { analysisDatapointTypeDef } from "./typeDefs/types/analysisDatapoint.js";
 import { reportFigureTypeDef } from "./typeDefs/types/reportFigure.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 import { groundTypeDef } from "./typeDefs/types/ground.js";
@@ -84,6 +85,7 @@ export const typeDefs = [
   datapointTypeDef,
   situationAnalysisTypeDef,
   analysisTypeDef,
+  analysisDatapointTypeDef,
   reportFigureTypeDef,
   webhookTypeDef,
   groundTypeDef,
