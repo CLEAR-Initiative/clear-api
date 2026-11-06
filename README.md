@@ -21,7 +21,7 @@ flowchart LR
 
 | Repo | Role |
 | --- | --- |
-| [clear-pipeline](https://github.com/CLEAR-Initiative/clear-pipeline) | Ingests signals (Dataminr and other sources), classifies them with LLMs, and turns ReliefWeb PDFs into knowledge-base entries. Writes everything through this API (GraphQL mutations and REST ingest routes). |
+| [clear-pipeline](https://github.com/CLEAR-Initiative/clear-pipeline) | Ingests signals, classifies them, and turns ReliefWeb PDFs into knowledge-base entries. Writes everything through this API (GraphQL mutations and REST ingest routes). |
 | **clear-api** (this repo) | The single source of truth. Owns the database schema (`prisma/schema.prisma`), authentication, and the GraphQL API. |
 | [clear-mvp](https://github.com/CLEAR-Initiative/clear-mvp) | The web application used by NRC teams in Sudan, Afghanistan and Venezuela. Reads and writes through this API. |
 
