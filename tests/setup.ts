@@ -10,6 +10,23 @@ process.env.NODE_ENV = "development";
 // (`src/index.ts: import "dotenv/config"`).
 import "dotenv/config";
 
+import { assertSafeTestDatabase } from "./test-guards.js";
+
+// Neutralise the outbound channels for the whole suite, overriding any `.env`
+// value (this runs after dotenv). A DB-backed test that completes/fails Tasks
+// calls notifyTaskOutcome, which emails real admins through the configured
+// provider — so without this a stray `bun test` against a live DB + real
+// Postmark floods inboxes. `none` selects the Null providers (registry.ts);
+// tests that need to assert on email mock the messaging module themselves.
+process.env.EMAIL_PROVIDER = "none";
+process.env.SMS_PROVIDER = "none";
+
+// Refuse to run DB-backed tests against anything but a throwaway database.
+// `scripts/test-db.sh` sets SCRATCH_DB=1; `test:ci` sets SKIP_DB_TESTS=1.
+// A plain `bun test` whose `.env` points DATABASE_URL at a real/tunnelled DB
+// aborts here instead of writing rows into it.
+assertSafeTestDatabase(process.env);
+
 // The Task suites exercise a two-source fan-out (several Workers proposing on
 // one Event), which the code still supports; production defaults to the web
 // kind alone (env.ts). `satellite` is fictional: it stands in for any later
