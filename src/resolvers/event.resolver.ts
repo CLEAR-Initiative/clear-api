@@ -3,6 +3,7 @@ import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
+import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { logActivity } from "../utils/activity-log.js";
 import { logEventChange } from "../utils/event-log.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
@@ -1059,7 +1060,12 @@ export const eventResolvers = {
       if (parent.signalEvents) {
         return parent.signalEvents
           .map((l) => l.signal)
-          .filter((s) => (s as { retracted?: boolean }).retracted !== true);
+          .filter((s) => (s as { retracted?: boolean }).retracted !== true)
+          // A deeper include pre-loaded these without knowing the caller's
+          // signal scope, so drop the ones they may not see before they leave
+          // the resolver. An API-only developer reads the Event itself but
+          // only the member Signals from sources granted to them.
+          .filter((s) => canReadSignal(context.signalScope, s as { sourceId: string }));
       }
       // Inspect the GraphQL selection to decide whether to include
       // signal-locations + their translations. /detection's events tab
@@ -1097,7 +1103,10 @@ export const eventResolvers = {
       };
       return context.prisma.signalEvents
         .findMany({
-          where: { eventId: parent.id, signal: { retracted: false } },
+          where: {
+            eventId: parent.id,
+            signal: withSignalScope(context.signalScope, { retracted: false }),
+          },
           include: { signal: { include: signalInclude } },
           take: 50,
           // Intentionally no orderBy: ordering by signal.publishedAt

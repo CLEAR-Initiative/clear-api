@@ -17,6 +17,9 @@ export const queryTypeDef = gql`
     """Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope."""
     alert(id: String!): Alert
 
+    """Data sources opened to one API-only developer. Admin only."""
+    apiSignalSourceGrants(userId: String!): [ApiSignalSourceGrant!]!
+
     """List signals. Requires authentication. includeDummy defaults to false."""
     signals(teamId: String, includeDummy: Boolean): [Signal!]!
 

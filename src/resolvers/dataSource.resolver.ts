@@ -1,5 +1,6 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
+import { withSignalScope } from "../utils/signal-access.js";
 import { requireAuth, requireRole } from "../utils/auth-guard.js";
 
 interface CreateDataSourceInput {
@@ -253,8 +254,13 @@ export const dataSourceResolvers = {
     },
   },
   DataSource: {
-    signals: (parent: { id: string }, _args: unknown, { prisma }: Context) => {
-      return prisma.signals.findMany({ where: { sourceId: parent.id } });
+    signals: (parent: { id: string }, _args: unknown, { prisma, signalScope }: Context) => {
+      // Narrow to the caller's granted sources: without this, an API-only
+      // developer could read any source's Signals by walking DataSource.signals
+      // instead of the top-level query.
+      return prisma.signals.findMany({
+        where: withSignalScope(signalScope, { sourceId: parent.id }),
+      });
     },
   },
 };

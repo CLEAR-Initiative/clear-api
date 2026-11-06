@@ -246,6 +246,10 @@ const data = await fetch('/graphql', {
     <td><code>Alert</code></td>
     <td>Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>apiSignalSourceGrants</code></td>
+    <td><code>[ApiSignalSourceGrant!]!</code></td>
+    <td>Data sources opened to one API-only developer. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>signals</code></td>
     <td><code>[Signal!]!</code></td>
     <td>List signals. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
@@ -1051,6 +1055,16 @@ Best-effort: returns true even if the log write fails. Any signed-in user.<div c
     <td><code>createApiKey</code></td>
     <td><code>CreateApiKeyPayload!</code></td>
     <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
+  </tr><tr id="mutation-grantapisignalsource">
+    <td><code>grantApiSignalSource</code></td>
+    <td><code>ApiSignalSourceGrant!</code></td>
+    <td>Open one data source's Signals to an API-only developer. Admin only.
+Idempotent: re-granting an existing pair returns the existing row.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>dataSourceId: String!</code></span><span class="arg"><code>reason: String</code></span></div></td>
+  </tr><tr id="mutation-revokeapisignalsource">
+    <td><code>revokeApiSignalSource</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Close one data source for an API-only developer. Admin only.
+Returns false when no such grant existed.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>dataSourceId: String!</code></span></div></td>
   </tr><tr id="mutation-revokeapikey">
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
@@ -5526,6 +5540,34 @@ check for this request.</td>
     <td>—</td>
   </tr><tr>
     <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-apisignalsourcegrant"><code>ApiSignalSourceGrant</code> <span class="type-badge">object</span></h3><p>One data source opened to one API-only developer.
+
+API-only users (a `member` who holds a live API key and belongs to no
+organisation or team) read NO Signals by default — including the Signals
+nested under an Event. Each grant opens exactly one source to one user.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>dataSource</code></td>
+    <td><code>DataSource!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>grantedBy</code></td>
+    <td><code>User</code></td>
+    <td>Admin who issued it. Null if that account was deleted.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>String</code></td>
+    <td>Why this source was opened to this user.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-approveuserresult"><code>ApproveUserResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `approveUser` mutation. Flips a `pending`

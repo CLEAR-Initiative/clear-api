@@ -30,6 +30,11 @@ function buildContext(user: User, dataSources: Record<string, unknown> = {}, sig
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
+    // Real requests always carry this (createContext resolves it). The helpers
+    // deliberately do NOT default a missing scope to full — a fail-open default
+    // in a security gate is the bug this feature exists to prevent — so a fake
+    // context has to state it.
+    signalScope: { kind: "full" },
   } as Context;
 }
 
@@ -280,5 +285,20 @@ describe("DataSource.signals field resolver", () => {
     const result = dataSourceResolvers.DataSource.signals({ id: "ds1" }, {}, ctx);
     expect(result).toBe(rows);
     expect(findMany).toHaveBeenCalledWith({ where: { sourceId: "ds1" } });
+  });
+
+  it("intersects the parent source with an API-only caller's grants, so the field is not a way around the gate", () => {
+    const findMany = vi.fn().mockReturnValue([]);
+    const ctx = {
+      ...buildContext(null, {}, { findMany }),
+      signalScope: { kind: "restricted", sourceIds: ["ds-granted"] },
+    } as unknown as Context;
+    dataSourceResolvers.DataSource.signals({ id: "ds1" }, {}, ctx);
+    // AND, not a merged object: an earlier version spread the scope over the
+    // parent filter, so `sourceId` was overwritten and asking for an UNGRANTED
+    // source returned the caller's granted Signals instead of nothing.
+    expect(findMany).toHaveBeenCalledWith({
+      where: { AND: [{ sourceId: "ds1" }, { sourceId: { in: ["ds-granted"] } }] },
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import {
@@ -223,8 +224,18 @@ export const signalLocationChallengeResolvers = {
       const signalFilter = args.teamId
         ? await buildLocationFilterForTeam(context.prisma, args.teamId)
         : undefined;
+      // A challenge whose Signal the caller may not read is not listed at all.
+      // That also keeps `SignalLocationChallenge.signal` (non-null in the
+      // schema) honest — every listed challenge carries a readable Signal.
+      // Only attach a `signal` filter when something actually constrains it,
+      // so a full-scope caller's query keeps the exact shape it had before
+      // scoping existed (no empty relation filter).
+      const signalWhere = withSignalScope(context.signalScope, signalFilter ?? {});
       return context.prisma.signalLocationChallenges.findMany({
-        where: { status, ...(signalFilter ? { signal: signalFilter } : {}) },
+        where: {
+          status,
+          ...(Object.keys(signalWhere).length > 0 ? { signal: signalWhere } : {}),
+        },
         orderBy: { createdAt: "desc" },
       });
     },
@@ -518,8 +529,23 @@ export const signalLocationChallengeResolvers = {
   },
 
   SignalLocationChallenge: {
-    signal: (parent: { signalId: string }, _args: unknown, { prisma }: Context) =>
-      prisma.signals.findUnique({ where: { id: parent.signalId } }),
+    signal: async (
+      parent: { signalId: string },
+      _args: unknown,
+      { prisma, signalScope }: Context,
+    ) => {
+      const sig = await prisma.signals.findUnique({ where: { id: parent.signalId } });
+      // Defence in depth: the list queries above already exclude challenges on
+      // out-of-scope Signals. This field is non-null in the schema, so an
+      // unreachable case errors rather than returning null and breaking the
+      // contract.
+      if (!canReadSignal(signalScope, sig)) {
+        throw new GraphQLError("You may not read this Signal", {
+          extensions: { code: "FORBIDDEN", subCode: "NO_SIGNAL_SOURCE_GRANT" },
+        });
+      }
+      return sig;
+    },
     // Only for the team's members and platform admins, as `Query.team`: any
     // reader lists challenges, and a Team carries its members.
     team: async (parent: { teamId: string | null }, _args: unknown, context: Context) => {

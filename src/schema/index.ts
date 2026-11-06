@@ -2,6 +2,7 @@ import { scalarTypeDef } from "./typeDefs/scalars.js";
 import { queryTypeDef } from "./typeDefs/query.js";
 import { mutationTypeDef } from "./typeDefs/mutation.js";
 import { userTypeDef } from "./typeDefs/types/user.js";
+import { apiSignalSourceGrantTypeDef } from "./typeDefs/types/apiSignalSourceGrant.js";
 import { alertTypeDef } from "./typeDefs/types/alert.js";
 import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { detectionMetricsTypeDef } from "./typeDefs/types/detectionMetrics.js";
@@ -50,6 +51,7 @@ export const typeDefs = [
   queryTypeDef,
   mutationTypeDef,
   userTypeDef,
+  apiSignalSourceGrantTypeDef,
   alertTypeDef,
   detectionTypeDef,
   detectionMetricsTypeDef,

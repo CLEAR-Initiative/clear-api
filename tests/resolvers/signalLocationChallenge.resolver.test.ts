@@ -45,6 +45,10 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
     session: null,
     authMethod: user ? "session" : null,
     locale: "en",
+    // The signal-access helpers never default a missing scope to full — a
+    // fail-open default is the bug the feature exists to prevent — so fakes
+    // must state it.
+    signalScope: { kind: "full" },
   } as Context;
 }
 

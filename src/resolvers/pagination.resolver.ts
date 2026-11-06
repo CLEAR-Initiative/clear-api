@@ -2,6 +2,12 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import { requireContentReader } from "../utils/auth-guard.js";
 import {
+  assertSignalReadable,
+  withSignalScope,
+  FULL_SIGNAL_SCOPE,
+  type SignalScope,
+} from "../utils/signal-access.js";
+import {
   buildEventLocationFilterForTeam,
   buildLocationFilterForTeam,
   getTeamScopeLocationIds,
@@ -461,6 +467,13 @@ interface SignalsPageInput extends SignalsFilter {
 export async function computeEntityStats(
   prisma: Context["prisma"],
   input: EntityStatsInput,
+  /**
+   * Caller's Signal visibility. Counts are a read of Signal data too — an
+   * unscoped total would tell an API-only developer how many Signals exist
+   * beyond the sources granted to them. Defaults to full for callers that
+   * never count Signals.
+   */
+  signalScope: SignalScope = FULL_SIGNAL_SCOPE,
 ): Promise<{ total: number; buckets: Array<{ key: string; count: number }> }> {
   const groupBy: StatsGroupBy = input.groupBy ?? "none";
 
@@ -475,13 +488,29 @@ export async function computeEntityStats(
       const where = await buildEventsWhere(prisma, input as EventsFilter);
       total = await prisma.events.count({ where });
     } else {
-      const where = await buildSignalsWhere(prisma, input as SignalsFilter);
+      // AND, not spread: buildSignalsWhere can set `sourceId` from a
+      // caller-supplied filter, which a spread would let overwrite the scope.
+      const where = withSignalScope(
+        signalScope,
+        await buildSignalsWhere(prisma, input as SignalsFilter),
+      );
       total = await prisma.signals.count({ where });
     }
     return { total, buckets: [] };
   }
 
-  const { table, whereSql, tsCol, typeExpr } = await statsScope(prisma, input);
+  const { table, whereSql: baseWhereSql, tsCol, typeExpr } = await statsScope(prisma, input);
+
+  // Narrow Signal stats to the caller's granted sources. `statsScope` always
+  // emits a WHERE, so this appends rather than introducing one. An empty grant
+  // list yields `IN (NULL)`, which matches nothing — closed by default, same as
+  // the Prisma path above.
+  const whereSql =
+    input.entity === "signal" && signalScope.kind === "restricted"
+      ? Prisma.sql`${baseWhereSql} AND signals.source_id IN (${Prisma.join(
+          signalScope.sourceIds.length > 0 ? signalScope.sourceIds : [null],
+        )})`
+      : baseWhereSql;
 
   // Build the SELECT key expression based on groupBy.
   let keyExpr: Prisma.Sql;
@@ -610,8 +639,15 @@ export const paginationResolvers = {
       context: Context,
     ) => {
       requireContentReader(context);
+      assertSignalReadable(context.signalScope);
       const input = args.input ?? {};
-      const where = await buildSignalsWhere(context.prisma, input);
+      // Scope first, so both the page and its totalCount describe the same
+      // set — a count that ignored the scope would leak how many Signals
+      // exist beyond the caller's granted sources.
+      const where = withSignalScope(
+        context.signalScope,
+        await buildSignalsWhere(context.prisma, input),
+      );
       const limit = clampLimit(input.limit);
       const offset = clampOffset(input.offset);
 
@@ -644,7 +680,7 @@ export const paginationResolvers = {
       context: Context,
     ) => {
       requireContentReader(context);
-      return computeEntityStats(context.prisma, args.input);
+      return computeEntityStats(context.prisma, args.input, context.signalScope);
     },
   },
 };

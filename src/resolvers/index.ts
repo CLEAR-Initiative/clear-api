@@ -12,6 +12,7 @@ import { locationResolvers } from "./location.resolver.js";
 import { notificationResolvers } from "./notification.resolver.js";
 import { featureFlagResolvers } from "./featureFlag.resolver.js";
 import { apiKeyResolvers } from "./apiKey.resolver.js";
+import { apiSignalSourceGrantResolvers } from "./apiSignalSourceGrant.resolver.js";
 import { devUserResolvers } from "./devUser.resolver.js";
 import { publicEventResolvers } from "./publicEvent.resolver.js";
 import { disasterTypeResolvers } from "./disasterType.resolver.js";
@@ -55,6 +56,7 @@ export const resolvers: IResolvers[] = [
   notificationResolvers,
   featureFlagResolvers,
   apiKeyResolvers,
+  apiSignalSourceGrantResolvers,
   devUserResolvers,
   publicEventResolvers,
   disasterTypeResolvers,
