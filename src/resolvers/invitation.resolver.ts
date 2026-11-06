@@ -2,12 +2,16 @@ import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { isPlatformAdmin, requireNonWorker } from "../utils/auth-guard.js";
-import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import {
   organisationInvite,
   teamInviteNotification,
 } from "../services/messaging/templates.js";
+import {
+  brandedUrl,
+  resolveBranding,
+  type TouchpointParams,
+} from "../services/branding.js";
 import { auth } from "../lib/auth.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
 
@@ -18,7 +22,7 @@ interface TeamAssignmentInput {
   teamRole: string;
 }
 
-interface InviteUserInput {
+interface InviteUserInput extends TouchpointParams {
   email: string;
   organisationId: string;
   role?: string;
@@ -146,6 +150,11 @@ export const invitationResolvers = {
       const inviter = await requireOrgAdmin(context, args.input.organisationId);
       const { email, organisationId, role = "member", teams } = args.input;
 
+      // Authenticated org admin → trust the supplied frontend base as-is
+      // (falls back to FRONTEND_URL). `senderEmail`/`senderName` brand the
+      // Reply-To and From display name; the From address stays the platform's.
+      const branding = resolveBranding(args.input, { trustFrontend: true });
+
       if (!teams || teams.length === 0) {
         throw new GraphQLError("Must specify at least one team", {
           extensions: { code: "BAD_USER_INPUT" },
@@ -236,13 +245,15 @@ export const invitationResolvers = {
               org.name,
               teamSummary,
               roleByTeam.get(toAdd[0]!) ?? "team_member",
-              `${env.FRONTEND_URL}/dashboard`,
+              brandedUrl(branding.frontendBase, "/dashboard"),
             );
             await emailProvider.send({
               to: email,
               subject: content.subject,
               textBody: content.textBody,
               htmlBody: content.htmlBody,
+              replyTo: branding.replyTo,
+              fromName: branding.fromName,
             });
           } catch (err) {
             console.error("[inviteUser] team-add notification failed:", err);
@@ -308,7 +319,10 @@ export const invitationResolvers = {
       });
 
       // Send invite email — list every team for context.
-      const inviteUrl = `${env.FRONTEND_URL}/accept-invite?token=${token}`;
+      const inviteUrl = brandedUrl(
+        branding.frontendBase,
+        `/accept-invite?token=${token}`,
+      );
       const teamSummary = teamIds
         .map((tid) => `${teamNamesById.get(tid)} (${roleByTeam.get(tid)})`)
         .join(", ");
@@ -325,6 +339,8 @@ export const invitationResolvers = {
         subject: content.subject,
         textBody: content.textBody,
         htmlBody: content.htmlBody,
+        replyTo: branding.replyTo,
+        fromName: branding.fromName,
       });
 
       return invitation;
@@ -486,7 +502,7 @@ export const invitationResolvers = {
 
     resendInvite: async (
       _parent: unknown,
-      args: { id: string },
+      args: { id: string } & TouchpointParams,
       context: Context,
     ) => {
       // Authenticate before the lookup so the caller can't probe which
@@ -523,8 +539,13 @@ export const invitationResolvers = {
         data: { token: newToken, expiresAt: newExpiry },
       });
 
-      // Resend email
-      const inviteUrl = `${env.FRONTEND_URL}/accept-invite?token=${newToken}`;
+      // Resend email. Authenticated org admin → trust the supplied frontend
+      // base as-is (falls back to FRONTEND_URL).
+      const branding = resolveBranding(args, { trustFrontend: true });
+      const inviteUrl = brandedUrl(
+        branding.frontendBase,
+        `/accept-invite?token=${newToken}`,
+      );
       const emailProvider = await getEmailProvider();
       const content = organisationInvite(
         inviter.name,
@@ -538,6 +559,8 @@ export const invitationResolvers = {
         subject: content.subject,
         textBody: content.textBody,
         htmlBody: content.htmlBody,
+        replyTo: branding.replyTo,
+        fromName: branding.fromName,
       });
 
       return updated;

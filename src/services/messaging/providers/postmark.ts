@@ -67,7 +67,9 @@ export class PostmarkEmailProvider implements EmailProvider {
   }
 
   async send(options: SendEmailOptions): Promise<boolean> {
-    const from = options.fromEmail ?? this.senderEmail;
+    const address = options.fromEmail ?? this.senderEmail;
+    // Keep the verified address; optionally dress it with a display name.
+    const from = options.fromName ? `${options.fromName} <${address}>` : address;
     console.log(
       `[POSTMARK] Sending email: to=${options.to}, from=${from}, subject="${options.subject}"`,
     );
@@ -80,6 +82,9 @@ export class PostmarkEmailProvider implements EmailProvider {
     };
     if (options.htmlBody) {
       payload.HtmlBody = options.htmlBody;
+    }
+    if (options.replyTo) {
+      payload.ReplyTo = options.replyTo;
     }
 
     const result = (await this.makeRequest("/email", payload)) as Record<
@@ -110,14 +115,18 @@ export class PostmarkEmailProvider implements EmailProvider {
     for (let i = 0; i < messages.length; i += 500) {
       const chunk = messages.slice(i, i + 500);
       const batchPayload = chunk.map((msg) => {
+        const address = msg.fromEmail ?? this.senderEmail;
         const item: Record<string, string> = {
-          From: msg.fromEmail ?? this.senderEmail,
+          From: msg.fromName ? `${msg.fromName} <${address}>` : address,
           To: msg.to,
           Subject: msg.subject,
           TextBody: msg.textBody,
         };
         if (msg.htmlBody) {
           item.HtmlBody = msg.htmlBody;
+        }
+        if (msg.replyTo) {
+          item.ReplyTo = msg.replyTo;
         }
         return item;
       });
