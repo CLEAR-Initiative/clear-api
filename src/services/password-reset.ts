@@ -44,12 +44,11 @@ export function normaliseEmail(raw: string): string {
 }
 
 /**
- * Build the user-facing reset URL.
+ * Build the Developer Portal reset URL.
  *
- * Points at the Developer Portal page served by this same API process
- * (`BETTER_AUTH_URL` is the server's own base URL), not at
- * `FRONTEND_URL` — the Next.js app has no reset-password route, so a
- * link there is a dead end.
+ * Points at the portal page served by this same API process
+ * (`BETTER_AUTH_URL` is the server's own base URL). Resets requested from
+ * the CLEAR app link to the app instead; see `buildAppResetUrl`.
  *
  * `env.BETTER_AUTH_URL` is normalised to a bare origin on load, so this
  * can concatenate without re-trimming: a deployment that sets a path
@@ -62,6 +61,15 @@ export function normaliseEmail(raw: string): string {
 export function buildResetUrl(token: string, kind?: "setup"): string {
   const suffix = kind ? `&kind=${kind}` : "";
   return `${env.BETTER_AUTH_URL}/portal/reset-password?token=${token}${suffix}`;
+}
+
+/**
+ * Build the CLEAR app reset URL. The app's `/auth/reset-password` page
+ * takes the same token and calls the `resetPassword` mutation, then sends
+ * the user to the app's sign-in.
+ */
+export function buildAppResetUrl(token: string): string {
+  return `${env.FRONTEND_URL.replace(/\/$/, "")}/auth/reset-password?token=${token}`;
 }
 
 /**
@@ -106,10 +114,14 @@ export async function issueResetToken(
  * resolves without throwing, so callers can only ever report "if that
  * address is registered, a link is on its way". Failures are logged
  * server-side.
+ *
+ * `buildUrl` picks where the emailed link lands: the portal by default,
+ * the app for resets requested from the app.
  */
 export async function sendPasswordResetEmail(
   prisma: PrismaClient,
   rawEmail: string,
+  buildUrl: (token: string) => string = buildResetUrl,
 ): Promise<void> {
   // Normalise here rather than at each call site. The `user.email` lookup is
   // case-sensitive, and the portal route and the GraphQL mutation used to
@@ -139,7 +151,7 @@ export async function sendPasswordResetEmail(
   }
 
   const token = await issueResetToken(prisma, email);
-  const content = templates.passwordReset(user.name, buildResetUrl(token));
+  const content = templates.passwordReset(user.name, buildUrl(token));
 
   try {
     const provider = await getEmailProvider();
