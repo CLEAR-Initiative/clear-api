@@ -119,8 +119,16 @@ export const mutationTypeDef = gql`
     updateUserRole(userId: String!, role: GlobalRole!): User!
 
     # ─── Auth ──────────────────────────────────────────────────────────────────
-    """Request an email verification link for the authenticated user."""
-    requestEmailVerification: Boolean!
+    """Request an email verification link for the authenticated user.
+
+    \`frontendBaseUrl\` sets the host of the verification link (trusted as
+    given for this authenticated call; defaults to \`FRONTEND_URL\`).
+    \`senderEmail\`/\`senderName\` set Reply-To and the From display name."""
+    requestEmailVerification(
+      frontendBaseUrl: String
+      senderEmail: String
+      senderName: String
+    ): Boolean!
 
     """Verify email using a token from the verification link."""
     verifyEmail(token: String!): Boolean!
@@ -445,12 +453,31 @@ export const mutationTypeDef = gql`
     """Cancel a pending invitation."""
     cancelInvite(id: String!): Boolean!
 
-    """Resend an invitation email (resets expiry to 7 days)."""
-    resendInvite(id: String!): Invitation!
+    """Resend an invitation email (resets expiry to 7 days). The optional
+    sender/frontend arguments brand the email and link the same way as
+    inviteUser; trusted as given for this authenticated call."""
+    resendInvite(
+      id: String!
+      frontendBaseUrl: String
+      senderEmail: String
+      senderName: String
+    ): Invitation!
 
     # ─── Password Reset ──────────────────────────────────────────────────────
-    """Request a password reset email (public, always returns true)."""
-    requestPasswordReset(email: String!): Boolean!
+    """Request a password reset email (public, always returns true).
+
+    \`frontendBaseUrl\` sets the host of the reset link. Because this mutation
+    is unauthenticated, that override is honoured only when its origin is in
+    the operator's \`ALLOWED_FRONTEND_ORIGINS\` allowlist; otherwise it falls
+    back to \`FRONTEND_URL\` (a token-bearing link can never be pointed at an
+    arbitrary host). \`senderEmail\`/\`senderName\` set Reply-To and the From
+    display name."""
+    requestPasswordReset(
+      email: String!
+      frontendBaseUrl: String
+      senderEmail: String
+      senderName: String
+    ): Boolean!
 
     """Reset password using a token from the reset email."""
     resetPassword(token: String!, newPassword: String!): Boolean!
@@ -859,6 +886,17 @@ export const mutationTypeDef = gql`
     """Team assignments — at least one team is required. Each entry grants the
     invitee membership in that team with the given role on acceptance."""
     teams: [TeamAssignmentInput!]!
+    """Base URL of the frontend the invite should link into (e.g.
+    \`https://app.example.org\`). The accept-invite link is built from it.
+    Trusted as given for this authenticated call; defaults to the platform
+    \`FRONTEND_URL\` when omitted. May include a path prefix."""
+    frontendBaseUrl: String
+    """Address replies to the invite email route to (becomes \`Reply-To\`).
+    The \`From\` address stays the platform's verified sender."""
+    senderEmail: String
+    """Display name shown on the invite email's \`From\` header (e.g. the
+    inviting organisation's name)."""
+    senderName: String
   }
 
   """One (team, role) assignment passed to inviteUser."""

@@ -2,7 +2,6 @@ import { GraphQLError } from "graphql";
 import { randomBytes } from "crypto";
 import type { Context } from "../context.js";
 import { requireNonWorker } from "../utils/auth-guard.js";
-import { env } from "../utils/env.js";
 import { getEmailProvider, templates } from "../services/messaging/index.js";
 import {
   MIN_PASSWORD_LENGTH,
@@ -10,6 +9,13 @@ import {
   resetPasswordWithToken,
   sendPasswordResetEmail,
 } from "../services/password-reset.js";
+import {
+  brandedUrl,
+  resolveSender,
+  safeFrontendBase,
+  trustedFrontendBase,
+  type TouchpointParams,
+} from "../services/branding.js";
 
 const THROTTLE_MS = 5 * 60 * 1000; // 5 minutes between verification requests
 
@@ -23,7 +29,7 @@ export const authResolvers = {
   Mutation: {
     requestEmailVerification: async (
       _parent: unknown,
-      _args: unknown,
+      args: TouchpointParams,
       context: Context,
     ) => {
       const user = requireNonWorker(context);
@@ -68,8 +74,11 @@ export const authResolvers = {
         },
       });
 
-      // Build verification URL and send email
-      const verificationUrl = `${env.FRONTEND_URL}/verify-email/${token}`;
+      // Build verification URL and send email. Authenticated caller → trust
+      // the supplied frontend base as-is (falls back to FRONTEND_URL).
+      const base = trustedFrontendBase(args.frontendBaseUrl);
+      const sender = resolveSender(args);
+      const verificationUrl = brandedUrl(base, `/verify-email/${token}`);
       const email = templates.emailVerification(user.name, verificationUrl);
 
       try {
@@ -79,6 +88,8 @@ export const authResolvers = {
           subject: email.subject,
           textBody: email.textBody,
           htmlBody: email.htmlBody,
+          replyTo: sender.replyTo,
+          fromName: sender.fromName,
         });
         console.log(
           `[AUTH] Verification email sent to ${user.email}`,
@@ -129,7 +140,7 @@ export const authResolvers = {
 
     requestPasswordReset: async (
       _parent: unknown,
-      args: { email: string },
+      args: { email: string } & TouchpointParams,
       context: Context,
     ) => {
       // Always resolves true regardless of whether the address exists,
@@ -137,7 +148,19 @@ export const authResolvers = {
       // `sendPasswordResetEmail`. Never branch on the return value here
       // or the enumeration guarantee is lost. The CLEAR app calls this, so
       // the link lands on the app's reset page, not the Developer Portal.
-      await sendPasswordResetEmail(context.prisma, args.email, buildAppResetUrl);
+      //
+      // UNAUTHENTICATED: the frontend base is allowlist-gated so a caller
+      // cannot point the emailed reset link (which carries the token) at an
+      // arbitrary host. An un-allowlisted override silently falls back to
+      // FRONTEND_URL.
+      const base = safeFrontendBase(args.frontendBaseUrl);
+      const sender = resolveSender(args);
+      await sendPasswordResetEmail(
+        context.prisma,
+        args.email,
+        (token) => buildAppResetUrl(token, base),
+        sender,
+      );
       return true;
     },
 

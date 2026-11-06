@@ -1149,7 +1149,11 @@ HTML form hits the same service via POST
   </tr><tr id="mutation-requestemailverification">
     <td><code>requestEmailVerification</code></td>
     <td><code>Boolean!</code></td>
-    <td>Request an email verification link for the authenticated user.</td>
+    <td>Request an email verification link for the authenticated user.
+
+`frontendBaseUrl` sets the host of the verification link (trusted as
+given for this authenticated call; defaults to `FRONTEND_URL`).
+`senderEmail`/`senderName` set Reply-To and the From display name.<div class="field-args"><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-verifyemail">
     <td><code>verifyEmail</code></td>
     <td><code>Boolean!</code></td>
@@ -1527,11 +1531,20 @@ a platform admin or an org_admin of the target organisation.<div class="field-ar
   </tr><tr id="mutation-resendinvite">
     <td><code>resendInvite</code></td>
     <td><code>Invitation!</code></td>
-    <td>Resend an invitation email (resets expiry to 7 days).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Resend an invitation email (resets expiry to 7 days). The optional
+sender/frontend arguments brand the email and link the same way as
+inviteUser; trusted as given for this authenticated call.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-requestpasswordreset">
     <td><code>requestPasswordReset</code></td>
     <td><code>Boolean!</code></td>
-    <td>Request a password reset email (public, always returns true).<div class="field-args"><span class="arg"><code>email: String!</code></span></div></td>
+    <td>Request a password reset email (public, always returns true).
+
+`frontendBaseUrl` sets the host of the reset link. Because this mutation
+is unauthenticated, that override is honoured only when its origin is in
+the operator's `ALLOWED_FRONTEND_ORIGINS` allowlist; otherwise it falls
+back to `FRONTEND_URL` (a token-bearing link can never be pointed at an
+arbitrary host). `senderEmail`/`senderName` set Reply-To and the From
+display name.<div class="field-args"><span class="arg"><code>email: String!</code></span><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-resetpassword">
     <td><code>resetPassword</code></td>
     <td><code>Boolean!</code></td>
@@ -3402,6 +3415,23 @@ is never mutated: a NEW thread is created instead, with a warning.</td>
     <td><code>[TeamAssignmentInput!]!</code></td>
     <td>Team assignments — at least one team is required. Each entry grants the
 invitee membership in that team with the given role on acceptance.</td>
+  </tr><tr>
+    <td><code>frontendBaseUrl</code></td>
+    <td><code>String</code></td>
+    <td>Base URL of the frontend the invite should link into (e.g.
+`https://app.example.org`). The accept-invite link is built from it.
+Trusted as given for this authenticated call; defaults to the platform
+`FRONTEND_URL` when omitted. May include a path prefix.</td>
+  </tr><tr>
+    <td><code>senderEmail</code></td>
+    <td><code>String</code></td>
+    <td>Address replies to the invite email route to (becomes `Reply-To`).
+The `From` address stays the platform's verified sender.</td>
+  </tr><tr>
+    <td><code>senderName</code></td>
+    <td><code>String</code></td>
+    <td>Display name shown on the invite email's `From` header (e.g. the
+inviting organisation's name).</td>
   </tr></tbody></table><h3 id="type-knowledgebasechunkinput"><code>KnowledgebaseChunkInput</code> <span class="type-badge">input</span></h3><p>One chunk written into the knowledgebase table. Mirrors the
 columns exactly (minus `lexicalTsv`, which the DB trigger fills
 from `embeddedText`, and `createdAt` which uses the column
