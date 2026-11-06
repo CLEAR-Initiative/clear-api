@@ -17,6 +17,14 @@ export const mutationTypeDef = gql`
     """Create a new API key for the authenticated user."""
     createApiKey(input: CreateApiKeyInput!): CreateApiKeyPayload!
 
+    """Open one data source's Signals to an API-only developer. Admin only.
+    Idempotent: re-granting an existing pair returns the existing row."""
+    grantApiSignalSource(userId: String!, dataSourceId: String!, reason: String): ApiSignalSourceGrant!
+
+    """Close one data source for an API-only developer. Admin only.
+    Returns false when no such grant existed."""
+    revokeApiSignalSource(userId: String!, dataSourceId: String!): Boolean!
+
     """Revoke an API key by ID. Only the key owner or an admin can revoke."""
     revokeApiKey(id: String!): ApiKey!
 

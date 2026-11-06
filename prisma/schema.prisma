@@ -111,23 +111,25 @@ model user {
   defaultTeamId String? @map("default_team_id")
   defaultTeam   teams?  @relation("DefaultTeam", fields: [defaultTeamId], references: [id], onDelete: SetNull)
 
-  alerts                userAlerts[]
-  apiKeys               apiKeys[]
-  notifications         notifications[]
-  organisations         organisationUsers[]
-  teamMemberships       teamMembers[]
-  eventEscaladedByUsers eventEscaladedByUsers[]
-  userFeedbacks         userFeedbacks[]
-  userComments          userComments[]
-  commentTags           commentTags[]
-  invitationsSent       invitations[]           @relation("InvitedBy")
-  activityLogs          activityLogs[]
-  conversations         conversations[]
+  alerts                 userAlerts[]
+  apiKeys                apiKeys[]
+  notifications          notifications[]
+  organisations          organisationUsers[]
+  teamMemberships        teamMembers[]
+  eventEscaladedByUsers  eventEscaladedByUsers[]
+  userFeedbacks          userFeedbacks[]
+  userComments           userComments[]
+  commentTags            commentTags[]
+  invitationsSent        invitations[]           @relation("InvitedBy")
+  activityLogs           activityLogs[]
+  conversations          conversations[]
   /// Signals this person submitted (the Domain Ontology's `submitted_by_user`).
-  submittedSignals      signals[]               @relation("SignalSubmittedBy")
-  agentWorkingMemory    agentWorkingMemory?
-  estimatesCreated      estimate[]              @relation("EstimateCreatedBy")
-  developerProfile      developerProfile?
+  submittedSignals       signals[]               @relation("SignalSubmittedBy")
+  agentWorkingMemory     agentWorkingMemory?
+  estimatesCreated       estimate[]              @relation("EstimateCreatedBy")
+  developerProfile       developerProfile?
+  signalSourceGrants     apiSignalSourceGrant[]  @relation("GrantHolder")
+  signalSourceGrantsMade apiSignalSourceGrant[]  @relation("GrantIssuer")
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -525,11 +527,11 @@ model locations {
   // sourceLinks sourceLocations[]
 
   // Reverse relations for signal
-  signalOrigins      signals[] @relation("SignalOrigin")
-  signalDestinations signals[] @relation("SignalDestination")
-  signalLocations    signals[] @relation("SignalLocation")
+  signalOrigins           signals[] @relation("SignalOrigin")
+  signalDestinations      signals[] @relation("SignalDestination")
+  signalLocations         signals[] @relation("SignalLocation")
   signalPipelineLocations signals[] @relation("SignalPipelineLocation")
-  signalCountries    signals[] @relation("SignalCountries")
+  signalCountries         signals[] @relation("SignalCountries")
 
   // Reverse relations for Location challenges
   challengePreviousLocations signalLocationChallenges[] @relation("ChallengePreviousLocation")
@@ -614,8 +616,9 @@ model dataSources {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  signals          signals[]
-  reportDatapoints reportDatapoint[]
+  signals            signals[]
+  reportDatapoints   reportDatapoint[]
+  signalSourceGrants apiSignalSourceGrant[]
 
   @@index([type])
   @@index([isActive])
@@ -2040,16 +2043,16 @@ model analysis {
   /// rows, so there is no single bucket to reference here.
   sourceReportIds String[] @map("source_report_ids")
 
-  generatedByModel  String   @map("generated_by_model")
-  generationCostUsd Float?   @map("generation_cost_usd")
+  generatedByModel       String   @map("generated_by_model")
+  generationCostUsd      Float?   @map("generation_cost_usd")
   /// Token usage of the LLM generation, summed across the component calls
   /// (provider-reported input/output counts). Null for deterministic-only runs
   /// or when the provider reported no usage. USD cost is derived from these
   /// downstream where current prices are known — no volatile price is frozen on
   /// the row (the native-Anthropic generation returns tokens, not cost).
-  generationInputTokens  Int? @map("generation_input_tokens")
-  generationOutputTokens Int? @map("generation_output_tokens")
-  generatedAt       DateTime @default(now()) @map("generated_at")
+  generationInputTokens  Int?     @map("generation_input_tokens")
+  generationOutputTokens Int?     @map("generation_output_tokens")
+  generatedAt            DateTime @default(now()) @map("generated_at")
 
   /// Last time any trigger CHECKED this frame (manual sync or automation),
   /// whether or not it regenerated (ADR-0008). Bumped on a gate skip (within
@@ -3053,4 +3056,35 @@ model recipientListMember {
 
   @@unique([listId, email])
   @@map("recipient_list_members")
+}
+
+/// Per-user whitelist of the data sources an API-only user may read Signals from.
+///
+/// API-only users (a `member` who holds a live API key and belongs to no
+/// organisation or team) get NO Signals by default — including the Signals
+/// nested under an Event. A row here opens exactly one source to one user.
+/// Absence of rows means no access, so the default is closed and adding a
+/// source is an explicit, audited act.
+///
+/// Scope is the data source only. Location/time scoping is deliberately not
+/// modelled here: nobody has asked for it, and a second axis would make the
+/// effective grant much harder to reason about.
+model apiSignalSourceGrant {
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  dataSourceId String @map("data_source_id")
+
+  /// Admin who issued the grant, for audit. Null if the granter was deleted.
+  grantedById String?  @map("granted_by_id")
+  /// Free text: why this source was opened to this user.
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user       user        @relation("GrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy  user?       @relation("GrantIssuer", fields: [grantedById], references: [id], onDelete: SetNull)
+  dataSource dataSources @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dataSourceId])
+  @@index([userId])
+  @@map("api_signal_source_grants")
 }

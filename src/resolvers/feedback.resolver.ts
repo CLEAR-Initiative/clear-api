@@ -1,4 +1,5 @@
 import { GraphQLError } from "graphql";
+import { canReadSignal } from "../utils/signal-access.js";
 import type { Context } from "../context.js";
 import { isPlatformAdmin, requireNonWorker, resolveTeamMembership } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
@@ -285,9 +286,16 @@ export const feedbackResolvers = {
       if (!parent.eventId) return null;
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
-    signal: (parent: { signalId: string | null }, _args: unknown, { prisma }: Context) => {
+    signal: async (
+      parent: { signalId: string | null },
+      _args: unknown,
+      { prisma, signalScope }: Context,
+    ) => {
       if (!parent.signalId) return null;
-      return prisma.signals.findUnique({ where: { id: parent.signalId } });
+      const sig = await prisma.signals.findUnique({ where: { id: parent.signalId } });
+      // Null rather than the row when it is out of scope — the feedback or
+      // comment itself stays readable, its Signal does not.
+      return canReadSignal(signalScope, sig) ? sig : null;
     },
     crisis: (parent: { crisisId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.crisisId) return null;
@@ -303,9 +311,16 @@ export const feedbackResolvers = {
       if (!parent.eventId) return null;
       return prisma.events.findUnique({ where: { id: parent.eventId } });
     },
-    signal: (parent: { signalId: string | null }, _args: unknown, { prisma }: Context) => {
+    signal: async (
+      parent: { signalId: string | null },
+      _args: unknown,
+      { prisma, signalScope }: Context,
+    ) => {
       if (!parent.signalId) return null;
-      return prisma.signals.findUnique({ where: { id: parent.signalId } });
+      const sig = await prisma.signals.findUnique({ where: { id: parent.signalId } });
+      // Null rather than the row when it is out of scope — the feedback or
+      // comment itself stays readable, its Signal does not.
+      return canReadSignal(signalScope, sig) ? sig : null;
     },
     crisis: (parent: { crisisId: string | null }, _args: unknown, { prisma }: Context) => {
       if (!parent.crisisId) return null;

@@ -121,6 +121,9 @@ function buildContext(
     authMethod: user ? "session" : null,
     locale,
     translationLoader,
+    // See the note in dataSource.resolver.test.ts: the signal-access helpers
+    // never default a missing scope to full, so fakes must supply one.
+    signalScope: { kind: "full" },
   } as unknown as Context;
 }
 

@@ -32,6 +32,10 @@ export type ActivityAction =
   | "feedback.create"
   | "dev_user.provisioned"
   | "dev_user.api_key_rotated"
+  // An admin opened / closed one data source's Signals for an API-only
+  // developer. Actor is the admin; resource is the developer.
+  | "api_signal_source.grant"
+  | "api_signal_source.revoke"
   | "user.approved"
   | "user.role_updated"
   // A platform admin read another user's Conversation (or listed them).

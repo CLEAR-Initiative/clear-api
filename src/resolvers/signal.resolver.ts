@@ -5,6 +5,7 @@ import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentW
 import { logActivity } from "../utils/activity-log.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
+import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
 
@@ -212,28 +213,38 @@ export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
       requireContentReader(context);
+      // An API-only developer sees Signals only from the data sources an admin
+      // granted them. Errors rather than returning [] here, so "you may not see
+      // this" never reads as "there is no data" on an explicit Signal query.
+      assertSignalReadable(context.signalScope);
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
-      // No teamId: any authenticated user gets the global feed.
+      // No teamId: any authenticated user gets the global feed, narrowed to
+      // whatever the caller's signal scope allows.
       if (!args.teamId) {
-        return context.prisma.signals.findMany({ where: dummyFilter });
+        return context.prisma.signals.findMany({
+          where: withSignalScope(context.signalScope, dummyFilter),
+        });
       }
       // teamId provided: apply that team's location filter without
       // requiring the caller to be a member — the team scope is just a
       // view filter now, not an access gate.
       const filter = await buildLocationFilterForTeam(context.prisma, args.teamId);
-      return context.prisma.signals.findMany({ where: { ...filter, ...dummyFilter } });
+      return context.prisma.signals.findMany({
+        where: withSignalScope(context.signalScope, { ...filter, ...dummyFilter }),
+      });
     },
     signalsByLocation: async (_parent: unknown, args: { locationId: string }, context: Context) => {
       requireContentReader(context);
+      assertSignalReadable(context.signalScope);
       const locationIds = await getLocationIdsWithDescendants(context.prisma, args.locationId);
       return context.prisma.signals.findMany({
-        where: {
+        where: withSignalScope(context.signalScope, {
           OR: [
             { originId: { in: locationIds } },
             { destinationId: { in: locationIds } },
             { locationId: { in: locationIds } },
           ],
-        },
+        }),
       });
     },
     signal: async (_parent: unknown, args: { id: string }, context: Context) => {
@@ -268,10 +279,13 @@ export const signalResolvers = {
             }
           : {}),
       };
-      return context.prisma.signals.findUnique({
+      const found = await context.prisma.signals.findUnique({
         where: { id: args.id },
         include,
       });
+      // Out-of-scope reads as "not found": a restricted caller must not be able
+      // to probe which Signal ids exist by distinguishing 403 from null.
+      return canReadSignal(context.signalScope, found) ? found : null;
     },
 
     // The Dagster event-driven drain: signals awaiting downstream processing
