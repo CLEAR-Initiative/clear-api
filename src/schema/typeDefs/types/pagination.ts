@@ -114,7 +114,7 @@ export const paginationTypeDef = gql`
 
     teamId: String
     locationId: String
-    """Restrict to signals whose source name is in this list (e.g. ["acled","dataminr"])."""
+    """Restrict to signals whose source name is in this list (e.g. ["acled","gdacs"])."""
     sourceNames: [String!]
     severityMin: Int
     severityMax: Int

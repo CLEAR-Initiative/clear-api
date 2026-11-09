@@ -39,7 +39,7 @@ export const signalTypeDef = gql`
     revision: Int!
     """Pointer to the raw payload blob in the S3 data lake, when landed there."""
     rawS3Key: String
-    """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
+    """Stable upstream identifier (e.g. "acled:{event_id_cnty}"). Used to
     deduplicate ingestion — (source, externalId) is unique."""
     externalId: String
     publishedAt: DateTime!
@@ -50,7 +50,7 @@ export const signalTypeDef = gql`
     """Severity score (1–5). From data source or estimated by pipeline."""
     severity: Int
     """Reported casualties for the signal. Sourced from ACLED's fatalities
-    field; for Dataminr, parsed from raw text via regex."""
+    field; for some other feeds, parsed from the raw text via regex."""
     casualties: Int
     """Real-world event onset extracted from this signal by the shared
     event-classification LLM. Null when no onset was resolved."""
