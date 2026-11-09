@@ -27,6 +27,10 @@
 
 import { env } from "../utils/env.js";
 
+/** Per-call deadline. Signup and approval wait on these calls, so a
+ *  stalled CRM must fail fast rather than hold the reply open. */
+const CRM_TIMEOUT_MS = 10_000;
+
 interface ExponentialContact {
   id: string;
   email: string | null;
@@ -83,7 +87,12 @@ async function trpcCall<T>(
 
   let response: Response;
   try {
-    response = await fetch(url, { method, headers: authHeaders(), body });
+    response = await fetch(url, {
+      method,
+      headers: authHeaders(),
+      body,
+      signal: AbortSignal.timeout(CRM_TIMEOUT_MS),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[exponential] ${procedure} network error: ${msg}`);
