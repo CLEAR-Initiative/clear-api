@@ -107,4 +107,25 @@ describe("exponential trpc client", () => {
     expect(result).toEqual({ ok: false, reason: "contact_upsert_failed:network_error:boom" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("gives up on a stalled CRM call when its deadline fires", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // Shrink the 10s deadline so the test doesn't wait for it.
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(5));
+    // A CRM that never answers: the request only ends when its signal aborts.
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createContact({ email: "someone@example.org" });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/^network_error:/);
+  });
 });
