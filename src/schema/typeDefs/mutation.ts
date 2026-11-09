@@ -969,7 +969,7 @@ export const mutationTypeDef = gql`
     """Stable upstream identifier for idempotent ingestion. If a signal with
     the same (sourceId, externalId) already exists, createSignal returns the
     existing row instead of creating a duplicate. Recommended prefix scheme:
-    "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
+    "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
     """Fingerprint of rawData, for sources whose records get revised in
     place (e.g. IDMC). Optional — most sources never revise a signal after
