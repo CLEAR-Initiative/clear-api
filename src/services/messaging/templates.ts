@@ -568,6 +568,52 @@ The CLEAR team`,
   };
 }
 
+/**
+ * Sent when an admin approves a self-signed-up account (`approveUser`).
+ * Fulfils the "You'll get an email as soon as it's approved" promise made
+ * by the signup acknowledgement and the Welcome page. Sent from this API,
+ * not from a CRM automation, so approval never depends on the CRM.
+ */
+export function accountApproved(
+  userName: string,
+  apiKeysUrl: string,
+): EmailContent {
+  const displayName = userName?.trim() || "there";
+  const safeName = escapeHtml(displayName);
+
+  return {
+    subject: "Your CLEAR account is approved",
+
+    textBody: `Hi ${displayName},
+
+Good news: your CLEAR account has been approved. API keys and usage analytics are now unlocked in the Developer Portal.
+
+Create your first API key here:
+
+${apiKeysUrl}
+
+Best,
+The CLEAR team`,
+
+    htmlBody: wrapHtml(
+      "Account approved",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${safeName},
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        Good news: your CLEAR account has been approved. API keys and usage analytics are now unlocked in the Developer Portal.
+      </p>
+      ${ctaButton("Create an API key", apiKeysUrl)}
+      <p style="margin: 0; font-size: 12px; color: #737373; word-break: break-all; line-height: 1.4;">
+        ${apiKeysUrl}
+      </p>
+      <p style="margin: 24px 0 0; font-size: 15px; color: #171717; line-height: 1.5;">
+        Best,<br />The CLEAR team
+      </p>`,
+    ),
+  };
+}
+
 /** Strip CR/LF so a user-supplied name can't fold into a new mail header. */
 function headerSafe(text: string): string {
   return text.replace(/[\r\n]+/g, " ").trim();

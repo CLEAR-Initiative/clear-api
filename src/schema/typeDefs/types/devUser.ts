@@ -46,18 +46,24 @@ export const devUserTypeDef = gql`
 
   """
   Result of the admin-only \`approveUser\` mutation. Flips a \`pending\`
-  user's role to \`viewer\` and moves the matching CRM contact from
-  the prospects collection into the approved collection, triggering
-  Exponential's welcome automation.
+  user's role to \`member\`, emails them that they are approved, and
+  mirrors the approval into the CRM when one is configured.
   """
   type ApproveUserResult {
     """The approved user (with the new role)."""
     user: User!
     """
-    True when the CRM-side list move completed cleanly. False means
-    the user is approved locally but the CRM record still sits in the
-    prospects list — the admin can retry from /portal/admin without
-    re-approving the user.
+    True when the approval email was handed to the email provider.
+    False means the user is approved but was not told; \`emailError\`
+    says why.
+    """
+    emailSent: Boolean!
+    """Why the approval email failed. Null when it was sent."""
+    emailError: String
+    """
+    True when the CRM contact landed in the approved collection. False
+    when no CRM is configured or the sync failed; a failure also adds
+    an entry to \`crmWarnings\`. The approval stands either way.
     """
     crmMoved: Boolean!
     """

@@ -1130,12 +1130,11 @@ Notifies the user by email. Requires global `admin`.<div class="field-args"><spa
     <td><code>approveUser</code></td>
     <td><code>ApproveUserResult!</code></td>
     <td>Approve a self-signed-up user. Flips their role from `pending`
-to `viewer` (granting read access to signals / events / alerts /
-crises) and moves their CRM contact from the prospects collection
-into the approved collection — which fires Exponential's welcome
-automation. The local role flip is authoritative; CRM updates are
-best-effort and surface as fields on the result so the admin UI
-can offer a retry. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
+to `member` (granting read access to signals / events / alerts /
+crises) and emails them that they are approved. When a CRM is
+configured, also moves their contact into the approved collection.
+The role flip is authoritative; the email and CRM sync are
+best-effort and report back on the result. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
   </tr><tr id="mutation-updateuserrole">
     <td><code>updateUserRole</code></td>
     <td><code>User!</code></td>
@@ -5601,19 +5600,27 @@ nested under an Event. Each grant opens exactly one source to one user.</p><tabl
     <td><code>DateTime!</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-approveuserresult"><code>ApproveUserResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `approveUser` mutation. Flips a `pending`
-user's role to `viewer` and moves the matching CRM contact from
-the prospects collection into the approved collection, triggering
-Exponential's welcome automation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+user's role to `member`, emails them that they are approved, and
+mirrors the approval into the CRM when one is configured.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
     <td>The approved user (with the new role).</td>
   </tr><tr>
+    <td><code>emailSent</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the approval email was handed to the email provider.
+False means the user is approved but was not told; `emailError`
+says why.</td>
+  </tr><tr>
+    <td><code>emailError</code></td>
+    <td><code>String</code></td>
+    <td>Why the approval email failed. Null when it was sent.</td>
+  </tr><tr>
     <td><code>crmMoved</code></td>
     <td><code>Boolean!</code></td>
-    <td>True when the CRM-side list move completed cleanly. False means
-the user is approved locally but the CRM record still sits in the
-prospects list — the admin can retry from /portal/admin without
-re-approving the user.</td>
+    <td>True when the CRM contact landed in the approved collection. False
+when no CRM is configured or the sync failed; a failure also adds
+an entry to `crmWarnings`. The approval stands either way.</td>
   </tr><tr>
     <td><code>crmWarnings</code></td>
     <td><code>[String!]!</code></td>
