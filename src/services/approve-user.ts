@@ -63,13 +63,21 @@ export async function approveUserById(
     );
   }
 
-  // Local role flip first — authoritative even if Exponential is
-  // unreachable, so the user gets access immediately. `member` is the default
-  // approved human role (formerly `viewer`).
-  const updated = await prisma.user.update({
-    where: { id: user.id },
+  // Local role flip first — authoritative even if the mail provider or CRM
+  // is unreachable, so the user gets access immediately. `member` is the
+  // default approved human role (formerly `viewer`). Conditional on
+  // `pending` so that of two overlapping approvals only one wins the flip
+  // and goes on to email the user.
+  const flipped = await prisma.user.updateMany({
+    where: { id: user.id, role: "pending" },
     data: { role: "member" },
   });
+  if (flipped.count === 0) {
+    throw new GraphQLError("User is not pending (already approved)", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  const updated = { ...user, role: "member" };
 
   // Independent side effects; neither throws.
   const [email, synced] = await Promise.all([

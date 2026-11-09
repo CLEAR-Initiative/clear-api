@@ -18,30 +18,44 @@ export function portalApiKeysUrl(): string {
 
 export type ApprovalEmailResult = { ok: true } | { ok: false; reason: string };
 
+/** The admin's approval reply waits on this send, so a stalled provider
+ *  must not hold it open: past this deadline the send is reported as
+ *  failed. A late delivery is still possible; the admin is told to check. */
+export const APPROVAL_EMAIL_TIMEOUT_MS = 10_000;
+
 /**
  * Never throws: a failed send must not undo the approval. The failure
  * comes back as a result so the admin is told rather than it vanishing
  * into the logs.
  */
-export async function sendApprovalEmail(input: {
-  email: string;
-  name: string | null | undefined;
-}): Promise<ApprovalEmailResult> {
+export async function sendApprovalEmail(
+  input: { email: string; name: string | null | undefined },
+  timeoutMs = APPROVAL_EMAIL_TIMEOUT_MS,
+): Promise<ApprovalEmailResult> {
   const content = templates.accountApproved(input.name ?? "", portalApiKeysUrl());
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+
   try {
-    const provider = await getEmailProvider();
-    const sent = await provider.send({
-      to: input.email,
-      subject: content.subject,
-      textBody: content.textBody,
-      htmlBody: content.htmlBody,
-    });
+    const send = getEmailProvider().then((provider) =>
+      provider.send({
+        to: input.email,
+        subject: content.subject,
+        textBody: content.textBody,
+        htmlBody: content.htmlBody,
+      }),
+    );
+    const sent = await Promise.race([send, deadline]);
     if (!sent) return { ok: false, reason: "provider_rejected" };
     return { ok: true };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.error(`[approveUser] approval email failed for ${input.email}: ${reason}`);
     return { ok: false, reason };
+  } finally {
+    clearTimeout(timer);
   }
 }
