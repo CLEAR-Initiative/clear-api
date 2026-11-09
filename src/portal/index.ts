@@ -25,7 +25,7 @@ import {
   portalUpdateTeamMemberRole,
   slugifyName,
 } from "./admin-orgs.js";
-import { approveUserById } from "../services/approve-user.js";
+import { approvalSummary, approveUserById } from "../services/approve-user.js";
 import {
   MIN_PASSWORD_LENGTH,
   findValidResetToken,
@@ -584,14 +584,9 @@ portalRouter.post("/admin/approve", urlencoded, async (req, res) => {
 
   try {
     const result = await approveUserById(prisma, admin.id, userId);
-    const detail = result.crmMoved
-      ? "Approved and synced to CRM."
-      : result.crmWarnings.length > 0
-        ? `Approved locally. CRM sync issues: ${result.crmWarnings.join(", ")}`
-        : "Approved locally.";
     adminRedirect(res, "users", {
       kind: "success",
-      message: `${result.user.email}: ${detail}`,
+      message: `${result.user.email}: ${approvalSummary(result)}`,
     });
   } catch (err) {
     const message =

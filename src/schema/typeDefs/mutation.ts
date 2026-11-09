@@ -98,12 +98,11 @@ export const mutationTypeDef = gql`
 
     """
     Approve a self-signed-up user. Flips their role from \`pending\`
-    to \`viewer\` (granting read access to signals / events / alerts /
-    crises) and moves their CRM contact from the prospects collection
-    into the approved collection — which fires Exponential's welcome
-    automation. The local role flip is authoritative; CRM updates are
-    best-effort and surface as fields on the result so the admin UI
-    can offer a retry. Requires global \`admin\`.
+    to \`member\` (granting read access to signals / events / alerts /
+    crises) and emails them that they are approved. When a CRM is
+    configured, also moves their contact into the approved collection.
+    The role flip is authoritative; the email and CRM sync are
+    best-effort and report back on the result. Requires global \`admin\`.
     """
     approveUser(userId: String!): ApproveUserResult!
 
