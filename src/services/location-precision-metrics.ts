@@ -99,7 +99,28 @@ export interface LocationPrecisionMetricsInput {
   sourceNames?: string[] | null;
   /** Bucket size of `series`; defaults to WEEK. */
   granularity?: Granularity | null;
+  /**
+   * Read the replay series of this Replay run instead of the history series
+   * (ADR-0020): only the Signals the run re-processed, each at the level the
+   * run gave it, in the bucket of its Live Outcome.
+   */
+  replayRunId?: string | null;
 }
+
+/** One Replay run with Outcomes for Signals in range (ADR-0020). */
+export interface LocationReplayRun {
+  /** The run id the pipeline sent: a Dagster run id, or a replay job's own id. */
+  runId: string;
+  /** The clear-pipeline git SHA of the run; null when the pipeline sent none. */
+  pipelineVersion: string | null;
+  /** The instant of the run's first Outcome for a Signal in range. */
+  startedAt: Date;
+  /** How many ingested Signals in range the run re-processed. */
+  signals: number;
+}
+
+/** The most Replay runs `fetchLocationReplayRuns` returns: the newest ones. */
+export const MAX_REPLAY_RUNS = 50;
 
 /** The bucket a location level falls in; anything finer than a district is a point. */
 export function levelBucket(level: number | null | undefined): Level {
@@ -266,6 +287,96 @@ export async function fetchLocationPrecisionRows(
   `;
 }
 
+/**
+ * The replay series of one Replay run (ADR-0020), in the shape of
+ * `fetchLocationPrecisionRows`. A Signal counts when it is in range by its
+ * Live Outcome and the run wrote an Outcome for it. The day is the day of the
+ * Live Outcome, so the replay line and the history line compare the same
+ * Signals bucket by bucket. The level is the one the run gave the Signal (its
+ * last Outcome for it). The location filter reads the Live Outcome's
+ * location, as the history series does: the two lines cover the same place.
+ */
+export async function fetchLocationReplayRows(
+  prisma: PrismaClient,
+  range: { from: Date; to: Date },
+  locationId: string | null,
+  sourceNames: string[],
+  replayRunId: string,
+): Promise<LocationPrecisionRow[]> {
+  const { inSources, inLocation } = filters(locationId, sourceNames);
+  return prisma.$queryRaw<LocationPrecisionRow[]>`
+    SELECT ds."name" AS "source",
+      FLOOR(EXTRACT(EPOCH FROM o."located_at") / 86400)::int AS "day",
+      r."level" AS "level",
+      COUNT(*)::int AS "count"
+    FROM "signal_location_outcomes" o
+    JOIN "signals" s ON s."id" = o."signal_id"
+    JOIN "data_sources" ds ON ds."id" = s."source_id"
+    LEFT JOIN "locations" l ON l."id" = o."location_id"
+    JOIN LATERAL (
+      SELECT ro."level" FROM "signal_location_outcomes" ro
+      WHERE ro."signal_id" = o."signal_id" AND ro."run_kind" = 'REPLAY' AND ro."run_id" = ${replayRunId}
+      ORDER BY ro."id" DESC
+      LIMIT 1
+    ) r ON true
+    WHERE ${IS_LIVE_OUTCOME}
+      AND ${ingestedSignal("s")}
+      AND o."located_at" >= ${range.from}
+      AND o."located_at" <= ${range.to}
+      ${inSources}
+      ${inLocation}
+    GROUP BY 1, 2, 3
+  `;
+}
+
+/**
+ * The Replay runs that re-processed a Signal in range, newest first, at most
+ * `MAX_REPLAY_RUNS`. "In range" is by the Signal's Live Outcome, under the
+ * same source and location filters as the series, so `signals` is the
+ * denominator total of that run's replay series. A REPLAY Outcome with no run
+ * id belongs to no run and is left out.
+ */
+export async function fetchLocationReplayRuns(
+  prisma: PrismaClient,
+  range: { from: Date; to: Date },
+  locationId: string | null,
+  sourceNames: string[],
+): Promise<LocationReplayRun[]> {
+  const { inSources, inLocation } = filters(locationId, sourceNames);
+  const rows = await prisma.$queryRaw<Array<{ runId: string; pipelineVersion: string | null; startedAt: Date; signals: number }>>`
+    SELECT ro."run_id" AS "runId",
+      MAX(ro."pipeline_version") AS "pipelineVersion",
+      MIN(ro."located_at") AS "startedAt",
+      COUNT(DISTINCT o."signal_id")::int AS "signals"
+    FROM "signal_location_outcomes" o
+    JOIN "signals" s ON s."id" = o."signal_id"
+    JOIN "data_sources" ds ON ds."id" = s."source_id"
+    LEFT JOIN "locations" l ON l."id" = o."location_id"
+    JOIN "signal_location_outcomes" ro
+      ON ro."signal_id" = o."signal_id" AND ro."run_kind" = 'REPLAY' AND ro."run_id" IS NOT NULL
+    WHERE ${IS_LIVE_OUTCOME}
+      AND ${ingestedSignal("s")}
+      AND o."located_at" >= ${range.from}
+      AND o."located_at" <= ${range.to}
+      ${inSources}
+      ${inLocation}
+    GROUP BY ro."run_id"
+    ORDER BY MIN(ro."located_at") DESC, ro."run_id" ASC
+    LIMIT ${MAX_REPLAY_RUNS}
+  `;
+  return rows.map((row) => ({ ...row, signals: Number(row.signals) || 0 }));
+}
+
+/** The Replay runs over the requested range, location and sources; the range rules are those of the metric. */
+export async function listLocationReplayRuns(
+  prisma: PrismaClient,
+  input: Pick<LocationPrecisionMetricsInput, "from" | "to" | "locationId" | "sourceNames">,
+  now: Date = new Date(),
+): Promise<LocationReplayRun[]> {
+  const range = resolveRange({ from: input.from, to: input.to }, now);
+  return fetchLocationReplayRuns(prisma, range, input.locationId || null, normaliseSourceNames(input.sourceNames));
+}
+
 /** Location challenges filed in range, by status, under the same source and location filters. */
 export async function fetchLocationCorrectionRows(
   prisma: PrismaClient,
@@ -298,7 +409,10 @@ export async function computeLocationPrecisionMetrics(
   const granularity = resolveGranularity(input.granularity);
   const locationId = input.locationId || null;
   const sourceNames = normaliseSourceNames(input.sourceNames);
-  const rows = await fetchLocationPrecisionRows(prisma, range, locationId, sourceNames);
+  const replayRunId = input.replayRunId?.trim() || null;
+  const rows = replayRunId
+    ? await fetchLocationReplayRows(prisma, range, locationId, sourceNames, replayRunId)
+    : await fetchLocationPrecisionRows(prisma, range, locationId, sourceNames);
   const corrections = await fetchLocationCorrectionRows(prisma, range, locationId, sourceNames);
   return summarise(rows, corrections, range, granularity);
 }

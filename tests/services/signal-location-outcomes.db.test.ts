@@ -8,7 +8,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import type { Context } from "../../src/context.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
-import { computeLocationPrecisionMetrics } from "../../src/services/location-precision-metrics.js";
+import { computeLocationPrecisionMetrics, listLocationReplayRuns } from "../../src/services/location-precision-metrics.js";
+import { computeMetricSeries } from "../../src/services/metric-registry.js";
 import { writeArrivalOutcomes } from "../../src/services/signal-location-outcomes.js";
 import { describeIfDb } from "../helpers/db.js";
 
@@ -201,6 +202,72 @@ describeIfDb("the location Outcome log", () => {
       ["2026-W44", 1, 1],
       ["2026-W45", 0, 0],
     ]);
+  });
+
+  it("a Replay run changes the replay line and not the history line", async () => {
+    const mine = `${RUN}-replay`;
+    const replaySource = (await prisma.dataSources.create({ data: { name: mine, type: "test" } })).id;
+    const arriveHere = async (collectedAt: string) => {
+      const signal = await createSignal(
+        {},
+        { input: { sourceId: replaySource, externalId: `${RUN}-${n++}`, rawData: {}, publishedAt: collectedAt, collectedAt } as never },
+        ctx,
+      );
+      return signal.id;
+    };
+    // W44: two Signals at the state. W45: one at the state.
+    const live = async (collectedAt: string, at: string) => {
+      const id = await arriveHere(collectedAt);
+      await updateSignalLocation({}, { id, locationId: STATE }, ctx);
+      await markSignalsProcessed({}, { ids: [id] }, ctx);
+      await processedAt(id, at);
+      return id;
+    };
+    const a = await live("2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z");
+    const b = await live("2026-10-28T09:00:00Z", "2026-10-28T10:00:00Z");
+    const c = await live("2026-11-03T09:00:00Z", "2026-11-03T10:00:00Z");
+    const input = { metric: "DISTRICT_OR_FINER" as const, ...range, sourceNames: [mine] };
+    const shares = (series: Awaited<ReturnType<typeof computeMetricSeries>>) =>
+      series.buckets.map((bucket) => [bucket.label, bucket.numerator, bucket.denominator]);
+
+    const history = shares(await computeMetricSeries(prisma, input));
+    expect(history).toEqual([
+      ["2026-W44", 0, 2],
+      ["2026-W45", 0, 1],
+    ]);
+    expect(await listLocationReplayRuns(prisma, { ...range, sourceNames: [mine] })).toEqual([]);
+
+    // The Replay run re-locates two of the three, now: one to the district, one to the country.
+    const replay = { runKind: "REPLAY" as const, pipelineVersion: "def456", runId: `${RUN}-run` };
+    await updateSignalLocation({}, { id: a, locationId: DISTRICT }, ctx);
+    await updateSignalLocation({}, { id: c, locationId: COUNTRY }, ctx);
+    await markSignalsProcessed({}, { ids: [a, c], ...replay }, ctx);
+
+    // The history line is the same. The replay line holds the two Signals, in their old weeks.
+    expect(shares(await computeMetricSeries(prisma, input))).toEqual(history);
+    expect(shares(await computeMetricSeries(prisma, { ...input, replayRunId: replay.runId }))).toEqual([
+      ["2026-W44", 1, 1],
+      ["2026-W45", 0, 1],
+    ]);
+    // Per source too, and a run with no Signal in range is all zeros.
+    const grouped = await computeMetricSeries(prisma, { ...input, groupBy: "SOURCE", replayRunId: replay.runId });
+    expect(grouped.groups).toEqual([mine]);
+    expect(shares(await computeMetricSeries(prisma, { ...input, replayRunId: "no-such-run" }))).toEqual([
+      ["2026-W44", 0, 0],
+      ["2026-W45", 0, 0],
+    ]);
+
+    // The run list: one run, with its version and its coverage (2 of the 3 Signals in range).
+    const runs = await listLocationReplayRuns(prisma, { ...range, sourceNames: [mine] });
+    expect(runs).toMatchObject([{ runId: replay.runId, pipelineVersion: "def456", signals: 2 }]);
+    expect(runs[0]!.startedAt.getTime()).toBeGreaterThan(new Date("2026-11-09T00:00:00Z").getTime());
+    // A Signal the run touched outside the range does not count.
+    expect(await listLocationReplayRuns(prisma, { from: "2026-11-02T00:00:00Z", to: range.to, sourceNames: [mine] })).toMatchObject([
+      { runId: replay.runId, signals: 1 },
+    ]);
+
+    await prisma.signals.deleteMany({ where: { id: { in: [a, b, c] } } });
+    await prisma.dataSources.deleteMany({ where: { id: replaySource } });
   });
 
   it("keeps the level a run produced when the location is removed", async () => {

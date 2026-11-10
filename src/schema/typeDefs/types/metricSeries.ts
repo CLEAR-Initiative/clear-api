@@ -84,6 +84,44 @@ export const metricSeriesTypeDef = gql`
     sourceNames: [String!]
     """Split the series into groups. Refused with BAD_USER_INPUT for a metric that cannot be grouped."""
     groupBy: MetricGroupBy
+    """
+    Read the replay series of one Replay run instead of the history series
+    (ADR-0020): only the Signals in range that the run re-processed, each at
+    the result the run gave it, in the bucket the history series has it in.
+    The two series then compare the same Signals bucket by bucket. Take the id
+    from \`locationReplayRuns\`. Only \`DISTRICT_OR_FINER\` has a replay
+    series; another metric refuses it with BAD_USER_INPUT. A run with no
+    Signal in range gives an all-zero series.
+    """
+    replayRunId: String
+  }
+
+  """Which Replay runs to list: the range and filters of the series they are drawn on."""
+  input LocationReplayRunsInput {
+    """Start of the range, inclusive. Defaults as \`metricSeries\` does."""
+    from: DateTime
+    """End of the range, inclusive. Defaults to now."""
+    to: DateTime
+    """Only Signals whose Live Outcome is in this location or inside it."""
+    locationId: String
+    """Only these sources, by \`DataSource.name\`."""
+    sourceNames: [String!]
+  }
+
+  """
+  One Replay run of the pipeline that re-located Signals in the range
+  (ADR-0020). A Replay run re-processes Signals that a run already finished;
+  its results are kept beside the history, never in place of it.
+  """
+  type LocationReplayRun {
+    """The id the pipeline gave the run: a Dagster run id, or a replay job's own id. Pass it as \`MetricSeriesInput.replayRunId\`."""
+    runId: String!
+    """The clear-pipeline git SHA of the run; null when the pipeline sent none."""
+    pipelineVersion: String
+    """The instant of the run's first result for a Signal in range."""
+    startedAt: DateTime!
+    """How many ingested Signals in range the run re-processed: the denominator total of its replay series."""
+    signals: Int!
   }
 
   """One bucket of one group. The metric is \`numerator / denominator\`; a bucket with a zero denominator measured nothing."""
