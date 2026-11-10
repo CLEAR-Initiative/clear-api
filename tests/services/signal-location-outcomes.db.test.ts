@@ -224,6 +224,11 @@ describeIfDb("the location Outcome log", () => {
       runId: "backfill-1",
     });
     expect(await series()).toEqual(before);
+
+    // A person corrected the Signal earlier. The Outcome still holds what the replay wrote.
+    await prisma.signals.update({ where: { id }, data: { locationCorrectedAt: new Date(), pipelineLocationId: STATE } });
+    await updateSignalLocation({}, { id, locationId: COUNTRY, runKind: "REPLAY" }, ctx);
+    expect((await outcomes(id)).at(-1)).toMatchObject({ locationId: COUNTRY, level: 0, runKind: "REPLAY" });
     await prisma.signals.deleteMany({ where: { id } });
   });
 

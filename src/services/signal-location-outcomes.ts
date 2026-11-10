@@ -155,14 +155,17 @@ export function writeProcessedOutcomes(
 
 /**
  * Write the REPLAY Outcome of a Signal that a replay job just moved with
- * `updateSignalLocation`: the location it has now, at `at`. Run it in the
- * same transaction as the update, after it. A replay job that moves Signals
- * without the drain never calls `markSignalsProcessed`, so this is the only
- * record of its result.
+ * `updateSignalLocation`: the location the replay wrote (`locationId`), at
+ * `at`. Run it in the same transaction as the update. A replay job that moves
+ * Signals without the drain never calls `markSignalsProcessed`, so this is
+ * the only record of its result. The row holds what the replay wrote, also
+ * for a Signal a person corrected earlier: `pipelineLocation` would give the
+ * location from before the correction there.
  */
 export function writeRelocatedOutcome(
   prisma: Pick<PrismaClient, "$executeRaw">,
   signalId: string,
+  locationId: string,
   at: Date,
   run: PipelineRun = {},
 ) {
@@ -172,7 +175,7 @@ export function writeRelocatedOutcome(
     SELECT s."id", (${at.toISOString()}::timestamptz AT TIME ZONE 'UTC'), l."id", l."level",
       'REPLAY', 'RELOCATED', ${trimmed(run.pipelineVersion)}, ${trimmed(run.runId)}
     FROM "signals" s
-    LEFT JOIN "locations" l ON l."id" = ${pipelineLocation("s")}
+    JOIN "locations" l ON l."id" = ${locationId}
     WHERE s."id" = ${signalId}
       AND ${pipelineSignal("s")}
   `;

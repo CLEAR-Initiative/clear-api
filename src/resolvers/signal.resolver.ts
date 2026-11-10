@@ -792,7 +792,7 @@ export const signalResolvers = {
       if (args.runKind !== "REPLAY") return update;
       const [moved] = await context.prisma.$transaction([
         update,
-        writeRelocatedOutcome(context.prisma, args.id, new Date(), {
+        writeRelocatedOutcome(context.prisma, args.id, args.locationId, new Date(), {
           pipelineVersion: args.pipelineVersion,
           runId: args.runId,
         }),
