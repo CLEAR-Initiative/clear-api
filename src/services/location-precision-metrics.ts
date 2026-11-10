@@ -7,18 +7,15 @@
  * Each ingested Signal in range is counted once, under the level of its
  * location: `noLocation`, `country` (0), `state` (1), `district` (2) or
  * `point` (a level-4 landmark or coordinate point; there is no level 3).
- * "District or finer" is `district + point`. The location is the Signal's
- * general location, or for a displacement Signal its origin (where the
- * incident happened), else its destination. A Signal a person corrected (an
- * accepted or corrected Location challenge) is read at the location the
- * pipeline gave it (`pipelineLocationId`, kept by the first correction), not
- * the point the person wrote.
+ * "District or finer" is `district + point`.
  *
- * A Signal is **in range** by the instant it was last located: `processedAt`
- * (the drain that resolves text-only sources sets it) or, with none,
- * `collectedAt` (sources with coordinates are placed on arrival). That is the
- * week a pipeline deploy shows up in, which is the point of the metric; it
- * differs from time to detection, which buckets by `publishedAt`.
+ * The metric reads the Outcome log, not the live Signal (ADR-0020). Each
+ * Signal counts once, at its **Live Outcome**: the last row a Live run wrote
+ * for it. The Outcome gives the level (copied from the location when the run
+ * placed the Signal) and the instant that puts the Signal **in range** and in
+ * a bucket. A Replay run adds rows and changes neither. A person's correction
+ * writes no Outcome, so the metric measures the pipeline. The series differs
+ * from time to detection, which buckets by `publishedAt`.
  *
  * **Ingested** means the same as in ADR-0011: brought in by a pipeline (no
  * `submittedById`, not `rawData.manual`), not retracted, not dummy. Signals a
@@ -42,6 +39,7 @@ import {
   type Bucket,
   type Granularity,
 } from "./detection-metrics.js";
+import { pipelineLocation } from "./signal-location-outcomes.js";
 
 export { normaliseSourceNames };
 
@@ -207,16 +205,19 @@ export function summarise(
   return { from: range.from, to: range.to, signalsInRange, bySource, weekly, corrections: correctionCounts, granularity, series };
 }
 
+/** The location the pipeline gave the Signal `s`; the correction counts filter on it. */
+const PIPELINE_LOCATION = pipelineLocation("s");
+
 /**
- * The location the pipeline gave the Signal `s`: its own location fields, or,
- * once a person corrected it, the location the first correction overwrote. A
- * human point would measure the person, not the pipeline, and lift the
- * Signal's original week.
+ * True when the Outcome `o` is the Live Outcome of its Signal: its last LIVE
+ * row. A Replay run adds REPLAY rows, so it never changes which row this is.
  */
-const PIPELINE_LOCATION = Prisma.sql`CASE
-  WHEN s."location_corrected_at" IS NULL THEN COALESCE(s."location_id", s."origin_id", s."destination_id")
-  ELSE s."pipeline_location_id"
-END`;
+const IS_LIVE_OUTCOME = Prisma.sql`o."run_kind" = 'LIVE' AND NOT EXISTS (
+  SELECT 1 FROM "signal_location_outcomes" later
+  WHERE later."signal_id" = o."signal_id"
+    AND later."run_kind" = 'LIVE'
+    AND (later."located_at", later."id") > (o."located_at", o."id")
+)`;
 
 /** `WHERE` clauses shared by both queries: the Signal's source and location. */
 function filters(locationId: string | null, sourceNames: string[]) {
@@ -230,10 +231,11 @@ function filters(locationId: string | null, sourceNames: string[]) {
 }
 
 /**
- * Ingested Signals in range, aggregated by source, UTC day of the instant
- * they were located, and the level of their location. The day is whole days
- * since the epoch, computed on the stored UTC timestamp so no session time
- * zone can shift it.
+ * Ingested Signals in range, aggregated by source, UTC day and level. Each
+ * Signal is read at its Live Outcome (ADR-0020): the instant and the level
+ * that the Live run recorded, not the Signal's current location or
+ * `processedAt`. The day is whole days since the epoch, computed on the
+ * stored UTC timestamp so no session time zone can shift it.
  */
 export async function fetchLocationPrecisionRows(
   prisma: PrismaClient,
@@ -244,15 +246,17 @@ export async function fetchLocationPrecisionRows(
   const { inSources, inLocation } = filters(locationId, sourceNames);
   return prisma.$queryRaw<LocationPrecisionRow[]>`
     SELECT ds."name" AS "source",
-      FLOOR(EXTRACT(EPOCH FROM COALESCE(s."processed_at", s."collected_at")) / 86400)::int AS "day",
-      l."level" AS "level",
+      FLOOR(EXTRACT(EPOCH FROM o."located_at") / 86400)::int AS "day",
+      o."level" AS "level",
       COUNT(*)::int AS "count"
-    FROM "signals" s
+    FROM "signal_location_outcomes" o
+    JOIN "signals" s ON s."id" = o."signal_id"
     JOIN "data_sources" ds ON ds."id" = s."source_id"
-    LEFT JOIN "locations" l ON l."id" = ${PIPELINE_LOCATION}
-    WHERE ${ingestedSignal("s")}
-      AND COALESCE(s."processed_at", s."collected_at") >= ${range.from}
-      AND COALESCE(s."processed_at", s."collected_at") <= ${range.to}
+    LEFT JOIN "locations" l ON l."id" = o."location_id"
+    WHERE ${IS_LIVE_OUTCOME}
+      AND ${ingestedSignal("s")}
+      AND o."located_at" >= ${range.from}
+      AND o."located_at" <= ${range.to}
       ${inSources}
       ${inLocation}
     GROUP BY 1, 2, 3
