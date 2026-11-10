@@ -9,6 +9,7 @@ import type { Context } from "../../src/context.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import { computeLocationPrecisionMetrics } from "../../src/services/location-precision-metrics.js";
+import { writeArrivalOutcomes } from "../../src/services/signal-location-outcomes.js";
 import { describeIfDb } from "../helpers/db.js";
 
 const RUN = `slo-db-${Date.now()}`;
@@ -152,6 +153,54 @@ describeIfDb("the location Outcome log", () => {
       ["REPLAY", 0],
     ]);
     expect(await series()).toEqual(before);
+  });
+
+  it("a bulk ingest writes one arrival Outcome per new Signal, and none for a duplicate", async () => {
+    // As /x-ingest does: createMany(skipDuplicates), then the Outcomes, in one transaction.
+    const ingest = (externalIds: string[]) =>
+      prisma.$transaction([
+        prisma.signals.createMany({
+          data: externalIds.map((externalId) => ({ sourceId, externalId, rawData: {}, publishedAt: new Date("2026-10-29T09:00:00Z") })),
+          skipDuplicates: true,
+        }),
+        writeArrivalOutcomes(prisma, sourceId, externalIds),
+      ]);
+    const [a, b] = [`${RUN}-bulk-a`, `${RUN}-bulk-b`];
+    await ingest([a]);
+    await ingest([a, b]); // the poller sends `a` again
+    const rows = await prisma.signals.findMany({
+      where: { sourceId, externalId: { in: [a, b] } },
+      include: { locationOutcomes: true },
+      orderBy: { externalId: "asc" },
+    });
+    expect(rows.map((r) => r.locationOutcomes.length)).toEqual([1, 1]);
+    expect(rows[0]!.locationOutcomes[0]).toMatchObject({
+      locatedAt: rows[0]!.collectedAt,
+      locationId: null,
+      level: null,
+      runKind: "LIVE",
+      step: "ARRIVAL",
+    });
+    await prisma.signals.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+  });
+
+  it("reads the Outcome the run wrote, also when the arrival instant is later", async () => {
+    // The connector's clock is ahead: collectedAt (W45) is after the drain finishes (W44).
+    const id = await arrive("2026-11-05T09:00:00Z");
+    await updateSignalLocation({}, { id, locationId: DISTRICT }, ctx);
+    await markSignalsProcessed({}, { ids: [id] }, ctx);
+    await processedAt(id, "2026-10-29T10:00:00Z");
+    const metrics = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [SOURCE] });
+    const mine = metrics.weekly.filter((w) => w.isoWeek === "2026-W44")[0]!;
+    const before = await series();
+    await prisma.signals.deleteMany({ where: { id } });
+    const after = await series();
+    // Removing the Signal takes one district Signal out of W44 and nothing out of W45.
+    expect(mine.district).toBeGreaterThanOrEqual(1);
+    expect(before.map((w, i) => [w[0], (w[1] as number) - (after[i]![1] as number), (w[5] as number) - (after[i]![5] as number)])).toEqual([
+      ["2026-W44", 1, 1],
+      ["2026-W45", 0, 0],
+    ]);
   });
 
   it("keeps the level a run produced when the location is removed", async () => {

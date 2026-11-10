@@ -8,7 +8,8 @@
  * Two writes exist:
  *
  * - `arrivalOutcome`: `createSignal` writes the location the Signal arrived
- *   with, in the same write as the Signal.
+ *   with, in the same write as the Signal. `writeArrivalOutcomes` does the
+ *   same for the `/x-ingest` route, which creates Signals in bulk.
  * - `writeProcessedOutcomes`: `markSignalsProcessed` writes the location
  *   the Signal has when a run finishes it, in the same transaction as
  *   `processedAt`. A run that found no location writes a row with no location.
@@ -77,6 +78,33 @@ export async function arrivalOutcome(
     pipelineVersion: trimmed(run.pipelineVersion),
     runId: trimmed(run.runId),
   };
+}
+
+/**
+ * Write the arrival Outcome of each Signal of `sourceId` in `externalIds`
+ * that has no Outcome yet: for an ingest path that creates Signals in bulk
+ * (`/x-ingest`). Run it in the same transaction as the insert, after it. A
+ * Signal that the insert skipped as a duplicate already has its Outcome, so
+ * it gets no second one.
+ */
+export function writeArrivalOutcomes(
+  prisma: Pick<PrismaClient, "$executeRaw">,
+  sourceId: string,
+  externalIds: string[],
+  run: PipelineRun = {},
+) {
+  return prisma.$executeRaw`
+    INSERT INTO "signal_location_outcomes"
+      ("signal_id", "located_at", "location_id", "level", "run_kind", "step", "pipeline_version", "run_id")
+    SELECT s."id", s."collected_at", l."id", l."level", 'LIVE', 'ARRIVAL',
+      ${trimmed(run.pipelineVersion)}, ${trimmed(run.runId)}
+    FROM "signals" s
+    LEFT JOIN "locations" l ON l."id" = ${pipelineLocation("s")}
+    WHERE s."source_id" = ${sourceId}
+      AND s."external_id" = ANY(${externalIds}::text[])
+      AND ${pipelineSignal("s")}
+      AND NOT EXISTS (SELECT 1 FROM "signal_location_outcomes" o WHERE o."signal_id" = s."id")
+  `;
 }
 
 /**

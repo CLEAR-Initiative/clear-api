@@ -33,7 +33,7 @@ pipeline version gave at the time. The live row keeps only the latest result.
 | Outcome log | The append-only table of Outcomes, `signal_location_outcomes`. |
 | Live run | The pipeline run that processes a Signal for the first time, after ingest. |
 | Replay run | A pipeline run that re-processes Signals that a Live run already processed. |
-| Live Outcome | The last Outcome that a Live run wrote for a Signal. |
+| Live Outcome | The last Outcome that a Live run wrote for a Signal: the `LIVE` row written last, not the one with the latest `locatedAt`. |
 | Step | The pipeline step that wrote an Outcome: `ARRIVAL` (Signal create) or `PROCESSED` (the run marked the Signal done). |
 
 **Decision**: clear-api keeps an Outcome log. Location precision reads Live
@@ -81,11 +81,12 @@ live Signal.
 
 ## Which mutations write an Outcome
 
-Four mutations set a pipeline location on a Signal:
+Four mutations and one route create a pipeline Signal or set its location:
 
 | Mutation | What it sets | Writes an Outcome |
 |---|---|---|
 | `createSignal` | The location the Signal arrives with (a location id, or a point from coordinates). | Yes: `ARRIVAL`, `LIVE`, at `collectedAt`. |
+| `POST /x-ingest` (a route, not a mutation) | Nothing: X posts arrive with text only. | Yes: `ARRIVAL`, `LIVE`, at `collectedAt`, with no location. |
 | `updateSignalLocation` | The location the drain finds for a text-only Signal. | No. |
 | `updateSignalContent` | The location of a revised Signal, when no person corrected it. | No. |
 | `markSignalsProcessed` | Nothing; it ends the run (`status`, `processedAt`). | Yes: `PROCESSED`, at the new `processedAt`, with the location the Signal has then. |
@@ -104,6 +105,8 @@ If a run fails after it sets a location and before the mark, the Signal stays
 `NEW`. The next run marks it and writes the Outcome.
 
 `createSignal` writes the Outcome with the Signal in one statement.
+`/x-ingest` creates Signals in bulk and writes their Outcomes in the same
+transaction.
 `markSignalsProcessed` writes the Outcomes in one transaction with the marks.
 A Signal that the mark skips (its revision moved) gets no Outcome.
 

@@ -209,14 +209,17 @@ export function summarise(
 const PIPELINE_LOCATION = pipelineLocation("s");
 
 /**
- * True when the Outcome `o` is the Live Outcome of its Signal: its last LIVE
- * row. A Replay run adds REPLAY rows, so it never changes which row this is.
+ * True when the Outcome `o` is the Live Outcome of its Signal: the last LIVE
+ * row written for it (the largest id). The order is the write order, not
+ * `located_at`: an arrival row with a `collectedAt` ahead of the clock must
+ * not hide the row the run wrote later. A Replay run adds REPLAY rows, so it
+ * never changes which row this is.
  */
 const IS_LIVE_OUTCOME = Prisma.sql`o."run_kind" = 'LIVE' AND NOT EXISTS (
   SELECT 1 FROM "signal_location_outcomes" later
   WHERE later."signal_id" = o."signal_id"
     AND later."run_kind" = 'LIVE'
-    AND (later."located_at", later."id") > (o."located_at", o."id")
+    AND later."id" > o."id"
 )`;
 
 /** `WHERE` clauses shared by both queries: the Signal's source and location. */
