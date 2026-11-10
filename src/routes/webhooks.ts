@@ -104,9 +104,13 @@ router.post("/glitchtip", async (req: Request, res: Response) => {
   // independent of subscriptions, never blocks or fails the 202.
   const matrix = matrixConfigFromEnv(env);
   if (matrix) {
-    void postMatrixMessage(matrix, formatGlitchtipAlert(payload)).catch((e) => {
-      console.error("[webhook-receive] matrix post threw:", e);
-    });
+    // Format inside the task: a malformed payload must not throw here and
+    // skip the subscription fan-out below.
+    void Promise.resolve()
+      .then(() => postMatrixMessage(matrix, formatGlitchtipAlert(payload)))
+      .catch((e) => {
+        console.error("[webhook-receive] matrix post threw:", e);
+      });
   }
 
   // Fan out. `eventTypeFilter: []` matches all — postgres array_contains

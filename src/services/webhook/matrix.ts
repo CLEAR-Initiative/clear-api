@@ -113,9 +113,8 @@ function safeUrl(v: unknown): string | null {
  */
 export function formatGlitchtipAlert(payload: unknown): MatrixMessage {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
-  const attachment = (
-    Array.isArray(p.attachments) && p.attachments.length > 0 ? p.attachments[0] : {}
-  ) as SlackAttachment;
+  const first: unknown = Array.isArray(p.attachments) ? p.attachments[0] : undefined;
+  const attachment = (first && typeof first === "object" ? first : {}) as SlackAttachment;
 
   const alias = str(p.alias);
   const heading = (alias && HEADINGS[alias]) ?? "GlitchTip alert";
@@ -126,7 +125,9 @@ export function formatGlitchtipAlert(payload: unknown): MatrixMessage {
   const fields = Array.isArray(attachment.fields) ? (attachment.fields as SlackField[]) : [];
   const shown: { name: string; value: string }[] = [];
   for (const wanted of SHOWN_FIELDS) {
-    const f = fields.find((x) => str(x?.title)?.toLowerCase() === wanted);
+    const f = fields.find(
+      (x) => x !== null && typeof x === "object" && str(x.title)?.toLowerCase() === wanted,
+    );
     const value = f ? str(f.value) : null;
     if (f && value) shown.push({ name: str(f.title) as string, value });
   }
@@ -161,6 +162,28 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Delays before attempts 2 and 3. */
 const RETRY_DELAYS_MS = [1_000, 5_000];
+/** Upper bound on a homeserver-requested rate-limit wait, so a bogus
+ *  `Retry-After` cannot park the task for hours. */
+const MAX_RATE_LIMIT_WAIT_MS = 120_000;
+
+/**
+ * Wait the homeserver asked for on a 429, in ms: `Retry-After` header
+ * (seconds) or the body's `retry_after_ms`. Null when neither is given.
+ */
+export function rateLimitWaitMs(headers: Headers, bodyText: string): number | null {
+  let ms: number | null = null;
+  const header = headers.get("retry-after");
+  if (header && /^\d+(\.\d+)?$/.test(header.trim())) ms = Number(header.trim()) * 1000;
+  if (ms === null) {
+    try {
+      const v = (JSON.parse(bodyText) as { retry_after_ms?: unknown }).retry_after_ms;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) ms = v;
+    } catch {
+      // Not JSON — no hint.
+    }
+  }
+  return ms === null ? null : Math.min(ms, MAX_RATE_LIMIT_WAIT_MS);
+}
 
 /**
  * Post a message, retrying transient failures. Returns true on success.
@@ -186,37 +209,47 @@ export async function postMatrixMessage(
     formatted_body: message.formattedBody,
   });
 
+  let nextDelayMs: number | null = null;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1] as number);
+    if (attempt > 0) {
+      await sleep(Math.max(nextDelayMs ?? 0, RETRY_DELAYS_MS[attempt - 1] as number));
+    }
+    nextDelayMs = null;
+    const controller = new AbortController();
+    // The timer covers the whole attempt, including reading an error body,
+    // so a stalled response cannot block the next retry.
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      let res: Response;
-      try {
-        res = await doFetch(url, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${config.accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
+      const res = await doFetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${config.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        void res.body?.cancel().catch(() => {});
+        return true;
       }
-      if (res.ok) return true;
       const detail = await res.text().catch(() => "");
       console.error(
         `[matrix] send failed (attempt ${attempt + 1}): ${res.status} ${detail.slice(0, 300)}`,
       );
-      // 4xx other than rate-limit won't fix itself (bad token, not in room).
-      if (res.status >= 400 && res.status < 500 && res.status !== 429) return false;
+      if (res.status === 429) {
+        nextDelayMs = rateLimitWaitMs(res.headers, detail);
+      } else if (res.status >= 400 && res.status < 500) {
+        // 4xx other than rate-limit won't fix itself (bad token, not in room).
+        return false;
+      }
     } catch (e) {
       console.error(
         `[matrix] send error (attempt ${attempt + 1}):`,
         e instanceof Error ? e.message : e,
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
   return false;

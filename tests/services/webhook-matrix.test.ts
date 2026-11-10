@@ -3,6 +3,7 @@ import {
   formatGlitchtipAlert,
   matrixConfigFromEnv,
   postMatrixMessage,
+  rateLimitWaitMs,
 } from "../../src/services/webhook/matrix.js";
 
 const glitchtipPayload = {
@@ -76,6 +77,22 @@ describe("formatGlitchtipAlert", () => {
   });
 });
 
+describe("formatGlitchtipAlert junk attachments", () => {
+  it("does not throw on null attachments or fields", () => {
+    expect(() => formatGlitchtipAlert({ attachments: [null] })).not.toThrow();
+    expect(() => formatGlitchtipAlert({ attachments: [{ fields: [null, 3] }] })).not.toThrow();
+  });
+});
+
+describe("rateLimitWaitMs", () => {
+  it("reads Retry-After seconds, then retry_after_ms, capped", () => {
+    expect(rateLimitWaitMs(new Headers({ "retry-after": "30" }), "")).toBe(30_000);
+    expect(rateLimitWaitMs(new Headers(), '{"retry_after_ms":7000}')).toBe(7_000);
+    expect(rateLimitWaitMs(new Headers({ "retry-after": "99999" }), "")).toBe(120_000);
+    expect(rateLimitWaitMs(new Headers(), "nope")).toBeNull();
+  });
+});
+
 describe("postMatrixMessage", () => {
   const msg = { body: "b", formattedBody: "<b>b</b>" };
   const sleep = async () => {};
@@ -112,5 +129,23 @@ describe("postMatrixMessage", () => {
     });
     expect(await postMatrixMessage(config, msg, { fetch: broken, sleep })).toBe(false);
     expect(broken).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits the homeserver's requested time on 429", async () => {
+    const waits: number[] = [];
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('{"errcode":"M_LIMIT_EXCEEDED","retry_after_ms":30000}', { status: 429 }),
+      )
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    const ok = await postMatrixMessage(config, msg, {
+      fetch,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    expect(ok).toBe(true);
+    expect(waits).toEqual([30_000]);
   });
 });
