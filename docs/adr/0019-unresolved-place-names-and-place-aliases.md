@@ -52,9 +52,13 @@ CLEAR stores unresolved place names and place aliases in three tables of its own
 3. **The queue key is (country, normalised spelling, state).** The same
    village name in two states gives two rows. `normalizeGazetteerName`
    normalises the spelling, as the importer does.
-4. **The state comes from the area.** The pipeline sends the area. The server
-   takes the area's level-1 ancestor. The state is null when the area is the
-   country.
+4. **The state and the country come from the area.** The pipeline sends the
+   area. The server takes the area's level-1 ancestor as the state. The state
+   is null when the area is the country. The server also stores the area's
+   level-0 ancestor in `countryLocationId`. That column is not part of the
+   key. It places a row with no state inside a team's area. `countryCode`
+   cannot do this: a country location does not always carry its ISO code
+   (`ensureCountryLocation` and the seed set none).
 5. **The alias key is (country, normalised spelling, scope).** A null scope
    means the whole country. Facilities use it.
 6. **Both unique keys use `NULLS NOT DISTINCT`.** Each key ends in a nullable
@@ -78,8 +82,8 @@ CLEAR stores unresolved place names and place aliases in three tables of its own
     for the `admin` and `pipeline` roles. `unresolvedPlaceNames` is for
     deciders: a platform admin reads all rows, and a team admin reads the rows
     whose state is inside the areas of the teams they administer. A row with
-    no state belongs to its country, so only a team that covers the whole
-    country reads it. All other roles get FORBIDDEN. These are the people who
+    no state belongs to its country (`countryLocationId`), so only a team that
+    covers the whole country reads it. All other roles get FORBIDDEN. These are the people who
     decide Location challenges.
 12. **The database checks the value sets.** `status`, `reason` and the alias
     `source` (`review`, `seed`, `manual`) each have a CHECK constraint.
@@ -107,7 +111,8 @@ CLEAR stores unresolved place names and place aliases in three tables of its own
 ## Consequences
 
 - A state cannot be deleted while a queue row or an alias scope uses it
-  (`ON DELETE RESTRICT`). Delete or re-point those rows first.
+  (`ON DELETE RESTRICT`). Delete or re-point those rows first. The seed reset
+  (`prisma/seed.ts`) deletes the queue and the aliases before the locations.
 - An alias goes away with its target location (`ON DELETE CASCADE`). The
   queue row keeps its status and loses the link (`ON DELETE SET NULL`).
 - A deleted Signal removes its links. `signalCount` does not go down.

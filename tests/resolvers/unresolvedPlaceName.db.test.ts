@@ -4,7 +4,8 @@
  * count per Signal, dates from `seenAt`, closed rows stay closed), who reads
  * the queue, and the GeoNames re-import leaving CLEAR's tables alone.
  *
- * Self-seeding: two countries, two states, a district, two teams with an
+ * Self-seeding: two countries (one with no ISO code on its location, as
+ * `ensureCountryLocation` makes them), two states, a district, two teams with an
  * admin each, an analyst, a data source and Signals. All deleted in afterAll,
  * so it runs against an empty scratch database:
  * `bun run test:db tests/resolvers/unresolvedPlaceName.db.test.ts`.
@@ -94,7 +95,8 @@ describeIfDb("Unresolved place names against the real schema", () => {
       ],
     });
 
-    await insertArea(COUNTRY_ID, "Testland", 0, null, CC, "MULTIPOLYGON(((60 60, 64 60, 64 64, 60 64, 60 60)))");
+    // No p_code: the queue must not depend on a country location carrying its ISO code.
+    await insertArea(COUNTRY_ID, "Testland", 0, null, null, "MULTIPOLYGON(((60 60, 64 60, 64 64, 60 64, 60 60)))");
     await insertArea(STATE_A_ID, "State A", 1, COUNTRY_ID, null, "MULTIPOLYGON(((60 60, 62 60, 62 64, 60 64, 60 60)))");
     await insertArea(STATE_B_ID, "State B", 1, COUNTRY_ID, null, "MULTIPOLYGON(((62 60, 64 60, 64 64, 62 64, 62 60)))");
     await insertArea(DISTRICT_ID, "District A1", 2, STATE_A_ID, null, "MULTIPOLYGON(((60 60, 61 60, 61 61, 60 61, 60 60)))");
@@ -147,6 +149,7 @@ describeIfDb("Unresolved place names against the real schema", () => {
       nameAr: "أم دباكر",
       countryCode: CC,
       stateLocationId: STATE_A_ID,
+      countryLocationId: COUNTRY_ID,
       status: "open",
       signalCount: 1,
     });
@@ -193,7 +196,7 @@ describeIfDb("Unresolved place names against the real schema", () => {
   it("a country-level spelling is one row: the unique keys use NULLS NOT DISTINCT", async () => {
     const a = await record(3, "Merowe Dam", COUNTRY_ID);
     const b = await record(4, "Merowe Dam", COUNTRY_ID);
-    expect(a).toMatchObject({ stateLocationId: null, signalCount: 1 });
+    expect(a).toMatchObject({ stateLocationId: null, countryLocationId: COUNTRY_ID, signalCount: 1 });
     expect(b!.id).toBe(a!.id);
     expect(b!.signalCount).toBe(2);
     expect(await prisma.unresolvedPlaceNames.count({ where: { countryCode: CC, nameNorm: "merowe dam" } })).toBe(1);
@@ -283,10 +286,12 @@ describeIfDb("Unresolved place names against the real schema", () => {
     const stateRows = await queue(stateAdmin);
     expect(stateRows.totalCount).toBe(2);
     expect(stateRows.items.every((r) => r.stateLocationId === STATE_A_ID)).toBe(true);
-    // A team that covers the country also reads the rows with no state.
+    // A team that covers the country also reads the rows with no state. The
+    // country location carries no ISO code here: the row's country location decides.
     const countryRows = await queue(countryAdmin);
     expect(countryRows.totalCount).toBe(4);
     expect(countryRows.items.some((r) => r.stateLocationId === null)).toBe(true);
+    expect((await queue(countryAdmin, { areaLocationId: COUNTRY_ID })).totalCount).toBe(4);
   });
 
   it("an analyst and the pipeline may not read the queue", async () => {

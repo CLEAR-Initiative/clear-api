@@ -539,6 +539,7 @@ model locations {
 
   // Reverse relations for unresolved place names and place aliases (ADR-0019)
   unresolvedPlaceNameStates      unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameState")
+  unresolvedPlaceNameCountries   unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameCountry")
   unresolvedPlaceNameSignalAreas unresolvedPlaceNameSignals[] @relation("UnresolvedPlaceNameSignalArea")
   placeAliasScopes               placeAliases[]               @relation("PlaceAliasScope")
   placeAliasLocations            placeAliases[]               @relation("PlaceAliasLocation")
@@ -2311,8 +2312,13 @@ model unresolvedPlaceNames {
 
   /// The state (level 1) that holds the area the pipeline chose. Null when
   /// that area is the country itself.
-  stateLocationId String?    @map("state_location_id")
-  stateLocation   locations? @relation("UnresolvedPlaceNameState", fields: [stateLocationId], references: [id], onDelete: Restrict)
+  stateLocationId   String?    @map("state_location_id")
+  stateLocation     locations? @relation("UnresolvedPlaceNameState", fields: [stateLocationId], references: [id], onDelete: Restrict)
+  /// The country (level 0) that holds the area. Not part of the key: it
+  /// places a row with no state inside a team's area, where `countryCode`
+  /// cannot (a country location does not always carry its ISO code).
+  countryLocationId String?    @map("country_location_id")
+  countryLocation   locations? @relation("UnresolvedPlaceNameCountry", fields: [countryLocationId], references: [id], onDelete: SetNull)
 
   /// "open", "resolved", "not_a_place" or "ambiguous" (DB CHECK).
   status      String   @default("open")
@@ -2336,6 +2342,7 @@ model unresolvedPlaceNames {
 
   @@index([status, signalCount(sort: Desc)])
   @@index([stateLocationId])
+  @@index([countryLocationId])
   @@index([placeAliasId])
   @@map("unresolved_place_names")
 }

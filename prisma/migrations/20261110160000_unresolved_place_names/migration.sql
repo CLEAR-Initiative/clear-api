@@ -28,6 +28,7 @@ CREATE TABLE "unresolved_place_names" (
     "name_ar" TEXT,
     "country_code" TEXT NOT NULL,
     "state_location_id" TEXT,
+    "country_location_id" TEXT,
     "status" TEXT NOT NULL DEFAULT 'open',
     "signal_count" INTEGER NOT NULL DEFAULT 0,
     "first_seen_at" TIMESTAMP(3) NOT NULL,
@@ -88,6 +89,9 @@ CREATE INDEX "unresolved_place_names_status_signal_count_idx" ON "unresolved_pla
 CREATE INDEX "unresolved_place_names_state_location_id_idx" ON "unresolved_place_names"("state_location_id");
 
 -- CreateIndex
+CREATE INDEX "unresolved_place_names_country_location_id_idx" ON "unresolved_place_names"("country_location_id");
+
+-- CreateIndex
 CREATE INDEX "unresolved_place_names_place_alias_id_idx" ON "unresolved_place_names"("place_alias_id");
 
 -- CreateIndex
@@ -104,6 +108,9 @@ ALTER TABLE "place_aliases" ADD CONSTRAINT "place_aliases_location_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "unresolved_place_names" ADD CONSTRAINT "unresolved_place_names_state_location_id_fkey" FOREIGN KEY ("state_location_id") REFERENCES "locations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "unresolved_place_names" ADD CONSTRAINT "unresolved_place_names_country_location_id_fkey" FOREIGN KEY ("country_location_id") REFERENCES "locations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "unresolved_place_names" ADD CONSTRAINT "unresolved_place_names_place_alias_id_fkey" FOREIGN KEY ("place_alias_id") REFERENCES "place_aliases"("id") ON DELETE SET NULL ON UPDATE CASCADE;

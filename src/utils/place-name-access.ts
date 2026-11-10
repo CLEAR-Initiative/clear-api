@@ -15,10 +15,6 @@ export type PlaceNameScope =
       kind: "area";
       /** The teams' scope locations and everything under them. */
       locationIds: ReadonlySet<string>;
-      /** ISO-2 codes of the countries (level 0) inside `locationIds`. A row
-       *  with no state belongs to a country, so only a team that covers the
-       *  whole country works it. */
-      countryCodes: ReadonlySet<string>;
     };
 
 /**
@@ -49,21 +45,20 @@ export async function requirePlaceNameDecider(
     if (!ids) return { user, scope: { kind: "all" } };
     for (const id of ids) locationIds.add(id);
   }
-  const countries = await context.prisma.locations.findMany({
-    where: { id: { in: [...locationIds] }, level: 0, pCode: { not: null } },
-    select: { pCode: true },
-  });
-  const countryCodes = new Set(countries.map((c) => (c.pCode ?? "").toUpperCase()));
-  return { user, scope: { kind: "area", locationIds, countryCodes } };
+  return { user, scope: { kind: "area", locationIds } };
 }
 
-/** Whether a row (or an alias: pass its scope as the state) is in the scope. */
+/**
+ * Whether a queue row is in the scope. A row with a state is in the area
+ * when its state is. A row with no state belongs to its country, so only a
+ * team that covers the whole country works it. The country is a location id,
+ * not an ISO code: a country location does not always carry its code.
+ */
 export function placeNameInScope(
   scope: PlaceNameScope,
-  row: { stateLocationId: string | null; countryCode: string },
+  row: { stateLocationId: string | null; countryLocationId: string | null },
 ): boolean {
   if (scope.kind === "all") return true;
-  return row.stateLocationId
-    ? scope.locationIds.has(row.stateLocationId)
-    : scope.countryCodes.has(row.countryCode.toUpperCase());
+  const place = row.stateLocationId ?? row.countryLocationId;
+  return place != null && scope.locationIds.has(place);
 }

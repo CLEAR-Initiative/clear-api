@@ -52,6 +52,8 @@ export const unresolvedPlaceNameTypeDef = gql`
     country itself."""
     stateLocationId: String
     stateLocation: Location
+    """The country that holds the Signals' area."""
+    countryLocationId: String
     status: UnresolvedPlaceNameStatus!
     """The number of Signals recorded on the row. A Signal counts once."""
     signalCount: Int!

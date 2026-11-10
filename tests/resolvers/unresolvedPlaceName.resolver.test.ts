@@ -115,9 +115,9 @@ describe("recordUnresolvedPlaceName", () => {
 
     const upsert = prisma.$queryRaw.mock.calls[0]!;
     expect(sqlOf(upsert)).toContain('ON CONFLICT ("country_code", "name_norm", "state_location_id")');
-    // id, nameNorm, name, nameAr, countryCode, state, seenAt, seenAt
-    expect(upsert.slice(2, 7)).toEqual(["um dabakir", "Um-Dabākir", null, "SD", STATE.id]);
-    expect(upsert[7]).toBeInstanceOf(Date);
+    // id, nameNorm, name, nameAr, countryCode, state, country, seenAt, seenAt
+    expect(upsert.slice(2, 8)).toEqual(["um dabakir", "Um-Dabākir", null, "SD", STATE.id, COUNTRY.id]);
+    expect(upsert[8]).toBeInstanceOf(Date);
 
     const link = prisma.$executeRaw.mock.calls[0]!;
     expect(sqlOf(link)).toContain("DO NOTHING");
@@ -141,7 +141,7 @@ describe("recordUnresolvedPlaceName", () => {
       ctx(PIPELINE, prisma),
     );
     const upsert = prisma.$queryRaw.mock.calls[0]!;
-    expect(upsert.slice(4, 9)).toEqual(["أم دباكر", "SD", null, seenAt, seenAt]);
+    expect(upsert.slice(4, 10)).toEqual(["أم دباكر", "SD", null, COUNTRY.id, seenAt, seenAt]);
     expect(prisma.$executeRaw.mock.calls[0]!.slice(5, 7)).toEqual(["outside_area", seenAt]);
   });
 
@@ -173,10 +173,21 @@ describe("recordUnresolvedPlaceName", () => {
 describe("stateOfArea and normalizeCountryCode", () => {
   it("finds the state and the country code of an area", async () => {
     const prisma = fakePrisma() as unknown as Context["prisma"];
-    expect(await stateOfArea(prisma, DISTRICT.id)).toEqual({ stateLocationId: STATE.id, countryCode: "SD" });
-    expect(await stateOfArea(prisma, STATE.id)).toEqual({ stateLocationId: STATE.id, countryCode: "SD" });
-    expect(await stateOfArea(prisma, COUNTRY.id)).toEqual({ stateLocationId: null, countryCode: "SD" });
+    const inSudan = { countryLocationId: COUNTRY.id, countryCode: "SD" };
+    expect(await stateOfArea(prisma, DISTRICT.id)).toEqual({ stateLocationId: STATE.id, ...inSudan });
+    expect(await stateOfArea(prisma, STATE.id)).toEqual({ stateLocationId: STATE.id, ...inSudan });
+    expect(await stateOfArea(prisma, COUNTRY.id)).toEqual({ stateLocationId: null, ...inSudan });
     expect(await stateOfArea(prisma, "no-such-location")).toBeNull();
+  });
+
+  it("knows the country of an area when the country carries no ISO code", async () => {
+    const prisma = fakePrisma();
+    prisma.locations.findUnique.mockResolvedValue({ id: "loc-bare", level: 0, pCode: null, ancestorIds: [] });
+    expect(await stateOfArea(prisma as unknown as Context["prisma"], "loc-bare")).toEqual({
+      stateLocationId: null,
+      countryLocationId: "loc-bare",
+      countryCode: null,
+    });
   });
 
   it("accepts two letters in any case", () => {
@@ -202,22 +213,21 @@ describe("requirePlaceNameDecider", () => {
     vi.mocked(getTeamScopeLocationIds).mockImplementation(async (_p, teamId) =>
       teamId === "t1" ? [STATE.id, DISTRICT.id] : [COUNTRY.id],
     );
-    prisma.locations.findMany.mockResolvedValue([{ pCode: "sd" }]);
     const { scope } = await requirePlaceNameDecider(ctx(MEMBER, prisma));
-    expect(scope).toEqual({
-      kind: "area",
-      locationIds: new Set([STATE.id, DISTRICT.id, COUNTRY.id]),
-      countryCodes: new Set(["SD"]),
-    });
+    expect(scope).toEqual({ kind: "area", locationIds: new Set([STATE.id, DISTRICT.id, COUNTRY.id]) });
     expect(prisma.teamMembers.findMany).toHaveBeenCalledWith({
       where: { userId: MEMBER.id, role: "team_admin" },
       select: { teamId: true },
     });
-    expect(placeNameInScope(scope, { stateLocationId: STATE.id, countryCode: "SD" })).toBe(true);
-    expect(placeNameInScope(scope, { stateLocationId: "loc-other", countryCode: "SD" })).toBe(false);
-    expect(placeNameInScope(scope, { stateLocationId: null, countryCode: "sd" })).toBe(true);
-    expect(placeNameInScope(scope, { stateLocationId: null, countryCode: "VE" })).toBe(false);
-    expect(placeNameInScope({ kind: "all" }, { stateLocationId: null, countryCode: "VE" })).toBe(true);
+    const row = (stateLocationId: string | null, countryLocationId: string | null) => ({ stateLocationId, countryLocationId });
+    expect(placeNameInScope(scope, row(STATE.id, COUNTRY.id))).toBe(true);
+    // A state outside the area, even inside a country the team covers elsewhere.
+    expect(placeNameInScope(scope, row("loc-other", "loc-other-country"))).toBe(false);
+    // A row with no state belongs to its country.
+    expect(placeNameInScope(scope, row(null, COUNTRY.id))).toBe(true);
+    expect(placeNameInScope(scope, row(null, "loc-other-country"))).toBe(false);
+    expect(placeNameInScope(scope, row(null, null))).toBe(false);
+    expect(placeNameInScope({ kind: "all" }, row(null, null))).toBe(true);
   });
 
   it("gives the admin of a team with no scope every row", async () => {
@@ -256,26 +266,25 @@ describe("unresolvedPlaceNames", () => {
     const prisma = queuePrisma(2);
     prisma.teamMembers.findMany.mockResolvedValue([{ teamId: "t1" }]);
     vi.mocked(getTeamScopeLocationIds).mockResolvedValue([STATE.id]);
-    prisma.locations.findMany.mockImplementation(({ where }: { where: { level?: unknown } }) =>
-      Promise.resolve(where.level === 0 ? [] : [STATE, COUNTRY]),
-    );
     await unresolvedPlaceNames(
       null,
       { status: "open", countryCode: "sd", areaLocationId: DISTRICT.id },
       ctx(MEMBER, prisma),
     );
     const bound = valuesOf(prisma.$queryRaw.mock.calls[0]!);
-    expect(bound).toContain('u.\\"state_location_id\\" = ANY(');
+    expect(bound).toContain('COALESCE(u.\\"state_location_id\\", u.\\"country_location_id\\") = ANY(');
     expect(bound).toContain('u.\\"status\\" = ');
     expect(bound).toContain('"open"');
     expect(bound).toContain('"SD"');
     expect(bound).toContain(`"${STATE.id}"`);
   });
 
-  it("keeps a country's rows by country code, and nothing for an area with no country", async () => {
+  it("keeps a country's rows by its location id, and nothing for an area with no country", async () => {
     const byCountry = queuePrisma(0);
     await unresolvedPlaceNames(null, { areaLocationId: COUNTRY.id }, ctx(PLATFORM, byCountry));
-    expect(valuesOf(byCountry.$queryRaw.mock.calls[0]!)).toContain('u.\\"country_code\\" = ');
+    const bound = valuesOf(byCountry.$queryRaw.mock.calls[0]!);
+    expect(bound).toContain('u.\\"country_location_id\\" = ');
+    expect(bound).toContain(`"${COUNTRY.id}"`);
 
     const orphan = queuePrisma(0);
     orphan.locations.findUnique.mockResolvedValue({ id: "loc-x", level: 4, pCode: null, ancestorIds: [] });

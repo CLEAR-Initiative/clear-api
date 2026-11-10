@@ -49,6 +49,7 @@ interface QueueRow {
   nameAr: string | null;
   countryCode: string;
   stateLocationId: string | null;
+  countryLocationId: string | null;
   status: string;
   signalCount: number;
   firstSeenAt: Date;
@@ -84,14 +85,19 @@ export function normalizeCountryCode(value: string): string {
 }
 
 /**
- * The state (level 1) that holds `areaLocationId`, and the country code of
- * its country (level 0) when that location carries one. The state is null
- * when the area is the country itself, or sits under no state.
+ * The state (level 1) and the country (level 0) that hold `areaLocationId`,
+ * and the country's ISO code when its location carries one (`pCode`; a
+ * country made by `ensureCountryLocation` has none). The state is null when
+ * the area is the country itself, or sits under no state.
  */
 export async function stateOfArea(
   prisma: Context["prisma"],
   areaLocationId: string,
-): Promise<{ stateLocationId: string | null; countryCode: string | null } | null> {
+): Promise<{
+  stateLocationId: string | null;
+  countryLocationId: string | null;
+  countryCode: string | null;
+} | null> {
   const area = await prisma.locations.findUnique({
     where: { id: areaLocationId },
     select: { id: true, level: true, pCode: true, ancestorIds: true },
@@ -109,6 +115,7 @@ export async function stateOfArea(
   const country = chain.find((l) => l.level === 0);
   return {
     stateLocationId: state?.id ?? null,
+    countryLocationId: country?.id ?? null,
     countryCode: country?.pCode ? country.pCode.toUpperCase() : null,
   };
 }
@@ -116,7 +123,8 @@ export async function stateOfArea(
 const QUEUE_COLUMNS = Prisma.sql`
   u."id", u."name_norm" AS "nameNorm", u."name_as_written" AS "nameAsWritten",
   u."name_ar" AS "nameAr", u."country_code" AS "countryCode",
-  u."state_location_id" AS "stateLocationId", u."status",
+  u."state_location_id" AS "stateLocationId",
+  u."country_location_id" AS "countryLocationId", u."status",
   u."signal_count" AS "signalCount", u."first_seen_at" AS "firstSeenAt",
   u."last_seen_at" AS "lastSeenAt", u."resolved_by_id" AS "resolvedById",
   u."resolved_at" AS "resolvedAt", u."resolution_note" AS "resolutionNote",
@@ -163,8 +171,8 @@ export const unresolvedPlaceNameResolvers = {
         if (!area) throw badInput("areaLocationId is not a known location.");
         if (area.stateLocationId) {
           where.push(Prisma.sql`u."state_location_id" = ${area.stateLocationId}`);
-        } else if (area.countryCode) {
-          where.push(Prisma.sql`u."country_code" = ${area.countryCode}`);
+        } else if (area.countryLocationId) {
+          where.push(Prisma.sql`u."country_location_id" = ${area.countryLocationId}`);
         } else {
           where.push(Prisma.sql`FALSE`);
         }
@@ -172,12 +180,10 @@ export const unresolvedPlaceNameResolvers = {
       if (scope.kind === "area") {
         // A row with a state is in the area when the state is. A row with no
         // state belongs to its country, so the team must cover the country.
-        const states = [...scope.locationIds];
-        const countries = [...scope.countryCodes];
-        where.push(Prisma.sql`(
-          (u."state_location_id" IS NOT NULL AND u."state_location_id" = ANY(${states}::text[]))
-          OR (u."state_location_id" IS NULL AND u."country_code" = ANY(${countries}::text[]))
-        )`);
+        const ids = [...scope.locationIds];
+        where.push(
+          Prisma.sql`COALESCE(u."state_location_id", u."country_location_id") = ANY(${ids}::text[])`,
+        );
       }
       const filter = where.length > 0 ? Prisma.sql`WHERE ${Prisma.join(where, " AND ")}` : Prisma.empty;
 
@@ -232,11 +238,13 @@ export const unresolvedPlaceNameResolvers = {
         const rows = await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO "unresolved_place_names"
             ("id", "name_norm", "name_as_written", "name_ar", "country_code", "state_location_id",
-             "status", "signal_count", "first_seen_at", "last_seen_at")
+             "country_location_id", "status", "signal_count", "first_seen_at", "last_seen_at")
           VALUES (${randomUUID()}, ${nameNorm}, ${name}, ${nameAr}, ${countryCode}, ${area.stateLocationId},
-                  'open', 0, ${seenAt}, ${seenAt})
+                  ${area.countryLocationId}, 'open', 0, ${seenAt}, ${seenAt})
           ON CONFLICT ("country_code", "name_norm", "state_location_id") DO UPDATE
-            SET "name_ar" = COALESCE("unresolved_place_names"."name_ar", EXCLUDED."name_ar")
+            SET "name_ar" = COALESCE("unresolved_place_names"."name_ar", EXCLUDED."name_ar"),
+                "country_location_id" =
+                  COALESCE("unresolved_place_names"."country_location_id", EXCLUDED."country_location_id")
           RETURNING "id"`;
         const rowId = rows[0]!.id;
         // A Signal counts once per row: a re-run inserts nothing.
