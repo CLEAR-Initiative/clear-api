@@ -68,6 +68,8 @@ export const unresolvedPlaceNameTypeDef = gql`
     """The alias that the resolution created."""
     placeAliasId: String
     placeAlias: PlaceAlias
+    """The number of its Signals that a resolution moved to the alias location."""
+    signalsMoved: Int!
     """The Signals that named it, newest first."""
     signals(
       """Max rows to return (1 to 50, default 5)."""
@@ -122,6 +124,61 @@ export const unresolvedPlaceNameTypeDef = gql`
     """Rows that match the filters, before paging."""
     totalCount: Int!
     hasMore: Boolean!
+  }
+
+  """What kind of place a suggestion is."""
+  enum PlaceNameSuggestionKind {
+    """A GeoNames row. Resolve with kind GEONAMES and its \`geonamesId\`."""
+    GEONAMES
+    """A CLEAR district or landmark. Resolve with kind LOCATION and its \`locationId\`."""
+    LOCATION
+  }
+
+  """A place that a queued name can mean."""
+  type PlaceNameSuggestion {
+    kind: PlaceNameSuggestionKind!
+    geonamesId: Int
+    locationId: String
+    name: String!
+    """The level of a CLEAR location: 2 district, 4 landmark."""
+    level: Int
+    """GeoNames feature class (P populated place, A admin area, S spot, ...)."""
+    featureClass: String
+    featureCode: String
+    latitude: Float!
+    longitude: Float!
+    """0 to 1: trigram similarity to the name, 1 for an exact match."""
+    score: Float!
+    """Whether the point is inside \`withinLocationId\`. Null without one."""
+    insideArea: Boolean
+    """Kilometres from \`withinLocationId\` (0 inside it). Null without one."""
+    distanceKm: Float
+  }
+
+  """How a decider answers a queued name."""
+  enum UnresolvedPlaceNameResolutionKind {
+    """An existing CLEAR location: give \`locationId\`."""
+    LOCATION
+    """A GeoNames suggestion: give \`geonamesId\`. It becomes a level-4 landmark."""
+    GEONAMES
+    """A new point: give \`point\`. It becomes a level-4 landmark."""
+    POINT
+    """The spelling is not a place. The row closes and does not come back."""
+    NOT_A_PLACE
+    """The spelling can mean more than one place. The row leaves the open
+    queue and stays resolvable."""
+    AMBIGUOUS
+  }
+
+  """One answer: \`kind\`, and the one field that kind needs."""
+  input UnresolvedPlaceNameResolutionInput {
+    kind: UnresolvedPlaceNameResolutionKind!
+    """With LOCATION: a district, a state or a level-4 landmark in the row's country."""
+    locationId: String
+    """With GEONAMES: the suggestion's GeoNames id."""
+    geonamesId: Int
+    """With POINT: the place. Its name defaults to the row's spelling."""
+    point: LocationChallengePointInput
   }
 
   """One geocode miss, sent by the pipeline."""

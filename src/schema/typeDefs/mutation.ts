@@ -251,6 +251,23 @@ export const mutationTypeDef = gql`
     move. Auth: admin or pipeline."""
     recordUnresolvedPlaceName(input: RecordUnresolvedPlaceNameInput!): UnresolvedPlaceName!
 
+    """Resolve a row of the unresolved place-name queue (ADR-0019). A location
+    answer (LOCATION, GEONAMES or POINT) writes a place alias for the spelling
+    in the row's state, closes the row as RESOLVED and moves the waiting
+    Signals to the alias location. A Signal moves only when the alias location
+    is inside its current location and no person corrected it. NOT_A_PLACE and
+    AMBIGUOUS close the row with no alias. Auth: a platform admin, or a team
+    admin when the row is inside their team's area; a team admin must place
+    the answer inside the row's state. CONFLICT when the row is already
+    resolved or marked not a place, or when the spelling has an alias."""
+    resolveUnresolvedPlaceName(
+      """The queue row."""
+      id: String!
+      resolution: UnresolvedPlaceNameResolutionInput!
+      """Why, at most 2000 characters. Kept on the row and on the alias."""
+      note: String
+    ): UnresolvedPlaceName!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!

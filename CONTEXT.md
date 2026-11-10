@@ -114,7 +114,7 @@ A place name, as written in a Signal, that geocoding could not place inside the 
 _Avoid_: failed geocode, unknown location (the Signal still has a location: its state or country)
 
 **Place alias**:
-A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a level-4 landmark. CLEAR owns it, in `place_aliases`, with no foreign key to the GeoNames tables, so a GeoNames re-import never touches it. Its source is `review` (a decider resolved an unresolved place name), `seed` (a loaded list) or `manual`. See ADR-0019.
+A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a level-4 landmark. CLEAR owns it, in `place_aliases`, with no foreign key to the GeoNames tables, so a GeoNames re-import never touches it. Its source is `review` (a decider resolved an unresolved place name), `seed` (a loaded list) or `manual`. `resolveGazetteerLocation` checks aliases before GeoNames and answers with `source: ALIAS` and the `locationId`. Resolving a queue row (`resolveUnresolvedPlaceName`) writes the alias, a second alias for the row's Arabic spelling, and moves the waiting Signals: those whose current location holds the alias location and that no person corrected. See ADR-0019.
 _Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNames' own data)
 
 **Alias scope**:

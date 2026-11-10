@@ -2,15 +2,24 @@ import { randomUUID } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireRole } from "../utils/auth-guard.js";
+import { logActivity } from "../utils/activity-log.js";
+import { findOrCreateLandmarkL4, resolveContainingAdminArea } from "../utils/geo-resolve.js";
 import { normalizeGazetteerName } from "../utils/geonames-normalize.js";
-import { requirePlaceNameDecider } from "../utils/place-name-access.js";
+import { placeNameInScope, requirePlaceNameDecider } from "../utils/place-name-access.js";
 import { canReadSignal } from "../utils/signal-access.js";
+import {
+  PlaceNameConflict,
+  RESOLVABLE_STATUSES,
+  moveLateSignals,
+  resolveIntoAlias,
+  suggestPlaces,
+} from "../services/place-names.js";
 
-// ─── Unresolved place names (ADR-0019, Exponential #1307) ────────────────────
+// ─── Unresolved place names (ADR-0019, Exponential #1307, #1309) ─────────────
 // The pipeline records each place name that geocoding could not place inside
-// the Signal's area. A decider reads the queue. Resolving a row is a later
-// slice (#1309): nothing here changes a row's status.
+// the Signal's area. A decider reads the queue and resolves a row: the answer
+// becomes a place alias, and the waiting Signals move.
 
 export const UNRESOLVED_PLACE_NAME_STATUSES = ["open", "resolved", "not_a_place", "ambiguous"] as const;
 export type UnresolvedPlaceNameStatus = (typeof UNRESOLVED_PLACE_NAME_STATUSES)[number];
@@ -18,6 +27,7 @@ export const UNRESOLVED_PLACE_NAME_REASONS = ["no_match", "outside_area"] as con
 export type UnresolvedPlaceNameReason = (typeof UNRESOLVED_PLACE_NAME_REASONS)[number];
 
 const NAME_MAX = 500;
+const NOTE_MAX = 2000;
 const PAGE_DEFAULT = 50;
 const PAGE_MAX = 200;
 const SIGNALS_DEFAULT = 5;
@@ -31,6 +41,15 @@ interface RecordInput {
   areaLocationId: string;
   reason?: UnresolvedPlaceNameReason | null;
   seenAt?: Date | null;
+}
+
+type ResolutionKind = "LOCATION" | "GEONAMES" | "POINT" | "NOT_A_PLACE" | "AMBIGUOUS";
+
+interface ResolutionInput {
+  kind: ResolutionKind;
+  locationId?: string | null;
+  geonamesId?: number | null;
+  point?: { lat: number; lng: number; name?: string | null } | null;
 }
 
 interface QueueArgs {
@@ -66,6 +85,53 @@ function badInput(message: string): GraphQLError {
 
 function notFound(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "NOT_FOUND" } });
+}
+
+function forbidden(message: string): GraphQLError {
+  return new GraphQLError(message, { extensions: { code: "FORBIDDEN" } });
+}
+
+function conflict(message: string): GraphQLError {
+  return new GraphQLError(message, { extensions: { code: "CONFLICT" } });
+}
+
+function assertPoint(lat: number, lng: number): void {
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+    throw badInput("The point's latitude must be a finite number in [-90, 90].");
+  }
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+    throw badInput("The point's longitude must be a finite number in [-180, 180].");
+  }
+}
+
+/** Each kind takes exactly its own field. */
+function assertResolutionShape(r: ResolutionInput): void {
+  const given = {
+    locationId: r.locationId != null,
+    geonamesId: r.geonamesId != null,
+    point: r.point != null,
+  };
+  const needs: Record<ResolutionKind, keyof typeof given | null> = {
+    LOCATION: "locationId",
+    GEONAMES: "geonamesId",
+    POINT: "point",
+    NOT_A_PLACE: null,
+    AMBIGUOUS: null,
+  };
+  const need = needs[r.kind];
+  for (const field of Object.keys(given) as Array<keyof typeof given>) {
+    if (field === need && !given[field]) throw badInput(`${r.kind} needs ${field}.`);
+    if (field !== need && given[field]) throw badInput(`${r.kind} does not take ${field}.`);
+  }
+}
+
+/** A location with its ancestors: the chain a place must be inside. */
+async function chainOf(prisma: Context["prisma"], locationId: string): Promise<string[] | null> {
+  const loc = await prisma.locations.findUnique({
+    where: { id: locationId },
+    select: { id: true, ancestorIds: true },
+  });
+  return loc ? [loc.id, ...loc.ancestorIds] : null;
 }
 
 /** Trim to null (empty → null); reject when over `max`. */
@@ -200,6 +266,46 @@ export const unresolvedPlaceNameResolvers = {
       const totalCount = Number(counted[0]?.count ?? 0);
       return { items, totalCount, hasMore: offset + items.length < totalCount };
     },
+
+    placeNameSuggestions: async (
+      _parent: unknown,
+      args: { name: string; nameAr?: string | null; countryCode: string; withinLocationId?: string | null },
+      context: Context,
+    ) => {
+      await requirePlaceNameDecider(context);
+      const name = trimText(args.name, NAME_MAX, "name");
+      if (!name) throw badInput("name is required.");
+      const nameAr = trimText(args.nameAr, NAME_MAX, "nameAr");
+      const countryCode = normalizeCountryCode(args.countryCode);
+
+      // CLEAR locations are searched inside the country's location. With an
+      // area, that is the area's country; without one, the country that
+      // carries the code (none carries it: no CLEAR locations are suggested).
+      let countryLocationId: string | null;
+      if (args.withinLocationId) {
+        const area = await stateOfArea(context.prisma, args.withinLocationId);
+        if (!area) throw badInput("withinLocationId is not a known location.");
+        // One country for both lists: GeoNames is searched by code, CLEAR
+        // locations by the area's country.
+        if (area.countryCode && area.countryCode !== countryCode) {
+          throw badInput(`withinLocationId is in ${area.countryCode}, not in ${countryCode}.`);
+        }
+        countryLocationId = area.countryLocationId;
+      } else {
+        const country = await context.prisma.locations.findFirst({
+          where: { level: 0, pCode: { equals: countryCode, mode: "insensitive" } },
+          select: { id: true },
+        });
+        countryLocationId = country?.id ?? null;
+      }
+      return suggestPlaces(context.prisma, {
+        name,
+        nameAr,
+        countryCode,
+        countryLocationId,
+        withinLocationId: args.withinLocationId ?? null,
+      });
+    },
   },
 
   Mutation: {
@@ -262,10 +368,156 @@ export const unresolvedPlaceNameResolvers = {
                 "updated_at" = CURRENT_TIMESTAMP
             WHERE "id" = ${rowId}`;
         }
+        // The row may be resolved already (this miss lost a race with the
+        // resolution): its alias then applies to this Signal at once.
+        await moveLateSignals(tx, rowId);
         return rowId;
       });
 
       return context.prisma.unresolvedPlaceNames.findUnique({ where: { id } });
+    },
+
+    resolveUnresolvedPlaceName: async (
+      _parent: unknown,
+      args: { id: string; resolution: ResolutionInput; note?: string | null },
+      context: Context,
+    ) => {
+      const { user, scope } = await requirePlaceNameDecider(context);
+      const row = await context.prisma.unresolvedPlaceNames.findUnique({ where: { id: args.id } });
+      if (!row) throw notFound("Unresolved place name not found.");
+      if (!placeNameInScope(scope, row)) throw forbidden("This place name is outside your team's area");
+
+      const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+      const closed = () => conflict(`This place name is already ${row.status.replaceAll("_", " ")}`);
+      if (!resolvable.includes(row.status)) throw closed();
+      const resolution = args.resolution;
+      assertResolutionShape(resolution);
+      const note = trimText(args.note, NOTE_MAX, "note");
+      const { kind } = resolution;
+
+      if (kind === "NOT_A_PLACE" || kind === "AMBIGUOUS") {
+        const status = kind === "NOT_A_PLACE" ? "not_a_place" : "ambiguous";
+        if (row.status === status) throw closed();
+        // Conditional on the status read above, so a concurrent decision wins
+        // once: another decider's answer is never overwritten.
+        const { count } = await context.prisma.unresolvedPlaceNames.updateMany({
+          where: { id: row.id, status: row.status },
+          data: { status, resolvedById: user.id, resolvedAt: new Date(), resolutionNote: note },
+        });
+        if (count === 0) throw conflict("This place name was resolved in the meantime");
+        void logActivity(context.prisma, {
+          userId: user.id,
+          action: kind === "NOT_A_PLACE" ? "place_name.not_a_place" : "place_name.ambiguous",
+          resourceType: "place_name",
+          resourceId: row.id,
+          metadata: { nameNorm: row.nameNorm, countryCode: row.countryCode, stateLocationId: row.stateLocationId },
+        });
+        return context.prisma.unresolvedPlaceNames.findUnique({ where: { id: row.id } });
+      }
+
+      // A location answer. The place must be in the row's country. A team
+      // admin must place it inside the row's state (the country, for a row
+      // with no state); a platform admin may place it anywhere in the country.
+      const anywhereInCountry = isPlatformAdmin(user);
+      const home = row.stateLocationId ?? row.countryLocationId;
+      const assertPlace = (chain: string[]) => {
+        if (row.countryLocationId && !chain.includes(row.countryLocationId)) {
+          throw badInput("The place is outside the country of this place name.");
+        }
+        if (!anywhereInCountry && !(home && chain.includes(home))) {
+          throw forbidden(
+            "The place is outside the state of this place name; a platform admin can place it there",
+          );
+        }
+      };
+
+      let locationId: string;
+      if (kind === "LOCATION") {
+        const target = await context.prisma.locations.findUnique({
+          where: { id: resolution.locationId! },
+          select: { id: true, level: true, ancestorIds: true },
+        });
+        if (!target) throw badInput("locationId is not a known location.");
+        if (target.level < 1) throw badInput("A country cannot be the answer: pick a place inside it.");
+        assertPlace([target.id, ...target.ancestorIds]);
+        locationId = target.id;
+      } else {
+        let place: { lat: number; lng: number; name: string };
+        if (kind === "GEONAMES") {
+          const hit = await context.prisma.geonames.findUnique({ where: { geonamesId: resolution.geonamesId! } });
+          if (!hit) throw badInput("geonamesId is not in the gazetteer.");
+          if (hit.countryCode.toUpperCase() !== row.countryCode) {
+            throw badInput("The place is outside the country of this place name.");
+          }
+          place = { lat: hit.latitude, lng: hit.longitude, name: hit.name };
+        } else {
+          const point = resolution.point!;
+          assertPoint(point.lat, point.lng);
+          place = {
+            lat: point.lat,
+            lng: point.lng,
+            name: trimText(point.name, NAME_MAX, "point.name") ?? row.nameAsWritten,
+          };
+        }
+        // Inside an admin area, not near one: a place just across a border
+        // is not its neighbour's.
+        const placement = await resolveContainingAdminArea(context.prisma, place.lat, place.lng);
+        const chain = placement ? await chainOf(context.prisma, placement.id) : null;
+        if (!placement || !chain) throw badInput("The place is outside the areas CLEAR covers.");
+        assertPlace(chain);
+        // Reuse a same-name point under the row's state; for a place a
+        // platform admin put outside it, under the area that holds the point.
+        const insideState = row.stateLocationId != null && chain.includes(row.stateLocationId);
+        const found = await findOrCreateLandmarkL4(context.prisma, {
+          name: place.name,
+          lat: place.lat,
+          lng: place.lng,
+          kind: "admin",
+          withinId: insideState ? row.stateLocationId : placement.id,
+        });
+        if (!found.locationId) {
+          throw new GraphQLError("The place could not be placed", {
+            extensions: { code: "INTERNAL_SERVER_ERROR" },
+          });
+        }
+        locationId = found.locationId;
+      }
+
+      let result: { aliasId: string; signalsMoved: number };
+      try {
+        result = await resolveIntoAlias(context.prisma, {
+          row,
+          locationId,
+          userId: user.id,
+          note,
+          source: "review",
+        });
+      } catch (err) {
+        if (err instanceof PlaceNameConflict) {
+          throw conflict(
+            err.reason === "ALIAS_EXISTS"
+              ? "This spelling already has a place alias in this state"
+              : "This place name was resolved in the meantime",
+          );
+        }
+        throw err;
+      }
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "place_name.resolve",
+        resourceType: "place_name",
+        resourceId: row.id,
+        metadata: {
+          kind,
+          nameNorm: row.nameNorm,
+          countryCode: row.countryCode,
+          stateLocationId: row.stateLocationId,
+          locationId,
+          placeAliasId: result.aliasId,
+          signalsMoved: result.signalsMoved,
+        },
+      });
+      return context.prisma.unresolvedPlaceNames.findUnique({ where: { id: row.id } });
     },
   },
 
@@ -279,6 +531,10 @@ export const unresolvedPlaceNameResolvers = {
       const u = await prisma.user.findUnique({ where: { id: parent.resolvedById }, select: { name: true } });
       return u?.name ?? null;
     },
+    signalsMoved: (parent: { id: string }, _args: unknown, { prisma }: Context) =>
+      prisma.unresolvedPlaceNameSignals.count({
+        where: { unresolvedPlaceNameId: parent.id, relocatedAt: { not: null } },
+      }),
     signals: (parent: { id: string }, args: { first?: number | null }, { prisma }: Context) => {
       const take = args.first ?? SIGNALS_DEFAULT;
       if (!Number.isInteger(take) || take < 1 || take > SIGNALS_MAX) {
