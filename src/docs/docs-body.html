@@ -294,6 +294,13 @@ in one country. Candidates inside `withinLocationId` come first, then the
 most similar, then the nearest. Computed on each call. Auth: a platform
 admin or a team admin.<div class="field-args"><span class="arg"><code>name: String!</code> — The name as written (Latin script).</span><span class="arg"><code>nameAr: String</code> — The Arabic spelling, when known. Matched exactly.</span><span class="arg"><code>countryCode: String!</code> — ISO-3166-1 alpha-2 (SD, VE, AF).</span><span class="arg"><code>withinLocationId: String</code> — The row's state, or another area. Sets `insideArea` and `distanceKm`.</span></div></td>
   </tr><tr>
+    <td><code>placeAliases</code></td>
+    <td><code>PlaceAliasesPage!</code></td>
+    <td>The place alias list (ADR-0019): the spellings CLEAR maps to its own
+locations, newest first. Auth: a platform admin or a team admin. Every
+decider reads every alias; `canEdit` says which ones the caller may
+change.<div class="field-args"><span class="arg"><code>countryCode: String</code> — Only aliases of this country (ISO-3166-1 alpha-2).</span><span class="arg"><code>search: String</code> — Matches the spelling (normalised, or as shown) or the target's name.</span><span class="arg"><code>scopeLocationId: String</code> — Only aliases with this scope.</span><span class="arg"><code>source: PlaceAliasSource</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 50).</span><span class="arg"><code>after: String</code> — The `endCursor` of the page before.</span></div></td>
+  </tr><tr>
     <td><code>locationPlacement</code></td>
     <td><code>Location</code></td>
     <td>The existing admin area a point falls in (district, else state, else
@@ -1319,6 +1326,27 @@ AMBIGUOUS close the row with no alias. Auth: a platform admin, or a team
 admin when the row is inside their team's area; a team admin must place
 the answer inside the row's state. CONFLICT when the row is already
 resolved or marked not a place, or when the spelling has an alias.<div class="field-args"><span class="arg"><code>id: String!</code> — The queue row.</span><span class="arg"><code>resolution: UnresolvedPlaceNameResolutionInput!</code></span><span class="arg"><code>note: String</code> — Why, at most 2000 characters. Kept on the row and on the alias.</span></div></td>
+  </tr><tr id="mutation-createplacealias">
+    <td><code>createPlaceAlias</code></td>
+    <td><code>PlaceAlias!</code></td>
+    <td>Add a place alias by hand (source MANUAL), to an existing location or
+to a new point. It also resolves the open queue rows with the same
+spelling in its scope, and moves their waiting Signals. Auth: a platform
+admin, or a team admin for a scope inside their team's area; a
+country-wide alias needs a platform admin. CONFLICT when the scope already
+has an alias for the spelling.<div class="field-args"><span class="arg"><code>input: CreatePlaceAliasInput!</code></span></div></td>
+  </tr><tr id="mutation-updateplacealias">
+    <td><code>updatePlaceAlias</code></td>
+    <td><code>PlaceAlias!</code></td>
+    <td>Change a place alias's target, scope or note. Signals it moved before
+stay where they are: the change applies to new Signals. Auth as
+createPlaceAlias, for the alias's scope and for the new one.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdatePlaceAliasInput!</code></span></div></td>
+  </tr><tr id="mutation-deleteplacealias">
+    <td><code>deletePlaceAlias</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a place alias. Signals it moved stay where they are. The queue
+row it came from goes back to OPEN. Auth as createPlaceAlias. Returns
+true.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -2957,6 +2985,36 @@ Ignored for platform-level callers.</td>
     <td><code>slug</code></td>
     <td><code>String!</code></td>
     <td>URL-friendly identifier. Must be unique.</td>
+  </tr></tbody></table><h3 id="type-createplacealiasinput"><code>CreatePlaceAliasInput</code> <span class="type-badge">input</span></h3><p>An alias added by hand. Give the target as `locationId` or as `point`,
+not both.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling. At most 500 characters.</td>
+  </tr><tr>
+    <td><code>nameAr</code></td>
+    <td><code>String</code></td>
+    <td>The same place in Arabic script. It gets an alias of its own.</td>
+  </tr><tr>
+    <td><code>countryCode</code></td>
+    <td><code>String!</code></td>
+    <td>ISO-3166-1 alpha-2 (SD, VE, AF).</td>
+  </tr><tr>
+    <td><code>scopeLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The state where the alias applies. Omit for the whole country
+(platform admins only).</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>An existing CLEAR location: a district, a state or a level-4 landmark.</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>LocationChallengePointInput</code></td>
+    <td>A new point. It becomes a level-4 landmark. Its name defaults to `name`.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createpubliceventlinkinput"><code>CreatePublicEventLinkInput</code> <span class="type-badge">input</span></h3><p>Input for the `createPublicEventLink` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -4300,6 +4358,23 @@ see and triage its threads. Null unassigns it (platform admins only).</td>
     <td><code>isActive</code></td>
     <td><code>Boolean</code></td>
     <td>Set active/inactive status.</td>
+  </tr></tbody></table><h3 id="type-updateplacealiasinput"><code>UpdatePlaceAliasInput</code> <span class="type-badge">input</span></h3><p>What to change. A field left out stays as it is.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A new target: an existing CLEAR location.</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>LocationChallengePointInput</code></td>
+    <td>A new target: a point, which becomes a level-4 landmark.</td>
+  </tr><tr>
+    <td><code>scopeLocationId</code></td>
+    <td><code>String</code></td>
+    <td>A new scope: a state, or null for the whole country (platform admins
+only). Leave the field out to keep the scope.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>A new note. Null or empty removes it.</td>
   </tr></tbody></table><h3 id="type-updateprofileinput"><code>UpdateProfileInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
@@ -8418,6 +8493,27 @@ GeoNames re-import never touches it.</p><table class="ref-table"><thead><tr><th>
     <td><code>note</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>canEdit</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Whether the caller may change or delete this alias: a platform admin
+always, a team admin when the scope is inside their team's area.</td>
+  </tr></tbody></table><h3 id="type-placealiasespage"><code>PlaceAliasesPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>items</code></td>
+    <td><code>[PlaceAlias!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>totalCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Aliases that match the filters, before paging.</td>
+  </tr><tr>
+    <td><code>hasMore</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endCursor</code></td>
+    <td><code>String</code></td>
+    <td>Pass as `after` to read the next page. Null on the last page.</td>
   </tr></tbody></table><h3 id="type-placenamesuggestion"><code>PlaceNameSuggestion</code> <span class="type-badge">object</span></h3><p>A place that a queued name can mean.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>kind</code></td>
     <td><code>PlaceNameSuggestionKind!</code></td>

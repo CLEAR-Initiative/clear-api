@@ -82,6 +82,24 @@ export const queryTypeDef = gql`
       withinLocationId: String
     ): [PlaceNameSuggestion!]!
 
+    """The place alias list (ADR-0019): the spellings CLEAR maps to its own
+    locations, newest first. Auth: a platform admin or a team admin. Every
+    decider reads every alias; \`canEdit\` says which ones the caller may
+    change."""
+    placeAliases(
+      """Only aliases of this country (ISO-3166-1 alpha-2)."""
+      countryCode: String
+      """Matches the spelling (normalised, or as shown) or the target's name."""
+      search: String
+      """Only aliases with this scope."""
+      scopeLocationId: String
+      source: PlaceAliasSource
+      """Max rows to return (1 to 200, default 50)."""
+      first: Int
+      """The \`endCursor\` of the page before."""
+      after: String
+    ): PlaceAliasesPage!
+
     """The existing admin area a point falls in (district, else state, else
     country), or null when it is outside the areas CLEAR covers. Lets a client
     show where a corrected point would be placed before filing it."""

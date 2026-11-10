@@ -6,7 +6,7 @@ import { isPlatformAdmin, requireRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { findOrCreateLandmarkL4, resolveContainingAdminArea } from "../utils/geo-resolve.js";
 import { normalizeGazetteerName } from "../utils/geonames-normalize.js";
-import { placeNameInScope, requirePlaceNameDecider } from "../utils/place-name-access.js";
+import { canWritePlaceAlias, placeNameInScope, requirePlaceNameDecider } from "../utils/place-name-access.js";
 import { canReadSignal } from "../utils/signal-access.js";
 import {
   PlaceNameConflict,
@@ -26,8 +26,8 @@ export type UnresolvedPlaceNameStatus = (typeof UNRESOLVED_PLACE_NAME_STATUSES)[
 export const UNRESOLVED_PLACE_NAME_REASONS = ["no_match", "outside_area"] as const;
 export type UnresolvedPlaceNameReason = (typeof UNRESOLVED_PLACE_NAME_REASONS)[number];
 
-const NAME_MAX = 500;
-const NOTE_MAX = 2000;
+export const NAME_MAX = 500;
+export const NOTE_MAX = 2000;
 const PAGE_DEFAULT = 50;
 const PAGE_MAX = 200;
 const SIGNALS_DEFAULT = 5;
@@ -79,23 +79,23 @@ interface QueueRow {
   placeAliasId: string | null;
 }
 
-function badInput(message: string): GraphQLError {
+export function badInput(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
 }
 
-function notFound(message: string): GraphQLError {
+export function notFound(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "NOT_FOUND" } });
 }
 
-function forbidden(message: string): GraphQLError {
+export function forbidden(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "FORBIDDEN" } });
 }
 
-function conflict(message: string): GraphQLError {
+export function conflict(message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code: "CONFLICT" } });
 }
 
-function assertPoint(lat: number, lng: number): void {
+export function assertPoint(lat: number, lng: number): void {
   if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
     throw badInput("The point's latitude must be a finite number in [-90, 90].");
   }
@@ -126,7 +126,7 @@ function assertResolutionShape(r: ResolutionInput): void {
 }
 
 /** A location with its ancestors: the chain a place must be inside. */
-async function chainOf(prisma: Context["prisma"], locationId: string): Promise<string[] | null> {
+export async function chainOf(prisma: Context["prisma"], locationId: string): Promise<string[] | null> {
   const loc = await prisma.locations.findUnique({
     where: { id: locationId },
     select: { id: true, ancestorIds: true },
@@ -135,7 +135,7 @@ async function chainOf(prisma: Context["prisma"], locationId: string): Promise<s
 }
 
 /** Trim to null (empty → null); reject when over `max`. */
-function trimText(value: string | null | undefined, max: number, field: string): string | null {
+export function trimText(value: string | null | undefined, max: number, field: string): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
@@ -560,6 +560,21 @@ export const unresolvedPlaceNameResolvers = {
   },
 
   PlaceAlias: {
+    // The alias list sets it for the whole page. Reached another way (a
+    // queue row's alias), it is worked out for this caller.
+    canEdit: async (
+      parent: { scopeLocationId: string | null; canEdit?: boolean },
+      _args: unknown,
+      context: Context,
+    ) => {
+      if (parent.canEdit !== undefined) return parent.canEdit;
+      try {
+        const { user, scope } = await requirePlaceNameDecider(context);
+        return canWritePlaceAlias(user, scope, parent.scopeLocationId);
+      } catch {
+        return false;
+      }
+    },
     location: (parent: { locationId: string }, _args: unknown, { prisma }: Context) =>
       prisma.locations.findUnique({ where: { id: parent.locationId } }),
     scopeLocation: (parent: { scopeLocationId: string | null }, _args: unknown, { prisma }: Context) =>

@@ -1,6 +1,7 @@
 import { Prisma } from "../generated/prisma/client.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.js";
+import { pipelineCountryNameByPcode } from "../resolvers/pipelineCountry.resolver.js";
 
 /**
  * Place aliases and the unresolved place-name queue (ADR-0019): the lookup
@@ -10,6 +11,45 @@ import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.j
 
 /** A Prisma client or an open transaction. */
 type Db = PrismaClient | Prisma.TransactionClient;
+
+// ─── The country of an alias ─────────────────────────────────────────────────
+
+/** A country's name without its long official form or a leading "the". */
+function countryNameKey(name: string): string {
+  return name
+    .replace(/\([^)]*\)/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/^the\s+/, "");
+}
+
+/**
+ * The level-0 location of a country code (ISO-2), or null when CLEAR has
+ * none. Matched by the location's pcode; else, for a pipeline country, by
+ * its name: `ensureCountryLocation` and the seed create countries with no
+ * pcode. An alias is checked against this location, so an alias for one
+ * country can never point into another.
+ */
+export async function countryLocationIdForCode(prisma: Db, countryCode: string): Promise<string | null> {
+  const code = countryCode.trim().toUpperCase();
+  const countries = await prisma.locations.findMany({
+    where: { level: 0 },
+    select: { id: true, name: true, pCode: true },
+    orderBy: { id: "asc" },
+  });
+  const byCode = countries.find((c) => c.pCode?.trim().toUpperCase() === code);
+  if (byCode) return byCode.id;
+  const name = pipelineCountryNameByPcode(code);
+  if (!name) return null;
+  // A location that carries another country's code is not this country.
+  return countries.find((c) => !c.pCode && countryNameKey(c.name) === countryNameKey(name))?.id ?? null;
+}
+
+/** Whether an alias with this scope applies in a queue row's state: a
+ *  country-wide alias applies everywhere, a scoped one in its own state. */
+export function aliasCoversState(scopeLocationId: string | null, stateLocationId: string | null): boolean {
+  return scopeLocationId === null || scopeLocationId === stateLocationId;
+}
 
 // ─── Alias lookup (the gazetteer's first tier) ───────────────────────────────
 
@@ -251,10 +291,18 @@ export async function resolveIntoAlias(
   prisma: PrismaClient,
   args: ResolveIntoAliasArgs,
 ): Promise<{ aliasId: string; signalsMoved: number }> {
+  return prisma.$transaction((tx) => resolveIntoAliasTx(tx, args));
+}
+
+/** `resolveIntoAlias` inside a transaction the caller already holds: the
+ *  alias API creates an alias and closes the rows it answers as one write. */
+export async function resolveIntoAliasTx(
+  tx: Prisma.TransactionClient,
+  args: ResolveIntoAliasArgs,
+): Promise<{ aliasId: string; signalsMoved: number }> {
   const { row, locationId, userId, note } = args;
   const now = args.now ?? new Date();
-
-  return prisma.$transaction(async (tx) => {
+  {
     // Conditional on the status this request read, so a concurrent decision
     // wins once: another decider's answer is never overwritten, not even one
     // that left the row resolvable (ambiguous).
@@ -316,7 +364,7 @@ export async function resolveIntoAlias(
 
     const signalsMoved = await moveWaitingSignals(tx, row.id, locationId, now);
     return { aliasId, signalsMoved };
-  });
+  }
 }
 
 /**
@@ -329,9 +377,16 @@ export async function resolveIntoAlias(
 export async function moveLateSignals(tx: Prisma.TransactionClient, unresolvedPlaceNameId: string): Promise<number> {
   const row = await tx.unresolvedPlaceNames.findUnique({
     where: { id: unresolvedPlaceNameId },
-    select: { status: true, placeAlias: { select: { locationId: true } } },
+    select: {
+      status: true,
+      stateLocationId: true,
+      placeAlias: { select: { locationId: true, scopeLocationId: true } },
+    },
   });
   if (row?.status !== "resolved" || !row.placeAlias) return 0;
+  // The alias as it is now: one whose scope was changed away from this
+  // row's state no longer answers the name here.
+  if (!aliasCoversState(row.placeAlias.scopeLocationId, row.stateLocationId)) return 0;
   return moveWaitingSignals(tx, unresolvedPlaceNameId, row.placeAlias.locationId, new Date());
 }
 

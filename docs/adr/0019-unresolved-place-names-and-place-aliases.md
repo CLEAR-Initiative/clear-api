@@ -150,10 +150,57 @@ Slice [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309) ad
 26. **Each human write is logged:** `place_name.resolve`,
     `place_name.not_a_place`, `place_name.ambiguous`.
 
+## The alias list
+
+Slice [#1310](https://www.exponential.im/w/clear/products/clear/tickets/1310) adds
+`placeAliases`, `createPlaceAlias`, `updatePlaceAlias` and `deletePlaceAlias`.
+
+27. **Every decider reads every alias.** The list is a gazetteer, not private
+    data. `canEdit` on each alias says whether the caller may change it.
+28. **A team admin writes the aliases scoped inside the team's area.** A
+    platform admin writes all aliases. A country-wide alias applies to every
+    state, so only a platform admin adds, changes or deletes one.
+29. **A scope is a state, or the whole country.** A district is refused.
+
+    **An alias never crosses a border.** The scope and the target must be
+    inside the level-0 location of the alias's country. That location is
+    found by its pcode, or, for a pipeline country with no pcode, by its
+    name. A country with no location cannot have aliases: nothing could be
+    checked.
+30. **An alias added by hand has the source `manual`.** Its target is an
+    existing location or a new point. A point becomes a level-4 landmark.
+    The target rules are those of point 15.
+31. **A new alias closes the open queue rows it answers.** A scoped alias
+    closes the rows of its spelling in its state. A country-wide alias closes
+    the rows of its spelling in every state. Each row closes through the
+    resolve function of point 16, so its waiting Signals move. The alias and
+    its rows are one transaction: a failure saves nothing, and the request
+    can be sent again. A row under the Arabic spelling closes under the
+    Arabic alias, with that alias's own target.
+32. **A change applies to new Signals only.** A new target or scope does not
+    move the Signals that the alias moved before.
+
+    **A narrower scope reopens the rows it leaves out.** A row that the alias
+    answered, in a state that the new scope does not cover, goes back to
+    `open`. A late miss (point 20) checks the alias's scope as it is now.
+
+    **A write goes through only on the alias as read.** An update or a delete
+    is conditional on `updatedAt`. An alias that changed in between gives
+    CONFLICT. An update writes only the fields that the request changes.
+33. **A deleted alias reopens its queue row.** The row goes back to `open`,
+    and a decider can answer it again. The Signals that the alias moved stay
+    where they are.
+34. **The two aliases of one answer are separate rows.** A resolution writes
+    one alias for the Latin spelling and one for the Arabic spelling. A
+    change or a delete applies to one row. The list shows both.
+35. **The list pages by cursor**, newest first.
+36. **Each write is logged:** `place_alias.create`, `place_alias.update`,
+    `place_alias.delete`.
+
 ## Not in these slices
 
-- Listing and editing aliases: [#1310](https://www.exponential.im/w/clear/products/clear/tickets/1310).
 - Re-grouping a Signal that moved: [#1316](https://www.exponential.im/w/clear/products/clear/tickets/1316).
+- Loading a list of aliases from a file: [#1314](https://www.exponential.im/w/clear/products/clear/tickets/1314).
 
 ## Considered options
 
