@@ -38,8 +38,9 @@ const ALIAS = {
 };
 
 interface Fake {
-  placeAliases: { findUnique: Fn; findUniqueOrThrow: Fn; updateMany: Fn; deleteMany: Fn };
+  placeAliases: { findUnique: Fn; findUniqueOrThrow: Fn; updateMany: Fn; delete: Fn };
   unresolvedPlaceNames: { updateMany: Fn };
+  $queryRaw: Fn;
   $transaction: Fn;
 }
 
@@ -49,9 +50,11 @@ function fakePrisma(): Fake {
       findUnique: vi.fn().mockResolvedValue(ALIAS),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ ...ALIAS, note: "Checked" }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      delete: vi.fn().mockResolvedValue({}),
     },
     unresolvedPlaceNames: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+    // The lock on the alias as read: one row while it is unchanged.
+    $queryRaw: vi.fn().mockResolvedValue([{ id: ALIAS.id }]),
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation((fn: (tx: Fake) => unknown) => fn(prisma));
@@ -86,22 +89,31 @@ describe("a write on an alias that changed since it was read", () => {
     expect(logActivity).not.toHaveBeenCalled();
   });
 
-  it("a delete removes the alias as it was read, and reopens its rows", async () => {
+  it("a delete locks the alias as it was read, then reopens its rows, then deletes it", async () => {
     const prisma = fakePrisma();
+    const order: string[] = [];
+    prisma.$queryRaw.mockImplementation(async () => (order.push("lock alias"), [{ id: ALIAS.id }]));
+    prisma.unresolvedPlaceNames.updateMany.mockImplementation(async () => (order.push("reopen rows"), { count: 2 }));
+    prisma.placeAliases.delete.mockImplementation(async () => (order.push("delete alias"), {}));
     expect(await deletePlaceAlias(null, { id: ALIAS.id }, ctx(prisma))).toBe(true);
-    expect(prisma.placeAliases.deleteMany).toHaveBeenCalledWith({ where: { id: ALIAS.id, updatedAt: READ_AT } });
+    // The alias before its rows, as an update does: the two never deadlock.
+    expect(order).toEqual(["lock alias", "reopen rows", "delete alias"]);
+    // The lock is taken on the version read (the SQL's bound values).
+    expect(prisma.$queryRaw.mock.calls[0]!.slice(1)).toEqual([ALIAS.id, READ_AT]);
     expect(logActivity).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({ action: "place_alias.delete", metadata: expect.objectContaining({ rowsReopened: 2 }) }),
     );
   });
 
-  it("a delete of a changed alias is a conflict", async () => {
+  it("a delete of a changed alias is a conflict, and nothing is written", async () => {
     const prisma = fakePrisma();
-    prisma.placeAliases.deleteMany.mockResolvedValue({ count: 0 });
+    prisma.$queryRaw.mockResolvedValue([]);
     await expect(deletePlaceAlias(null, { id: ALIAS.id }, ctx(prisma))).rejects.toMatchObject({
       extensions: { code: "CONFLICT" },
     });
+    expect(prisma.unresolvedPlaceNames.updateMany).not.toHaveBeenCalled();
+    expect(prisma.placeAliases.delete).not.toHaveBeenCalled();
     expect(logActivity).not.toHaveBeenCalled();
   });
 });

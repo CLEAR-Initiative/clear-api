@@ -268,11 +268,19 @@ export const placeAliasResolvers = {
                 data: [{ ...base, nameNorm: arabicNorm, nameDisplay: nameAr }],
                 skipDuplicates: true,
               });
-              const arabic = await tx.placeAliases.findFirst({
-                where: { countryCode, nameNorm: arabicNorm, scopeLocationId },
-                select: { id: true, locationId: true },
-              });
-              if (arabic) spellings.set(arabicNorm, arabic);
+              // Read under a row lock, held to the end of this transaction:
+              // an alias that was there already could otherwise be re-scoped
+              // or deleted between this read and the rows closing under it.
+              // One moved out of this scope meanwhile is not found, and its
+              // spelling then answers no row here.
+              const arabic = await tx.$queryRaw<{ id: string; locationId: string }[]>`
+                SELECT "id", "location_id" AS "locationId"
+                FROM "place_aliases"
+                WHERE "country_code" = ${countryCode}
+                  AND "name_norm" = ${arabicNorm}
+                  AND "scope_location_id" IS NOT DISTINCT FROM ${scopeLocationId}
+                FOR UPDATE`;
+              if (arabic[0]) spellings.set(arabicNorm, arabic[0]);
             }
 
             // The open queue rows these spellings name: in the alias's state,
@@ -422,14 +430,20 @@ export const placeAliasResolvers = {
       // be answered again. Signals it moved stay where they are: deleting an
       // alias affects new Signals only.
       const reopened = await context.prisma.$transaction(async (tx) => {
+        // The alias first, then its rows: the same lock order as an update,
+        // so a delete and a scope change on one alias never deadlock. Only
+        // the alias as read above is locked: one changed in between (made
+        // country-wide, say) is not this caller's to delete without a new look.
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "place_aliases"
+          WHERE "id" = ${id} AND "updated_at" = ${alias.updatedAt}
+          FOR UPDATE`;
+        if (locked.length === 0) throw changedMeanwhile();
         const { count } = await tx.unresolvedPlaceNames.updateMany({
           where: { placeAliasId: id, status: "resolved" },
           data: { status: "open", resolvedById: null, resolvedAt: null, resolutionNote: null, placeAliasId: null },
         });
-        // Only the alias as read above: one changed in between (made
-        // country-wide, say) is not this caller's to delete without a new look.
-        const gone = await tx.placeAliases.deleteMany({ where: { id, updatedAt: alias.updatedAt } });
-        if (gone.count === 0) throw changedMeanwhile();
+        await tx.placeAliases.delete({ where: { id } });
         return count;
       });
       void logActivity(context.prisma, {
