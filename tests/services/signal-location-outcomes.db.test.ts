@@ -203,6 +203,30 @@ describeIfDb("the location Outcome log", () => {
     ]);
   });
 
+  it("a replay job that moves a Signal without the drain writes a REPLAY Outcome with the move", async () => {
+    const id = await arrive("2026-10-28T09:00:00Z");
+    await updateSignalLocation({}, { id, locationId: STATE }, ctx);
+    await markSignalsProcessed({}, { ids: [id] }, ctx);
+    await processedAt(id, "2026-10-28T10:00:00Z");
+    const before = await series();
+
+    // The place-name backfill: a finer place, no mark.
+    await updateSignalLocation({}, { id, locationId: DISTRICT, runKind: "REPLAY", pipelineVersion: "def456", runId: "backfill-1" }, ctx);
+    const signal = await prisma.signals.findUniqueOrThrow({ where: { id } });
+    expect(signal.locationId).toBe(DISTRICT);
+    expect(signal.processedAt).toEqual(new Date("2026-10-28T10:00:00Z")); // the move does not touch it
+    expect((await outcomes(id)).at(-1)).toMatchObject({
+      locationId: DISTRICT,
+      level: 2,
+      runKind: "REPLAY",
+      step: "RELOCATED",
+      pipelineVersion: "def456",
+      runId: "backfill-1",
+    });
+    expect(await series()).toEqual(before);
+    await prisma.signals.deleteMany({ where: { id } });
+  });
+
   it("keeps the level a run produced when the location is removed", async () => {
     const gone = `${RUN}-gone`;
     await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "geometry")

@@ -34,7 +34,7 @@ pipeline version gave at the time. The live row keeps only the latest result.
 | Live run | The pipeline run that processes a Signal for the first time, after ingest. |
 | Replay run | A pipeline run that re-processes Signals that a Live run already processed. |
 | Live Outcome | The last Outcome that a Live run wrote for a Signal: the `LIVE` row written last, not the one with the latest `locatedAt`. |
-| Step | The pipeline step that wrote an Outcome: `ARRIVAL` (Signal create) or `PROCESSED` (the run marked the Signal done). |
+| Step | The pipeline step that wrote an Outcome: `ARRIVAL` (Signal create), `PROCESSED` (the run marked the Signal done) or `RELOCATED` (a replay job moved the Signal without the drain). |
 
 **Decision**: clear-api keeps an Outcome log. Location precision reads Live
 Outcomes from the log. It no longer reads the location or `processedAt` of the
@@ -42,8 +42,8 @@ live Signal.
 
 - **An Outcome has these fields**: `signalId`, `locatedAt`, `locationId`
   (null when the run found no location), `level` (copied from the location at
-  write time), `runKind` (`LIVE` or `REPLAY`), `step` (`ARRIVAL` or
-  `PROCESSED`), `pipelineVersion` (the pipeline git SHA), and `runId` (the
+  write time), `runKind` (`LIVE` or `REPLAY`), `step` (`ARRIVAL`,
+  `PROCESSED` or `RELOCATED`), `pipelineVersion` (the pipeline git SHA), and `runId` (the
   Dagster run id, optional).
 - **The log is append-only.** No mutation updates or deletes an Outcome. A
   retracted Signal keeps its Outcomes; the metric excludes it by the ADR-0011
@@ -87,7 +87,7 @@ Four mutations and one route create a pipeline Signal or set its location:
 |---|---|---|
 | `createSignal` | The location the Signal arrives with (a location id, or a point from coordinates). | Yes: `ARRIVAL`, `LIVE`, at `collectedAt`. |
 | `POST /x-ingest` (a route, not a mutation) | Nothing: X posts arrive with text only. | Yes: `ARRIVAL`, `LIVE`, at `collectedAt`, with no location. |
-| `updateSignalLocation` | The location the drain finds for a text-only Signal. | No. |
+| `updateSignalLocation` | The location the drain finds for a text-only Signal, or the location a replay job moves a Signal to. | From the drain: no. With `runKind: REPLAY`: yes, `RELOCATED`, `REPLAY`, at the instant of the move. |
 | `updateSignalContent` | The location of a revised Signal, when no person corrected it. | No. |
 | `markSignalsProcessed` | Nothing; it ends the run (`status`, `processedAt`). | Yes: `PROCESSED`, at the new `processedAt`, with the location the Signal has then. |
 
@@ -100,6 +100,12 @@ mutations write no Outcome, for these reasons:
   run would double the log.
 - The mark is the instant ADR-0012 used (`processedAt`), so the series does
   not move at the switch.
+
+A replay job can move Signals without the drain: the place-name backfill in
+clear-pipeline calls `updateSignalLocation` and never marks. It passes
+`runKind: REPLAY`, and the move writes a `RELOCATED` Outcome in the same
+transaction. The move does not change `processedAt`, and the Outcome is
+`REPLAY`, so the history series does not change.
 
 If a run fails after it sets a location and before the mark, the Signal stays
 `NEW`. The next run marks it and writes the Outcome.
