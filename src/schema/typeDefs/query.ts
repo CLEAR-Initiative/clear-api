@@ -66,6 +66,22 @@ export const queryTypeDef = gql`
       offset: Int
     ): UnresolvedPlaceNamesPage!
 
+    """Places a queued name can mean, for a decider: up to 5 GeoNames
+    candidates and up to 5 CLEAR districts or landmarks with a similar name,
+    in one country. Candidates inside \`withinLocationId\` come first, then the
+    most similar, then the nearest. Computed on each call. Auth: a platform
+    admin or a team admin."""
+    placeNameSuggestions(
+      """The name as written (Latin script)."""
+      name: String!
+      """The Arabic spelling, when known. Matched exactly."""
+      nameAr: String
+      """ISO-3166-1 alpha-2 (SD, VE, AF)."""
+      countryCode: String!
+      """The row's state, or another area. Sets \`insideArea\` and \`distanceKm\`."""
+      withinLocationId: String
+    ): [PlaceNameSuggestion!]!
+
     """The existing admin area a point falls in (district, else state, else
     country), or null when it is outside the areas CLEAR covers. Lets a client
     show where a corrected point would be placed before filing it."""
@@ -422,8 +438,12 @@ export const queryTypeDef = gql`
       adminLevel: Int
     ): String
 
-    """Resolve a place name against the offline GeoNames gazetteer - the
-    first tier of the hybrid geo-resolver. Tries an exact normalised-name
+    """Resolve a place name against CLEAR's place aliases, then the offline
+    GeoNames gazetteer - the first tier of the hybrid geo-resolver. A place
+    alias (ADR-0019) wins: the same normalised name and country, and a scope
+    that is the whole country or holds \`withinLocationId\`. Its hit has
+    \`source: ALIAS\` and a \`locationId\`, with the location's point as the
+    coordinates. Then GeoNames (\`source: GEONAMES\`): an exact normalised-name
     match, then a \`pg_trgm\` fuzzy match, preferring populated places / admin
     areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every

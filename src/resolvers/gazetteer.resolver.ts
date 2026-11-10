@@ -2,6 +2,7 @@ import type { Context } from "../context.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { requireRole } from "../utils/auth-guard.js";
 import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.js";
+import { findPlaceAlias } from "../services/place-names.js";
 
 interface Row {
   geonamesId: number;
@@ -27,6 +28,8 @@ function toHit(r: Row, score: number, exact: boolean) {
     population: Number(r.population),
     score,
     exact,
+    locationId: null,
+    source: "GEONAMES" as const,
   };
 }
 
@@ -51,6 +54,28 @@ export const gazetteerResolvers = {
       // so a caller could pass -1 (which would disable the floor entirely) or
       // >1 (which would match nothing). Defaults to 0.4.
       const minSim = Math.min(1, Math.max(0, args.minSimilarity ?? 0.4));
+
+      // 0. CLEAR's own place aliases (ADR-0019), before GeoNames: a spelling
+      //    a decider resolved, or a seeded facility. The answer is a CLEAR
+      //    location, returned with a point so a caller that does not read
+      //    `locationId` yet still gets coordinates.
+      const alias = await findPlaceAlias(context.prisma, q, cc, args.withinLocationId ?? null);
+      if (alias) {
+        return {
+          geonamesId: alias.geonamesId ?? 0,
+          name: alias.name,
+          latitude: alias.latitude,
+          longitude: alias.longitude,
+          featureClass: null,
+          featureCode: null,
+          countryCode: alias.countryCode,
+          population: 0,
+          score: 1.0,
+          exact: true,
+          locationId: alias.locationId,
+          source: "ALIAS" as const,
+        };
+      }
       // Only matches strictly inside this location's geometry. Village names
       // repeat, so without it the most populous same-named place anywhere
       // wins. The subquery is uncorrelated, so Postgres evaluates it once; an

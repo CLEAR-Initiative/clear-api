@@ -88,10 +88,60 @@ CLEAR stores unresolved place names and place aliases in three tables of its own
 12. **The database checks the value sets.** `status`, `reason` and the alias
     `source` (`review`, `seed`, `manual`) each have a CHECK constraint.
 
-## Not in this slice
+## Resolving a row
 
-- Resolving a row, the alias lookup in `resolveGazetteerLocation` and moving
-  the waiting Signals: [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309).
+Slice [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309) adds
+`resolveUnresolvedPlaceName`, `placeNameSuggestions` and the alias tier of
+`resolveGazetteerLocation`.
+
+13. **A decider gives one of five answers.** `LOCATION` (an existing CLEAR
+    location), `GEONAMES` (a GeoNames suggestion), `POINT` (a new point),
+    `NOT_A_PLACE` or `AMBIGUOUS`.
+14. **A GeoNames answer or a point becomes a level-4 landmark** through
+    `findOrCreateLandmarkL4`. The alias then points at that landmark.
+15. **The answer must be in the row's country.** A team admin must put it
+    inside the row's state. A platform admin can put it anywhere in the
+    country.
+16. **A location answer writes the alias and closes the row in one
+    transaction.** The alias has the row's spelling, the row's state as its
+    scope and the source `review`. The status change is conditional
+    (`open` or `ambiguous` only), so one of two deciders wins and the other
+    gets CONFLICT.
+17. **The row's Arabic spelling gets a second alias** to the same location.
+    The Arabic spelling is the source's own. The Latin spelling is a
+    transliteration, and it changes from post to post. An Arabic alias that
+    exists already stays as it is.
+18. **The same transaction moves the waiting Signals.** A Signal moves when
+    the alias location is inside the Signal's current location, and no person
+    corrected the Signal (`locationCorrectedAt` is null). A human correction
+    always wins. The link gets `relocatedAt`.
+19. **A move is not a correction.** It does not set `locationCorrectedAt` or
+    `pipelineLocationId`. Location precision (ADR-0012) therefore reads a
+    moved Signal at the alias location, in the week the pipeline located it.
+20. **A move does not change the Signal's Event.** #1316 decides re-grouping.
+21. **`AMBIGUOUS` is a status of its own, and the row stays resolvable.** The
+    open queue (status `OPEN`) hides it. A person with local knowledge can
+    resolve it later. `RESOLVED` and `NOT_A_PLACE` are closed.
+22. **The gazetteer checks aliases first.** An alias applies when the
+    normalised name and the country match, and its scope is the whole country
+    or holds `withinLocationId`. A scoped alias wins over a country-wide
+    alias. With no `withinLocationId`, only country-wide aliases apply.
+23. **An alias hit is a `GazetteerHit`** with `source: ALIAS`, the
+    `locationId` and the location's point (a point on the polygon for a
+    district). A GeoNames hit has `source: GEONAMES` and no `locationId`. A
+    pipeline that does not read the new fields still gets coordinates.
+24. **The server does not test the alias location against
+    `withinLocationId`.** The pipeline checks the point, as it does for a
+    GeoNames hit.
+25. **Suggestions are computed on each call.** Up to 5 GeoNames candidates
+    (trigram floor 0.2, exact match for Arabic) and up to 5 CLEAR districts or
+    named landmarks. Candidates inside the area come first, then the most
+    similar, then the nearest.
+26. **Each human write is logged:** `place_name.resolve`,
+    `place_name.not_a_place`, `place_name.ambiguous`.
+
+## Not in these slices
+
 - Listing and editing aliases: [#1310](https://www.exponential.im/w/clear/products/clear/tickets/1310).
 - Re-grouping a Signal that moved: [#1316](https://www.exponential.im/w/clear/products/clear/tickets/1316).
 
@@ -120,3 +170,11 @@ CLEAR stores unresolved place names and place aliases in three tables of its own
   like the other hand-written indexes in this schema. Do not drop them.
 - clear-pipeline calls `recordUnresolvedPlaceName` on each miss
   ([#1308](https://www.exponential.im/w/clear/products/clear/tickets/1308)).
+- A landmark made for an answer stays when the resolve then loses a race.
+  The next answer with the same name and place reuses it.
+- A resolution moves Signals of past weeks, so the location precision of
+  those weeks goes up without a pipeline change. Read a jump in an old week
+  against the queue's activity log.
+- clear-pipeline must use `locationId` from an alias hit directly
+  ([#1311](https://www.exponential.im/w/clear/products/clear/tickets/1311)).
+  Until then it makes a landmark from the hit's point.
