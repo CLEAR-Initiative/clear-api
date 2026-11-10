@@ -243,6 +243,14 @@ export const mutationTypeDef = gql`
       point: LocationChallengePointInput
     ): SignalLocationChallenge!
 
+    """Record a place name that geocoding could not place inside a Signal's
+    area (ADR-0019). Creates the queue row for (country, normalised spelling,
+    state), or adds the Signal to the row that exists. A Signal counts once
+    per row, so a re-run changes nothing. The row's status never changes
+    here: a row marked not a place stays closed and only its count and dates
+    move. Auth: admin or pipeline."""
+    recordUnresolvedPlaceName(input: RecordUnresolvedPlaceNameInput!): UnresolvedPlaceName!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!

@@ -15,7 +15,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
-import { hasArabic, normalizeGazetteerName as norm } from "../src/utils/geonames-normalize.js";
+import {
+  GEONAMES_TRUNCATE_SQL,
+  hasArabic,
+  normalizeGazetteerName as norm,
+} from "../src/utils/geonames-normalize.js";
 
 const COUNTRIES = ["SD", "VE", "AF"] as const;
 const GEONAMES_DIR = join(process.cwd(), "src", "geonames");
@@ -53,7 +57,7 @@ async function main() {
     // half-populated and silently serving incomplete results in production.
     await client.query("BEGIN");
     console.log("Truncating geonames tables…");
-    await client.query("TRUNCATE geonames, geonames_name RESTART IDENTITY CASCADE");
+    await client.query(GEONAMES_TRUNCATE_SQL);
 
     let totalPlaces = 0;
     let totalNames = 0;
