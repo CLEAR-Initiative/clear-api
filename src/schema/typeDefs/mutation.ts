@@ -161,8 +161,22 @@ export const mutationTypeDef = gql`
     after recomputing a changed signal's events. Sets status (PROCESSED, or
     FAILED) and processedAt. Pass exactly one of \`ids\` (unconditional) or
     \`items\` (compare-and-set: a row is updated only if its revision still
-    matches). Returns rows updated. Idempotent. Admin/pipeline only."""
-    markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
+    matches). Returns rows updated. Idempotent. Admin/pipeline only.
+
+    Each marked Signal a pipeline brought in also gets one row in the location
+    Outcome log (ADR-0020): the location it has now, at the new processedAt.
+    \`runKind\` says which kind of run this is (default LIVE); a Signal that a
+    run already finished is recorded as REPLAY whatever is sent.
+    \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\` the Dagster
+    run id."""
+    markSignalsProcessed(
+      ids: [String!]
+      items: [SignalRevisionInput!]
+      status: SignalStatus
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Int!
 
     """Put signals back in the Dagster drain queue for a backfill: sets status
     NEW and clears processedAt, so the next drain re-classifies and re-groups
@@ -1028,6 +1042,12 @@ export const mutationTypeDef = gql`
     rawS3Key: String
     publishedAt: String!
     collectedAt: String
+    """The clear-pipeline git SHA, kept on the Signal's first location Outcome
+    (ADR-0020). Optional."""
+    pipelineVersion: String
+    """The Dagster run id, kept on the Signal's first location Outcome
+    (ADR-0020). Optional."""
+    runId: String
     url: String
     title: String
     description: String

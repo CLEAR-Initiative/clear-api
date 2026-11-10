@@ -1,6 +1,14 @@
 import { gql } from "graphql-tag";
 
 export const signalTypeDef = gql`
+  """Which kind of pipeline run placed a Signal (ADR-0020)."""
+  enum LocationRunKind {
+    """The run that processes a Signal for the first time, after ingest."""
+    LIVE
+    """A run that re-processes a Signal that a Live run already processed."""
+    REPLAY
+  }
+
   """Durable processing status for the Dagster event-driven drain (pending
   work only; see \`retracted\`). NEW = awaiting first grouping; PROCESSED =
   classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =

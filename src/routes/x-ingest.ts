@@ -30,6 +30,7 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import { writeArrivalOutcomes } from "../services/signal-location-outcomes.js";
 import { resolveRequestAuth } from "../utils/request-auth.js";
 
 const router = Router();
@@ -141,19 +142,29 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    const { count: created } = await prisma.signals.createMany({
-      data: events.map((event) => ({
-        sourceId: source.id,
-        externalId: `x:${event.id}`,
-        rawData: event as Prisma.InputJsonValue,
-        publishedAt: new Date(event.created_at),
-        url: event.url,
-        title: truncateTitle(event.text),
-        description: event.text,
-        // status intentionally omitted: defaults to NEW, the drain owns it.
-      })),
-      skipDuplicates: true,
-    });
+    // Each new Signal gets its arrival Outcome in the same transaction
+    // (ADR-0020): location precision reads the Outcome log, and a Signal that
+    // waits for the drain counts there with no location.
+    const [{ count: created }] = await prisma.$transaction([
+      prisma.signals.createMany({
+        data: events.map((event) => ({
+          sourceId: source.id,
+          externalId: `x:${event.id}`,
+          rawData: event as Prisma.InputJsonValue,
+          publishedAt: new Date(event.created_at),
+          url: event.url,
+          title: truncateTitle(event.text),
+          description: event.text,
+          // status intentionally omitted: defaults to NEW, the drain owns it.
+        })),
+        skipDuplicates: true,
+      }),
+      writeArrivalOutcomes(
+        prisma,
+        source.id,
+        events.map((event) => `x:${event.id}`),
+      ),
+    ]);
 
     res.json({ created, skipped: events.length - created });
   } catch (err) {

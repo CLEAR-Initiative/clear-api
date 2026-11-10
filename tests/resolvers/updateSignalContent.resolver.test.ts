@@ -103,6 +103,8 @@ function makeStore(rows: Row[], links: Record<string, number> = {}) {
         return r ?? null;
       }),
     },
+    // The Outcome insert that markSignalsProcessed adds to its transaction (ADR-0020).
+    $executeRaw: vi.fn(async () => 0),
     // Supports both the callback form ($transaction(fn)) and the array form.
     $transaction: vi.fn(async (arg: unknown) =>
       typeof arg === "function"

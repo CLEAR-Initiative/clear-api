@@ -34,14 +34,17 @@ instant it was located**.
   are backfilled from their first applied challenge's `previousLocationId`).
   The point the person wrote would measure the person, and would lift the
   Signal's original week without any geocoding change.
-- **Located at**: `processedAt`, the time the drain last processed the Signal
-  (text-only sources are placed there), or with none `collectedAt` (sources
-  with coordinates are placed on arrival). A Signal is **in range** when that
-  instant is in `[from, to]`, and the weekly rows bucket by its ISO week. This
-  is the week a pipeline deploy shows up in, which is the point of the metric.
-  A re-processed Signal moves to the week it was re-located in, with the
-  location that run gave it; the metric never keeps an old location for an old
-  week.
+- **Located at** (amended by ADR-0020): the `locatedAt` of the Signal's
+  **Live Outcome** in the Outcome log. That is the instant the Live run
+  finished the Signal (its `processedAt` then), or, while no run has finished
+  it, `collectedAt` (sources with coordinates are placed on arrival). A Signal
+  is **in range** when that instant is in `[from, to]`, and the weekly rows
+  bucket by its ISO week. This is the week a pipeline deploy shows up in,
+  which is the point of the metric. The level is the one the Live Outcome
+  recorded. A re-processed Signal keeps its week and its level: a Replay run
+  adds Outcomes and changes no history. (Before ADR-0020 the metric read
+  `processedAt` and the location from the live Signal, and a re-processed
+  Signal moved to the week it was re-located in.)
 - **Ingested Signal**: as ADR-0011 defines it: a pipeline brought it in (no
   `submittedById`, `rawData.manual` not true), and it is not retracted or
   dummy. A Signal a person placed by hand measures the person, not the
@@ -88,9 +91,8 @@ handling.
 - The first baseline is retroactive: the stored locations already exist, so
   the card shows the weeks before and after the 29 Oct 2026 geocoding deploy
   (Exponential #1205 to #1207) without waiting.
-- Backfills must be deliberate: re-locating old Signals moves them into the
-  current week with new locations. Read the baseline before any bulk
-  re-processing, or keep the lab's day files as the frozen "before".
+- Re-locating old Signals is safe for this metric since ADR-0020: the series
+  reads the Outcome log, and a replay only adds rows to it.
 - A change to how displacement Signals are located (origin versus destination)
   changes which location this metric reads; update the definition with it.
 - The query aggregates in SQL (source, day, level), so it returns at most a few

@@ -8,6 +8,7 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
+import { arrivalOutcome, writeProcessedOutcomes, type RunKind } from "../services/signal-location-outcomes.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
@@ -91,6 +92,10 @@ interface CreateSignalInput {
    *  omitted; the signal `title` is never used here so headline-style
    *  paragraphs don't leak into the locations table. */
   pointName?: string;
+  /** The clear-pipeline git SHA and Dagster run id, kept on the Signal's
+   *  location Outcome (ADR-0020). */
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 /** In-place change to an existing signal, identified by `id` or by
@@ -408,16 +413,29 @@ export const signalResolvers = {
         pointName: input.pointName,
       });
 
+      const collectedAt = input.collectedAt ? new Date(input.collectedAt) : new Date();
+      // The Outcome log (ADR-0020): where the Signal arrived, written with it.
+      // A Signal a person entered (`rawData.manual`) measures the person.
+      const outcome =
+        (input.rawData as { manual?: unknown } | null)?.manual === true
+          ? null
+          : await arrivalOutcome(
+              context.prisma,
+              { collectedAt, locationId, originId: input.originId, destinationId: input.destinationId },
+              { pipelineVersion: input.pipelineVersion, runId: input.runId },
+            );
+
       try {
         return await context.prisma.signals.create({
           data: {
+            ...(outcome ? { locationOutcomes: { create: outcome } } : {}),
             sourceId: input.sourceId,
             externalId: input.externalId,
             contentHash: input.contentHash,
             rawData: input.rawData as InputJsonValue,
             rawS3Key: input.rawS3Key,
             publishedAt: new Date(input.publishedAt),
-            collectedAt: input.collectedAt ? new Date(input.collectedAt) : new Date(),
+            collectedAt,
             url: input.url,
             title: input.title,
             description: input.description,
@@ -472,6 +490,9 @@ export const signalResolvers = {
         ids?: string[] | null;
         items?: { id: string; revision: number }[] | null;
         status?: SignalStatusValue | null;
+        runKind?: RunKind | null;
+        pipelineVersion?: string | null;
+        runId?: string | null;
       },
       context: Context,
     ) => {
@@ -494,28 +515,36 @@ export const signalResolvers = {
       }
       const status = args.status ?? "PROCESSED";
       const processedAt = new Date();
+      // Each mark runs in one transaction with the Signals' location Outcomes
+      // (ADR-0020): the Outcome records where this run left the Signal.
+      const run = { runKind: args.runKind, pipelineVersion: args.pipelineVersion, runId: args.runId };
 
       if (hasIds) {
         if (args.ids!.length === 0) return 0;
-        const result = await context.prisma.signals.updateMany({
-          where: { id: { in: args.ids! } },
-          data: { status, processedAt },
-        });
-        return result.count;
+        const [marked] = await context.prisma.$transaction([
+          context.prisma.signals.updateMany({
+            where: { id: { in: args.ids! } },
+            data: { status, processedAt },
+          }),
+          writeProcessedOutcomes(context.prisma, args.ids!, status, processedAt, run),
+        ]);
+        return marked.count;
       }
 
       // Compare-and-set: a row whose revision moved since the drain fetched
       // it is skipped and picked up by the next run.
       if (args.items!.length === 0) return 0;
-      const results = await context.prisma.$transaction(
-        args.items!.map((item) =>
+      const results = await context.prisma.$transaction([
+        ...args.items!.map((item) =>
           context.prisma.signals.updateMany({
             where: { id: item.id, revision: item.revision },
             data: { status, processedAt },
           }),
         ),
-      );
-      return results.reduce((sum, r) => sum + r.count, 0);
+        writeProcessedOutcomes(context.prisma, args.items!.map((item) => item.id), status, processedAt, run),
+      ]);
+      // The last result is the Outcome insert, not a mark.
+      return results.slice(0, -1).reduce<number>((sum, r) => sum + (r as { count: number }).count, 0);
     },
 
     requeueSignals: async (

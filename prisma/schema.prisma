@@ -531,6 +531,7 @@ model locations {
   signalDestinations      signals[] @relation("SignalDestination")
   signalLocations         signals[] @relation("SignalLocation")
   signalPipelineLocations signals[] @relation("SignalPipelineLocation")
+  signalLocationOutcomes  signalLocationOutcomes[] @relation("SignalLocationOutcomeLocation")
   signalCountries         signals[] @relation("SignalCountries")
 
   // Reverse relations for Location challenges
@@ -783,12 +784,62 @@ model signals {
   signalLocationChallenges signalLocationChallenges[]
   unresolvedPlaceNames     unresolvedPlaceNameSignals[]
   estimates                estimate[]
+  locationOutcomes         signalLocationOutcomes[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
   @@index([publishedAt])
   /// Drives the Dagster drain query: pending signals (status = NEW) oldest-first.
   @@index([status, publishedAt])
+}
+
+/// Which kind of pipeline run wrote a location Outcome (ADR-0020).
+enum LocationRunKind {
+  /// The run that processes a Signal for the first time, after ingest.
+  LIVE
+  /// A run that re-processes a Signal a Live run already processed.
+  REPLAY
+}
+
+/// The pipeline step that wrote a location Outcome (ADR-0020).
+enum LocationOutcomeStep {
+  /// `createSignal`: the location the Signal arrived with.
+  ARRIVAL
+  /// `markSignalsProcessed`: the location the Signal had when a run finished it.
+  PROCESSED
+}
+
+/// The Outcome log (ADR-0020): one row records where one pipeline run placed
+/// one Signal. Append-only: no mutation updates or deletes a row. Location
+/// precision reads the last `LIVE` row of each Signal, so a replay adds rows
+/// and changes no history.
+model signalLocationOutcomes {
+  id       BigInt  @id @default(autoincrement())
+  signalId String  @map("signal_id")
+  signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The instant the run placed the Signal: `collectedAt` for an `ARRIVAL`
+  /// row, the new `processedAt` for a `PROCESSED` row.
+  locatedAt  DateTime   @map("located_at")
+  /// Null when the run found no location.
+  locationId String?    @map("location_id")
+  location   locations? @relation("SignalLocationOutcomeLocation", fields: [locationId], references: [id], onDelete: SetNull)
+  /// `locations.level` copied at write time, so a gazetteer re-import that
+  /// changes or removes the location does not change what the run produced.
+  level      Int?
+
+  runKind         LocationRunKind     @default(LIVE) @map("run_kind")
+  step            LocationOutcomeStep
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?             @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?             @map("run_id")
+
+  /// The Live Outcome of a Signal, and "was this Signal processed before".
+  @@index([signalId, runKind, locatedAt])
+  /// The series: Live Outcomes in a time range.
+  @@index([runKind, locatedAt])
+  @@map("signal_location_outcomes")
 }
 
 /// An analyst's Location challenge on a Signal, with an optional corrected
