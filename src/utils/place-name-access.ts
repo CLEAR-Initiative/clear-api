@@ -49,6 +49,22 @@ export async function requirePlaceNameDecider(
 }
 
 /**
+ * Whether the caller may add, change or delete an alias with this scope. A
+ * platform admin writes every alias. A team admin writes the aliases scoped
+ * inside their team's area. A country-wide alias (no scope) applies to every
+ * state, so only a platform admin writes it.
+ */
+export function canWritePlaceAlias(
+  user: { role?: string | null },
+  scope: PlaceNameScope,
+  scopeLocationId: string | null,
+): boolean {
+  if (isPlatformAdmin(user)) return true;
+  if (!scopeLocationId) return false;
+  return scope.kind === "all" || scope.locationIds.has(scopeLocationId);
+}
+
+/**
  * Whether a queue row is in the scope. A row with a state is in the area
  * when its state is. A row with no state belongs to its country, so only a
  * team that covers the whole country works it. The country is a location id,

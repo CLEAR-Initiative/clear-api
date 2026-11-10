@@ -117,6 +117,50 @@ export const unresolvedPlaceNameTypeDef = gql`
     createdAt: DateTime!
     updatedAt: DateTime!
     note: String
+    """Whether the caller may change or delete this alias: a platform admin
+    always, a team admin when the scope is inside their team's area."""
+    canEdit: Boolean!
+  }
+
+  type PlaceAliasesPage {
+    items: [PlaceAlias!]!
+    """Aliases that match the filters, before paging."""
+    totalCount: Int!
+    hasMore: Boolean!
+    """Pass as \`after\` to read the next page. Null on the last page."""
+    endCursor: String
+  }
+
+  """An alias added by hand. Give the target as \`locationId\` or as \`point\`,
+  not both."""
+  input CreatePlaceAliasInput {
+    """The spelling. At most 500 characters."""
+    name: String!
+    """The same place in Arabic script. It gets an alias of its own."""
+    nameAr: String
+    """ISO-3166-1 alpha-2 (SD, VE, AF)."""
+    countryCode: String!
+    """The state where the alias applies. Omit for the whole country
+    (platform admins only)."""
+    scopeLocationId: String
+    """An existing CLEAR location: a district, a state or a level-4 landmark."""
+    locationId: String
+    """A new point. It becomes a level-4 landmark. Its name defaults to \`name\`."""
+    point: LocationChallengePointInput
+    note: String
+  }
+
+  """What to change. A field left out stays as it is."""
+  input UpdatePlaceAliasInput {
+    """A new target: an existing CLEAR location."""
+    locationId: String
+    """A new target: a point, which becomes a level-4 landmark."""
+    point: LocationChallengePointInput
+    """A new scope: a state, or null for the whole country (platform admins
+    only). Leave the field out to keep the scope."""
+    scopeLocationId: String
+    """A new note. Null or empty removes it."""
+    note: String
   }
 
   type UnresolvedPlaceNamesPage {

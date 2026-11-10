@@ -118,7 +118,7 @@ A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a 
 _Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNames' own data)
 
 **Alias scope**:
-The area where a place alias applies: one state by default, or the whole country (a null scope, used for facilities). The same spelling can have one alias per scope.
+The area where a place alias applies: one state by default, or the whole country (a null scope, used for facilities). The same spelling can have one alias per scope. A team admin adds, changes and deletes the aliases scoped inside their team's area; a country-wide alias needs a platform admin. Every decider reads the whole list (`placeAliases`).
 
 ### Agent conversations
 

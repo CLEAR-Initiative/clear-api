@@ -20,7 +20,7 @@ import {
   stateOfArea,
   unresolvedPlaceNameResolvers,
 } from "../../src/resolvers/unresolvedPlaceName.resolver.js";
-import { placeNameInScope, requirePlaceNameDecider } from "../../src/utils/place-name-access.js";
+import { canWritePlaceAlias, placeNameInScope, requirePlaceNameDecider } from "../../src/utils/place-name-access.js";
 import { getTeamScopeLocationIds } from "../../src/utils/location-scope.js";
 import type { Context } from "../../src/context.js";
 
@@ -228,6 +228,18 @@ describe("requirePlaceNameDecider", () => {
     expect(placeNameInScope(scope, row(null, "loc-other-country"))).toBe(false);
     expect(placeNameInScope(scope, row(null, null))).toBe(false);
     expect(placeNameInScope({ kind: "all" }, row(null, null))).toBe(true);
+  });
+
+  it("lets a team admin write the aliases scoped inside their area, and a platform admin all of them", () => {
+    const area = { kind: "area" as const, locationIds: new Set([STATE.id]) };
+    expect(canWritePlaceAlias(MEMBER, area, STATE.id)).toBe(true);
+    expect(canWritePlaceAlias(MEMBER, area, "loc-other")).toBe(false);
+    // A country-wide alias applies to every state: platform admins only.
+    expect(canWritePlaceAlias(MEMBER, area, null)).toBe(false);
+    expect(canWritePlaceAlias(MEMBER, { kind: "all" }, null)).toBe(false);
+    expect(canWritePlaceAlias(MEMBER, { kind: "all" }, "loc-other")).toBe(true);
+    expect(canWritePlaceAlias(PLATFORM, area, null)).toBe(true);
+    expect(canWritePlaceAlias(PLATFORM, area, "loc-other")).toBe(true);
   });
 
   it("gives the admin of a team with no scope every row", async () => {

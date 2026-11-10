@@ -31,6 +31,7 @@ import { translationResolvers } from "./translation.resolver.js";
 import { knowledgebaseResolvers } from "./knowledgebase.resolver.js";
 import { gazetteerResolvers } from "./gazetteer.resolver.js";
 import { unresolvedPlaceNameResolvers } from "./unresolvedPlaceName.resolver.js";
+import { placeAliasResolvers } from "./placeAlias.resolver.js";
 import { datapointResolvers } from "./datapoint.resolver.js";
 import { situationAnalysisResolvers } from "./situationAnalysis.resolver.js";
 import { analysisResolvers } from "./analysis.resolver.js";
@@ -76,6 +77,7 @@ export const resolvers: IResolvers[] = [
   knowledgebaseResolvers,
   gazetteerResolvers,
   unresolvedPlaceNameResolvers,
+  placeAliasResolvers,
   datapointResolvers,
   situationAnalysisResolvers,
   analysisResolvers,

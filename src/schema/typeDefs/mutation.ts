@@ -268,6 +268,24 @@ export const mutationTypeDef = gql`
       note: String
     ): UnresolvedPlaceName!
 
+    """Add a place alias by hand (source MANUAL), to an existing location or
+    to a new point. It also resolves the open queue rows with the same
+    spelling in its scope, and moves their waiting Signals. Auth: a platform
+    admin, or a team admin for a scope inside their team's area; a
+    country-wide alias needs a platform admin. CONFLICT when the scope already
+    has an alias for the spelling."""
+    createPlaceAlias(input: CreatePlaceAliasInput!): PlaceAlias!
+
+    """Change a place alias's target, scope or note. Signals it moved before
+    stay where they are: the change applies to new Signals. Auth as
+    createPlaceAlias, for the alias's scope and for the new one."""
+    updatePlaceAlias(id: String!, input: UpdatePlaceAliasInput!): PlaceAlias!
+
+    """Delete a place alias. Signals it moved stay where they are. The queue
+    row it came from goes back to OPEN. Auth as createPlaceAlias. Returns
+    true."""
+    deletePlaceAlias(id: String!): Boolean!
+
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
     createEvent(input: CreateEventInput!): Event!
