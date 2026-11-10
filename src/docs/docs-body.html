@@ -628,6 +628,13 @@ metric's own query row for row. Counts only. Admin only. Refuses a
 grouping the metric lacks, an inverted range or one over 364 days with
 BAD_USER_INPUT. See `MetricSeries` and ADR-0015.<div class="field-args"><span class="arg"><code>input: MetricSeriesInput!</code></span></div></td>
   </tr><tr>
+    <td><code>locationReplayRuns</code></td>
+    <td><code>[LocationReplayRun!]!</code></td>
+    <td>The Replay runs that re-located a Signal in the range, newest first, at
+most 50 (ADR-0020). Each can be drawn as a second line on location
+precision: `metricSeries` with `replayRunId`. Range rules as
+`metricSeries`. Platform admin only.<div class="field-args"><span class="arg"><code>input: LocationReplayRunsInput</code></span></div></td>
+  </tr><tr>
     <td><code>metricAnnotations</code></td>
     <td><code>[MetricAnnotation!]!</code></td>
     <td>The changes that should move a metric (deploys, imports, prompt
@@ -3737,6 +3744,22 @@ field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type
     <td><code>granularity</code></td>
     <td><code>MetricGranularity</code></td>
     <td>Bucket size of `series`. Defaults to `WEEK`.</td>
+  </tr></tbody></table><h3 id="type-locationreplayrunsinput"><code>LocationReplayRunsInput</code> <span class="type-badge">input</span></h3><p>Which Replay runs to list: the range and filters of the series they are drawn on.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults as `metricSeries` does.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Signals whose Live Outcome is in this location or inside it.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name`.</td>
   </tr></tbody></table><h3 id="type-metricannotationsinput"><code>MetricAnnotationsInput</code> <span class="type-badge">input</span></h3><p>The range and metric to list annotations for. Every field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>from</code></td>
     <td><code>DateTime</code></td>
@@ -3777,6 +3800,16 @@ field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type
     <td><code>groupBy</code></td>
     <td><code>MetricGroupBy</code></td>
     <td>Split the series into groups. Refused with BAD_USER_INPUT for a metric that cannot be grouped.</td>
+  </tr><tr>
+    <td><code>replayRunId</code></td>
+    <td><code>String</code></td>
+    <td>Read the replay series of one Replay run instead of the history series
+(ADR-0020): only the Signals in range that the run re-processed, each at
+the result the run gave it, in the bucket the history series has it in.
+The two series then compare the same Signals bucket by bucket. Take the id
+from `locationReplayRuns`. Only `DISTRICT_OR_FINER` has a replay
+series; another metric refuses it with BAD_USER_INPUT. A run with no
+Signal in range gives an all-zero series.</td>
   </tr></tbody></table><h3 id="type-recordunresolvedplacenameinput"><code>RecordUnresolvedPlaceNameInput</code> <span class="type-badge">input</span></h3><p>One geocode miss, sent by the pipeline.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>signalId</code></td>
     <td><code>String!</code></td>
@@ -8153,6 +8186,24 @@ submitted or filed by hand), not retracted, not dummy.</p><table class="ref-tabl
     <td><code>isPartial</code></td>
     <td><code>Boolean!</code></td>
     <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr></tbody></table><h3 id="type-locationreplayrun"><code>LocationReplayRun</code> <span class="type-badge">object</span></h3><p>One Replay run of the pipeline that re-located Signals in the range
+(ADR-0020). A Replay run re-processes Signals that a run already finished;
+its results are kept beside the history, never in place of it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>runId</code></td>
+    <td><code>String!</code></td>
+    <td>The id the pipeline gave the run: a Dagster run id, or a replay job's own id. Pass it as `MetricSeriesInput.replayRunId`.</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>The clear-pipeline git SHA of the run; null when the pipeline sent none.</td>
+  </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>The instant of the run's first result for a Signal in range.</td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>Int!</code></td>
+    <td>How many ingested Signals in range the run re-processed: the denominator total of its replay series.</td>
   </tr></tbody></table><h3 id="type-maupoint"><code>MauPoint</code> <span class="type-badge">object</span></h3><p>One month in a MAU time series.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>month</code></td>
     <td><code>String!</code></td>

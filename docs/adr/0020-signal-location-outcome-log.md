@@ -64,10 +64,18 @@ live Signal.
   series. This replaces the "Located at" and re-processing rules of ADR-0012.
   All other rules of ADR-0012 stay: levels, ingested Signal, source, location
   filter, corrections.
-- **Replay series** (later ticket): for one Replay run, each Signal counts at
-  its Replay Outcome, in the bucket of its Live Outcome. The two lines then
+- **Replay series**: for one Replay run, each Signal counts at the run's
+  last Outcome for it, in the bucket of its Live Outcome. The two lines then
   compare the same Signals week by week: what the pipeline did then, and what
-  the current pipeline does with the same input.
+  the run does with the same input. `metricSeries` takes `replayRunId` for
+  `DISTRICT_OR_FINER` and returns the same bucket shape. The series holds
+  only the Signals the run re-processed, so its denominators are the run's
+  coverage of the range. The location filter reads the Live Outcome's
+  location, so both lines cover the same place.
+- **Replay runs**: `locationReplayRuns` lists the runs that have an Outcome
+  for a Signal in range: run id, pipeline version, start instant and Signal
+  count, newest first, at most 50. A run is its `runId`; a `REPLAY` Outcome
+  with no run id belongs to no run and is not listed.
 - **Backfill**: the migration that creates the table writes one `LIVE`
   Outcome per existing Signal that a pipeline brought in. It uses the ADR-0012
   values: `COALESCE(processedAt, collectedAt)` and the pipeline location.

@@ -67,6 +67,8 @@ export interface MetricSeriesInput {
   locationId?: string | null;
   sourceNames?: string[] | null;
   groupBy?: MetricGroupBy | null;
+  /** Read the replay series of this Replay run (ADR-0020); only `DISTRICT_OR_FINER` has one. */
+  replayRunId?: string | null;
 }
 
 /** One bucket of one group: the metric is `numerator / denominator`. */
@@ -163,7 +165,7 @@ function addUp(buckets: MetricBucket[], range: { from: Date; to: Date }, granula
 }
 
 /** The input every per-source service accepts; a service that ignores a field (source health and the location) still receives it. */
-type PerSourceInput = Pick<MetricSeriesInput, "from" | "to" | "locationId" | "sourceNames" | "granularity">;
+type PerSourceInput = Pick<MetricSeriesInput, "from" | "to" | "locationId" | "sourceNames" | "granularity" | "replayRunId">;
 
 /**
  * A share per source read from the service that owns it: grouped, the
@@ -183,7 +185,14 @@ function perSourceShare<Row extends Bucket & { source: string }>(
   return async (prisma, input, now) => {
     const m = await compute(
       prisma,
-      { from: input.from, to: input.to, locationId: input.locationId, sourceNames: input.sourceNames, granularity: input.granularity },
+      {
+        from: input.from,
+        to: input.to,
+        locationId: input.locationId,
+        sourceNames: input.sourceNames,
+        granularity: input.granularity,
+        replayRunId: input.replayRunId,
+      },
       now,
     );
     const base = { metric, granularity: m.granularity, from: m.from, to: m.to };
@@ -192,6 +201,9 @@ function perSourceShare<Row extends Bucket & { source: string }>(
     return { ...base, groups: [], buckets: addUp(perSource, { from: m.from, to: m.to }, m.granularity) };
   };
 }
+
+/** The metrics that can be read for one Replay run (`replayRunId`): those that read an Outcome log (ADR-0020). */
+const REPLAY_SERIES_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>(["DISTRICT_OR_FINER"]);
 
 const REGISTRY: Record<MetricKey, RegistryEntry> = {
   DETECTED_BY_NEXT_DAY: {
@@ -357,6 +369,9 @@ export async function computeMetricSeries(
   }
   if (input.groupBy && !entry.groupable) {
     throw badInput(`\`${entry.key}\` has no groups; leave \`groupBy\` out.`);
+  }
+  if (input.replayRunId?.trim() && !REPLAY_SERIES_METRICS.has(entry.key)) {
+    throw badInput(`\`${entry.key}\` has no replay series; leave \`replayRunId\` out.`);
   }
   // Validate the granularity up front, so a bad value fails the same way whichever service runs.
   resolveGranularity(input.granularity);

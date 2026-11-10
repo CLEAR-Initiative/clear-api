@@ -14,6 +14,7 @@ import {
 import { computeDetectionMetrics, type DetectionMetricsInput } from "../services/detection-metrics.js";
 import {
   computeLocationPrecisionMetrics,
+  listLocationReplayRuns,
   type LocationPrecisionMetricsInput,
 } from "../services/location-precision-metrics.js";
 import { computeMetricSeries, metricDefinitions, type MetricSeriesInput } from "../services/metric-registry.js";
@@ -61,6 +62,15 @@ export const metricsResolvers = {
     metricSeries: async (_parent: unknown, args: { input: MetricSeriesInput }, context: Context) => {
       requireRole(context, ["admin"]);
       return computeMetricSeries(context.prisma, args.input);
+    },
+    /** The Replay runs that can be drawn as a second line on location precision (ADR-0020). */
+    locationReplayRuns: async (
+      _parent: unknown,
+      args: { input?: Pick<LocationPrecisionMetricsInput, "from" | "to" | "locationId" | "sourceNames"> | null },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin"]);
+      return listLocationReplayRuns(context.prisma, args.input ?? {});
     },
     /** The changes drawn as markers on the charts (ADR-0016). */
     metricAnnotations: async (_parent: unknown, args: { input?: MetricAnnotationsFilter | null }, context: Context) => {
