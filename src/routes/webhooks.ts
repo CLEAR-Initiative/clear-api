@@ -30,6 +30,11 @@ import { timingSafeEqual } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { env } from "../utils/env.js";
 import { attemptDelivery } from "../services/webhook/deliver.js";
+import {
+  formatGlitchtipAlert,
+  matrixConfigFromEnv,
+  postMatrixMessage,
+} from "../services/webhook/matrix.js";
 
 const router = Router();
 
@@ -94,6 +99,19 @@ router.post("/glitchtip", async (req: Request, res: Response) => {
 
   const eventType = extractEventType(payload);
   const eventId = extractEventId(payload);
+
+  // Post to the Matrix alerts room, if configured. Fire-and-forget:
+  // independent of subscriptions, never blocks or fails the 202.
+  const matrix = matrixConfigFromEnv(env);
+  if (matrix) {
+    // Format inside the task: a malformed payload must not throw here and
+    // skip the subscription fan-out below.
+    void Promise.resolve()
+      .then(() => postMatrixMessage(matrix, formatGlitchtipAlert(payload)))
+      .catch((e) => {
+        console.error("[webhook-receive] matrix post threw:", e);
+      });
+  }
 
   // Fan out. `eventTypeFilter: []` matches all — postgres array_contains
   // logic would require special handling, so we filter in JS: cheaper
