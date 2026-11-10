@@ -839,6 +839,8 @@ model signalLocationOutcomes {
   @@index([signalId, runKind, locatedAt])
   /// The series: Live Outcomes in a time range.
   @@index([runKind, locatedAt])
+  /// The replay series: one run's Outcomes, Signal by Signal.
+  @@index([runId, signalId])
   @@map("signal_location_outcomes")
 }
 
