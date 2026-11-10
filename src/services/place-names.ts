@@ -63,6 +63,20 @@ export async function findPlaceAlias(
 
 // ─── Suggestions ─────────────────────────────────────────────────────────────
 
+/**
+ * A CLEAR location's name, normalised in SQL the way `normalizeGazetteerName`
+ * normalises the query: lower case, Arabic spelling variants folded to one
+ * letter, vowel marks and tatweel removed, punctuation reduced to spaces.
+ * `locations.name` is stored as written (GeoNames names are stored
+ * normalised), so without this an Arabic landmark name never equals its own
+ * normalised spelling. Latin accents are not folded here: Postgres has no
+ * NFKD, and CLEAR's Latin names are plain.
+ */
+const NORM_L_NAME = Prisma.sql`btrim(regexp_replace(regexp_replace(
+  translate(lower(l."name"), 'أإآٱىیکةؤئ', 'ااااييكهوي'),
+  '[\u064B-\u065F\u0670\u0640]', '', 'g'),
+  '[^a-z0-9 \u0621-\u064A\u066E-\u06D3]+', ' ', 'g'))`;
+
 export interface PlaceNameSuggestion {
   kind: "GEONAMES" | "LOCATION";
   geonamesId: number | null;
@@ -150,8 +164,8 @@ export async function suggestPlaces(
       ? await tx.$queryRaw<PlaceNameSuggestion[]>`
           WITH matched AS (
             SELECT l."id", l."name", l."level", ${POINT_OF_L} AS pt,
-                   CASE WHEN lower(l."name") = ANY(${exact}::text[]) THEN 1.0
-                        ELSE similarity(lower(l."name"), ${fuzzy ?? ""}) END AS "score"
+                   CASE WHEN ${NORM_L_NAME} = ANY(${exact}::text[]) THEN 1.0
+                        ELSE similarity(${NORM_L_NAME}, ${fuzzy ?? ""}) END AS "score"
             FROM "locations" l
             WHERE l."ancestor_ids" @> ARRAY[${args.countryLocationId}]::text[]
               AND (l."level" = 2 OR (l."level" = 4 AND l."point_type" = 'landmark-geocoded'))
@@ -168,8 +182,18 @@ export async function suggestPlaces(
           LIMIT ${SUGGESTIONS_PER_KIND}`
       : [];
 
-    return [...geonames, ...locations];
+    // Each kind keeps its own five; the list a decider reads is ranked as
+    // one: inside the area first, then the most similar, then the nearest.
+    return [...geonames, ...locations].sort(bySuggestionRank);
   });
+}
+
+/** Inside the area first, then the most similar, then the nearest. */
+export function bySuggestionRank(a: PlaceNameSuggestion, b: PlaceNameSuggestion): number {
+  const inside = Number(b.insideArea === true) - Number(a.insideArea === true);
+  if (inside !== 0) return inside;
+  if (b.score !== a.score) return b.score - a.score;
+  return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
 }
 
 // ─── Resolve into an alias, and move the waiting Signals ─────────────────────
@@ -192,6 +216,10 @@ export interface ResolveIntoAliasArgs {
     nameAr: string | null;
     countryCode: string;
     stateLocationId: string | null;
+    /** The status the caller read. The write goes through only while the
+     *  row still has it: a decision made in between is a conflict, also one
+     *  that left the row resolvable (open to ambiguous). */
+    status: string;
   };
   /** The CLEAR location the spelling means. */
   locationId: string;
@@ -227,9 +255,13 @@ export async function resolveIntoAlias(
   const now = args.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
-    // Conditional on still resolvable, so a concurrent decision wins once.
+    // Conditional on the status this request read, so a concurrent decision
+    // wins once: another decider's answer is never overwritten, not even one
+    // that left the row resolvable (ambiguous).
+    const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+    if (!resolvable.includes(row.status)) throw new PlaceNameConflict("ROW_CLOSED");
     const { count } = await tx.unresolvedPlaceNames.updateMany({
-      where: { id: row.id, status: { in: [...RESOLVABLE_STATUSES] } },
+      where: { id: row.id, status: row.status },
       data: { status: "resolved", resolvedById: userId, resolvedAt: now, resolutionNote: note },
     });
     if (count === 0) throw new PlaceNameConflict("ROW_CLOSED");
@@ -285,6 +317,22 @@ export async function resolveIntoAlias(
     const signalsMoved = await moveWaitingSignals(tx, row.id, locationId, now);
     return { aliasId, signalsMoved };
   });
+}
+
+/**
+ * A miss recorded on a row that is resolved already: apply the row's alias to
+ * the Signals that wait on it, under the same rule as the resolution. This
+ * closes a race: a pipeline run can miss the alias lookup just before the
+ * resolution commits, and record its miss just after. Without this, that
+ * Signal would wait on a closed row for good. Returns the number moved.
+ */
+export async function moveLateSignals(tx: Prisma.TransactionClient, unresolvedPlaceNameId: string): Promise<number> {
+  const row = await tx.unresolvedPlaceNames.findUnique({
+    where: { id: unresolvedPlaceNameId },
+    select: { status: true, placeAlias: { select: { locationId: true } } },
+  });
+  if (row?.status !== "resolved" || !row.placeAlias) return 0;
+  return moveWaitingSignals(tx, unresolvedPlaceNameId, row.placeAlias.locationId, new Date());
 }
 
 /**

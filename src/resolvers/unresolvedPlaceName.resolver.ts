@@ -11,6 +11,7 @@ import { canReadSignal } from "../utils/signal-access.js";
 import {
   PlaceNameConflict,
   RESOLVABLE_STATUSES,
+  moveLateSignals,
   resolveIntoAlias,
   suggestPlaces,
 } from "../services/place-names.js";
@@ -284,6 +285,11 @@ export const unresolvedPlaceNameResolvers = {
       if (args.withinLocationId) {
         const area = await stateOfArea(context.prisma, args.withinLocationId);
         if (!area) throw badInput("withinLocationId is not a known location.");
+        // One country for both lists: GeoNames is searched by code, CLEAR
+        // locations by the area's country.
+        if (area.countryCode && area.countryCode !== countryCode) {
+          throw badInput(`withinLocationId is in ${area.countryCode}, not in ${countryCode}.`);
+        }
         countryLocationId = area.countryLocationId;
       } else {
         const country = await context.prisma.locations.findFirst({
@@ -362,6 +368,9 @@ export const unresolvedPlaceNameResolvers = {
                 "updated_at" = CURRENT_TIMESTAMP
             WHERE "id" = ${rowId}`;
         }
+        // The row may be resolved already (this miss lost a race with the
+        // resolution): its alias then applies to this Signal at once.
+        await moveLateSignals(tx, rowId);
         return rowId;
       });
 
@@ -389,9 +398,10 @@ export const unresolvedPlaceNameResolvers = {
       if (kind === "NOT_A_PLACE" || kind === "AMBIGUOUS") {
         const status = kind === "NOT_A_PLACE" ? "not_a_place" : "ambiguous";
         if (row.status === status) throw closed();
-        // Conditional on still resolvable, so a concurrent decision wins once.
+        // Conditional on the status read above, so a concurrent decision wins
+        // once: another decider's answer is never overwritten.
         const { count } = await context.prisma.unresolvedPlaceNames.updateMany({
-          where: { id: row.id, status: { in: [...RESOLVABLE_STATUSES] } },
+          where: { id: row.id, status: row.status },
           data: { status, resolvedById: user.id, resolvedAt: new Date(), resolutionNote: note },
         });
         if (count === 0) throw conflict("This place name was resolved in the meantime");

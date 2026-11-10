@@ -104,9 +104,11 @@ Slice [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309) ad
     country.
 16. **A location answer writes the alias and closes the row in one
     transaction.** The alias has the row's spelling, the row's state as its
-    scope and the source `review`. The status change is conditional
-    (`open` or `ambiguous` only), so one of two deciders wins and the other
-    gets CONFLICT.
+    scope and the source `review`. The status change is conditional on the
+    status that the request read. One of two deciders wins, and the other
+    gets CONFLICT. This holds also when the first answer was `AMBIGUOUS`,
+    which leaves the row resolvable: the second decider must read the row
+    again.
 17. **The row's Arabic spelling gets a second alias** to the same location.
     The Arabic spelling is the source's own. The Latin spelling is a
     transliteration, and it changes from post to post. An Arabic alias that
@@ -119,6 +121,12 @@ Slice [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309) ad
     `pipelineLocationId`. Location precision (ADR-0012) therefore reads a
     moved Signal at the alias location, in the week the pipeline located it.
 20. **A move does not change the Signal's Event.** #1316 decides re-grouping.
+
+    **A late miss moves at once.** A pipeline run can miss the alias lookup
+    just before a resolution commits, and record its miss just after. The
+    record transaction then applies the row's alias to that Signal, under the
+    rule of point 18. The pipeline records a miss after it saves the Signal's
+    location, so the rule has a location to test.
 21. **`AMBIGUOUS` is a status of its own, and the row stays resolvable.** The
     open queue (status `OPEN`) hides it. A person with local knowledge can
     resolve it later. `RESOLVED` and `NOT_A_PLACE` are closed.
@@ -135,8 +143,10 @@ Slice [#1309](https://www.exponential.im/w/clear/products/clear/tickets/1309) ad
     GeoNames hit.
 25. **Suggestions are computed on each call.** Up to 5 GeoNames candidates
     (trigram floor 0.2, exact match for Arabic) and up to 5 CLEAR districts or
-    named landmarks. Candidates inside the area come first, then the most
-    similar, then the nearest.
+    named landmarks. The two lists are ranked as one: candidates inside the
+    area come first, then the most similar, then the nearest. A CLEAR
+    location's name is normalised in SQL like the query, so an Arabic name
+    matches its own spelling.
 26. **Each human write is logged:** `place_name.resolve`,
     `place_name.not_a_place`, `place_name.ambiguous`.
 

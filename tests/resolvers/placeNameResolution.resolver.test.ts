@@ -161,8 +161,9 @@ describe("resolveUnresolvedPlaceName", () => {
   it("closes a row as not a place or ambiguous, once", async () => {
     const prisma = fakePrisma();
     await run(TEAM_ADMIN, { kind: "NOT_A_PLACE" }, prisma, " Plural of kambo ");
+    // Conditional on the status this request read, not on "still resolvable".
     expect(prisma.unresolvedPlaceNames.updateMany).toHaveBeenCalledWith({
-      where: { id: ROW.id, status: { in: ["open", "ambiguous"] } },
+      where: { id: ROW.id, status: "open" },
       data: expect.objectContaining({ status: "not_a_place", resolvedById: TEAM_ADMIN.id, resolutionNote: "Plural of kambo" }),
     });
     expect(logActivity).toHaveBeenCalledWith(prisma, expect.objectContaining({ action: "place_name.not_a_place", resourceId: ROW.id }));
@@ -331,6 +332,15 @@ describe("placeNameSuggestions", () => {
     expect(suggestSpy).toHaveBeenLastCalledWith(prisma, expect.objectContaining({ countryLocationId: null }));
   });
 
+  it("refuses an area in another country than the code", async () => {
+    const prisma = fakePrisma();
+    prisma.locations.findUnique.mockResolvedValue({ id: "loc-ve", level: 0, pCode: "VE", ancestorIds: [] });
+    await expect(
+      placeNameSuggestions(null, { name: "Kamo", countryCode: "SD", withinLocationId: "loc-ve" }, ctx(PLATFORM, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
+    expect(suggestSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses an empty name, a bad country code, an unknown area and a non-decider", async () => {
     for (const args of [
       { name: " ", countryCode: "SD" },
@@ -408,7 +418,7 @@ describe("resolveIntoAlias", () => {
     const result = await real()(prisma as never, args);
     expect(result).toEqual({ aliasId: "alias-1", signalsMoved: 2 });
     expect(prisma.unresolvedPlaceNames.updateMany).toHaveBeenCalledWith({
-      where: { id: ROW.id, status: { in: ["open", "ambiguous"] } },
+      where: { id: ROW.id, status: "open" },
       data: expect.objectContaining({ status: "resolved", resolvedById: "u-1", resolutionNote: "n" }),
     });
     expect(prisma.placeAliases.create).toHaveBeenCalledWith({
@@ -443,6 +453,19 @@ describe("resolveIntoAlias", () => {
     expect(existing.unresolvedPlaceNames.update).toHaveBeenCalledWith({ where: { id: ROW.id }, data: { placeAliasId: "alias-9" } });
   });
 
+  it("writes against the status the caller read: an ambiguous row resolves, a closed one never does", async () => {
+    const ambiguous = fakePrisma();
+    await placeNames.resolveIntoAlias(ambiguous as never, { ...args, row: { ...ROW, status: "ambiguous" } });
+    expect(ambiguous.unresolvedPlaceNames.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: ROW.id, status: "ambiguous" } }),
+    );
+    const closed = fakePrisma();
+    await expect(
+      placeNames.resolveIntoAlias(closed as never, { ...args, row: { ...ROW, status: "not_a_place" } }),
+    ).rejects.toMatchObject({ reason: "ROW_CLOSED" });
+    expect(closed.unresolvedPlaceNames.updateMany).not.toHaveBeenCalled();
+  });
+
   it("is a conflict when the row closed meanwhile, or the spelling has an alias", async () => {
     const closed = fakePrisma();
     closed.unresolvedPlaceNames.updateMany.mockResolvedValue({ count: 0 });
@@ -475,9 +498,13 @@ describe("suggestPlaces and findPlaceAlias", () => {
     const prisma = fakePrisma();
     prisma.$queryRaw.mockResolvedValueOnce([{ kind: "GEONAMES", geonamesId: 7 }]).mockResolvedValueOnce([{ kind: "LOCATION", locationId: "l" }]);
     const base = { name: "Um Dabakir", nameAr: "أم دباكر", countryCode: "SD", withinLocationId: STATE.id };
+    const outsideGeonames = { kind: "GEONAMES", geonamesId: 7, insideArea: false, score: 1, distanceKm: 40 };
+    const insideLocation = { kind: "LOCATION", locationId: "l", insideArea: true, score: 0.6, distanceKm: 0 };
+    prisma.$queryRaw.mockReset().mockResolvedValueOnce([outsideGeonames]).mockResolvedValueOnce([insideLocation]);
+    // One ranked list: a CLEAR place inside the area comes before a GeoNames place outside it.
     expect(await placeNames.suggestPlaces(prisma as never, { ...base, countryLocationId: COUNTRY.id })).toEqual([
-      { kind: "GEONAMES", geonamesId: 7 },
-      { kind: "LOCATION", locationId: "l" },
+      insideLocation,
+      outsideGeonames,
     ]);
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1); // the trigram floor, local to the transaction
 
@@ -485,6 +512,32 @@ describe("suggestPlaces and findPlaceAlias", () => {
     noCountry.$queryRaw.mockResolvedValueOnce([]);
     await placeNames.suggestPlaces(noCountry as never, { ...base, countryLocationId: null });
     expect(noCountry.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("ranks inside the area first, then the most similar, then the nearest", () => {
+    const s = (insideArea: boolean | null, score: number, distanceKm: number | null) =>
+      ({ insideArea, score, distanceKm }) as placeNames.PlaceNameSuggestion;
+    const list = [s(false, 1, 80), s(true, 0.4, 0), s(null, 0.9, null), s(true, 0.9, 0), s(false, 1, 20)];
+    expect(list.sort(placeNames.bySuggestionRank).map((x) => [x.insideArea, x.score, x.distanceKm])).toEqual([
+      [true, 0.9, 0],
+      [true, 0.4, 0],
+      [false, 1, 20],
+      [false, 1, 80],
+      [null, 0.9, null],
+    ]);
+  });
+
+  it("applies a resolved row's alias to a miss recorded late, and nothing else", async () => {
+    const prisma = fakePrisma();
+    prisma.unresolvedPlaceNames.findUnique.mockResolvedValue({ status: "resolved", placeAlias: { locationId: "loc-l4" } });
+    prisma.$queryRaw.mockResolvedValue([{ id: "sig-9" }]);
+    expect(await placeNames.moveLateSignals(prisma as never, "row-1")).toBe(1);
+    for (const row of [{ status: "open", placeAlias: null }, { status: "resolved", placeAlias: null }, null]) {
+      const none = fakePrisma();
+      none.unresolvedPlaceNames.findUnique.mockResolvedValue(row);
+      expect(await placeNames.moveLateSignals(none as never, "row-1")).toBe(0);
+      expect(none.$queryRaw).not.toHaveBeenCalled();
+    }
   });
 
   it("returns the first alias row, or null", async () => {

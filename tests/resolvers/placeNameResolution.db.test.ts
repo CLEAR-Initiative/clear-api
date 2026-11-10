@@ -359,6 +359,52 @@ describeIfDb("Resolving an unresolved place name against the real schema", () =>
     expect(await locationOf(waiting)).toBe(aliases[0]!.locationId);
   });
 
+  it("one decider marks a row ambiguous while another resolves it: one wins, the other gets CONFLICT", async () => {
+    // Ambiguous leaves the row resolvable, so "still resolvable" is not enough:
+    // each write is conditional on the status its request read.
+    const row = await queued("Shearia", STATE_A_ID, [await signalAt(STATE_A_ID)]);
+    const results = await Promise.allSettled([
+      resolve(stateAdmin, row.id, { kind: "AMBIGUOUS" }, "Two villages"),
+      resolve(platform, row.id, { kind: "LOCATION", locationId: DISTRICT_A1_ID }),
+    ]);
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(lost[0]!.reason).toMatchObject({ extensions: { code: "CONFLICT" } });
+    // The loser wrote nothing: an ambiguous row keeps its note and has no alias.
+    const after = await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: row.id } });
+    const aliases = await prisma.placeAliases.count({ where: { countryCode: CC, nameNorm: "shearia" } });
+    if (after.status === "ambiguous") {
+      expect(after).toMatchObject({ resolvedById: STATE_ADMIN_ID, resolutionNote: "Two villages", placeAliasId: null });
+      expect(aliases).toBe(0);
+    } else {
+      expect(after).toMatchObject({ status: "resolved", resolvedById: PLATFORM_ID });
+      expect(aliases).toBe(1);
+    }
+  });
+
+  it("a miss recorded after the row was resolved moves at once, under the same rule", async () => {
+    // The race: a pipeline run misses the alias lookup just before the
+    // resolution commits, and records its miss just after.
+    const row = await queued("Kutum market", STATE_A_ID, [await signalAt(STATE_A_ID)]);
+    await resolve(stateAdmin, row.id, { kind: "LOCATION", locationId: DISTRICT_A1_ID });
+
+    const late = await signalAt(STATE_A_ID);
+    const lateElsewhere = await signalAt(DISTRICT_A2_ID);
+    const lateCorrected = await signalAt(STATE_A_ID, { locationCorrectedAt: new Date("2026-10-21T00:00:00.000Z") });
+    const after = await queued("Kutum market", STATE_A_ID, [late, lateElsewhere, lateCorrected]);
+    expect(after).toMatchObject({ id: row.id, status: "resolved", signalCount: 4 });
+
+    expect(await locationOf(late)).toBe(DISTRICT_A1_ID);
+    expect(await locationOf(lateElsewhere)).toBe(DISTRICT_A2_ID);
+    expect(await locationOf(lateCorrected)).toBe(STATE_A_ID);
+    const link = await prisma.unresolvedPlaceNameSignals.findUniqueOrThrow({
+      where: { unresolvedPlaceNameId_signalId: { unresolvedPlaceNameId: row.id, signalId: late } },
+    });
+    expect(link.relocatedAt).toBeInstanceOf(Date);
+    expect(await unresolvedPlaceNameResolvers.UnresolvedPlaceName.signalsMoved(row, null, platform)).toBe(2);
+  });
+
   it("a spelling that has an alias already is a conflict, and nothing is written", async () => {
     const waiting = await signalAt(STATE_A_ID);
     const row = await queued("Tabit", STATE_A_ID, [waiting]);
@@ -423,6 +469,30 @@ describeIfDb("Resolving an unresolved place name against the real schema", () =>
     expect(districts.find((s) => s.kind === "LOCATION")).toMatchObject({ locationId: DISTRICT_A1_ID, level: 2, score: 1 });
     const near = await placeNameSuggestions(null, { name: "Kamu", countryCode: CC }, platform);
     expect(near[0]).toMatchObject({ kind: "GEONAMES", geonamesId: GN_KAMO, insideArea: null, distanceKm: null });
+  });
+
+  it("finds a CLEAR landmark by its Arabic name, and ranks it with the GeoNames places", async () => {
+    // locations.name is stored as written; the query is normalised.
+    await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "parent_id", "ancestor_ids", "point_type", "geometry")
+      VALUES (${`${RUN}-ar-landmark`}, 'محطة أُمّ دباكر', 4, ${DISTRICT_A2_ID},
+              ARRAY[${DISTRICT_A2_ID}, ${STATE_A_ID}, ${COUNTRY_ID}]::text[], 'landmark-geocoded',
+              ST_GeomFromText('POINT(71.6 61.4)', 4326))`;
+    const suggestions = await placeNameSuggestions(
+      null,
+      { name: "Zzyzx", nameAr: "محطة ام دباكر", countryCode: CC, withinLocationId: STATE_A_ID },
+      platform,
+    );
+    expect(suggestions[0]).toMatchObject({ kind: "LOCATION", locationId: `${RUN}-ar-landmark`, score: 1, insideArea: true });
+
+    // One ranked list: every candidate inside the area comes before any outside it.
+    const mixed = await placeNameSuggestions(
+      null,
+      { name: "Um Dabakir", nameAr: "أم دباكر", countryCode: CC, withinLocationId: STATE_A_ID },
+      platform,
+    );
+    const inside = mixed.map((s) => s.insideArea);
+    expect(inside.indexOf(false)).toBeGreaterThan(inside.lastIndexOf(true));
+    expect(new Set(mixed.filter((s) => s.insideArea).map((s) => s.kind))).toEqual(new Set(["GEONAMES", "LOCATION"]));
   });
 
   it("suggestions are for deciders", async () => {
