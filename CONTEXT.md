@@ -109,6 +109,17 @@ The list of metrics the admin `/metrics` page can plot over time, one entry per 
 A change that should move a metric (a deploy, a data import, a prompt version), stored as a row with an instant, a label, the `MetricKey` values it bears on, and an optional description and link; drawn as a marker on the `/metrics` charts in the bucket holding its instant. Rows are per environment, admin only, and every write is activity-logged. `metricAnnotations` lists them; `createMetricAnnotation` and `deleteMetricAnnotation` write them. See ADR-0016.
 _Avoid_: geocoding accuracy (precision is how fine, not whether right); computing it anywhere but clear-api
 
+**Unresolved place name**:
+A place name, as written in a Signal, that geocoding could not place inside the Signal's area (the location the pipeline chose for it). The pipeline records each miss with `recordUnresolvedPlaceName`. One row per country, normalised spelling (`normalizeGazetteerName`) and state; each Signal that names it is a link with its own spelling, area, time and reason (`no_match`, or `outside_area` when a candidate exists outside the area). Statuses: `open`, `resolved`, `not_a_place` (a stop-list: later misses only add to the count) and `ambiguous`. Deciders read the queue with `unresolvedPlaceNames`: platform admins all rows, team admins the rows inside their team's area. See ADR-0019.
+_Avoid_: failed geocode, unknown location (the Signal still has a location: its state or country)
+
+**Place alias**:
+A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a level-4 landmark. CLEAR owns it, in `place_aliases`, with no foreign key to the GeoNames tables, so a GeoNames re-import never touches it. Its source is `review` (a decider resolved an unresolved place name), `seed` (a loaded list) or `manual`. See ADR-0019.
+_Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNames' own data)
+
+**Alias scope**:
+The area where a place alias applies: one state by default, or the whole country (a null scope, used for facilities). The same spelling can have one alias per scope.
+
 ### Agent conversations
 
 **Conversation**:

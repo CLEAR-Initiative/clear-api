@@ -537,6 +537,12 @@ model locations {
   challengePreviousLocations signalLocationChallenges[] @relation("ChallengePreviousLocation")
   challengeAppliedLocations  signalLocationChallenges[] @relation("ChallengeAppliedLocation")
 
+  // Reverse relations for unresolved place names and place aliases (ADR-0019)
+  unresolvedPlaceNameStates      unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameState")
+  unresolvedPlaceNameSignalAreas unresolvedPlaceNameSignals[] @relation("UnresolvedPlaceNameSignalArea")
+  placeAliasScopes               placeAliases[]               @relation("PlaceAliasScope")
+  placeAliasLocations            placeAliases[]               @relation("PlaceAliasLocation")
+
   // Reverse relations for event
   eventOrigins      events[] @relation("EventOrigin")
   eventDestinations events[] @relation("EventDestination")
@@ -774,6 +780,7 @@ model signals {
   signalEvents  signalEvents[]
 
   signalLocationChallenges signalLocationChallenges[]
+  unresolvedPlaceNames     unresolvedPlaceNameSignals[]
   estimates                estimate[]
 
   @@unique([sourceId, externalId])
@@ -2277,6 +2284,123 @@ model geonamesName {
   @@index([countryCode])
   @@index([nameNorm(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("geonames_name")
+}
+
+// ─── Unresolved place names and place aliases (ADR-0019) ─────────────────────
+//
+// CLEAR's own tables beside the GeoNames copy. None of them has a foreign key
+// to `geonames` or `geonames_name`: the importer runs
+// `TRUNCATE ... RESTART IDENTITY CASCADE`, which would empty them.
+
+/// A place name, as written in a Signal, that geocoding could not place
+/// inside the Signal's area. One row per country, normalised spelling and
+/// state. Unique on (countryCode, nameNorm, stateLocationId) with
+/// NULLS NOT DISTINCT; the index is written by hand in the migration,
+/// because Prisma cannot express it.
+model unresolvedPlaceNames {
+  id String @id @default(cuid())
+
+  /// The spelling after `normalizeGazetteerName`, the importer's normalisation.
+  nameNorm      String  @map("name_norm")
+  /// The spelling in the first Signal that named it.
+  nameAsWritten String  @map("name_as_written")
+  /// The Arabic spelling from the Signal's text, when one was found.
+  nameAr        String? @map("name_ar")
+  /// ISO-3166-1 alpha-2 (SD, VE, AF).
+  countryCode   String  @map("country_code")
+
+  /// The state (level 1) that holds the area the pipeline chose. Null when
+  /// that area is the country itself.
+  stateLocationId String?    @map("state_location_id")
+  stateLocation   locations? @relation("UnresolvedPlaceNameState", fields: [stateLocationId], references: [id], onDelete: Restrict)
+
+  /// "open", "resolved", "not_a_place" or "ambiguous" (DB CHECK).
+  status      String   @default("open")
+  /// The number of Signals recorded on this row. A Signal counts once.
+  signalCount Int      @default(0) @map("signal_count")
+  firstSeenAt DateTime @map("first_seen_at")
+  lastSeenAt  DateTime @map("last_seen_at")
+
+  /// Auth user id of whoever closed the row, and when.
+  resolvedById   String?       @map("resolved_by_id")
+  resolvedAt     DateTime?     @map("resolved_at")
+  resolutionNote String?       @map("resolution_note")
+  /// The alias that a resolution created.
+  placeAliasId   String?       @map("place_alias_id")
+  placeAlias     placeAliases? @relation(fields: [placeAliasId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  signals unresolvedPlaceNameSignals[]
+
+  @@index([status, signalCount(sort: Desc)])
+  @@index([stateLocationId])
+  @@index([placeAliasId])
+  @@map("unresolved_place_names")
+}
+
+/// One Signal that named an unresolved place name. A Signal counts once per row.
+model unresolvedPlaceNameSignals {
+  unresolvedPlaceNameId String               @map("unresolved_place_name_id")
+  unresolvedPlaceName   unresolvedPlaceNames @relation(fields: [unresolvedPlaceNameId], references: [id], onDelete: Cascade)
+  signalId              String               @map("signal_id")
+  signal                signals              @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The area the pipeline chose for the Signal: geocoding looked inside it.
+  areaLocationId String?    @map("area_location_id")
+  areaLocation   locations? @relation("UnresolvedPlaceNameSignalArea", fields: [areaLocationId], references: [id], onDelete: SetNull)
+
+  /// The spelling in this Signal.
+  nameAsWritten String @map("name_as_written")
+  /// "no_match" (no gazetteer candidate) or "outside_area" (a candidate
+  /// exists, but it lies outside the area). DB CHECK.
+  reason        String @default("no_match")
+
+  /// When the miss happened. A backfill passes the real date.
+  seenAt      DateTime  @map("seen_at")
+  /// When a resolution moved the Signal to the alias location.
+  relocatedAt DateTime? @map("relocated_at")
+
+  @@id([unresolvedPlaceNameId, signalId])
+  @@index([signalId])
+  @@index([areaLocationId])
+  @@map("unresolved_place_name_signals")
+}
+
+/// A spelling that CLEAR maps to a CLEAR location. Unique on
+/// (countryCode, nameNorm, scopeLocationId) with NULLS NOT DISTINCT; the
+/// index is written by hand in the migration.
+model placeAliases {
+  id String @id @default(cuid())
+
+  /// The spelling after `normalizeGazetteerName`.
+  nameNorm    String @map("name_norm")
+  /// The spelling to show.
+  nameDisplay String @map("name_display")
+  /// ISO-3166-1 alpha-2 (SD, VE, AF).
+  countryCode String @map("country_code")
+
+  /// The area where the alias applies. Null = the whole country.
+  scopeLocationId String?    @map("scope_location_id")
+  scopeLocation   locations? @relation("PlaceAliasScope", fields: [scopeLocationId], references: [id], onDelete: Restrict)
+  /// The CLEAR location the spelling means.
+  locationId      String     @map("location_id")
+  location        locations  @relation("PlaceAliasLocation", fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// "review" (from the queue), "seed" (a loaded list) or "manual" (DB CHECK).
+  source      String
+  /// Auth user id of whoever created the alias. Null for a seed.
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  note        String?
+
+  unresolvedPlaceNames unresolvedPlaceNames[]
+
+  @@index([locationId])
+  @@index([scopeLocationId])
+  @@map("place_aliases")
 }
 
 // ─── Ground intel staging tier ───────────────────────────────────────────────

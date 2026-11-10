@@ -46,6 +46,26 @@ export const queryTypeDef = gql`
       first: Int
     ): [SignalLocationChallenge!]!
 
+    """The unresolved place-name queue: place names that geocoding could not
+    place inside a Signal's area (ADR-0019). Open rows come first, then the
+    rows with the most Signals. Auth: a platform admin reads every row; a
+    team admin reads the rows whose state is inside the areas of the teams
+    they administer (a row with no state needs a team that covers the whole
+    country). Other roles get FORBIDDEN."""
+    unresolvedPlaceNames(
+      """Only rows in this state. Omit for every state, open rows first."""
+      status: UnresolvedPlaceNameStatus
+      """Only rows of this country (ISO-3166-1 alpha-2)."""
+      countryCode: String
+      """Only rows of this area. A country keeps all its rows. A state, or a
+      place under a state, keeps the rows of that state."""
+      areaLocationId: String
+      """Max rows to return (1 to 200, default 50)."""
+      first: Int
+      """Rows to skip (default 0)."""
+      offset: Int
+    ): UnresolvedPlaceNamesPage!
+
     """The existing admin area a point falls in (district, else state, else
     country), or null when it is outside the areas CLEAR covers. Lets a client
     show where a corrected point would be placed before filing it."""
