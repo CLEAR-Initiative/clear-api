@@ -9,11 +9,12 @@
  * empty scratch database: `bun run test:db tests/resolvers/placeAlias.db.test.ts`.
  */
 
-import { it, expect, beforeAll, afterAll } from "vitest";
+import { it, expect, beforeAll, afterAll, vi } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { placeAliasResolvers } from "../../src/resolvers/placeAlias.resolver.js";
 import { unresolvedPlaceNameResolvers } from "../../src/resolvers/unresolvedPlaceName.resolver.js";
 import { gazetteerResolvers } from "../../src/resolvers/gazetteer.resolver.js";
+import * as placeNames from "../../src/services/place-names.js";
 import { normalizeGazetteerName } from "../../src/utils/geonames-normalize.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
@@ -24,6 +25,8 @@ const { recordUnresolvedPlaceName, resolveUnresolvedPlaceName } = unresolvedPlac
 
 const RUN = `pa-db-${Date.now()}`;
 const CC = "ZT";
+const CC_B = "ZR";
+const STATE_X_ID = `${RUN}-state-x`;
 const COUNTRY_ID = `${RUN}-country`;
 const COUNTRY_B_ID = `${RUN}-country-b`;
 const STATE_A_ID = `${RUN}-state-a`;
@@ -109,6 +112,10 @@ describeIfDb("The place alias API against the real schema", () => {
     await insertArea(DISTRICT_A2_ID, "District A2", 2, STATE_A_ID, "MULTIPOLYGON(((81 60, 82 60, 82 62, 81 62, 81 60)))");
     await insertArea(DISTRICT_B1_ID, "District B1", 2, STATE_B_ID, "MULTIPOLYGON(((82 60, 83 60, 83 62, 82 62, 82 60)))");
     await insertArea(COUNTRY_B_ID, "Otherland", 0, null, "MULTIPOLYGON(((84 60, 88 60, 88 64, 84 64, 84 60)))");
+    await insertArea(STATE_X_ID, "State X", 1, COUNTRY_B_ID, "MULTIPOLYGON(((84 60, 86 60, 86 64, 84 64, 84 60)))");
+    // An alias is checked against its country's location, found by its code.
+    await prisma.locations.update({ where: { id: COUNTRY_ID }, data: { pCode: CC } });
+    await prisma.locations.update({ where: { id: COUNTRY_B_ID }, data: { pCode: CC_B } });
     await prisma.teamLocations.create({ data: { teamId: TEAM_ID, locationId: STATE_A_ID } });
     sourceId = (await prisma.dataSources.create({ data: { name: `${RUN}-source`, type: "test" } })).id;
   });
@@ -123,6 +130,7 @@ describeIfDb("The place alias API against the real schema", () => {
     for (const level of [4, 2, 1]) {
       await prisma.locations.deleteMany({ where: { level, ancestorIds: { has: COUNTRY_ID } } });
     }
+    await prisma.locations.deleteMany({ where: { id: STATE_X_ID } });
     await prisma.locations.deleteMany({ where: { id: { in: [COUNTRY_ID, COUNTRY_B_ID] } } });
     await prisma.teamMembers.deleteMany({ where: { teamId: TEAM_ID } });
     await prisma.teams.deleteMany({ where: { id: TEAM_ID } });
@@ -190,6 +198,22 @@ describeIfDb("The place alias API against the real schema", () => {
     await expect(create(platform, { name: "Kamo", countryCode: "ZTT" })).rejects.toMatchObject(bad);
   });
 
+  it("an alias never crosses a border: its scope and its target are in its country's own location", async () => {
+    const bad = { extensions: { code: "BAD_USER_INPUT" } };
+    // A country-wide alias pointing into another country.
+    await expect(create(platform, { name: "Kamo", scopeLocationId: null, locationId: STATE_X_ID })).rejects.toMatchObject(bad);
+    // A scope in another country, and a code that disagrees with the scope.
+    await expect(create(platform, { name: "Kamo", scopeLocationId: STATE_X_ID, locationId: STATE_X_ID })).rejects.toMatchObject(bad);
+    await expect(create(platform, { name: "Kamo", countryCode: CC_B })).rejects.toMatchObject(bad);
+    // A point in another country.
+    await expect(
+      create(platform, { name: "Kamo", scopeLocationId: null, locationId: null, point: { lat: 61, lng: 85 } }),
+    ).rejects.toMatchObject(bad);
+    // A country CLEAR has no location for: nothing can be checked, so nothing is saved.
+    await expect(create(platform, { name: "Kamo", countryCode: "ZQ", scopeLocationId: null })).rejects.toMatchObject(bad);
+    expect(await prisma.placeAliases.count({ where: { nameNorm: "kamo" } })).toBe(0);
+  });
+
   it("a point target becomes a landmark named after the spelling", async () => {
     const alias = await create(stateAdmin, { name: "Aruri", locationId: null, point: { lat: 61.2, lng: 81.4 } });
     const target = await prisma.locations.findUniqueOrThrow({ where: { id: alias.locationId } });
@@ -221,12 +245,97 @@ describeIfDb("The place alias API against the real schema", () => {
       .toMatchObject({ metadata: expect.objectContaining({ rowsResolved: 1, signalsMoved: 1 }) });
   });
 
+  it("a row under the Arabic spelling closes under the Arabic alias, with that alias's own target", async () => {
+    // Another answer already aliased the Arabic spelling, to another place.
+    const arabicNorm = normalizeGazetteerName("كتم");
+    const existing = await prisma.placeAliases.create({
+      data: { nameNorm: arabicNorm, nameDisplay: "كتم", countryCode: CC, scopeLocationId: STATE_A_ID, locationId: DISTRICT_A2_ID, source: "review" },
+    });
+    const latinSignal = await signalAt(STATE_A_ID);
+    const arabicSignal = await signalAt(STATE_A_ID);
+    const latinRow = await queued("Kutum", STATE_A_ID, latinSignal);
+    const arabicRow = await queued("كتم", STATE_A_ID, arabicSignal);
+
+    const alias = await create(stateAdmin, { name: "Kutum", nameAr: "كتم", locationId: DISTRICT_A1_ID });
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: latinRow.id } })).toMatchObject({
+      status: "resolved",
+      placeAliasId: alias.id,
+    });
+    expect(await locationOf(latinSignal)).toBe(DISTRICT_A1_ID);
+    // The Arabic row follows the alias of its own spelling: the one that was there.
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: arabicRow.id } })).toMatchObject({
+      status: "resolved",
+      placeAliasId: existing.id,
+    });
+    expect(await locationOf(arabicSignal)).toBe(DISTRICT_A2_ID);
+    // So deleting the Latin alias reopens the Latin row only.
+    await deletePlaceAlias(null, { id: alias.id }, stateAdmin);
+    expect((await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: latinRow.id } })).status).toBe("open");
+    expect((await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: arabicRow.id } })).status).toBe("resolved");
+    await prisma.unresolvedPlaceNames.deleteMany({ where: { id: { in: [latinRow.id, arabicRow.id] } } });
+    await prisma.placeAliases.delete({ where: { id: existing.id } });
+  });
+
+  it("a create that fails while it closes a row saves nothing, so it can be sent again", async () => {
+    const waiting = await signalAt(STATE_A_ID);
+    const row = await queued("Um Kadada", STATE_A_ID, waiting);
+    const spy = vi.spyOn(placeNames, "resolveIntoAliasTx").mockRejectedValueOnce(new Error("connection lost"));
+    await expect(create(stateAdmin, { name: "Um Kadada" })).rejects.toThrow("connection lost");
+    spy.mockRestore();
+    expect(await prisma.placeAliases.count({ where: { countryCode: CC, nameNorm: "um kadada" } })).toBe(0);
+    expect((await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("open");
+    // The same request again: no CONFLICT, and the row closes.
+    const alias = await create(stateAdmin, { name: "Um Kadada" });
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({
+      status: "resolved",
+      placeAliasId: alias.id,
+    });
+    expect(await locationOf(waiting)).toBe(DISTRICT_A1_ID);
+  });
+
+  it("an alias narrowed to one state stops answering the others: their rows reopen, and late misses stay", async () => {
+    const inA = await signalAt(STATE_A_ID);
+    const inB = await signalAt(STATE_B_ID);
+    const rowA = await queued("Jebel Marra", STATE_A_ID, inA);
+    const rowB = await queued("Jebel Marra", STATE_B_ID, inB);
+    // Country-wide: it answers the name in every state.
+    const wide = await create(platform, { name: "Jebel Marra", scopeLocationId: null, locationId: DISTRICT_B1_ID });
+    for (const id of [rowA.id, rowB.id]) {
+      expect((await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id } })).placeAliasId).toBe(wide.id);
+    }
+    expect(await locationOf(inB)).toBe(DISTRICT_B1_ID);
+
+    await updatePlaceAlias(null, { id: wide.id, input: { scopeLocationId: STATE_B_ID } }, platform);
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: rowA.id } })).toMatchObject({
+      status: "open",
+      placeAliasId: null,
+      resolvedById: null,
+    });
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: rowB.id } })).toMatchObject({
+      status: "resolved",
+      placeAliasId: wide.id,
+    });
+    // The signal it moved before stays where it is.
+    expect(await locationOf(inB)).toBe(DISTRICT_B1_ID);
+
+    // A row left linked to an alias that no longer covers its state (an old
+    // write, a repair by hand) does not move a late miss either.
+    await prisma.unresolvedPlaceNames.update({ where: { id: rowA.id }, data: { status: "resolved", placeAliasId: wide.id } });
+    const late = await signalAt(STATE_A_ID);
+    await queued("Jebel Marra", STATE_A_ID, late);
+    expect(await locationOf(late)).toBe(STATE_A_ID);
+    await prisma.unresolvedPlaceNames.update({ where: { id: rowA.id }, data: { status: "open", placeAliasId: null } });
+  });
+
   it("every decider reads the whole list; canEdit says what they may change", async () => {
     const all = await list(platform);
     expect(all.totalCount).toBeGreaterThanOrEqual(6);
     expect(all.items.every((a) => a.canEdit)).toBe(true);
     // Newest first.
-    expect(all.items[0]).toMatchObject({ nameNorm: "mazbud" });
+    expect(all.items[0]).toMatchObject({ nameNorm: "jebel marra" });
+    expect(all.items.map((a) => a.createdAt.getTime())).toEqual(
+      [...all.items.map((a) => a.createdAt.getTime())].sort((x, y) => y - x),
+    );
 
     const mine = await list(stateAdmin);
     expect(mine.totalCount).toBe(all.totalCount);
@@ -246,7 +355,10 @@ describeIfDb("The place alias API against the real schema", () => {
     expect((await list(platform, { search: "karinka" })).items.every((a) => a.locationId === DISTRICT_A1_ID)).toBe(true);
     expect(await names({ search: "no such place" })).toEqual([]);
 
-    expect((await list(platform, { scopeLocationId: STATE_B_ID })).items.map((a) => a.nameNorm)).toEqual(["um dabakir"]);
+    expect((await list(platform, { scopeLocationId: STATE_B_ID })).items.map((a) => a.nameNorm).sort()).toEqual([
+      "jebel marra",
+      "um dabakir",
+    ]);
     expect((await list(platform, { source: "review" })).totalCount).toBe(0);
     expect((await list(platform, { source: "manual" })).totalCount).toBe((await list(platform)).totalCount);
     expect((await placeAliases(null, { countryCode: "ZS" }, platform)).totalCount).toBe(0);
