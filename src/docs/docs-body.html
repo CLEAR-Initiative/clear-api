@@ -2383,6 +2383,11 @@ queue and stays resolvable.</td></tr></tbody></table><h3 id="type-unresolvedplac
     <td>Restrict to alerts whose event sits under this location (or any of
 its descendants).</td>
   </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps alerts whose event
+sits under any of them or under `locationId`. An empty list is no filter.</td>
+  </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
     <td>Glide codes — alert event must contain at least one of these in its
@@ -3260,6 +3265,11 @@ optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>
     <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
+  </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
     <td>—</td>
@@ -3365,6 +3375,11 @@ an explicit null / empty list clears a fact no live member supports.</td>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
   </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
@@ -3977,6 +3992,11 @@ requester. Retained for backward compatibility; its value has no effect.</td>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
   </tr><tr>
     <td><code>sourceNames</code></td>
     <td><code>[String!]</code></td>
