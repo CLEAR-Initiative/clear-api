@@ -6,6 +6,8 @@ import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentW
 import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { logActivity } from "../utils/activity-log.js";
 import { logEventChange } from "../utils/event-log.js";
+import { writeGroupingLinks } from "../services/signal-grouping-log.js";
+import type { RunKind } from "../services/signal-location-outcomes.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -84,6 +86,9 @@ interface CreateEventInput {
    * no team column.
    */
   teamId?: string;
+  runKind?: RunKind | null;
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 interface UpdateEventInput {
@@ -113,6 +118,9 @@ interface UpdateEventInput {
   casualties?: number;
   rank?: number;
   signalIds?: string[];
+  runKind?: RunKind | null;
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 /** Absent = leave unchanged; explicit null = clear (`?? undefined` would
@@ -442,51 +450,55 @@ export const eventResolvers = {
         }
       }
 
-      const event = await context.prisma.events.create({
-        data: {
-          title: input.title,
-          description: input.description,
-          description_signals: input.descriptionSignals
-            ? (input.descriptionSignals as InputJsonValue)
-            : undefined,
-          validFrom: new Date(input.validFrom),
-          validTo: input.validTo ? new Date(input.validTo) : null,
-          firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
-          lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
-          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
-          endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
-          startedAtAccuracy: input.startedAtAccuracy ?? undefined,
-          endedAtAccuracy: input.endedAtAccuracy ?? undefined,
-          magnitude: input.magnitude ?? undefined,
-          magnitudeUnit: input.magnitudeUnit ?? undefined,
-          actors: input.actors ?? undefined,
-          ...(input.countryIds && input.countryIds.length > 0
-            ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
-            : {}),
-          originId,
-          destinationId,
-          locationId,
-          types: input.types,
-          severity: input.severity,
-          populationAffected,
-          populationDisplaced,
-          casualties: input.casualties,
-          rank: input.rank,
-        },
-      });
-
-      // Create signalEvents join entries (dedupe the input array first so
-      // the same signalId repeated in the request doesn't create duplicate links).
+      // The Event, its Links and their grouping log rows are one transaction
+      // (ADR-0021): a Link never exists without the row that records it.
+      // Dedupe the input first so a repeated signalId makes one Link.
       const uniqueSignalIds = [...new Set(input.signalIds)];
-      if (uniqueSignalIds.length > 0) {
-        await context.prisma.signalEvents.createMany({
-          data: uniqueSignalIds.map((signalId) => ({
-            signalId,
-            eventId: event.id,
-            collectedAt: new Date(),
-          })),
+      const event = await context.prisma.$transaction(async (tx) => {
+        const event = await tx.events.create({
+          data: {
+            title: input.title,
+            description: input.description,
+            description_signals: input.descriptionSignals
+              ? (input.descriptionSignals as InputJsonValue)
+              : undefined,
+            validFrom: new Date(input.validFrom),
+            validTo: input.validTo ? new Date(input.validTo) : null,
+            firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
+            lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
+            startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
+            startedAtAccuracy: input.startedAtAccuracy ?? undefined,
+            endedAtAccuracy: input.endedAtAccuracy ?? undefined,
+            magnitude: input.magnitude ?? undefined,
+            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            actors: input.actors ?? undefined,
+            ...(input.countryIds && input.countryIds.length > 0
+              ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
+              : {}),
+            originId,
+            destinationId,
+            locationId,
+            types: input.types,
+            severity: input.severity,
+            populationAffected,
+            populationDisplaced,
+            casualties: input.casualties,
+            rank: input.rank,
+          },
         });
-      }
+
+        if (uniqueSignalIds.length > 0) {
+          const linkedAt = new Date();
+          await tx.signalEvents.createMany({
+            data: uniqueSignalIds.map((signalId) => ({ signalId, eventId: event.id, collectedAt: linkedAt })),
+          });
+          if (context.authMethod === "api-key") {
+            await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
+          }
+        }
+        return event;
+      });
 
       logEventChange("created", event, uniqueSignalIds);
 
@@ -624,12 +636,18 @@ export const eventResolvers = {
         const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
         newlyLinked = toLink;
         if (toLink.length > 0) {
-          await context.prisma.signalEvents.createMany({
-            data: toLink.map((signalId) => ({
-              signalId,
-              eventId: id,
-              collectedAt: new Date(),
-            })),
+          // The new Links and their grouping log rows are one transaction
+          // (ADR-0021). A Link that a person makes (a session, not an API
+          // key) writes no row.
+          const linkedAt = new Date();
+          const uniqueToLink = [...new Set(toLink)];
+          await context.prisma.$transaction(async (tx) => {
+            await tx.signalEvents.createMany({
+              data: uniqueToLink.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
+            });
+            if (context.authMethod === "api-key") {
+              await writeGroupingLinks(tx, id, uniqueToLink, input);
+            }
           });
         }
       }

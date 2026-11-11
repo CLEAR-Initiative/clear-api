@@ -780,6 +780,7 @@ model signals {
   userFeedbacks userFeedbacks[]
   userComments  userComments[]
   signalEvents  signalEvents[]
+  groupingLinks signalGroupingLinks[]
 
   signalLocationChallenges signalLocationChallenges[]
   unresolvedPlaceNames     unresolvedPlaceNameSignals[]
@@ -845,6 +846,39 @@ model signalLocationOutcomes {
   /// The replay series: one run's Outcomes, Signal by Signal.
   @@index([runId, signalId])
   @@map("signal_location_outcomes")
+}
+
+/// The grouping log (ADR-0021): one row per Link that a pipeline run makes
+/// between a Signal and an Event. Append-only: no mutation updates or deletes
+/// a row. The grouping metrics read the `LIVE` rows, so a re-grouping replay
+/// adds `REPLAY` rows and changes no history. A Link that a person makes
+/// writes no row.
+model signalGroupingLinks {
+  id       BigInt  @id @default(autoincrement())
+  signalId String  @map("signal_id")
+  /// `deleteSignal` removes the rows of the Signal it deletes, as for the
+  /// Outcome log. A replay never deletes a Signal (ADR-0021, rule 2).
+  signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  /// Plain text with no foreign key, so a row outlives its Event.
+  eventId  String  @map("event_id")
+
+  /// The instant of the Link: `signal_to_events.collected_at`.
+  linkedAt DateTime @map("linked_at")
+
+  /// The kinds are the same for every log, so the enum of ADR-0020 is reused.
+  runKind         LocationRunKind @default(LIVE) @map("run_kind")
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?         @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?         @map("run_id")
+
+  /// The Links of a Signal, and "does this Signal have a Live Link".
+  @@index([signalId, runKind])
+  /// The company of a Signal: the other rows of its Event.
+  @@index([eventId, runKind, linkedAt])
+  /// One run's Links (a later replay series).
+  @@index([runId])
+  @@map("signal_grouping_log")
 }
 
 /// An analyst's Location challenge on a Signal, with an optional corrected

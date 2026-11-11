@@ -1,7 +1,8 @@
 import { gql } from "graphql-tag";
 
 export const signalTypeDef = gql`
-  """Which kind of pipeline run placed a Signal (ADR-0020)."""
+  """Which kind of pipeline run wrote a log row: a location Outcome (ADR-0020)
+  or a grouping log Link (ADR-0021)."""
   enum LocationRunKind {
     """The run that processes a Signal for the first time, after ingest."""
     LIVE
