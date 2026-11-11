@@ -76,6 +76,10 @@ clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
 - **The pipeline is the caller with an API key.** clear-api writes a row
   only for a call with an API key. A person reaches clear-api with a session
   (clear-mvp sends the user's cookie), so a person's Link writes no row.
+  Known limit: an admin who calls a mutation by hand with a personal API key
+  writes a row. The pipeline's key belongs to an admin user today, so the
+  role cannot tell the two apart. A service identity for the pipeline would
+  close this; it is not part of this work.
 - **A Link that a person makes writes no row** (analyst splits and merges,
   [#1268](https://www.exponential.im/w/clear/products/clear/tickets/1268)).
   The metric measures the pipeline.
