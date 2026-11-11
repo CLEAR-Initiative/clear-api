@@ -8,7 +8,7 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
-import { arrivalOutcome, writeProcessedOutcomes, type RunKind } from "../services/signal-location-outcomes.js";
+import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
@@ -745,7 +745,13 @@ export const signalResolvers = {
 
     updateSignalLocation: async (
       _parent: unknown,
-      args: { id: string; locationId: string },
+      args: {
+        id: string;
+        locationId: string;
+        runKind?: RunKind | null;
+        pipelineVersion?: string | null;
+        runId?: string | null;
+      },
       context: Context,
     ) => {
       // Admin/pipeline only — the pipeline drain uses it to place push-feed
@@ -776,10 +782,22 @@ export const signalResolvers = {
         });
       }
 
-      return context.prisma.signals.update({
+      const update = context.prisma.signals.update({
         where: { id: args.id },
         data: { locationId: args.locationId },
       });
+      // The drain marks the Signal after this call, and the mark writes the
+      // Outcome (ADR-0020). A replay job that moves Signals without the drain
+      // says so, and its Outcome is written here with the move.
+      if (args.runKind !== "REPLAY") return update;
+      const [moved] = await context.prisma.$transaction([
+        update,
+        writeRelocatedOutcome(context.prisma, args.id, args.locationId, new Date(), {
+          pipelineVersion: args.pipelineVersion,
+          runId: args.runId,
+        }),
+      ]);
+      return moved;
     },
 
     updateSignalContent: async (

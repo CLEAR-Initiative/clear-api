@@ -1276,7 +1276,12 @@ whose author picked no location, and push feeds (e.g. sudan-war-x) that
 arrive with text only. The location is an admin area matched from the
 text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
 can key on its admin-2 district instead of creating an isolated event.
-Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+Admin/pipeline only.
+
+The drain marks the Signal afterwards, and that mark writes the location
+Outcome (ADR-0020). A replay job that moves a Signal without the drain
+passes `runKind: REPLAY`: the move then writes a REPLAY Outcome itself,
+with `pipelineVersion` (the clear-pipeline git SHA) and `runId`.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>runKind: LocationRunKind</code></span><span class="arg"><code>pipelineVersion: String</code></span><span class="arg"><code>runId: String</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>

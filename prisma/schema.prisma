@@ -807,6 +807,9 @@ enum LocationOutcomeStep {
   ARRIVAL
   /// `markSignalsProcessed`: the location the Signal had when a run finished it.
   PROCESSED
+  /// `updateSignalLocation` with `runKind: REPLAY`: a replay job moved the
+  /// Signal without sending it through the drain.
+  RELOCATED
 }
 
 /// The Outcome log (ADR-0020): one row records where one pipeline run placed

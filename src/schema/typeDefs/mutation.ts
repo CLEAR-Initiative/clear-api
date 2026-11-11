@@ -210,8 +210,19 @@ export const mutationTypeDef = gql`
     arrive with text only. The location is an admin area matched from the
     text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
     can key on its admin-2 district instead of creating an isolated event.
-    Admin/pipeline only."""
-    updateSignalLocation(id: String!, locationId: String!): Signal!
+    Admin/pipeline only.
+
+    The drain marks the Signal afterwards, and that mark writes the location
+    Outcome (ADR-0020). A replay job that moves a Signal without the drain
+    passes \`runKind: REPLAY\`: the move then writes a REPLAY Outcome itself,
+    with \`pipelineVersion\` (the clear-pipeline git SHA) and \`runId\`."""
+    updateSignalLocation(
+      id: String!
+      locationId: String!
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Signal!
 
     """Apply an in-place change to a signal, identified by \`id\` or by
     (\`sourceId\`, \`externalId\`). Content is written when contentHash differs,

@@ -16,7 +16,9 @@
  *
  * `updateSignalLocation` and `updateSignalContent` set a location during a
  * run. They write no Outcome: the run's result is recorded once, when the run
- * marks the Signal.
+ * marks the Signal. The exception is a replay job that moves a Signal without
+ * the drain: `updateSignalLocation` with `runKind: REPLAY` writes a REPLAY
+ * Outcome itself (`writeRelocatedOutcome`).
  *
  * Only Signals a pipeline brought in get Outcomes (no `submittedById`,
  * `rawData.manual` not true). A person's correction writes none.
@@ -147,6 +149,34 @@ export function writeProcessedOutcomes(
     WHERE s."id" = ANY(${[...new Set(ids)]}::text[])
       AND s."processed_at" = ${markedAt}
       AND s."status" = ${status}::"SignalStatus"
+      AND ${pipelineSignal("s")}
+  `;
+}
+
+/**
+ * Write the REPLAY Outcome of a Signal that a replay job just moved with
+ * `updateSignalLocation`: the location the replay wrote (`locationId`), at
+ * `at`. Run it in the same transaction as the update. A replay job that moves
+ * Signals without the drain never calls `markSignalsProcessed`, so this is
+ * the only record of its result. The row holds what the replay wrote, also
+ * for a Signal a person corrected earlier: `pipelineLocation` would give the
+ * location from before the correction there.
+ */
+export function writeRelocatedOutcome(
+  prisma: Pick<PrismaClient, "$executeRaw">,
+  signalId: string,
+  locationId: string,
+  at: Date,
+  run: PipelineRun = {},
+) {
+  return prisma.$executeRaw`
+    INSERT INTO "signal_location_outcomes"
+      ("signal_id", "located_at", "location_id", "level", "run_kind", "step", "pipeline_version", "run_id")
+    SELECT s."id", (${at.toISOString()}::timestamptz AT TIME ZONE 'UTC'), l."id", l."level",
+      'REPLAY', 'RELOCATED', ${trimmed(run.pipelineVersion)}, ${trimmed(run.runId)}
+    FROM "signals" s
+    JOIN "locations" l ON l."id" = ${locationId}
+    WHERE s."id" = ${signalId}
       AND ${pipelineSignal("s")}
   `;
 }
