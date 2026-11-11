@@ -70,10 +70,11 @@ The replay does these in one transaction with the mark.
 | Thing on the Replaced Event | What happens |
 |---|---|
 | Signal links (`signal_to_events`) | Move. The table holds live grouping only. The grouping log keeps the history (ADR-0021). |
-| The Alert | Moves to the Replacement and keeps its `created_at` (ADR-0021, rule 1). When two Replaced Events each have an Alert, the oldest moves and the others are archived, not deleted. |
+| The Alert | The oldest Alert among the merged Events is the Alert of the real-world event. It ends on the Live Event and keeps its `created_at` and the onset it was raised on (ADR-0021). Every other Alert stays on, or moves to, a Replaced Event and is archived, not deleted. An Event has one Alert at most (`alerts.event_id` is unique), so when the Live Event has a younger Alert, the run swaps the two in one transaction. |
 | Crisis links | Move. A link that the Replacement already has is not added twice. |
-| Escalations, comments and feedback from people | Move, with their author and their date. |
-| Onset, places, title, severity and the other Event fields | Stay on the Replaced Event, as the run that made it left them. No run writes them again. |
+| Comments and feedback from people | Move, with their author and their date. |
+| Escalations | Move. One person has one escalation per Event. When a person escalated several of the merged Events, the Replacement gets one row: the earliest `validFrom`, the latest `validTo` (open when one is open), and `isCrisis` when one has it. The other rows stay on their Replaced Events. Nothing is deleted. |
+| Onset, places, title, severity and the other Event fields | Stay on the Replaced Event, as the run that made it left them. No run writes them again. The Event facts log (ADR-0021) also holds the onset and the places as each run gave them. |
 | The knowledge-base card (ADR-0006) | Removed for the Replaced Event. The Replacement gets its card. |
 
 A person's work is then on the Event that people see, and the Replaced Event
@@ -90,7 +91,7 @@ is a frozen record of what the pipeline made.
 - **The pipeline** reads Live Events only: grouping, alert checks and
   recomputes never see a Replaced Event.
 - **The history series of `/metrics`** read Replaced Events (ADR-0021,
-  decision 4). They are the only readers that do.
+  decision 6). They are the only readers that do.
 - **Mutations** refuse a write to a Replaced Event with a message that names
   the Replacement. A person does not add a comment to a hidden Event.
 
@@ -124,7 +125,10 @@ is a frozen record of what the pipeline made.
 - Analyst merges and splits
   ([Exponential #1268](https://www.exponential.im/w/clear/products/clear/tickets/1268))
   can use the same mark, with a person as the author. That ticket decides it.
-- ADR-0021 needs no Alert log and no Event facts log. Its rule 2 is this ADR.
+- ADR-0021 needs no Alert log: the Alert row stays, with the onset it was
+  raised on. Its rule 2 is this ADR.
+- A re-grouping changes no history series. An archived Alert on a Replaced
+  Event still counts in time to alert as delivered: a Live run raised it.
 
 ## Open points
 

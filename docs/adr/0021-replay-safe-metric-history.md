@@ -3,12 +3,17 @@ status: proposed
 date: 2026-11-10
 ---
 
-# Replay-safe metric history: one grouping log, and rules for a replay
+# Replay-safe metric history: two logs, two views, and rules for a replay
 
 Every metric on `/metrics` is computed at request time from live rows
 (ADR-0015). A replay changes those rows. ADR-0020 fixed location precision
 with an append-only Outcome log. This ADR checks the other nine registry
 metrics and gives each one a pattern.
+
+The charts exist to show, with data, that work on the pipeline makes CLEAR
+better. So the first rule is: **a past bucket shows what the pipeline
+delivered at the time, and no later run changes it.** A replay, a re-grouping
+or a better prompt must never rewrite the record of an old pipeline version.
 
 This is the result of a spike
 ([Exponential #1419](https://www.exponential.im/w/clear/products/clear/tickets/1419)).
@@ -23,6 +28,9 @@ It changes no production code.
 | Link | One row of `signal_to_events`: a Signal is a member of an Event. |
 | Grouping window | The time in which a Live run can add a Signal to an Event: 7 days after the Event's newest Signal (`ACTIVE_EVENTS_WINDOW_DAYS` in clear-pipeline). |
 | Settled | An Event is settled when its grouping window has ended. A Live run cannot change a settled Event. |
+| Onset | The date the real-world event started (`events.started_at`). The pipeline extracts it from the Signals. It is an estimate, and a run can write a new one. |
+| As delivered | A view of a metric: every value as the Live run gave it at the time. The default, and the frozen one. |
+| Same ruler | A second view: the instants the Live run produced, measured against the onset known today. |
 
 ## What a replay can do today
 
@@ -46,11 +54,11 @@ replay. This ADR must be accepted before that work starts.
 | `DISTRICT_OR_FINER` | Was: `signals.location_id`, `processed_at`. | Was: every re-located Signal moved to the replay week. | None. | Outcome log (ADR-0020, done). |
 | `SIGNALS_GROUPED` | Links. `signals.retracted`. | None. With a location filter, a re-located Signal moves in or out of the place. | Rewrites every past bucket: the links are the metric. | Grouping log. |
 | `EVENTS_WITH_ONE_SIGNAL` | Links. Which Events exist. `events.isDummy`. | None, except the location filter. | Rewrites every past bucket. A replaced Event is gone from history. | Grouping log. |
-| `DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY` | Links (which ingested Signal is first). `events.started_at` and its accuracy. `events.first_signal_created_at`. | None, except the location filter. | Changes which Signal is first and which Events exist. | Grouping log for the first Signal. The onset stays live (rule 3). |
-| `ALERTED_BY_NEXT_DAY`, `ALERTED_SAME_DAY` | `alerts.created_at`. `events.started_at` and its accuracy. | None, except the location filter. | Only if the replay deletes an Alert and creates it again: the Alert then reads as months late. | Safe as it is, under rule 1. |
-| `ACLED_EVENTS_ALERTED` | The location of ACLED Signals. Which Alerts exist. The Event's date and places. Links (a non-ACLED member). | ACLED Signals arrive with coordinates, so a text geocoding replay does not move them. | Changes which Events hold a non-ACLED Signal, and their places. Moves Alerts to replacement Events. | Grouping log for the membership and for the set of Events (decision 4). Rules 1 and 2 for the Alert and the Event. |
+| `DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY` | Links (which ingested Signal is first). `events.started_at` and its accuracy. `events.first_signal_created_at`. | None, except the location filter. | Changes which Signal is first and which Events exist. | Grouping log for the first Signal. Event facts log for the onset (decision 3). |
+| `ALERTED_BY_NEXT_DAY`, `ALERTED_SAME_DAY` | `alerts.created_at`. `events.started_at` and its accuracy. | None, except the location filter. | A replacement Event has the new pipeline's onset, so an old Alert is measured against a new ruler. If the replay deletes an Alert and creates it again, the Alert reads as months late. | The onset is copied onto the Alert when it is raised (decision 3). Rule 1 keeps the Alert. |
+| `ACLED_EVENTS_ALERTED` | The location of ACLED Signals. Which Alerts exist. The Event's date and places. Links (a non-ACLED member). | ACLED Signals arrive with coordinates, so a text geocoding replay does not move them. | Changes which Events hold a non-ACLED Signal, and their places. Moves Alerts to replacement Events. | Grouping log for the membership and for the set of Events (decision 5). Event facts log for the Event's date and places (decision 3). Rules 1 and 2 for the Alert and the Event. |
 | `SOURCES_ON_SCHEDULE` | `signals.collected_at`. `signals.retracted`. | None. | None. | Safe as it is, under rule 2. |
-| `EVENTS_ESCALATED` | Which Events exist. `events.first_signal_created_at`. The escalations a person made. | None, except the location filter. | A deleted Event takes its escalations with it (cascade). That loses a person's work, not only a chart. A replacement Event also adds one Event to a past bucket. | Grouping log for the set of Events (decision 4). Rule 2 for the escalations. |
+| `EVENTS_ESCALATED` | Which Events exist. `events.first_signal_created_at`. The escalations a person made. | None, except the location filter. | A deleted Event takes its escalations with it (cascade). That loses a person's work, not only a chart. A replacement Event also adds one Event to a past bucket. | Grouping log for the set of Events (decision 5). Rule 2 for the escalations. |
 
 "Frozen closed buckets" is chosen for no metric. See "Considered options".
 
@@ -99,29 +107,84 @@ run at work, not a replay. The log keeps it, because a late Live Link is a
 This is why a snapshot does not fit: a snapshot needs an instant, and
 grouping has none.
 
-### 3. Three rules for any replay
+### 3. An Event facts log, and the onset on the Alert
 
-These rules make the other metrics safe without a second store. Each is a
-rule for the code that runs a replay, and each needs a test in the pull
-request that builds a re-grouping replay.
+Time to detection and time to alert measure a delay from the Event's onset.
+The onset is the pipeline's result too: a run extracts it, and a later run
+can write another. If the charts read the onset from the live Event, a
+better onset prompt or a re-grouping rewrites past buckets. So the onset is
+kept as each run gave it.
 
-1. **A replay never deletes an Alert and never creates a second Alert for
-   the same real-world event.** When a replay moves an alerted Event's
-   Signals to another Event, it moves the Alert (`alerts.event_id`). The
-   Alert keeps its `created_at`. Time to alert then needs no log.
+- **The Event facts log** is append-only. One row records the facts that one
+  run gave one Event: `eventId` (plain text, no foreign key), `recordedAt`,
+  `startedAt`, `startedAtAccuracy`, `firstSignalCreatedAt`, the place ids
+  (general, origin, destination) with the district of each, `runKind`,
+  `pipelineVersion`, `runId`.
+- **clear-api writes a row** in the mutations that set these facts
+  (`createEvent`, `updateEvent`, `setEventAggregates`), in the same
+  transaction. It writes no row when the facts did not change.
+- **`LIVE` and `REPLAY`**: a row from the drain is `LIVE`, also when the
+  drain recomputes an Event after a Signal joined or a source revised a
+  Signal. Event facts mature while the Event is open, and that is the Live
+  run at work. A row from a replay job is `REPLAY`. This differs from the
+  Outcome log of ADR-0020, where a second placement is always a replay.
+- **A person's edit writes no row.**
+- **The Alert holds the onset it was raised on.** `createAlert` copies the
+  Event's onset and its accuracy onto the Alert (`onset_at_raise`,
+  `onset_accuracy_at_raise`). No mutation changes them. The Alert is never
+  deleted (rule 1), so no Alert log is needed.
+- **Backfill**: one `LIVE` row per existing Event with its current facts, and
+  the current onset onto each existing Alert. The series do not move at the
+  switch.
+
+### 4. Two views of the delay metrics
+
+Both views are kept. Each answers a question that the other cannot.
+
+| | As delivered | Same ruler |
+|---|---|---|
+| Question | What did the pipeline tell us then? Is each deploy better than the last? | Against the best onset we now know, how late were we? |
+| For | Engineering and NRC as funder: proof that the work pays off. | Analysts and field leads: is CLEAR timely enough to act on. |
+| Onset | Time to alert: the onset on the Alert. Time to detection and the ACLED proxy: the last `LIVE` row of the Event facts log. | The onset of the live Event (for a replaced Event, its final replacement, ADR-0022). |
+| Instants | The first ingested Signal from the `LIVE` rows of the grouping log. `alerts.created_at`. | The same. |
+| Past buckets | Do not move after the Event settles. No replay moves them. | Move when the onset changes. Every bucket is measured with one ruler, so buckets compare fairly. |
+| Blind spot | An old extractor that read onsets too late makes old buckets look fast. | It cannot tell "alerts got faster" from "onsets got more accurate". |
+
+- **As delivered is the history series**, and the default of `metricSeries`.
+  It is the series a deploy is judged on.
+- **Same ruler is a second series** of the same metric. `metricSeries` takes
+  an optional `onsetBasis` (`AS_DELIVERED`, the default, or `CURRENT`). The
+  bucket shape does not change.
+- **The replay series** of ADR-0020 is a third thing: one Replay run's own
+  results for the same Signals. A re-grouping replay gets one from its
+  `REPLAY` rows in both logs.
+- **In the interface the two views are apart.** `/metrics` is the admin page
+  for the first question. It shows As delivered, with the deploy markers. It
+  can draw Same ruler as a second line, as it draws a Replay run. A view for
+  analysts of how timely CLEAR is belongs on a page they can open, with Same
+  ruler alone. That page is a product decision and its own ticket.
+
+### 5. Rules for any replay
+
+Each is a rule for the code that runs a replay. Each needs a test in the
+pull request that builds a re-grouping replay.
+
+1. **A replay never deletes an Alert and never raises a second Alert for the
+   same real-world event.** When a replay moves an alerted Event's Signals to
+   another Event, the Alert goes with them (ADR-0022 says which Alert when
+   there are several). The Alert keeps its `created_at` and the onset it was
+   raised on.
 2. **A replay never deletes a Signal or an Event.** A replaced Event is kept
    and marked as replaced, with the id of the Event that replaced it; live
-   views leave it out. Its onset, its places and its escalations stay
-   readable. Source health then needs no log. ADR-0022 holds the full
-   rule: the mark, what moves to the replacement, and who sees a replaced
-   Event.
-3. **The onset is the yardstick, not the result.** Time to detection and
-   time to alert measure two instants that the pipeline produced (the first
-   Signal, the Alert) against the Event's onset. A replay that extracts a
-   better onset makes the old measurement more correct. The metrics read the
-   live onset, as today.
+   views leave it out. ADR-0022 holds the full rule: the mark, what moves to
+   the replacement, and who sees a replaced Event.
+3. **A replay writes `REPLAY` rows and changes no `LIVE` row.** It sends its
+   run kind on every mutation that writes to a log. After a re-grouping
+   replay, every As delivered series is the same as before it. The test:
+   read each registry metric, run the replay, read each metric again, and
+   compare.
 
-### 4. The Events of a history series
+### 6. The Events of a history series
 
 Rules 1 and 2 keep the rows. They do not say which Events a history series
 counts. After a re-grouping replay, a replaced Event and its replacement
@@ -136,8 +199,9 @@ both exist, and the Alert is on the replacement.
   what a person or a later run attached there. A replaced Event counts as
   alerted when it or its replacement has an Alert, and as escalated when it
   or its replacement has an escalation.
-- Time to alert reads Alerts, not Events, and rule 1 keeps one Alert per
-  real-world event. It needs no change.
+- Time to alert reads Alerts, not Events. It counts every Alert that a Live
+  run raised, also an Alert that now sits archived on a replaced Event
+  (ADR-0022). An Alert that a Replay run raised is not counted.
 - An Event with no ingested Signal has no row in the log (a web case, a
   manual Signal). `EVENTS_ESCALATED` counts those Events today. Its history
   series keeps them: it counts an Event when it has a `LIVE` row or no row
@@ -150,11 +214,17 @@ both exist, and the Alert is on the replacement.
   Rejected. Grouping has no closing instant that is safe for all Events (see
   decision 2). The table also freezes today's definition, and it gives no
   replay line.
-- **An Alert log** with the instant each Alert was first raised. Rejected for
-  now: rule 1 gives the same result with no table. If rule 1 proves hard to
-  keep in a re-grouping replay, add the log then.
-- **An Event facts log** (onset, places) written on each aggregate change.
-  Rejected: many writes per Event, and rule 2 keeps the Event row itself.
+- **An Alert log** with the instant each Alert was first raised. Rejected:
+  rule 1 keeps the Alert row, and two columns on it hold the onset.
+- **The live onset for history** ("the onset is the yardstick, not the
+  result"). This was the first draft of this ADR. Rejected for the history
+  series: a better onset prompt or a re-grouping would move past buckets, and
+  the charts could not show what each deploy delivered. It is kept as the
+  Same ruler view.
+- **Only the Same ruler view, or only As delivered.** Rejected: each has a
+  blind spot that the other shows (decision 4).
+- **The onset in the grouping log.** Rejected: an onset changes without a new
+  Link, and a Link is made without a new onset.
 - **A log per metric.** Rejected: four metrics read the same Links.
 - **Shadow grouping**: a replay writes only to the log and never changes
   live Links. Safe, but the product would keep the old grouping. The point of
@@ -162,27 +232,44 @@ both exist, and the Alert is on the replacement.
 
 ## Consequences
 
-- One new table and two write paths. A re-grouping replay of N Links adds N
-  rows.
+- Two new tables (the grouping log, the Event facts log), two columns on
+  `alerts`, and five write paths. A re-grouping replay of N Links adds N
+  rows, and one row per Event it writes.
+- The pipeline sends `runKind`, `pipelineVersion` and `runId` on the Event
+  and Alert mutations too (`pipeline_run` in clear-pipeline carries them).
+- `createAlert` needs the run kind: an Alert that a Replay run raises is not
+  part of the history.
 - The grouping metrics get a replay line with no more design: the `REPLAY`
   rows of one run, bucketed as the history series is.
 - Rule 2 needs a "replaced by" field on Events. That is a schema change in
   the re-grouping replay work, not here. Until a re-grouping replay exists,
-  no Event is replaced and decision 4 changes no number.
+  no Event is replaced and decision 6 changes no number.
 - The location filter of every Signal-based metric still reads the Signal's
   current location. A geocoding replay moves Signals between places in a
   filtered view. This ADR leaves that as it is: the unfiltered series is the
   one a deploy is judged on.
 - `signals.retracted` and `isDummy` stay live in every metric, as ADR-0011
-  defines an ingested Signal.
+  defines an ingested Signal. A source that withdraws a Signal changes a past
+  bucket. That is the source, not the pipeline.
+- An Event's As delivered values can change until the Event settles: the
+  Live run still works on it. They are frozen from then on.
+
+## Decided
+
+- **The onset** (11 Nov 2026, James): kept as each run gave it, for the
+  history series. The live onset is the second view. Both are collected.
+- **Replaced Events** (11 Nov 2026, James): kept and marked. See ADR-0022.
 
 ## Open points for a person
 
-- **Rule 3.** Is the live onset correct for history, or must the onset also
-  be kept as each pipeline version gave it? This decides whether the
-  detection and alert metrics need more than rule 1.
-- **Rule 2.** Is "keep and mark as replaced" acceptable for Events, or will
-  a re-grouping replay delete them? If it deletes, the Event facts log and
-  the Alert log are needed after all.
+- **An Event with both kinds of rows.** A Live run can add a Signal to an
+  Event that a replay created, while its grouping window is open. That Event
+  then has a `LIVE` row and counts beside the Event it replaced (decision 6).
+  Record the run kind that created an Event, or define how such an Event
+  counts.
+- **The onset instant for time to detection.** This ADR takes the last `LIVE`
+  row of the Event. The other choice is the onset at the first ingested
+  Signal, which is often poor: one Signal says little about the start date.
+- **The analyst page for the Same ruler view.** Where it is, and who opens it.
 - **Late changes.** Does the page need a "may still change" mark on the
-  grouping charts?
+  charts for Events that are not settled?
