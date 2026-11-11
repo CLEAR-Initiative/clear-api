@@ -73,6 +73,9 @@ clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
   `eventId` is plain text with no foreign key, so a row outlives its Event.
 - **clear-api writes the row** in the mutations that create Links
   (`createEvent`, `updateEvent` with `signalIds`), in the same transaction.
+- **The pipeline is the caller with an API key.** clear-api writes a row
+  only for a call with an API key. A person reaches clear-api with a session
+  (clear-mvp sends the user's cookie), so a person's Link writes no row.
 - **A Link that a person makes writes no row** (analyst splits and merges,
   [#1268](https://www.exponential.im/w/clear/products/clear/tickets/1268)).
   The metric measures the pipeline.
@@ -95,8 +98,17 @@ clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
   "joined others" flag. A stored flag would keep a Signal grouped after its
   only companion is retracted, and `retracted` stays live in every metric
   (see "Consequences").
+- **Known limit: a companion that left.** The log records Links, not the
+  end of a Link. Rule 2 can count a Signal that a replay put in the Event
+  and a later replay moved away before the Live run made its Link. The
+  result is wrong only when no other ingested Signal was in the Event then.
+  The re-grouping replay work decides how a move is recorded (for example a
+  row for the end of a Link). Until a replay exists, no `REPLAY` row exists
+  and rule 2 counts nothing.
 - **Backfill**: one `LIVE` row per existing Link, with `linkedAt` from
-  `signal_to_events.collected_at`.
+  `signal_to_events.collected_at`. A Link that a person made before the log
+  gets a row too: `signal_to_events` does not say who made a Link, and the
+  metrics counted these Links, so the series do not move at the switch.
 - **The series contract does not change** (ADR-0015).
 
 ### 2. Which instant is "the result at the time" for grouping
