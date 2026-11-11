@@ -40,6 +40,9 @@ export interface EventFactValues {
   destinationId: string | null;
 }
 
+/** The facts that one call set on the Event: true for each fact the call wrote. */
+export type EventFactsSet = Partial<Record<keyof EventFactValues, boolean>>;
+
 interface CurrentFacts extends EventFactValues {
   locationDistrictId: string | null;
   originDistrictId: string | null;
@@ -51,15 +54,16 @@ const same = (a: Date | string | null, b: Date | string | null) =>
 
 /**
  * Write the facts that `run` gave the Event. Run it in the same transaction
- * as the write to the Event, after it. `before` is the Event as it was
- * before that write; leave it out for a new Event.
+ * as the write to the Event, after it. `set` names the facts that the call
+ * wrote; leave it out for a new Event, where the call wrote them all.
  *
  * - A `REPLAY` row holds the Event as the replay left it.
  * - A `LIVE` row holds what Live runs gave the Event. A fact that this call
- *   changed takes its new value. A fact that this call did not change keeps
- *   the value of the Event's last `LIVE` row. So a fact that a replay or a
+ *   set takes the Event's value. A fact that this call did not set keeps the
+ *   value of the Event's last `LIVE` row. So a fact that a replay or a
  *   person wrote never enters a `LIVE` row through a later Live write that
- *   did not set it.
+ *   did not set it. A call that sets a fact to the value the Event already
+ *   has still sets it.
  *
  * It writes no row when both are true: the run already has a row for the
  * Event, and the facts equal the last row of the same run kind. So each run
@@ -71,7 +75,7 @@ export async function writeEventFacts(
   prisma: Pick<PrismaClient, "$queryRaw" | "eventFacts">,
   eventId: string,
   run: PipelineRun = {},
-  before: EventFactValues | null = null,
+  set: EventFactsSet | null = null,
 ): Promise<void> {
   const runKind = runKindOf(run);
   const runId = trimmed(run.runId);
@@ -91,20 +95,20 @@ export async function writeEventFacts(
   const last = await prisma.eventFacts.findFirst({ where: { eventId, runKind }, orderBy: { id: "desc" } });
 
   const facts: CurrentFacts = { ...now };
-  if (runKind === "LIVE" && last && before) {
-    if (same(now.startedAt, before.startedAt)) facts.startedAt = last.startedAt;
-    if (same(now.startedAtAccuracy, before.startedAtAccuracy)) facts.startedAtAccuracy = last.startedAtAccuracy;
-    if (same(now.firstSignalCreatedAt, before.firstSignalCreatedAt)) facts.firstSignalCreatedAt = last.firstSignalCreatedAt;
+  if (runKind === "LIVE" && last && set) {
+    if (!set.startedAt) facts.startedAt = last.startedAt;
+    if (!set.startedAtAccuracy) facts.startedAtAccuracy = last.startedAtAccuracy;
+    if (!set.firstSignalCreatedAt) facts.firstSignalCreatedAt = last.firstSignalCreatedAt;
     // A place and its district go together.
-    if (same(now.locationId, before.locationId)) {
+    if (!set.locationId) {
       facts.locationId = last.locationId;
       facts.locationDistrictId = last.locationDistrictId;
     }
-    if (same(now.originId, before.originId)) {
+    if (!set.originId) {
       facts.originId = last.originId;
       facts.originDistrictId = last.originDistrictId;
     }
-    if (same(now.destinationId, before.destinationId)) {
+    if (!set.destinationId) {
       facts.destinationId = last.destinationId;
       facts.destinationDistrictId = last.destinationDistrictId;
     }

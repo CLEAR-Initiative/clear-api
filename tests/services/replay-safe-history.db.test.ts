@@ -175,6 +175,13 @@ describeIfDb("replay-safe history against the real schema", () => {
     await updateEvent(null, { id: e, input: { startedAt: "2026-08-08T00:00:00Z", runId: "run-3" } }, pipeline);
     expect((await facts(e)).at(-1)!.startedAt?.toISOString().slice(0, 10)).toBe("2026-08-08");
 
+    // A replay makes the accuracy MONTH. A Live run then sets a new onset and names the accuracy MONTH
+    // too: the value the Event already has. The LIVE row takes it, because the call set it.
+    await updateEvent(null, { id: e, input: { startedAtAccuracy: "MONTH", runKind: "REPLAY", runId: "replay-2" } }, pipeline);
+    await updateEvent(null, { id: e, input: { startedAt: "2026-08-07T00:00:00Z", startedAtAccuracy: "MONTH", runId: "run-4" } }, pipeline);
+    const last = (await facts(e)).at(-1)!;
+    expect([last.runKind, last.startedAt?.toISOString().slice(0, 10), last.startedAtAccuracy]).toEqual(["LIVE", "2026-08-07", "MONTH"]);
+
     // An Event that a person creates has no run kind and no row; one that a replay creates is REPLAY.
     const byPerson = await event(person, "facts", []);
     const byReplay = await event(pipeline, "facts", [], { runKind: "REPLAY" });

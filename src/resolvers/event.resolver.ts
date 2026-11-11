@@ -600,13 +600,16 @@ export const eventResolvers = {
           );
         }
 
-        const byPipeline = context.authMethod === "api-key";
-        // The Event before this write, so the log can tell which facts this run set.
-        const before = byPipeline ? await tx.events.findUnique({ where: { id } }) : null;
         const row = await tx.events.update({ where: { id }, data });
-        // The facts this run gave the Event (ADR-0021).
-        if (byPipeline) {
-          await writeEventFacts(tx, id, { runKind: args.runKind, pipelineVersion: args.pipelineVersion, runId: args.runId }, before);
+        // The facts this run gave the Event (ADR-0021). Of the logged facts,
+        // a recompute sets the onset accuracy only.
+        if (context.authMethod === "api-key") {
+          await writeEventFacts(
+            tx,
+            id,
+            { runKind: args.runKind, pipelineVersion: args.pipelineVersion, runId: args.runId },
+            { startedAtAccuracy: input.startedAtAccuracy !== undefined },
+          );
         }
         return row;
       });
@@ -671,7 +674,7 @@ export const eventResolvers = {
               await writeGroupingLinks(tx, id, uniqueToLink, input);
               // An Event with a Link in the grouping log always has a row in
               // the Event facts log: the history readers join the two.
-              await writeEventFacts(tx, id, input, existing);
+              await writeEventFacts(tx, id, input, {});
             }
           });
         }
@@ -739,7 +742,18 @@ export const eventResolvers = {
           },
         });
         // The facts this run gave the Event (ADR-0021); a person's edit writes no row.
-        if (byPipeline) await writeEventFacts(tx, id, input, existing);
+        if (byPipeline) {
+          await writeEventFacts(tx, id, input, {
+            // The same tests as the update above: what it writes, it sets.
+            startedAt: !!input.startedAt,
+            startedAtAccuracy: input.startedAtAccuracy !== undefined,
+            // The first Signal date only moves earlier, so the call sets it when it moves it.
+            firstSignalCreatedAt: !!input.firstSignalCreatedAt && row.firstSignalCreatedAt < existing.firstSignalCreatedAt,
+            locationId: input.locationId !== undefined,
+            originId: input.originId !== undefined,
+            destinationId: input.destinationId !== undefined,
+          });
+        }
         return row;
       });
       logEventChange("updated", updated, [...new Set(newlyLinked)]);
