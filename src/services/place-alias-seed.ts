@@ -222,7 +222,9 @@ export interface AliasSeedResult {
  * Write the planned aliases with `source = "seed"`, in ONE transaction, and
  * close the open queue rows they answer (by the row's own spelling or its
  * Arabic one), as an alias made by hand does. An alias that exists already
- * for a spelling and scope is left as it is. Safe to run again.
+ * for a spelling and scope is left as it is, and a row whose spelling an
+ * alias made by hand answers in its state is left to that alias. Safe to
+ * run again.
  */
 export async function applyAdminNameAliases(
   prisma: PrismaClient,
@@ -246,14 +248,26 @@ export async function applyAdminNameAliases(
         skipDuplicates: true,
       });
 
-      // The aliases of this seed as they are stored now: only these close
-      // rows. A spelling another alias already answered is not touched.
-      const seeded = await tx.placeAliases.findMany({
-        where: { countryCode: plan.countryCode, source: "seed", nameNorm: { in: plan.aliases.map((a) => a.nameNorm) } },
-        select: { id: true, nameNorm: true, scopeLocationId: true, locationId: true },
-      });
-      const bySpelling = new Map<string, typeof seeded>();
-      for (const alias of seeded) bySpelling.set(alias.nameNorm, [...(bySpelling.get(alias.nameNorm) ?? []), alias]);
+      // Every alias for these spellings as it is stored now, under a row
+      // lock held to the end of this transaction: one that a person re-scopes
+      // or deletes meanwhile waits, so no row closes under an alias that no
+      // longer applies. Aliases made by hand are read too: the answer for a
+      // row is the alias the gazetteer would pick, whoever made it.
+      const norms = [...new Set(plan.aliases.map((a) => a.nameNorm))];
+      const stored = await tx.$queryRaw<
+        { id: string; nameNorm: string; scopeLocationId: string | null; locationId: string; source: string; createdAt: Date }[]
+      >`
+        SELECT "id", "name_norm" AS "nameNorm", "scope_location_id" AS "scopeLocationId",
+               "location_id" AS "locationId", "source", "created_at" AS "createdAt"
+        FROM "place_aliases"
+        WHERE "country_code" = ${plan.countryCode} AND "name_norm" = ANY(${norms}::text[])
+        ORDER BY "created_at" ASC, "id" ASC
+        FOR UPDATE`;
+      const bySpelling = new Map<string, typeof stored>();
+      for (const alias of stored) bySpelling.set(alias.nameNorm, [...(bySpelling.get(alias.nameNorm) ?? []), alias]);
+      const planned = new Set(plan.aliases.map((a) => `${a.nameNorm}\u0000${a.scopeLocationId ?? ""}\u0000${a.locationId}`));
+      const isThisSeed = (a: (typeof stored)[number]) =>
+        a.source === "seed" && planned.has(`${a.nameNorm}\u0000${a.scopeLocationId ?? ""}\u0000${a.locationId}`);
 
       const rows = await tx.unresolvedPlaceNames.findMany({
         where: { countryCode: plan.countryCode, status: { in: [...RESOLVABLE_STATUSES] } },
@@ -262,10 +276,20 @@ export async function applyAdminNameAliases(
       let rowsResolved = 0;
       let signalsMoved = 0;
       for (const row of rows) {
+        // The row's own spelling first, then its Arabic ones. For each, the
+        // alias the lookup picks in the row's state (`findPlaceAlias`): a
+        // scoped one wins over a country-wide one, then the oldest. When
+        // that alias is not one of this seed's, a person's answer stands
+        // for the spelling and the row is left to them.
         const spellings = [row.nameNorm, ...(row.nameAr ? arabicSpellings(row.nameAr).map(normalizeGazetteerName) : [])];
-        const candidates = spellings.flatMap((s) => bySpelling.get(s) ?? []).filter((a) => aliasCoversState(a.scopeLocationId, row.stateLocationId));
-        // A scoped alias wins over a country-wide one, as in the lookup.
-        const alias = candidates.find((a) => a.scopeLocationId) ?? candidates[0];
+        let alias: (typeof stored)[number] | undefined;
+        for (const spelling of spellings) {
+          const covering = (bySpelling.get(spelling) ?? []).filter((a) => aliasCoversState(a.scopeLocationId, row.stateLocationId));
+          const picked = covering.find((a) => a.scopeLocationId) ?? covering[0];
+          if (!picked) continue;
+          alias = isThisSeed(picked) ? picked : undefined;
+          break;
+        }
         if (!alias) continue;
         const { count } = await tx.unresolvedPlaceNames.updateMany({
           where: { id: row.id, status: row.status },

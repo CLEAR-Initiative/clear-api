@@ -188,6 +188,37 @@ describeIfDb("Seeding place aliases from admin names in Arabic", () => {
     expect((await prisma.signals.findUniqueOrThrow({ where: { id: signalId } })).locationId).toBe(UM_BARU);
   });
 
+  it("leaves a queue row to an alias made by hand that answers it in its state", async () => {
+    // A person mapped "كسيلا" to a district of State B, for State B only.
+    // The seed's country-wide alias for the same spelling must not close a
+    // State B row with its own target.
+    await prisma.placeAliases.deleteMany({ where: { countryCode: CC, nameNorm: normalizeGazetteerName("كسيلا") } });
+    const manual = await prisma.placeAliases.create({
+      data: { nameNorm: normalizeGazetteerName("كسيلا"), nameDisplay: "كسيلا", countryCode: CC, scopeLocationId: STATE_B,
+              locationId: RAHAD_B, source: "manual" },
+    });
+    const waiting = (
+      await prisma.signals.create({
+        data: { sourceId: sourceId!, rawData: {}, contentHash: `${RUN}-h2`, title: "Post 2",
+                publishedAt: new Date("2026-11-10T00:00:00.000Z"), locationId: STATE_B, countries: { connect: [{ id: COUNTRY }] } },
+      })
+    ).id;
+    const row = await unresolvedPlaceNameResolvers.Mutation.recordUnresolvedPlaceName(
+      null,
+      { input: { signalId: waiting, name: "Kaseila", nameAr: "كسيلا", countryCode: CC, areaLocationId: STATE_B } },
+      pipeline,
+    );
+
+    const p = await plan();
+    const result = await applyAdminNameAliases(prisma, { countryCode: CC, aliases: p.aliases.filter((a) => !a.knownToGeonames) }, { note: NOTE });
+    expect(result).toMatchObject({ created: 1, rowsResolved: 0, signalsMoved: 0 });
+    expect(await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: row!.id } })).toMatchObject({ status: "open", placeAliasId: null });
+    expect((await prisma.signals.findUniqueOrThrow({ where: { id: waiting } })).locationId).toBe(STATE_B);
+    expect(await gazetteer("كسيلا", STATE_B)).toMatchObject({ locationId: RAHAD_B });
+    await prisma.placeAliases.delete({ where: { id: manual.id } });
+    await prisma.unresolvedPlaceNames.delete({ where: { id: row!.id } });
+  });
+
   it("changes nothing when it runs again, and leaves an alias made by hand as it is", async () => {
     await prisma.placeAliases.create({
       data: { nameNorm: normalizeGazetteerName("كوستي"), nameDisplay: "كوستي", countryCode: CC, locationId: RAHAD_B, source: "manual" },
