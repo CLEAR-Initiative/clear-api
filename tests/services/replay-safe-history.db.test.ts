@@ -11,6 +11,7 @@ import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import { alertResolvers } from "../../src/resolvers/alert.resolver.js";
 import type { Context } from "../../src/context.js";
 import { computeMetricSeries, METRIC_KEYS, type MetricKey } from "../../src/services/metric-registry.js";
+import { fetchRecallRows, summariseRecall } from "../../src/services/recall-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
 import { clearHistory } from "../helpers/history-backfill.js";
 
@@ -20,11 +21,14 @@ const { createAlert } = alertResolvers.Mutation;
 const RUN = `rsh-db-${Date.now()}`;
 const USER = `${RUN}-user`;
 const FEED = `${RUN}-feed`;
+/** A reference feed for the recall proxy, in place of ACLED. */
+const REF = `${RUN}-ref`;
 /** One country with one district per test, so each test reads its own Events. */
-const PLACES = ["facts", "alert", "onset", "replayEvent", "regroup"] as const;
+const PLACES = ["facts", "alert", "onset", "replayEvent", "regroup", "recall"] as const;
 const country = (place: (typeof PLACES)[number]) => `${RUN}-${place}-country`;
 const district = (place: (typeof PLACES)[number]) => `${RUN}-${place}-district`;
 let sourceId = "";
+let refSourceId = "";
 const eventIds: string[] = [];
 let n = 0;
 
@@ -41,11 +45,11 @@ const range = { from: "2026-08-10T00:00:00Z", to: "2026-08-23T23:59:59.999Z" };
 /** After the range, so "now" never makes a bucket partial in one read and not in the next. */
 const NOW = new Date("2026-09-15T00:00:00Z");
 
-/** An ingested Signal with no Link. */
-async function signal(place: (typeof PLACES)[number], iso = DAY1) {
+/** An ingested Signal with no Link; `ref` makes it a reference event of the recall proxy. */
+async function signal(place: (typeof PLACES)[number], iso = DAY1, ref = false) {
   const s = await prisma.signals.create({
     data: {
-      sourceId,
+      sourceId: ref ? refSourceId : sourceId,
       externalId: `${RUN}-${n++}`,
       rawData: {},
       publishedAt: new Date(iso),
@@ -89,6 +93,13 @@ async function series(metric: MetricKey, place: (typeof PLACES)[number], onsetBa
   return m.buckets.map((b) => [b.group, b.label, b.numerator, b.denominator]);
 }
 
+/** The recall proxy against this suite's reference feed, one day either side: [reference events, alerted nearby]. */
+async function recall(place: (typeof PLACES)[number]) {
+  const r = { from: new Date(range.from), to: new Date(range.to) };
+  const m = summariseRecall(await fetchRecallRows(prisma, r, country(place), REF, 1), r, "WEEK");
+  return [m.groundTruth, m.alerted];
+}
+
 /** Every registry metric, as delivered. */
 async function everyMetric(place: (typeof PLACES)[number]) {
   const out: Record<string, unknown> = {};
@@ -106,14 +117,15 @@ describeIfDb("replay-safe history against the real schema", () => {
     }
     await prisma.user.create({ data: { id: USER, name: "Admin", email: `${RUN}@example.org`, role: "admin" } });
     sourceId = (await prisma.dataSources.create({ data: { name: FEED, type: "test" } })).id;
+    refSourceId = (await prisma.dataSources.create({ data: { name: REF, type: "test" } })).id;
   });
 
   afterAll(async () => {
     await clearHistory(prisma, eventIds);
     await prisma.alerts.deleteMany({ where: { eventId: { in: eventIds } } });
-    await prisma.signals.deleteMany({ where: { sourceId } });
+    await prisma.signals.deleteMany({ where: { sourceId: { in: [sourceId, refSourceId] } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
-    await prisma.dataSources.deleteMany({ where: { id: sourceId } });
+    await prisma.dataSources.deleteMany({ where: { id: { in: [sourceId, refSourceId] } } });
     await prisma.user.deleteMany({ where: { id: USER } });
     await prisma.locations.deleteMany({ where: { id: { in: PLACES.map(district) } } });
     await prisma.locations.deleteMany({ where: { id: { in: PLACES.map(country) } } });
@@ -152,6 +164,16 @@ describeIfDb("replay-safe history against the real schema", () => {
       ["REPLAY", "replay-1", "2026-08-01", "WEEK"],
     ]);
     expect((await prisma.events.findUniqueOrThrow({ where: { id: e } })).createdByRunKind).toBe("LIVE");
+
+    // A Live run writes the Event again and sets no fact. The onset of the live Event is now the
+    // person's (1 Aug), kept by the replay; it must not enter a LIVE row.
+    await updateEvent(null, { id: e, input: { title: "After the replay", runId: "run-3" } }, pipeline);
+    await setEventAggregates(null, { id: e, input: { rank: 1 }, members: [member], runId: "run-3" }, pipeline);
+    const live = (await facts(e)).filter((r) => r.runKind === "LIVE");
+    expect([live.length, live.at(-1)!.runId, live.at(-1)!.startedAt?.toISOString().slice(0, 10)]).toEqual([5, "run-3", "2026-08-09"]);
+    // A Live run sets the onset: the LIVE row takes it.
+    await updateEvent(null, { id: e, input: { startedAt: "2026-08-08T00:00:00Z", runId: "run-3" } }, pipeline);
+    expect((await facts(e)).at(-1)!.startedAt?.toISOString().slice(0, 10)).toBe("2026-08-08");
 
     // An Event that a person creates has no run kind and no row; one that a replay creates is REPLAY.
     const byPerson = await event(person, "facts", []);
@@ -222,6 +244,9 @@ describeIfDb("replay-safe history against the real schema", () => {
     // A replay makes a new Event of a and b, and raises an Alert for it.
     const made = await event(pipeline, "replayEvent", [a, b], { onset: "2026-08-11T00:00:00Z", runKind: "REPLAY", runId: "replay-2" });
     await createAlert(null, { input: { eventId: made, status: "published", runKind: "REPLAY" } }, pipeline);
+    // A reference event in the district on that day: the replay's Event and Alert do not make it "alerted".
+    await signal("replayEvent", "2026-08-11T00:00:00Z", true);
+    expect(await recall("replayEvent")).toEqual([1, 0]);
     expect(await everyMetric("replayEvent")).toEqual(before);
 
     // The next day the drain adds c to that Event, as a Live run.
@@ -231,6 +256,7 @@ describeIfDb("replay-safe history against the real schema", () => {
     expect(after.SIGNALS_GROUPED).toEqual([[null, "2026-W33", 1, 2], [null, "2026-W34", 0, 0]]);
     // No Event-based series has a new Event, and no series has the replay's Alert.
     expect({ ...after, SIGNALS_GROUPED: before.SIGNALS_GROUPED }).toEqual(before);
+    expect(await recall("replayEvent")).toEqual([1, 0]);
   });
 
   it("keeps the As delivered series of every metric when a replay re-groups the Signals of an alerted Event", async () => {
@@ -239,19 +265,59 @@ describeIfDb("replay-safe history against the real schema", () => {
     const second = await event(pipeline, "regroup", [c], { onset: "2026-08-11T00:00:00Z", runId: "run-1" });
     const alert = (await createAlert(null, { input: { eventId: first, status: "published" } }, pipeline))!;
     await prisma.alerts.update({ where: { id: alert.id }, data: { createdAt: new Date("2026-08-11T12:00:00Z") } });
+    // A reference event in the district on the day of the alerted Event's onset.
+    await signal("regroup", "2026-08-10T00:00:00Z", true);
     const before = await everyMetric("regroup");
+    expect(await recall("regroup")).toEqual([1, 1]);
     expect(before.SIGNALS_GROUPED).toEqual([[null, "2026-W33", 2, 3], [null, "2026-W34", 0, 0]]);
     expect(before.EVENTS_WITH_ONE_SIGNAL).toEqual([[null, "2026-W33", 1, 2], [null, "2026-W34", 0, 0]]);
     expect(before.DETECTED_BY_NEXT_DAY).toEqual([[null, "2026-W33", 2, 2], [null, "2026-W34", 0, 0]]);
     expect(before.ALERTED_BY_NEXT_DAY).toEqual([[null, "2026-W33", 1, 1], [null, "2026-W34", 0, 0]]);
     expect(before.EVENTS_ESCALATED).toEqual([[null, "2026-W33", 0, 2], [null, "2026-W34", 0, 0]]);
 
-    // The replay moves every Link into the alerted Event and gives it a new onset. It deletes nothing.
+    // The replay moves every Link into the alerted Event, and gives it an older onset and an older
+    // first Signal date (a week earlier: another bucket, before the range). It deletes nothing.
     await prisma.signalEvents.deleteMany({ where: { eventId: second } });
-    await updateEvent(null, { id: first, input: { signalIds: [c], startedAt: "2026-08-05T00:00:00Z", runKind: "REPLAY", runId: "regroup-1" } }, pipeline);
+    await updateEvent(
+      null,
+      { id: first, input: { signalIds: [c], startedAt: "2026-08-01T00:00:00Z", firstSignalCreatedAt: "2026-08-03T09:00:00Z", runKind: "REPLAY", runId: "regroup-1" } },
+      pipeline,
+    );
+    // Then the drain writes the Event as a Live run and sets no fact.
+    await updateEvent(null, { id: first, input: { title: "Recomputed", runId: "run-2" } }, pipeline);
 
     expect(await everyMetric("regroup")).toEqual(before);
+    // The reference event is still alerted nearby: the Event keeps the date the Live run gave it.
+    expect(await recall("regroup")).toEqual([1, 1]);
     // The Alert still holds the onset it was raised on.
     expect((await prisma.alerts.findUniqueOrThrow({ where: { id: alert.id } })).onsetAtRaise?.toISOString()).toBe("2026-08-10T00:00:00.000Z");
+  });
+
+  it("reads the members, the date and the Alert of the recall proxy as a Live run gave them", async () => {
+    // Two reference events in the district, on 11 and 18 Aug.
+    const ref = await signal("recall", "2026-08-11T00:00:00Z", true);
+    await signal("recall", "2026-08-18T00:00:00Z", true);
+
+    // An alerted Event that only the reference feed drove: CLEAR repeating the feed, not detecting.
+    const onlyRef = await event(pipeline, "recall", [ref], { onset: "2026-08-11T00:00:00Z" });
+    await createAlert(null, { input: { eventId: onlyRef, status: "published" } }, pipeline);
+    expect(await recall("recall")).toEqual([2, 0]);
+
+    // A replay adds a Signal of another feed to it: a REPLAY Link is not a member in the history.
+    await updateEvent(null, { id: onlyRef, input: { signalIds: [await signal("recall")], runKind: "REPLAY" } }, pipeline);
+    expect(await recall("recall")).toEqual([2, 0]);
+
+    // A Live run adds one: the Event now counts, for the reference event of its day.
+    await updateEvent(null, { id: onlyRef, input: { signalIds: [await signal("recall")] } }, pipeline);
+    expect(await recall("recall")).toEqual([2, 1]);
+
+    // A replay moves the Event's onset to the day of the other reference event: nothing changes.
+    await updateEvent(null, { id: onlyRef, input: { startedAt: "2026-08-18T00:00:00Z", runKind: "REPLAY" } }, pipeline);
+    expect(await recall("recall")).toEqual([2, 1]);
+
+    // A Live Event on 18 Aug with an Alert that a replay raised: not alerted in the history.
+    const late = await event(pipeline, "recall", [await signal("recall", "2026-08-18T09:00:00Z")], { onset: "2026-08-18T00:00:00Z", at: "2026-08-18T09:00:00Z" });
+    await createAlert(null, { input: { eventId: late, status: "published", runKind: "REPLAY" } }, pipeline);
+    expect(await recall("recall")).toEqual([2, 1]);
   });
 });

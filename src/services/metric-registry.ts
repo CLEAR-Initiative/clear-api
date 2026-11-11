@@ -345,7 +345,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     unit: "EVENTS",
     description:
       "Share of Events a user escalated to the team, out of every Event whose first Signal arrived in the bucket. An interim usefulness proxy until actionability is recorded: an analyst escalating an Event is a decision that it mattered (ADR-0017).",
-    timeBasis: "The Event's firstSignalCreatedAt.",
+    timeBasis: "The Event's firstSignalCreatedAt, as a Live pipeline run last gave it.",
     groupable: false,
     locationScoped: true,
     adr: "ADR-0017",

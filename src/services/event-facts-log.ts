@@ -30,9 +30,36 @@ export function districtOf(alias: string): Prisma.Sql {
     ELSE (SELECT d."id" FROM "locations" d WHERE d."level" = 2 AND d."id" = ANY(${alias}."ancestor_ids") LIMIT 1) END`);
 }
 
+/** The facts of an Event that the log keeps. */
+export interface EventFactValues {
+  startedAt: Date | null;
+  startedAtAccuracy: "DAY" | "WEEK" | "MONTH" | "YEAR" | null;
+  firstSignalCreatedAt: Date;
+  locationId: string | null;
+  originId: string | null;
+  destinationId: string | null;
+}
+
+interface CurrentFacts extends EventFactValues {
+  locationDistrictId: string | null;
+  originDistrictId: string | null;
+  destinationDistrictId: string | null;
+}
+
+const same = (a: Date | string | null, b: Date | string | null) =>
+  a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b;
+
 /**
- * Write the facts the Event has now, as the result of `run`. Run it in the
- * same transaction as the write to the Event, after it.
+ * Write the facts that `run` gave the Event. Run it in the same transaction
+ * as the write to the Event, after it. `before` is the Event as it was
+ * before that write; leave it out for a new Event.
+ *
+ * - A `REPLAY` row holds the Event as the replay left it.
+ * - A `LIVE` row holds what Live runs gave the Event. A fact that this call
+ *   changed takes its new value. A fact that this call did not change keeps
+ *   the value of the Event's last `LIVE` row. So a fact that a replay or a
+ *   person wrote never enters a `LIVE` row through a later Live write that
+ *   did not set it.
  *
  * It writes no row when both are true: the run already has a row for the
  * Event, and the facts equal the last row of the same run kind. So each run
@@ -40,48 +67,65 @@ export function districtOf(alias: string): Prisma.Sql {
  * nothing adds nothing more. A run is its kind and its `runId`; calls with
  * no `runId` count as one run.
  */
-export function writeEventFacts(prisma: Pick<PrismaClient, "$executeRaw">, eventId: string, run: PipelineRun = {}) {
+export async function writeEventFacts(
+  prisma: Pick<PrismaClient, "$queryRaw" | "eventFacts">,
+  eventId: string,
+  run: PipelineRun = {},
+  before: EventFactValues | null = null,
+): Promise<void> {
   const runKind = runKindOf(run);
   const runId = trimmed(run.runId);
-  return prisma.$executeRaw`
-    INSERT INTO "event_facts_log" (
-      "event_id", "recorded_at", "started_at", "started_at_accuracy", "first_signal_created_at",
-      "location_id", "location_district_id", "origin_id", "origin_district_id",
-      "destination_id", "destination_district_id", "run_kind", "pipeline_version", "run_id"
-    )
-    SELECT f.*, ${runKind}::"LocationRunKind", ${trimmed(run.pipelineVersion)}, ${runId}
-    FROM (
-      SELECT e."id" AS "event_id", (now() AT TIME ZONE 'UTC') AS "recorded_at",
-        e."started_at", e."started_at_accuracy", e."first_signal_created_at",
-        e."location_id", ${districtOf("gl")} AS "location_district_id",
-        e."origin_id", ${districtOf("ol")} AS "origin_district_id",
-        e."destination_id", ${districtOf("dl")} AS "destination_district_id"
-      FROM "events" e
-      LEFT JOIN "locations" gl ON gl."id" = e."location_id"
-      LEFT JOIN "locations" ol ON ol."id" = e."origin_id"
-      LEFT JOIN "locations" dl ON dl."id" = e."destination_id"
-      WHERE e."id" = ${eventId}
-    ) f
-    WHERE NOT (
-      EXISTS (
-        SELECT 1 FROM "event_facts_log" r
-        WHERE r."event_id" = f."event_id" AND r."run_kind" = ${runKind}::"LocationRunKind"
-          AND r."run_id" IS NOT DISTINCT FROM ${runId}
-      )
-      AND COALESCE((
-        SELECT (p."started_at", p."started_at_accuracy", p."first_signal_created_at",
-            p."location_id", p."location_district_id", p."origin_id", p."origin_district_id",
-            p."destination_id", p."destination_district_id")
-          IS NOT DISTINCT FROM
-          (f."started_at", f."started_at_accuracy", f."first_signal_created_at",
-            f."location_id", f."location_district_id", f."origin_id", f."origin_district_id",
-            f."destination_id", f."destination_district_id")
-        FROM "event_facts_log" p
-        WHERE p."event_id" = f."event_id" AND p."run_kind" = ${runKind}::"LocationRunKind"
-        ORDER BY p."id" DESC LIMIT 1
-      ), false)
-    )
+  const [now] = await prisma.$queryRaw<CurrentFacts[]>`
+    SELECT e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+      e."first_signal_created_at" AS "firstSignalCreatedAt",
+      e."location_id" AS "locationId", ${districtOf("gl")} AS "locationDistrictId",
+      e."origin_id" AS "originId", ${districtOf("ol")} AS "originDistrictId",
+      e."destination_id" AS "destinationId", ${districtOf("dl")} AS "destinationDistrictId"
+    FROM "events" e
+    LEFT JOIN "locations" gl ON gl."id" = e."location_id"
+    LEFT JOIN "locations" ol ON ol."id" = e."origin_id"
+    LEFT JOIN "locations" dl ON dl."id" = e."destination_id"
+    WHERE e."id" = ${eventId}
   `;
+  if (!now) return;
+  const last = await prisma.eventFacts.findFirst({ where: { eventId, runKind }, orderBy: { id: "desc" } });
+
+  const facts: CurrentFacts = { ...now };
+  if (runKind === "LIVE" && last && before) {
+    if (same(now.startedAt, before.startedAt)) facts.startedAt = last.startedAt;
+    if (same(now.startedAtAccuracy, before.startedAtAccuracy)) facts.startedAtAccuracy = last.startedAtAccuracy;
+    if (same(now.firstSignalCreatedAt, before.firstSignalCreatedAt)) facts.firstSignalCreatedAt = last.firstSignalCreatedAt;
+    // A place and its district go together.
+    if (same(now.locationId, before.locationId)) {
+      facts.locationId = last.locationId;
+      facts.locationDistrictId = last.locationDistrictId;
+    }
+    if (same(now.originId, before.originId)) {
+      facts.originId = last.originId;
+      facts.originDistrictId = last.originDistrictId;
+    }
+    if (same(now.destinationId, before.destinationId)) {
+      facts.destinationId = last.destinationId;
+      facts.destinationDistrictId = last.destinationDistrictId;
+    }
+  }
+
+  const unchanged =
+    last !== null &&
+    same(facts.startedAt, last.startedAt) &&
+    same(facts.startedAtAccuracy, last.startedAtAccuracy) &&
+    same(facts.firstSignalCreatedAt, last.firstSignalCreatedAt) &&
+    same(facts.locationId, last.locationId) &&
+    same(facts.locationDistrictId, last.locationDistrictId) &&
+    same(facts.originId, last.originId) &&
+    same(facts.originDistrictId, last.originDistrictId) &&
+    same(facts.destinationId, last.destinationId) &&
+    same(facts.destinationDistrictId, last.destinationDistrictId);
+  if (unchanged && (await prisma.eventFacts.findFirst({ where: { eventId, runKind, runId }, select: { id: true } }))) return;
+
+  await prisma.eventFacts.create({
+    data: { eventId, recordedAt: new Date(), ...facts, runKind, pipelineVersion: trimmed(run.pipelineVersion), runId },
+  });
 }
 
 /**

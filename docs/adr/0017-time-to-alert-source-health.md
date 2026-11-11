@@ -95,7 +95,10 @@ alert and the escalation proxy now read what was delivered at the time:
   person raised, have no run kind and count as before.
 - **Existing Alerts** got the onset their Event had on the day of the
   migration. The onset on the day they were raised was not kept.
-- **Events escalated** leaves out an Event that a Replay run created.
+- **Events escalated** leaves out an Event that a Replay run created. It
+  buckets an Event by the first Signal date in its last `LIVE` row of the
+  Event facts log, so a replay that adds an older Signal does not move the
+  Event to another bucket.
 
 ## Considered options
 

@@ -107,7 +107,7 @@ The append-only table `signal_grouping_log`. One row records one **Link** (a Sig
 _Avoid_: reading `signal_to_events` for a history series; a stored "grouped" flag on a row
 
 **Event facts log**:
-The append-only table `event_facts_log`. One row records the facts that one pipeline run gave one Event: the onset and its accuracy, the first Signal date, and the three places with the district of each, plus the run kind, the pipeline version and the run id. `createEvent`, `updateEvent` and `setEventAggregates` write the row in the same transaction, for a call with an API key only: a person's edit writes no row. A run writes no second row for an Event when the facts did not change. The history series read the last `LIVE` row of an Event. See ADR-0021.
+The append-only table `event_facts_log`. One row records the facts that one pipeline run gave one Event: the onset and its accuracy, the first Signal date, and the three places with the district of each, plus the run kind, the pipeline version and the run id. `createEvent`, `updateEvent` and `setEventAggregates` write the row in the same transaction, for a call with an API key only: a person's edit writes no row. A run writes no second row for an Event when the facts did not change. A `LIVE` row holds what Live runs gave the Event: a fact that the call did not change keeps the value of the last `LIVE` row, so a fact that a replay or a person wrote never enters a `LIVE` row. A `REPLAY` row holds the Event as the replay left it. The history series read the last `LIVE` row of an Event. See ADR-0021.
 _Avoid_: reading `events.started_at` for a history series
 
 **As delivered** and **Same ruler**:
