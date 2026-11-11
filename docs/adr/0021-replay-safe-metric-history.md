@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-10
 ---
 
@@ -299,6 +299,8 @@ both exist, and the Alert is on the replacement.
   the run kind that created it (decision 6).
 - **Who sees the two views** (11 Nov 2026, James): platform admins only, as
   two tabs on `/metrics`.
+- **This ADR and ADR-0022** (11 Nov 2026, James): accepted. The two open
+  points below stay open.
 
 ## Open points for a person
 
