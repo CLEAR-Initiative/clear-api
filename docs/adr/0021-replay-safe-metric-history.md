@@ -69,15 +69,17 @@ replay. This ADR must be accepted before that work starts.
 clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
 
 - **One row per Link that a pipeline run makes**: `signalId`, `eventId`,
-  `linkedAt`, `joinedOthers`, `runKind` (`LIVE` or `REPLAY`),
-  `pipelineVersion`, `runId`. `eventId` is plain text with no foreign key,
-  so a row outlives its Event.
-- **`joinedOthers`** is true when the Event already held another ingested
-  Signal at the instant of the Link, whatever kind of run linked that
-  Signal. clear-api sets it in the same transaction. It is the grouping
-  result of this one Link: "the run put the Signal with others".
+  `linkedAt`, `runKind` (`LIVE` or `REPLAY`), `pipelineVersion`, `runId`.
+  `eventId` is plain text with no foreign key, so a row outlives its Event.
 - **clear-api writes the row** in the mutations that create Links
   (`createEvent`, `updateEvent` with `signalIds`), in the same transaction.
+- **The pipeline is the caller with an API key.** clear-api writes a row
+  only for a call with an API key. A person reaches clear-api with a session
+  (clear-mvp sends the user's cookie), so a person's Link writes no row.
+  Known limit: an admin who calls a mutation by hand with a personal API key
+  writes a row. The pipeline's key belongs to an admin user today, so the
+  role cannot tell the two apart. A service identity for the pipeline would
+  close this; it is not part of this work.
 - **A Link that a person makes writes no row** (analyst splits and merges,
   [#1268](https://www.exponential.im/w/clear/products/clear/tickets/1268)).
   The metric measures the pipeline.
@@ -85,15 +87,32 @@ clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
   ingested Signal of time to detection, and the non-ACLED membership of
   `ACLED_EVENTS_ALERTED` read the `LIVE` rows. They no longer read
   `signal_to_events`.
-- **A Signal is grouped** in the history series when one of these is true:
-  its `LIVE` row has `joinedOthers`, or its Event has a `LIVE` row for
-  another ingested Signal. The second rule gives the first Signal of an
-  Event its company when a later Signal joins. The first rule covers a
-  Signal that a Live run adds to an Event whose other Signals a replay put
-  there: those have `REPLAY` rows only, and the reader does not see them.
+- **A Signal is grouped** in the history series when the Event of its
+  `LIVE` row has one of these:
+  1. a `LIVE` row for another ingested Signal;
+  2. a row of any run kind for another ingested Signal, with a `linkedAt`
+     that is not later than the `linkedAt` of the Signal's own `LIVE` row.
+
+  Rule 1 gives the first Signal of an Event its company when a later Signal
+  joins. Rule 2 covers a Signal that a Live run adds to an Event whose other
+  Signals a replay put there: those have `REPLAY` rows only. The limit on
+  `linkedAt` keeps a replay out of the past: a Signal that a replay adds to
+  an Event later gives no company to a Signal that was alone.
+- **The reader checks the other Signal at read time.** The log stores no
+  "joined others" flag. A stored flag would keep a Signal grouped after its
+  only companion is retracted, and `retracted` stays live in every metric
+  (see "Consequences").
+- **Known limit: a companion that left.** The log records Links, not the
+  end of a Link. Rule 2 can count a Signal that a replay put in the Event
+  and a later replay moved away before the Live run made its Link. The
+  result is wrong only when no other ingested Signal was in the Event then.
+  The re-grouping replay work decides how a move is recorded (for example a
+  row for the end of a Link). Until a replay exists, no `REPLAY` row exists
+  and rule 2 counts nothing.
 - **Backfill**: one `LIVE` row per existing Link, with `linkedAt` from
-  `signal_to_events.collected_at`. `joinedOthers` is true when the Event has
-  an ingested Signal with an earlier Link.
+  `signal_to_events.collected_at`. A Link that a person made before the log
+  gets a row too: `signal_to_events` does not say who made a Link, and the
+  metrics counted these Links, so the series do not move at the switch.
 - **The series contract does not change** (ADR-0015).
 
 ### 2. Which instant is "the result at the time" for grouping
@@ -223,8 +242,8 @@ both exist, and the Alert is on the replacement.
   keeps three.
 - **A Signal that a Live run adds to a replay-created Event still counts for
   the Signal.** It is in `SIGNALS_GROUPED` for its own bucket, as grouped:
-  its `LIVE` row has `joinedOthers`, because the Event held other Signals
-  when the Live run made the Link (decision 1). It adds no Event to an
+  the Event held other Signals, with `REPLAY` rows, when the Live run made
+  the Link (decision 1, rule 2). It adds no Event to an
   Event-based series.
 - **A history reader follows a replaced Event to its replacement** to find
   what a person or a later run attached there. A replaced Event counts as
@@ -299,13 +318,12 @@ both exist, and the Alert is on the replacement.
   the run kind that created it (decision 6).
 - **Who sees the two views** (11 Nov 2026, James): platform admins only, as
   two tabs on `/metrics`.
-- **This ADR and ADR-0022** (11 Nov 2026, James): accepted. The two open
-  points below stay open.
-
-## Open points for a person
-
-- **The onset instant for time to detection.** This ADR takes the last `LIVE`
-  row of the Event. The other choice is the onset at the first ingested
-  Signal, which is often poor: one Signal says little about the start date.
-- **Late changes.** Does the page need a "may still change" mark on the
-  charts for Events that are not settled?
+- **This ADR and ADR-0022** (11 Nov 2026, James): accepted.
+- **The onset instant for time to detection** (11 Nov 2026, James): the last
+  `LIVE` row of the Event. The other choice was the onset at the first
+  ingested Signal, which is often poor: one Signal says little about the
+  start date.
+- **Late changes** (11 Nov 2026, James): no "may still change" mark in the
+  first version. It is a later option.
+- **A Signal is grouped** (11 Nov 2026, James): the reader checks the other
+  Signal at read time. The log has no `joinedOthers` field (decision 1).
