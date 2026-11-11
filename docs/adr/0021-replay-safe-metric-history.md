@@ -69,8 +69,13 @@ replay. This ADR must be accepted before that work starts.
 clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
 
 - **One row per Link that a pipeline run makes**: `signalId`, `eventId`,
-  `linkedAt`, `runKind` (`LIVE` or `REPLAY`), `pipelineVersion`, `runId`.
-  `eventId` is plain text with no foreign key, so a row outlives its Event.
+  `linkedAt`, `joinedOthers`, `runKind` (`LIVE` or `REPLAY`),
+  `pipelineVersion`, `runId`. `eventId` is plain text with no foreign key,
+  so a row outlives its Event.
+- **`joinedOthers`** is true when the Event already held another ingested
+  Signal at the instant of the Link, whatever kind of run linked that
+  Signal. clear-api sets it in the same transaction. It is the grouping
+  result of this one Link: "the run put the Signal with others".
 - **clear-api writes the row** in the mutations that create Links
   (`createEvent`, `updateEvent` with `signalIds`), in the same transaction.
 - **A Link that a person makes writes no row** (analyst splits and merges,
@@ -80,8 +85,15 @@ clear-api keeps an append-only log of Links, as ADR-0020 does for locations.
   ingested Signal of time to detection, and the non-ACLED membership of
   `ACLED_EVENTS_ALERTED` read the `LIVE` rows. They no longer read
   `signal_to_events`.
+- **A Signal is grouped** in the history series when one of these is true:
+  its `LIVE` row has `joinedOthers`, or its Event has a `LIVE` row for
+  another ingested Signal. The second rule gives the first Signal of an
+  Event its company when a later Signal joins. The first rule covers a
+  Signal that a Live run adds to an Event whose other Signals a replay put
+  there: those have `REPLAY` rows only, and the reader does not see them.
 - **Backfill**: one `LIVE` row per existing Link, with `linkedAt` from
-  `signal_to_events.collected_at`.
+  `signal_to_events.collected_at`. `joinedOthers` is true when the Event has
+  an ingested Signal with an earlier Link.
 - **The series contract does not change** (ADR-0015).
 
 ### 2. Which instant is "the result at the time" for grouping
@@ -211,8 +223,9 @@ both exist, and the Alert is on the replacement.
   keeps three.
 - **A Signal that a Live run adds to a replay-created Event still counts for
   the Signal.** It is in `SIGNALS_GROUPED` for its own bucket, as grouped:
-  the Event held other Signals when the Live run made the Link. It adds no
-  Event to an Event-based series.
+  its `LIVE` row has `joinedOthers`, because the Event held other Signals
+  when the Live run made the Link (decision 1). It adds no Event to an
+  Event-based series.
 - **A history reader follows a replaced Event to its replacement** to find
   what a person or a later run attached there. A replaced Event counts as
   alerted when it or its replacement has an Alert, and as escalated when it
