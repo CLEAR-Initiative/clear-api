@@ -279,8 +279,8 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "SIGNALS",
     description:
-      "Share of ingested Signals placed at a district (admin-2) or at a point inside one, out of every ingested Signal located in the bucket; the rest sit at state or country level or have no location. Grouping keys on district, so this is the share grouping can use. A Signal a person corrected counts at the location the pipeline gave it (ADR-0012).",
-    timeBasis: "The instant the Signal was last located: processedAt, else collectedAt.",
+      "Share of ingested Signals placed at a district (admin-2) or at a point inside one, out of every ingested Signal located in the bucket; the rest sit at state or country level or have no location. Grouping keys on district, so this is the share grouping can use. A Signal a person corrected counts at the location the pipeline gave it (ADR-0012). The level and the instant are the ones the pipeline recorded when it first finished the Signal, so a later replay does not change a past bucket (ADR-0020).",
+    timeBasis: "The instant the pipeline first finished locating the Signal, or its arrival while no run has finished it. A later replay does not move it.",
     groupable: true,
     locationScoped: true,
     adr: "ADR-0012",
