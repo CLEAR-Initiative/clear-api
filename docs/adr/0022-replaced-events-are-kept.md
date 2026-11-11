@@ -51,7 +51,11 @@ and points it to its Replacement. Every live view reads Live Events only.
 - **Merge** (A, B and C become D). A, B and C are replaced by D.
 - **Merge into an old Event** (B and C join A). A stays live and keeps its
   id. B and C are replaced by A. The replay prefers this to a new Event when
-  one of the old Events fits: fewer links break.
+  one of the old Events fits: fewer links break. When some of the Events
+  have an Alert, the Event with the oldest Alert is the one that stays live.
+  Its Alert does not move, and the unique constraint on `alerts.event_id`
+  is never in the way. When the Events merge into a new Event, the oldest
+  Alert moves to it; the new Event has no Alert yet.
 - **Split** (A becomes two Events). A stays live with the Signals that still
   belong to it. A new Event takes the rest. Nothing is replaced.
 - **All Signals leave** an Event for more than one Event. The Event is
@@ -70,7 +74,7 @@ The replay does these in one transaction with the mark.
 | Thing on the Replaced Event | What happens |
 |---|---|
 | Signal links (`signal_to_events`) | Move. The table holds live grouping only. The grouping log keeps the history (ADR-0021). |
-| The Alert | The oldest Alert among the merged Events is the Alert of the real-world event. It ends on the Live Event and keeps its `created_at` and the onset it was raised on (ADR-0021). Every other Alert stays on, or moves to, a Replaced Event and is archived, not deleted. An Event has one Alert at most (`alerts.event_id` is unique), so when the Live Event has a younger Alert, the run swaps the two in one transaction. |
+| The Alert | The oldest Alert among the merged Events is the Alert of the real-world event. It ends on the Live Event and keeps its `created_at` and the onset it was raised on (ADR-0021). Every other Alert stays on its own Replaced Event and is archived, not deleted. An Event has one Alert at most (`alerts.event_id` is unique and required), so no two Alerts ever trade places: see "Merge into an old Event". |
 | Crisis links | Move. A link that the Replacement already has is not added twice. |
 | Comments and feedback from people | Move, with their author and their date. |
 | Escalations | Move. One person has one escalation per Event. When a person escalated several of the merged Events, the Replacement gets one row: the earliest `validFrom`, the latest `validTo` (open when one is open), and `isCrisis` when one has it. The other rows stay on their Replaced Events. Nothing is deleted. |

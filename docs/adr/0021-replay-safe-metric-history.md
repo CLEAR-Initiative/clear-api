@@ -122,7 +122,10 @@ kept as each run gave it.
   `pipelineVersion`, `runId`.
 - **clear-api writes a row** in the mutations that set these facts
   (`createEvent`, `updateEvent`, `setEventAggregates`), in the same
-  transaction. It writes no row when the facts did not change.
+  transaction. It writes no row when the facts did not change and the run
+  already has a row for the Event. So each run that writes an Event has one
+  row for it at least, and a Replay run's series finds the facts that run
+  used, also when they equal the Live facts.
 - **`LIVE` and `REPLAY`**: a row from the drain is `LIVE`, also when the
   drain recomputes an Event after a Signal joined or a source revised a
   Signal. Event facts mature while the Event is open, and that is the Live
@@ -144,7 +147,7 @@ Both views are kept. Each answers a question that the other cannot.
 | | As delivered | Same ruler |
 |---|---|---|
 | Question | What did the pipeline tell us then? Is each deploy better than the last? | Against the best onset we now know, how late were we? |
-| For | Engineering and NRC as funder: proof that the work pays off. | Analysts and field leads: is CLEAR timely enough to act on. |
+| Use | Proof that the work pays off: before and after a deploy. | An honest reading of how timely CLEAR is, with one ruler for every week. |
 | Onset | Time to alert: the onset on the Alert. Time to detection and the ACLED proxy: the last `LIVE` row of the Event facts log. | The onset of the live Event (for a replaced Event, its final replacement, ADR-0022). |
 | Instants | The first ingested Signal from the `LIVE` rows of the grouping log. `alerts.created_at`. | The same. |
 | Past buckets | Do not move after the Event settles. No replay moves them. | Move when the onset changes. Every bucket is measured with one ruler, so buckets compare fairly. |
@@ -158,11 +161,11 @@ Both views are kept. Each answers a question that the other cannot.
 - **The replay series** of ADR-0020 is a third thing: one Replay run's own
   results for the same Signals. A re-grouping replay gets one from its
   `REPLAY` rows in both logs.
-- **In the interface the two views are apart.** `/metrics` is the admin page
-  for the first question. It shows As delivered, with the deploy markers. It
-  can draw Same ruler as a second line, as it draws a Replay run. A view for
-  analysts of how timely CLEAR is belongs on a page they can open, with Same
-  ruler alone. That page is a product decision and its own ticket.
+- **Both views are for platform admins only**, and both are on `/metrics`
+  (decided 11 Nov 2026, James). The page has two tabs, "As delivered" and
+  "Same ruler". Each tab says in one sentence what it shows and what it is
+  for. The tab is in the URL. `metricSeries` stays admin-only for both
+  values of `onsetBasis`. No other role reads either view.
 
 ### 5. Rules for any replay
 
@@ -259,6 +262,8 @@ both exist, and the Alert is on the replacement.
 - **The onset** (11 Nov 2026, James): kept as each run gave it, for the
   history series. The live onset is the second view. Both are collected.
 - **Replaced Events** (11 Nov 2026, James): kept and marked. See ADR-0022.
+- **Who sees the two views** (11 Nov 2026, James): platform admins only, as
+  two tabs on `/metrics`.
 
 ## Open points for a person
 
@@ -270,6 +275,5 @@ both exist, and the Alert is on the replacement.
 - **The onset instant for time to detection.** This ADR takes the last `LIVE`
   row of the Event. The other choice is the onset at the first ingested
   Signal, which is often poor: one Signal says little about the start date.
-- **The analyst page for the Same ruler view.** Where it is, and who opens it.
 - **Late changes.** Does the page need a "may still change" mark on the
   charts for Events that are not settled?
