@@ -28,9 +28,12 @@ export const locationPrecisionMetricsTypeDef = gql`
   pipeline gave it, not the corrected point. Counts only; shares are the
   caller's. See ADR-0012.
 
-  A Signal is in range by the instant it was last located: \`processedAt\`,
-  or with none \`collectedAt\`. Ingested means brought in by a pipeline (not
-  submitted or filed by hand), not retracted, not dummy.
+  The level and the instant come from the Signal's Live Outcome in the
+  location Outcome log (ADR-0020), not from the live Signal. The instant is
+  when the pipeline first finished the Signal, or its \`collectedAt\` while no
+  run has finished it. A Signal is in range by that instant. A replay adds
+  rows to the log and changes no past bucket. Ingested means brought in by a
+  pipeline (not submitted or filed by hand), not retracted, not dummy.
   """
   type LocationPrecisionMetrics {
     """Start of the range measured."""
