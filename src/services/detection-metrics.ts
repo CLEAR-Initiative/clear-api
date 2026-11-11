@@ -32,6 +32,7 @@
 
 import { GraphQLError } from "graphql";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
+import { historyEvent, LIVE_EVENT_FACTS } from "./event-facts-log.js";
 
 export const EXCLUSION_REASONS = [
   "NO_INGESTED_SIGNAL",
@@ -122,12 +123,32 @@ export interface DetectionMetrics {
   series: DetectionBucketRow[];
 }
 
+/**
+ * Which onset a delay metric measures from (ADR-0021, decision 4).
+ * `AS_DELIVERED`: the onset as the Live run gave it at the time; the default
+ * and the history series. `CURRENT`: the onset the Event has today ("same
+ * ruler").
+ */
+export const ONSET_BASES = ["AS_DELIVERED", "CURRENT"] as const;
+export type OnsetBasis = (typeof ONSET_BASES)[number];
+
 export interface DetectionMetricsInput {
   from?: Date | string | null;
   to?: Date | string | null;
   locationId?: string | null;
   /** Bucket size of `series`; defaults to WEEK. */
   granularity?: Granularity | null;
+  /** Only time to detection and time to alert read it; defaults to AS_DELIVERED. */
+  onsetBasis?: OnsetBasis | null;
+}
+
+/** The onset basis a caller asked for; `AS_DELIVERED` when none. Refuses an unknown value. */
+export function resolveOnsetBasis(onsetBasis: OnsetBasis | null | undefined): OnsetBasis {
+  if (onsetBasis == null) return "AS_DELIVERED";
+  if (!(ONSET_BASES as readonly string[]).includes(onsetBasis)) {
+    throw new GraphQLError(`\`onsetBasis\` must be one of ${ONSET_BASES.join(", ")}.`, { extensions: { code: "BAD_USER_INPUT" } });
+  }
+  return onsetBasis;
 }
 
 const badInput = (message: string) => new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
@@ -419,28 +440,42 @@ export function eventsInLocation(locationId: string | null): Prisma.Sql {
     : Prisma.empty;
 }
 
+/**
+ * The Events of the history series in range (ADR-0021): every Event that a
+ * Replay run did not create. The first ingested Signal comes from the `LIVE`
+ * rows of the grouping log. The onset comes from the last `LIVE` row of the
+ * Event facts log (`AS_DELIVERED`) or from the live Event (`CURRENT`). An
+ * Event with no `LIVE` facts row (a person created it) reads its own fields.
+ */
 export async function fetchDetectionEvents(
   prisma: PrismaClient,
   range: { from: Date; to: Date },
   locationId: string | null,
+  onsetBasis: OnsetBasis = "AS_DELIVERED",
 ): Promise<DetectionEventRow[]> {
   const inLocation = eventsInLocation(locationId);
+  const delivered = (column: string) => Prisma.raw(`CASE WHEN f."id" IS NULL THEN e."${column}" ELSE f."${column}" END`);
+  const onset = onsetBasis === "CURRENT" ? Prisma.raw('e."started_at"') : delivered("started_at");
+  const accuracy = onsetBasis === "CURRENT" ? Prisma.raw('e."started_at_accuracy"') : delivered("started_at_accuracy");
+  const inRangeAt = Prisma.raw('COALESCE(fi."at", f."first_signal_created_at", e."first_signal_created_at")');
   return prisma.$queryRaw<DetectionEventRow[]>`
     WITH first_ingested AS (
-      SELECT se."event_id", MIN(s."published_at") AS "at"
-      FROM "signal_to_events" se
-      JOIN "signals" s ON s."id" = se."signal_id"
-      WHERE ${ingestedSignal("s")}
-      GROUP BY se."event_id"
+      SELECT g."event_id", MIN(s."published_at") AS "at"
+      FROM "signal_grouping_log" g
+      JOIN "signals" s ON s."id" = g."signal_id"
+      WHERE g."run_kind" = 'LIVE' AND ${ingestedSignal("s")}
+      GROUP BY g."event_id"
     )
-    SELECT e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+    SELECT ${onset} AS "startedAt", ${accuracy} AS "startedAtAccuracy",
       fi."at" AS "firstIngestedAt",
-      COALESCE(fi."at", e."first_signal_created_at") AS "inRangeAt"
+      ${inRangeAt} AS "inRangeAt"
     FROM "events" e
     LEFT JOIN first_ingested fi ON fi."event_id" = e."id"
+    LEFT JOIN ${LIVE_EVENT_FACTS} f ON f."event_id" = e."id"
     WHERE NOT e."isDummy"
-      AND COALESCE(fi."at", e."first_signal_created_at") >= ${range.from}
-      AND COALESCE(fi."at", e."first_signal_created_at") <= ${range.to}
+      AND ${historyEvent("e")}
+      AND ${inRangeAt} >= ${range.from}
+      AND ${inRangeAt} <= ${range.to}
       ${inLocation}
   `;
 }
@@ -453,6 +488,6 @@ export async function computeDetectionMetrics(
 ): Promise<DetectionMetrics> {
   const range = resolveRange(input, now);
   const granularity = resolveGranularity(input.granularity);
-  const rows = await fetchDetectionEvents(prisma, range, input.locationId || null);
+  const rows = await fetchDetectionEvents(prisma, range, input.locationId || null, resolveOnsetBasis(input.onsetBasis));
   return summarise(rows, range, granularity);
 }

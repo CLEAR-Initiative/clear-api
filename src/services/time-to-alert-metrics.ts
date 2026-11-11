@@ -26,8 +26,10 @@
  * into shares.
  */
 
-import type { PrismaClient } from "../generated/prisma/client.js";
+import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import {
+  resolveOnsetBasis,
+  type OnsetBasis,
   bucketIndex,
   bucketsOf,
   eventsInLocation,
@@ -138,28 +140,38 @@ export function summariseAlerts(rows: AlertRow[], range: { from: Date; to: Date 
 }
 
 /**
- * The Alerts raised in range with their Event's onset, and whether their
+ * The Alerts raised in range with their onset, and whether their
  * `createdAt` is the timestamp migration's run instant (its `started_at` to
  * `finished_at` in `_prisma_migrations`, per environment, with a second's
  * margin because `created_at` keeps milliseconds and the migration log
  * microseconds). `locationId` keeps
  * the Alerts whose Event's origin, destination or general location is that
- * location or inside it, as time to detection does.
+ * location or inside it, as time to detection does. An Alert that a Replay
+ * run raised is not part of the history and is left out of both views.
  */
-export async function fetchAlertRows(prisma: PrismaClient, range: { from: Date; to: Date }, locationId: string | null): Promise<AlertRow[]> {
+export async function fetchAlertRows(
+  prisma: PrismaClient,
+  range: { from: Date; to: Date },
+  locationId: string | null,
+  onsetBasis: OnsetBasis = "AS_DELIVERED",
+): Promise<AlertRow[]> {
+  // As delivered: the onset the Alert was raised on. Same ruler: the onset the Event has today (ADR-0021).
+  const onset = Prisma.raw(onsetBasis === "CURRENT" ? 'e."started_at"' : 'a."onset_at_raise"');
+  const accuracy = Prisma.raw(onsetBasis === "CURRENT" ? 'e."started_at_accuracy"' : 'a."onset_accuracy_at_raise"');
   return prisma.$queryRaw<AlertRow[]>`
     WITH stamp AS (
       SELECT MIN(m."started_at") AS "started_at", MAX(m."finished_at") AS "finished_at"
       FROM "_prisma_migrations" m
       WHERE m."migration_name" = ${ALERT_TIMESTAMPS_MIGRATION} AND m."rolled_back_at" IS NULL
     )
-    SELECT a."created_at" AS "createdAt", e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+    SELECT a."created_at" AS "createdAt", ${onset} AS "startedAt", ${accuracy} AS "startedAtAccuracy",
       COALESCE((a."created_at" AT TIME ZONE 'UTC')
         BETWEEN stamp."started_at" - interval '1 second' AND stamp."finished_at" + interval '1 second', false) AS "backfilled"
     FROM "alerts" a
     JOIN "events" e ON e."id" = a."event_id"
     CROSS JOIN stamp
     WHERE NOT e."isDummy"
+      AND a."raised_by_run_kind" IS DISTINCT FROM 'REPLAY'
       AND a."created_at" >= ${range.from}
       AND a."created_at" <= ${range.to}
       ${eventsInLocation(locationId)}
@@ -170,6 +182,6 @@ export async function fetchAlertRows(prisma: PrismaClient, range: { from: Date; 
 export async function computeTimeToAlertMetrics(prisma: PrismaClient, input: TimeToAlertInput, now: Date = new Date()): Promise<TimeToAlertMetrics> {
   const range = resolveRange(input, now);
   const granularity = resolveGranularity(input.granularity);
-  const rows = await fetchAlertRows(prisma, range, input.locationId || null);
+  const rows = await fetchAlertRows(prisma, range, input.locationId || null, resolveOnsetBasis(input.onsetBasis));
   return summariseAlerts(rows, range, granularity);
 }

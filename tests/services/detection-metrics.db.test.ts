@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { computeDetectionMetrics } from "../../src/services/detection-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
+import { backfillHistory, clearHistory } from "../helpers/history-backfill.js";
 
 const RUN = `ttd-db-${Date.now()}`;
 const COUNTRY = `${RUN}-country`;
@@ -72,6 +73,7 @@ describeIfDb("time to detection against the real schema", () => {
   });
 
   afterAll(async () => {
+    await clearHistory(prisma, eventIds);
     await prisma.signals.deleteMany({ where: { sourceId: { in: sourceIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.dataSources.deleteMany({ where: { id: { in: sourceIds } } });
@@ -125,6 +127,8 @@ describeIfDb("time to detection against the real schema", () => {
     await event({ onset: "2026-10-01T00:00:00Z", firstSignalCreatedAt: "2026-10-01T10:00:00Z", isDummy: true, signals: [{ at: "2026-10-01T10:00:00Z" }] });
     await event({ onset: "2026-10-01T00:00:00Z", firstSignalCreatedAt: "2026-10-01T10:00:00Z", locationId: ABROAD, signals: [{ at: "2026-10-01T10:00:00Z" }] });
 
+    // The logs as the backfill migration leaves them (ADR-0021): the assertions below are from before the switch.
+    await backfillHistory(prisma, eventIds);
     const m = await computeDetectionMetrics(prisma, {
       from: "2026-09-28T00:00:00Z",
       to: "2026-10-11T23:59:59.999Z",

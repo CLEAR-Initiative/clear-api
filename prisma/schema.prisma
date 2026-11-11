@@ -881,6 +881,45 @@ model signalGroupingLinks {
   @@map("signal_grouping_log")
 }
 
+/// The Event facts log (ADR-0021, decision 3): one row records the onset,
+/// the first Signal date and the places that one pipeline run gave one
+/// Event. Append-only: no mutation updates or deletes a row. The history
+/// series read the last `LIVE` row of an Event, so a replay adds `REPLAY`
+/// rows and changes no history. A person's edit writes no row.
+model eventFacts {
+  id         BigInt   @id @default(autoincrement())
+  /// Plain text with no foreign key, so a row outlives its Event.
+  eventId    String   @map("event_id")
+  recordedAt DateTime @map("recorded_at")
+
+  startedAt            DateTime?     @map("started_at")
+  startedAtAccuracy    DateAccuracy? @map("started_at_accuracy")
+  firstSignalCreatedAt DateTime      @map("first_signal_created_at")
+
+  /// The three places of the Event, as plain text, each with its district
+  /// (the level-2 location among the place and its ancestors) copied at
+  /// write time. A gazetteer re-import then does not change what the run
+  /// produced.
+  locationId            String? @map("location_id")
+  locationDistrictId    String? @map("location_district_id")
+  originId              String? @map("origin_id")
+  originDistrictId      String? @map("origin_district_id")
+  destinationId         String? @map("destination_id")
+  destinationDistrictId String? @map("destination_district_id")
+
+  runKind         LocationRunKind @default(LIVE) @map("run_kind")
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?         @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?         @map("run_id")
+
+  /// The last row of an Event for one run kind.
+  @@index([eventId, runKind, id])
+  /// One run's rows (a later replay series).
+  @@index([runId])
+  @@map("event_facts_log")
+}
+
 /// An analyst's Location challenge on a Signal, with an optional corrected
 /// point, filed for one team and decided by that team's admin (Exponential
 /// #836; Location trust v1 was a queue only). Accepting writes a point onto
@@ -969,6 +1008,11 @@ model events {
   /// non-conflict events.
   actors               String[]
   isDummy              Boolean       @default(false)
+  /// The kind of pipeline run that created the Event (ADR-0021, decision 6):
+  /// `LIVE`, `REPLAY`, or null for an Event that a person created.
+  /// `createEvent` sets it once; no mutation changes it. A history series
+  /// leaves out an Event that a Replay run created.
+  createdByRunKind     LocationRunKind? @map("created_by_run_kind")
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])
@@ -1059,6 +1103,18 @@ model alerts {
   /// Updated automatically by Prisma on every write — useful for tracking
   /// status transitions (draft → published → archived).
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// The Event's onset and its accuracy at the instant the Alert was raised
+  /// (ADR-0021, decision 3). Set once, when the Alert is created; no
+  /// mutation changes them. Time to alert "as delivered" reads them, so a
+  /// later onset does not move a past bucket.
+  onsetAtRaise         DateTime?     @map("onset_at_raise")
+  onsetAccuracyAtRaise DateAccuracy? @map("onset_accuracy_at_raise")
+  /// The kind of pipeline run that raised the Alert: `LIVE`, `REPLAY`, or
+  /// null for an Alert that a person raised and for every Alert from before
+  /// this column. An Alert that a Replay run raised is not part of the
+  /// history series.
+  raisedByRunKind      LocationRunKind? @map("raised_by_run_kind")
 
   event      events       @relation(fields: [eventId], references: [id])
   userAlerts userAlerts[]

@@ -23,9 +23,11 @@ import {
   bucketsOf,
   computeDetectionMetrics,
   resolveGranularity,
+  resolveOnsetBasis,
   type Bucket,
   type DetectionMetricsInput,
   type Granularity,
+  type OnsetBasis,
 } from "./detection-metrics.js";
 import { computeEscalationMetrics } from "./escalation-metrics.js";
 import { computeSignalsGrouped, computeSingleSignalEvents } from "./grouping-metrics.js";
@@ -69,6 +71,8 @@ export interface MetricSeriesInput {
   groupBy?: MetricGroupBy | null;
   /** Read the replay series of this Replay run (ADR-0020); only `DISTRICT_OR_FINER` has one. */
   replayRunId?: string | null;
+  /** The onset the delay metrics measure from (ADR-0021); `CURRENT` only for the four delay metrics. */
+  onsetBasis?: OnsetBasis | null;
 }
 
 /** One bucket of one group: the metric is `numerator / denominator`. */
@@ -129,7 +133,11 @@ function ungroupedShare<Row extends Bucket>(
   pick: (row: Row) => { numerator: number; denominator: number },
 ): RegistryEntry["series"] {
   return async (prisma, input, now) => {
-    const m = await compute(prisma, { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity }, now);
+    const m = await compute(
+      prisma,
+      { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity, onsetBasis: input.onsetBasis },
+      now,
+    );
     return {
       metric,
       granularity: m.granularity,
@@ -205,6 +213,14 @@ function perSourceShare<Row extends Bucket & { source: string }>(
 /** The metrics that can be read for one Replay run (`replayRunId`): those that read an Outcome log (ADR-0020). */
 const REPLAY_SERIES_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>(["DISTRICT_OR_FINER"]);
 
+/** The delay metrics: they measure from an onset, so they have a "same ruler" view (`onsetBasis: CURRENT`, ADR-0021). */
+export const ONSET_BASIS_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>([
+  "DETECTED_BY_NEXT_DAY",
+  "DETECTED_SAME_DAY",
+  "ALERTED_BY_NEXT_DAY",
+  "ALERTED_SAME_DAY",
+]);
+
 const REGISTRY: Record<MetricKey, RegistryEntry> = {
   DETECTED_BY_NEXT_DAY: {
     key: "DETECTED_BY_NEXT_DAY",
@@ -212,7 +228,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "TIMELINESS",
     unit: "EVENTS",
     description:
-      "Share of measured Events whose first ingested Signal arrived on the onset day or the day after. An Event is measured when it has a day-precise onset and a first ingested Signal with a time of day on or after the onset day; every other Event in range is excluded under one reason (ADR-0011).",
+      "Share of measured Events whose first ingested Signal arrived on the onset day or the day after. An Event is measured when it has a day-precise onset and a first ingested Signal with a time of day on or after the onset day; every other Event in range is excluded under one reason (ADR-0011). As delivered, the onset is the last one a Live pipeline run gave the Event, and no replay moves a past bucket; with onsetBasis CURRENT it is the onset the Event has today (ADR-0021).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: false,
     locationScoped: true,
@@ -238,7 +254,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "TIMELINESS",
     unit: "EVENTS",
     description:
-      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its creation instant is real and its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason, including the Alerts whose createdAt was backfilled when the column was added in May 2026. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017).",
+      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its creation instant is real and its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason, including the Alerts whose createdAt was backfilled when the column was added in May 2026. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017). As delivered, the onset is the one the Alert was raised on, and no replay moves a past bucket; with onsetBasis CURRENT it is the onset the Event has today (ADR-0021).",
     timeBasis: "The instant the Alert was raised: its createdAt.",
     groupable: false,
     locationScoped: true,
@@ -372,6 +388,9 @@ export async function computeMetricSeries(
   }
   if (input.replayRunId?.trim() && !REPLAY_SERIES_METRICS.has(entry.key)) {
     throw badInput(`\`${entry.key}\` has no replay series; leave \`replayRunId\` out.`);
+  }
+  if (resolveOnsetBasis(input.onsetBasis) === "CURRENT" && !ONSET_BASIS_METRICS.has(entry.key)) {
+    throw badInput(`\`${entry.key}\` has one view; leave \`onsetBasis\` out.`);
   }
   // Validate the granularity up front, so a bad value fails the same way whichever service runs.
   resolveGranularity(input.granularity);

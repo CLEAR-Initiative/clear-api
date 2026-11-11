@@ -7,6 +7,7 @@ import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { logActivity } from "../utils/activity-log.js";
 import { logEventChange } from "../utils/event-log.js";
 import { writeGroupingLinks } from "../services/signal-grouping-log.js";
+import { onsetAtRaise, runKindOf, writeEventFacts } from "../services/event-facts-log.js";
 import type { RunKind } from "../services/signal-location-outcomes.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
@@ -454,6 +455,9 @@ export const eventResolvers = {
       // (ADR-0021): a Link never exists without the row that records it.
       // Dedupe the input first so a repeated signalId makes one Link.
       const uniqueSignalIds = [...new Set(input.signalIds)];
+      // The pipeline calls with an API key; a person has a session. Only the
+      // pipeline's writes go to the logs.
+      const byPipeline = context.authMethod === "api-key";
       const event = await context.prisma.$transaction(async (tx) => {
         const event = await tx.events.create({
           data: {
@@ -485,6 +489,9 @@ export const eventResolvers = {
             populationDisplaced,
             casualties: input.casualties,
             rank: input.rank,
+            // The run kind that created the Event; a person's Event has none
+            // (ADR-0021, decision 6). Never changed afterwards.
+            createdByRunKind: byPipeline ? runKindOf(input) : null,
           },
         });
 
@@ -493,10 +500,9 @@ export const eventResolvers = {
           await tx.signalEvents.createMany({
             data: uniqueSignalIds.map((signalId) => ({ signalId, eventId: event.id, collectedAt: linkedAt })),
           });
-          if (context.authMethod === "api-key") {
-            await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
-          }
+          if (byPipeline) await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
         }
+        if (byPipeline) await writeEventFacts(tx, event.id, input);
         return event;
       });
 
@@ -525,7 +531,14 @@ export const eventResolvers = {
     // its live members. Absent fields are kept; explicit nulls clear them.
     setEventAggregates: async (
       _parent: unknown,
-      args: { id: string; input: EventAggregatesInput; members: { id: string; revision: number }[] },
+      args: {
+        id: string;
+        input: EventAggregatesInput;
+        members: { id: string; revision: number }[];
+        runKind?: RunKind | null;
+        pipelineVersion?: string | null;
+        runId?: string | null;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
@@ -587,7 +600,12 @@ export const eventResolvers = {
           );
         }
 
-        return tx.events.update({ where: { id }, data });
+        const row = await tx.events.update({ where: { id }, data });
+        // The facts this run gave the Event (ADR-0021).
+        if (context.authMethod === "api-key") {
+          await writeEventFacts(tx, id, { runKind: args.runKind, pipelineVersion: args.pipelineVersion, runId: args.runId });
+        }
+        return row;
       });
       logEventChange("aggregates", updated, [], sent.size);
       return updated;
@@ -623,6 +641,7 @@ export const eventResolvers = {
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
+      const byPipeline = context.authMethod === "api-key";
       let newlyLinked: string[] = [];
       if (input.signalIds !== undefined && input.signalIds.length > 0) {
         const alreadyLinked = await context.prisma.signalEvents.findMany({
@@ -645,8 +664,11 @@ export const eventResolvers = {
             await tx.signalEvents.createMany({
               data: uniqueToLink.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
             });
-            if (context.authMethod === "api-key") {
+            if (byPipeline) {
               await writeGroupingLinks(tx, id, uniqueToLink, input);
+              // An Event with a Link in the grouping log always has a row in
+              // the Event facts log: the history readers join the two.
+              await writeEventFacts(tx, id, input);
             }
           });
         }
@@ -677,7 +699,7 @@ export const eventResolvers = {
           });
         }
 
-        return tx.events.update({
+        const row = await tx.events.update({
           where: { id },
           data: {
             title: input.title ?? undefined,
@@ -713,6 +735,9 @@ export const eventResolvers = {
             rank: input.rank ?? undefined,
           },
         });
+        // The facts this run gave the Event (ADR-0021); a person's edit writes no row.
+        if (byPipeline) await writeEventFacts(tx, id, input);
+        return row;
       });
       logEventChange("updated", updated, [...new Set(newlyLinked)]);
       return updated;
@@ -778,8 +803,10 @@ export const eventResolvers = {
 
       // Create alert if none exists, and fan out notifications
       if (!existingAlert) {
+        // A person raises this Alert: it holds the onset it was raised on
+        // (ADR-0021) and no run kind.
         const alert = await context.prisma.alerts.create({
-          data: { eventId: args.eventId, status: "published" },
+          data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
         });
 
         // Fan out notifications to subscribers

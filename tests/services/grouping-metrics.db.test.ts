@@ -18,6 +18,7 @@ import { computeSignalsGrouped, computeSingleSignalEvents } from "../../src/serv
 import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
+import { clearHistory } from "../helpers/history-backfill.js";
 
 const { createEvent, updateEvent } = eventResolvers.Mutation;
 
@@ -149,6 +150,7 @@ describeIfDb("grouping proxies against the real schema", () => {
   });
 
   afterAll(async () => {
+    await clearHistory(prisma, eventIds);
     await prisma.signals.deleteMany({ where: { sourceId: { in: Object.values(sourceIds) } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.dataSources.deleteMany({ where: { id: { in: Object.values(sourceIds) } } });

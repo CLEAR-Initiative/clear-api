@@ -334,7 +334,8 @@ describe("Mutation.createAlert", () => {
   it("creates a new alert with default status 'draft' when none exists", async () => {
     // No locations / no types on the event → fan-out short-circuits, so the
     // create path is unit-testable without exercising the subscriber loop.
-    const event = { id: "e1", types: [], severity: 2, originId: null, destinationId: null, locationId: null };
+    const onset = new Date("2026-10-01T00:00:00Z");
+    const event = { id: "e1", types: [], severity: 2, originId: null, destinationId: null, locationId: null, startedAt: onset, startedAtAccuracy: "DAY" };
     const created = { id: 99, status: "draft" };
     const create = vi.fn().mockResolvedValue(created);
     const ctx = buildContext(TEAM_ANALYST, {
@@ -348,7 +349,10 @@ describe("Mutation.createAlert", () => {
 
     const result = await createAlert(null, { input: { eventId: "e1" } }, ctx);
     expect(result).toBe(created);
-    expect(create).toHaveBeenCalledWith({ data: { eventId: "e1", status: "draft" } });
+    // The Alert holds the onset it was raised on; a person's Alert has no run kind (ADR-0021).
+    expect(create).toHaveBeenCalledWith({
+      data: { eventId: "e1", status: "draft", onsetAtRaise: onset, onsetAccuracyAtRaise: "DAY", raisedByRunKind: null },
+    });
     // First-time creation records exactly one activity entry.
     expect(logActivity).toHaveBeenCalledTimes(1);
     expect((logActivity as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
@@ -360,14 +364,16 @@ describe("Mutation.createAlert", () => {
   });
 
   it("honours an explicit status on a brand-new alert", async () => {
-    const event = { id: "e1", types: [], severity: 1, originId: null, destinationId: null, locationId: null };
+    const event = { id: "e1", types: [], severity: 1, originId: null, destinationId: null, locationId: null, startedAt: null, startedAtAccuracy: null };
     const create = vi.fn().mockResolvedValue({ id: 1, status: "active" });
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue(event) },
       alerts: { findFirst: vi.fn().mockResolvedValue(null), create },
     });
     await createAlert(null, { input: { eventId: "e1", status: "active" as never } }, ctx);
-    expect(create).toHaveBeenCalledWith({ data: { eventId: "e1", status: "active" } });
+    expect(create).toHaveBeenCalledWith({
+      data: { eventId: "e1", status: "active", onsetAtRaise: null, onsetAccuracyAtRaise: null, raisedByRunKind: null },
+    });
   });
 
   it("does NOT fan out for a non-published (archived) alert, even with locations + types", async () => {

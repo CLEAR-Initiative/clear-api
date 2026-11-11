@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { ALERT_TIMESTAMPS_MIGRATION, computeTimeToAlertMetrics } from "../../src/services/time-to-alert-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
+import { backfillHistory, clearHistory } from "../helpers/history-backfill.js";
 
 const RUN = `tta-db-${Date.now()}`;
 const COUNTRY = `${RUN}-country`;
@@ -56,6 +57,7 @@ describeIfDb("time to alert against the real schema", () => {
   });
 
   afterAll(async () => {
+    await clearHistory(prisma, eventIds);
     await prisma.alerts.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.locations.deleteMany({ where: { id: { in: [DISTRICT, COUNTRY, ABROAD, `${RUN}-stamp`] } } });
@@ -81,6 +83,8 @@ describeIfDb("time to alert against the real schema", () => {
     await alertedEvent({ onset: "2026-10-01T00:00:00Z", alertAt: "2026-10-01T10:00:00Z", locationId: ABROAD });
 
     const range = { from: "2026-09-28T00:00:00Z", to: "2026-10-11T23:59:59.999Z" };
+    // The logs as the backfill migration leaves them (ADR-0021): the assertions below are from before the switch.
+    await backfillHistory(prisma, eventIds);
     const m = await computeTimeToAlertMetrics(prisma, { ...range, locationId: COUNTRY });
     expect(m).toMatchObject({ alertsInRange: 7, counted: 4, sameDay: 2, byNextDay: 3 });
     expect(m.exclusions).toEqual([
@@ -114,6 +118,8 @@ describeIfDb("time to alert against the real schema", () => {
     await alertedEvent({ onset: onset.toISOString(), alertAt: stamped, locationId: STAMP });
     const after = new Date((window!.finishedAt ?? stamped).getTime() + 60_000);
     await alertedEvent({ onset: onset.toISOString(), alertAt: after, locationId: STAMP });
+    // The logs as the backfill migration leaves them (ADR-0021): the assertions below are from before the switch.
+    await backfillHistory(prisma, eventIds);
     const m = await computeTimeToAlertMetrics(prisma, {
       from: new Date(stamped.getTime() - 24 * 60 * 60 * 1000),
       to: new Date(after.getTime() + 24 * 60 * 60 * 1000),

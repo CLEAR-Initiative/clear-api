@@ -240,8 +240,18 @@ export const mutationTypeDef = gql`
     values were computed from; if the live members differ, nothing is written
     and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
     it; do not retry).
+    \`runKind\`, \`pipelineVersion\` and \`runId\` name the run, for the Event
+    facts log (ADR-0021): a call with an API key writes the Event's onset,
+    first Signal date and places as this run left them.
     Admin/pipeline only."""
-    setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
+    setEventAggregates(
+      id: String!
+      input: EventAggregatesInput!
+      members: [SignalRevisionInput!]!
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Event!
 
     """File a Location challenge on a Signal for a team, with an optional
     corrected point. Auth: an analyst on that team, or a platform admin; the
@@ -995,6 +1005,15 @@ export const mutationTypeDef = gql`
     """The event ID to create an alert from."""
     eventId: String!
     status: AlertStatus
+    """The run that raises the Alert (ADR-0021). \`runKind\` defaults to LIVE;
+    a replay job sends REPLAY, and that Alert is not part of the history
+    series. Read only for a call with an API key: an Alert that a person
+    raises has no run kind. \`pipelineVersion\` and \`runId\` are accepted so
+    the pipeline sends one run block on every write; the Alert does not
+    store them."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input UpdateAlertInput {
@@ -1224,11 +1243,11 @@ export const mutationTypeDef = gql`
     is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
-    """The run that makes these Links, for the grouping log (ADR-0021).
-    \`runKind\` defaults to LIVE; a replay job sends REPLAY. \`pipelineVersion\`
-    is the clear-pipeline git SHA and \`runId\` the Dagster run id. clear-api
-    logs a Link only for a call with an API key: a Link that a person makes
-    writes no row."""
+    """The run that makes this write, for the grouping log and the Event
+    facts log (ADR-0021). \`runKind\` defaults to LIVE; a replay job sends
+    REPLAY. \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\`
+    the Dagster run id. clear-api writes to the logs only for a call with
+    an API key: a person's Link or edit writes no row."""
     runKind: LocationRunKind
     pipelineVersion: String
     runId: String
@@ -1278,11 +1297,11 @@ export const mutationTypeDef = gql`
     """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float
-    """The run that makes these Links, for the grouping log (ADR-0021).
-    \`runKind\` defaults to LIVE; a replay job sends REPLAY. \`pipelineVersion\`
-    is the clear-pipeline git SHA and \`runId\` the Dagster run id. clear-api
-    logs a Link only for a call with an API key: a Link that a person makes
-    writes no row."""
+    """The run that makes this write, for the grouping log and the Event
+    facts log (ADR-0021). \`runKind\` defaults to LIVE; a replay job sends
+    REPLAY. \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\`
+    the Dagster run id. clear-api writes to the logs only for a call with
+    an API key: a person's Link or edit writes no row."""
     runKind: LocationRunKind
     pipelineVersion: String
     runId: String

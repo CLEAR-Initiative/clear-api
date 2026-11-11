@@ -13,6 +13,7 @@
  */
 
 import type { PrismaClient } from "../generated/prisma/client.js";
+import { historyEvent } from "./event-facts-log.js";
 import {
   bucketIndex,
   bucketsOf,
@@ -79,6 +80,7 @@ export async function fetchEscalationRows(prisma: PrismaClient, range: { from: D
       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "event_escaladed_by_users" x WHERE x."event_id" = e."id"))::int AS "escalated"
     FROM "events" e
     WHERE NOT e."isDummy"
+      AND ${historyEvent("e")}
       AND e."first_signal_created_at" >= ${range.from}
       AND e."first_signal_created_at" <= ${range.to}
       ${eventsInLocation(locationId)}

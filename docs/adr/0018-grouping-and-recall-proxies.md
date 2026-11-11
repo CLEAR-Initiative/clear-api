@@ -104,6 +104,19 @@ above stay; these rules change:
 - The log has its own indexes for these reads: `(signal_id, run_kind)` and
   `(event_id, run_kind, linked_at)`.
 
+**Amended by ADR-0021 for the recall proxy (11 Nov 2026).** "ACLED events
+alerted nearby" keeps its definition and reads the logs:
+
+- **The members** of an alerted Event (a Signal from a source other than
+  ACLED) come from the `LIVE` rows of the grouping log.
+- **The Event's date and districts** come from its last `LIVE` row in the
+  Event facts log. The row holds the district of each place, copied when the
+  run wrote it, so a gazetteer re-import does not move a past bucket.
+- **The Events** are those that a Replay run did not create, and **the
+  Alerts** are those that a Replay run did not raise.
+- "Events with one Signal" also leaves out an Event that a Replay run
+  created.
+
 ## Considered options
 
 - **Signals per Event as a ratio.** A ratio is not a share, and the page
