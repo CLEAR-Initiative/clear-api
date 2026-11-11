@@ -60,8 +60,11 @@ describe("fetchRecallRows and computeRecallMetrics", () => {
     expect(sql).toContain("generate_series(?::int, ?::int)");
     expect(sql).toContain('LEFT JOIN alerted a ON a."district" = r."district" AND a."day" = r."day"');
     expect(values).toContain(-RECALL_WINDOW_DAYS);
-    expect(sql).toContain(`e."started_at_accuracy" = 'DAY'`);
-    expect(sql).toContain('(VALUES (e."location_id"), (e."origin_id"), (e."destination_id"))');
+    // The Event's date and places come from its last LIVE row in the Event facts log, and its
+    // members from the LIVE rows of the grouping log (ADR-0021).
+    expect(sql).toContain(`f."started_at_accuracy" = 'DAY'`);
+    expect(sql).toContain('(VALUES (f."location_district_id"), (f."origin_district_id"), (f."destination_district_id"))');
+    expect(sql).toContain(`se."run_kind" = 'LIVE'`);
     expect(values).toContain(GROUND_TRUTH_SOURCE);
     expect(values).toContain(RECALL_WINDOW_DAYS);
     expect(JSON.stringify(values)).toContain("loc-sdn");

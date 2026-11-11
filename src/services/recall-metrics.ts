@@ -26,6 +26,7 @@
  */
 
 import type { PrismaClient } from "../generated/prisma/client.js";
+import { historyEvent, LIVE_EVENT_FACTS } from "./event-facts-log.js";
 import {
   bucketIndex,
   bucketsOf,
@@ -121,27 +122,28 @@ export async function fetchRecallRows(
         ${signalsInLocation(locationId)}
     ),
     alerted AS (
-      SELECT DISTINCT
-        CASE WHEN el."level" = 2 THEN el."id"
-          ELSE (SELECT l2."id" FROM "locations" l2 WHERE l2."level" = 2 AND l2."id" = ANY(el."ancestor_ids") LIMIT 1)
-        END AS "district",
+      SELECT DISTINCT p."district",
         FLOOR(EXTRACT(EPOCH FROM COALESCE(
-          CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
-          e."first_signal_created_at")) / 86400)::int + g."offset" AS "day"
+          CASE WHEN f."started_at_accuracy" IS NULL OR f."started_at_accuracy" = 'DAY' THEN f."started_at" END,
+          f."first_signal_created_at")) / 86400)::int + g."offset" AS "day"
       FROM "alerts" al
       JOIN "events" e ON e."id" = al."event_id"
-      CROSS JOIN LATERAL (VALUES (e."location_id"), (e."origin_id"), (e."destination_id")) AS p("place_id")
-      JOIN "locations" el ON el."id" = p."place_id"
+      JOIN ${LIVE_EVENT_FACTS} f ON f."event_id" = e."id"
+      CROSS JOIN LATERAL (VALUES (f."location_district_id"), (f."origin_district_id"), (f."destination_district_id")) AS p("district")
       CROSS JOIN generate_series(${-windowDays}::int, ${windowDays}::int) AS g("offset")
       WHERE NOT e."isDummy"
+        AND ${historyEvent("e")}
+        AND al."raised_by_run_kind" IS DISTINCT FROM 'REPLAY'
+        AND p."district" IS NOT NULL
         AND COALESCE(
-          CASE WHEN e."started_at_accuracy" IS NULL OR e."started_at_accuracy" = 'DAY' THEN e."started_at" END,
-          e."first_signal_created_at") BETWEEN ${since} AND ${until}
+          CASE WHEN f."started_at_accuracy" IS NULL OR f."started_at_accuracy" = 'DAY' THEN f."started_at" END,
+          f."first_signal_created_at") BETWEEN ${since} AND ${until}
         AND EXISTS (
-          SELECT 1 FROM "signal_to_events" se
+          SELECT 1 FROM "signal_grouping_log" se
           JOIN "signals" o ON o."id" = se."signal_id"
           JOIN "data_sources" od ON od."id" = o."source_id"
           WHERE se."event_id" = e."id"
+            AND se."run_kind" = 'LIVE'
             AND od."name" <> ${source}
             AND ${ingestedSignal("o")}
         )

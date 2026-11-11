@@ -39,6 +39,7 @@
 
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { hasLiveLink } from "./signal-grouping-log.js";
+import { historyEvent } from "./event-facts-log.js";
 import {
   bucketIndex,
   bucketsOf,
@@ -192,6 +193,7 @@ export async function fetchSingleSignalEventRows(
     JOIN first_ingested fi ON fi."event_id" = e."id"
     JOIN first_source fs ON fs."event_id" = e."id"
     WHERE NOT e."isDummy"
+      AND ${historyEvent("e")}
       AND fi."at" >= ${range.from}
       AND fi."at" <= ${range.to}
       ${inSources(sourceNames, Prisma.raw('fs."source"'))}

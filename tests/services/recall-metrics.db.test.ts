@@ -9,6 +9,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { fetchRecallRows, summariseRecall } from "../../src/services/recall-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
+import { backfillHistory, clearHistory } from "../helpers/history-backfill.js";
 
 const RUN = `rc-db-${Date.now()}`;
 const COUNTRY = `${RUN}-country`;
@@ -103,6 +104,7 @@ describeIfDb("detection recall proxy against the real schema", () => {
   });
 
   afterAll(async () => {
+    await clearHistory(prisma, eventIds);
     await prisma.alerts.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.signals.deleteMany({ where: { sourceId: { in: Object.values(sourceIds) } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
@@ -136,6 +138,8 @@ describeIfDb("detection recall proxy against the real schema", () => {
     await reference("2026-10-20T00:00:00Z", POINT); // after the range
 
     const range = { from: at("2026-10-12T00:00:00Z"), to: at("2026-10-18T23:59:59.999Z") };
+    // The logs as the backfill migration leaves them (ADR-0021): the assertions below are from before the switch.
+    await backfillHistory(prisma, eventIds);
     const rows = await fetchRecallRows(prisma, range, COUNTRY, REF, 1);
     const m = summariseRecall(rows, range, "DAY");
     expect(m).toMatchObject({ groundTruth: 6, alerted: 4 });

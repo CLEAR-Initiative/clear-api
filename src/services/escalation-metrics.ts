@@ -13,6 +13,7 @@
  */
 
 import type { PrismaClient } from "../generated/prisma/client.js";
+import { historyEvent, LIVE_EVENT_FACTS } from "./event-facts-log.js";
 import {
   bucketIndex,
   bucketsOf,
@@ -73,14 +74,18 @@ export function summariseEscalations(rows: EscalationDayRow[], range: { from: Da
 
 /** The Events in range by UTC day of their first Signal, with how many a user escalated. */
 export async function fetchEscalationRows(prisma: PrismaClient, range: { from: Date; to: Date }, locationId: string | null): Promise<EscalationDayRow[]> {
+  // The bucket date as a Live run gave it (ADR-0021): a replay that adds an older Signal moves
+  // the live Event's first Signal date, and must not move the Event to another bucket.
   return prisma.$queryRaw<EscalationDayRow[]>`
-    SELECT FLOOR(EXTRACT(EPOCH FROM e."first_signal_created_at") / 86400)::int AS "day",
+    SELECT FLOOR(EXTRACT(EPOCH FROM COALESCE(f."first_signal_created_at", e."first_signal_created_at")) / 86400)::int AS "day",
       COUNT(*)::int AS "events",
       COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "event_escaladed_by_users" x WHERE x."event_id" = e."id"))::int AS "escalated"
     FROM "events" e
+    LEFT JOIN ${LIVE_EVENT_FACTS} f ON f."event_id" = e."id"
     WHERE NOT e."isDummy"
-      AND e."first_signal_created_at" >= ${range.from}
-      AND e."first_signal_created_at" <= ${range.to}
+      AND ${historyEvent("e")}
+      AND COALESCE(f."first_signal_created_at", e."first_signal_created_at") >= ${range.from}
+      AND COALESCE(f."first_signal_created_at", e."first_signal_created_at") <= ${range.to}
       ${eventsInLocation(locationId)}
     GROUP BY 1
   `;

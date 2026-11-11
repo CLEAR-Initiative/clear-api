@@ -16,6 +16,8 @@ import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { alertNotification } from "../services/messaging/templates.js";
 import { fanOutAlertWebhooks } from "../services/webhook/alert-fanout.js";
+import { onsetAtRaise, runKindOf } from "../services/event-facts-log.js";
+import type { RunKind } from "../services/signal-location-outcomes.js";
 import {
   severityToLabel,
   formatCount,
@@ -31,6 +33,9 @@ import {
 interface CreateAlertInput {
   eventId: string;
   status?: AlertStatus;
+  runKind?: RunKind | null;
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 interface UpdateAlertInput {
@@ -150,6 +155,11 @@ export const alertResolvers = {
             data: {
               eventId: input.eventId,
               status: input.status ?? "draft",
+              // The onset the Alert is raised on, and the kind of run that
+              // raises it (ADR-0021). Set once: a retry returns the Alert
+              // that exists and changes neither.
+              ...onsetAtRaise(event),
+              raisedByRunKind: context.authMethod === "api-key" ? runKindOf(input) : null,
             },
           });
 

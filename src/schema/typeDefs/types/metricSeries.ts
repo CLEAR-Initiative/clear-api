@@ -94,6 +94,22 @@ export const metricSeriesTypeDef = gql`
     Signal in range gives an all-zero series.
     """
     replayRunId: String
+    """
+    The onset a delay metric measures from (ADR-0021). \`AS_DELIVERED\`, the
+    default, is the history series. \`CURRENT\` is the "same ruler" view, only
+    for \`DETECTED_BY_NEXT_DAY\`, \`DETECTED_SAME_DAY\`, \`ALERTED_BY_NEXT_DAY\`
+    and \`ALERTED_SAME_DAY\`; another metric refuses it with BAD_USER_INPUT.
+    The bucket shape is the same for both.
+    """
+    onsetBasis: MetricOnsetBasis
+  }
+
+  """Which onset a delay metric measures from (ADR-0021, decision 4)."""
+  enum MetricOnsetBasis {
+    """Every value as the Live pipeline run gave it at the time: the onset on the Alert, or the last onset a Live run gave the Event. Past buckets do not move after the Event settles, and no replay moves them."""
+    AS_DELIVERED
+    """The same instants, measured against the onset the Event has today. Past buckets move when the onset changes; every bucket has one ruler."""
+    CURRENT
   }
 
   """Which Replay runs to list: the range and filters of the series they are drawn on."""

@@ -82,6 +82,24 @@ Each entry reads from a service of its own (`time-to-alert-metrics.ts`,
 helpers (ADR-0014) and the shared Event location scope, so the registry still
 defines nothing. Counts only; shares are the caller's.
 
+**Amended by ADR-0021 (11 Nov 2026).** The definitions above stay. Time to
+alert and the escalation proxy now read what was delivered at the time:
+
+- **The onset of time to alert** has two views. *As delivered*, the default
+  and the history series: the onset on the Alert (`onset_at_raise` and
+  `onset_accuracy_at_raise`), copied from the Event when the Alert is raised
+  and never changed. *Same ruler*: the onset the Event has today
+  (`metricSeries` with `onsetBasis: CURRENT`).
+- **An Alert that a Replay run raised** (`raised_by_run_kind` is `REPLAY`)
+  is in neither view. An Alert from before that column, and an Alert that a
+  person raised, have no run kind and count as before.
+- **Existing Alerts** got the onset their Event had on the day of the
+  migration. The onset on the day they were raised was not kept.
+- **Events escalated** leaves out an Event that a Replay run created. It
+  buckets an Event by the first Signal date in its last `LIVE` row of the
+  Event facts log, so a replay that adds an older Signal does not move the
+  Event to another bucket.
+
 ## Considered options
 
 - **Median days to alert, as the Notion row says.** A median is a value, not
