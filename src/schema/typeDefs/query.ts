@@ -402,6 +402,14 @@ export const queryTypeDef = gql`
     BAD_USER_INPUT. See \`MetricSeries\` and ADR-0015."""
     metricSeries(input: MetricSeriesInput!): MetricSeries!
 
+    """
+    The Replay runs that re-located a Signal in the range, newest first, at
+    most 50 (ADR-0020). Each can be drawn as a second line on location
+    precision: \`metricSeries\` with \`replayRunId\`. Range rules as
+    \`metricSeries\`. Platform admin only.
+    """
+    locationReplayRuns(input: LocationReplayRunsInput): [LocationReplayRun!]!
+
     """The changes that should move a metric (deploys, imports, prompt
     changes), oldest first, in a range and optionally for one metric, drawn
     as markers on the /metrics charts. Admin only. See \`MetricAnnotation\`

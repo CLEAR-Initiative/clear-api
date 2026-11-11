@@ -3,7 +3,7 @@ status: proposed
 date: 2026-11-10
 ---
 
-# Replay-safe metric history: one grouping log, and three rules for a replay
+# Replay-safe metric history: one grouping log, and rules for a replay
 
 Every metric on `/metrics` is computed at request time from live rows
 (ADR-0015). A replay changes those rows. ADR-0020 fixed location precision
@@ -48,9 +48,9 @@ replay. This ADR must be accepted before that work starts.
 | `EVENTS_WITH_ONE_SIGNAL` | Links. Which Events exist. `events.isDummy`. | None, except the location filter. | Rewrites every past bucket. A replaced Event is gone from history. | Grouping log. |
 | `DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY` | Links (which ingested Signal is first). `events.started_at` and its accuracy. `events.first_signal_created_at`. | None, except the location filter. | Changes which Signal is first and which Events exist. | Grouping log for the first Signal. The onset stays live (rule 3). |
 | `ALERTED_BY_NEXT_DAY`, `ALERTED_SAME_DAY` | `alerts.created_at`. `events.started_at` and its accuracy. | None, except the location filter. | Only if the replay deletes an Alert and creates it again: the Alert then reads as months late. | Safe as it is, under rule 1. |
-| `ACLED_EVENTS_ALERTED` | The location of ACLED Signals. Which Alerts exist. The Event's date and places. Links (a non-ACLED member). | ACLED Signals arrive with coordinates, so a text geocoding replay does not move them. | Changes which Events hold a non-ACLED Signal, and their places. | Grouping log for the membership. Rules 1 and 2 for the Alert and the Event. |
+| `ACLED_EVENTS_ALERTED` | The location of ACLED Signals. Which Alerts exist. The Event's date and places. Links (a non-ACLED member). | ACLED Signals arrive with coordinates, so a text geocoding replay does not move them. | Changes which Events hold a non-ACLED Signal, and their places. Moves Alerts to replacement Events. | Grouping log for the membership and for the set of Events (decision 4). Rules 1 and 2 for the Alert and the Event. |
 | `SOURCES_ON_SCHEDULE` | `signals.collected_at`. `signals.retracted`. | None. | None. | Safe as it is, under rule 2. |
-| `EVENTS_ESCALATED` | `events.first_signal_created_at`. The escalations a person made. | None, except the location filter. | A deleted Event takes its escalations with it (cascade). That loses a person's work, not only a chart. | Safe as it is, under rule 2. |
+| `EVENTS_ESCALATED` | Which Events exist. `events.first_signal_created_at`. The escalations a person made. | None, except the location filter. | A deleted Event takes its escalations with it (cascade). That loses a person's work, not only a chart. A replacement Event also adds one Event to a past bucket. | Grouping log for the set of Events (decision 4). Rule 2 for the escalations. |
 
 "Frozen closed buckets" is chosen for no metric. See "Considered options".
 
@@ -83,14 +83,18 @@ run at work, not a replay. The log keeps it, because a late Live Link is a
 `LIVE` row like any other.
 
 - The result at the time is **the set of `LIVE` rows**. No instant is frozen.
-- A bucket can still change while an Event in it is not settled. After that,
-  only a replay could change it, and a replay writes `REPLAY` rows.
-- So a bucket is **final** when every Event in it is settled. In practice
-  this is 7 days after the newest Signal of its Events. A long-running Event
-  keeps its buckets open for as long as Signals arrive.
-- The API does not mark final buckets in the first version. The page already
-  marks a partly covered bucket (`isPartial`). A "not final yet" mark is a
-  later option.
+- An Event can still change while it is not settled. After that, only a
+  replay could change it, and a replay writes `REPLAY` rows. In practice an
+  Event settles 7 days after its newest Signal. A long-running Event stays
+  open for as long as Signals arrive.
+- A **bucket** is never final in the strict sense. The charts bucket by
+  `publishedAt`, and sources deliver late and backdated Signals. A Live run
+  can make a new Event from an old Signal and add it to an old bucket. This
+  is also a Live result, and the history series shows it. The log keeps the
+  history safe from a replay, not from late data.
+- The API does not mark settled Events or buckets in the first version. The
+  page already marks a partly covered bucket (`isPartial`). A "may still
+  change" mark is a later option.
 
 This is why a snapshot does not fit: a snapshot needs an instant, and
 grouping has none.
@@ -106,14 +110,36 @@ request that builds a re-grouping replay.
    Signals to another Event, it moves the Alert (`alerts.event_id`). The
    Alert keeps its `created_at`. Time to alert then needs no log.
 2. **A replay never deletes a Signal or an Event.** A replaced Event is kept
-   and marked as replaced; live views leave it out. Its onset, its places and
-   its escalations stay readable. Source health and Events escalated then
-   need no log.
+   and marked as replaced, with the id of the Event that replaced it; live
+   views leave it out. Its onset, its places and its escalations stay
+   readable. Source health then needs no log.
 3. **The onset is the yardstick, not the result.** Time to detection and
    time to alert measure two instants that the pipeline produced (the first
    Signal, the Alert) against the Event's onset. A replay that extracts a
    better onset makes the old measurement more correct. The metrics read the
    live onset, as today.
+
+### 4. The Events of a history series
+
+Rules 1 and 2 keep the rows. They do not say which Events a history series
+counts. After a re-grouping replay, a replaced Event and its replacement
+both exist, and the Alert is on the replacement.
+
+- **The Events of a history series are the Events with a `LIVE` row in the
+  grouping log.** An Event that a replay created has only `REPLAY` rows, so
+  it adds nothing to a past bucket. This applies to every Event-based
+  metric: Events with one Signal, time to detection, `EVENTS_ESCALATED` and
+  the Alert side of `ACLED_EVENTS_ALERTED`.
+- **A history reader follows a replaced Event to its replacement** to find
+  what a person or a later run attached there. A replaced Event counts as
+  alerted when it or its replacement has an Alert, and as escalated when it
+  or its replacement has an escalation.
+- Time to alert reads Alerts, not Events, and rule 1 keeps one Alert per
+  real-world event. It needs no change.
+- An Event with no ingested Signal has no row in the log (a web case, a
+  manual Signal). `EVENTS_ESCALATED` counts those Events today. Its history
+  series keeps them: it counts an Event when it has a `LIVE` row or no row
+  at all, and not when it has only `REPLAY` rows.
 
 ## Considered options
 
@@ -138,8 +164,9 @@ request that builds a re-grouping replay.
   rows.
 - The grouping metrics get a replay line with no more design: the `REPLAY`
   rows of one run, bucketed as the history series is.
-- Rule 2 needs a "replaced" state on Events. That is a schema change in the
-  re-grouping replay work, not here.
+- Rule 2 needs a "replaced by" field on Events. That is a schema change in
+  the re-grouping replay work, not here. Until a re-grouping replay exists,
+  no Event is replaced and decision 4 changes no number.
 - The location filter of every Signal-based metric still reads the Signal's
   current location. A geocoding replay moves Signals between places in a
   filtered view. This ADR leaves that as it is: the unfiltered series is the
@@ -155,5 +182,5 @@ request that builds a re-grouping replay.
 - **Rule 2.** Is "keep and mark as replaced" acceptable for Events, or will
   a re-grouping replay delete them? If it deletes, the Event facts log and
   the Alert log are needed after all.
-- **Final buckets.** Does the page need a "not final yet" mark on the
+- **Late changes.** Does the page need a "may still change" mark on the
   grouping charts?
