@@ -112,7 +112,9 @@ request that builds a re-grouping replay.
 2. **A replay never deletes a Signal or an Event.** A replaced Event is kept
    and marked as replaced, with the id of the Event that replaced it; live
    views leave it out. Its onset, its places and its escalations stay
-   readable. Source health then needs no log.
+   readable. Source health then needs no log. ADR-0022 holds the full
+   rule: the mark, what moves to the replacement, and who sees a replaced
+   Event.
 3. **The onset is the yardstick, not the result.** Time to detection and
    time to alert measure two instants that the pipeline produced (the first
    Signal, the Alert) against the Event's onset. A replay that extracts a
