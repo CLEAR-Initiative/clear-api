@@ -1,0 +1,1258 @@
+{
+ "source": "OCHA COD-AB Sudan administrative boundaries (HDX), fields adm1_name1 / adm2_name1",
+ "url": "https://data.humdata.org/dataset/a66a4b6c-92de-4507-9546-aa1900474180",
+ "file": "sdn_admin_boundaries.geojson.zip",
+ "sha256": "75330d4e12e53f966df0e5683e04f0919e9964952fbbf827f3729038e603c95e",
+ "fetchedOn": "2026-11-11",
+ "countryCode": "SD",
+ "rows": [
+  {
+   "pCode": "SD01",
+   "level": 1,
+   "name": "Khartoum",
+   "nameAr": "الخرطوم"
+  },
+  {
+   "pCode": "SD02",
+   "level": 1,
+   "name": "North Darfur",
+   "nameAr": "شمال دارفور"
+  },
+  {
+   "pCode": "SD03",
+   "level": 1,
+   "name": "South Darfur",
+   "nameAr": "جنوب دارفور"
+  },
+  {
+   "pCode": "SD04",
+   "level": 1,
+   "name": "West Darfur",
+   "nameAr": "غرب دارفور"
+  },
+  {
+   "pCode": "SD05",
+   "level": 1,
+   "name": "East Darfur",
+   "nameAr": "شرق دارفور"
+  },
+  {
+   "pCode": "SD06",
+   "level": 1,
+   "name": "Central Darfur",
+   "nameAr": "وسط دارفور"
+  },
+  {
+   "pCode": "SD07",
+   "level": 1,
+   "name": "South Kordofan",
+   "nameAr": "جنوب كردفان"
+  },
+  {
+   "pCode": "SD08",
+   "level": 1,
+   "name": "Blue Nile",
+   "nameAr": "النيل الأزرق"
+  },
+  {
+   "pCode": "SD09",
+   "level": 1,
+   "name": "White Nile",
+   "nameAr": "النيل الأبيض"
+  },
+  {
+   "pCode": "SD10",
+   "level": 1,
+   "name": "Red Sea",
+   "nameAr": "البحر الأحمر"
+  },
+  {
+   "pCode": "SD11",
+   "level": 1,
+   "name": "Kassala",
+   "nameAr": "كسلا"
+  },
+  {
+   "pCode": "SD12",
+   "level": 1,
+   "name": "Gedaref",
+   "nameAr": "القضارف"
+  },
+  {
+   "pCode": "SD13",
+   "level": 1,
+   "name": "North Kordofan",
+   "nameAr": "شمال كردفان"
+  },
+  {
+   "pCode": "SD14",
+   "level": 1,
+   "name": "Sennar",
+   "nameAr": "سنار"
+  },
+  {
+   "pCode": "SD15",
+   "level": 1,
+   "name": "Aj Jazirah",
+   "nameAr": "الجزيرة"
+  },
+  {
+   "pCode": "SD16",
+   "level": 1,
+   "name": "River Nile",
+   "nameAr": "نهر النيل"
+  },
+  {
+   "pCode": "SD17",
+   "level": 1,
+   "name": "Northern",
+   "nameAr": "الشمالية"
+  },
+  {
+   "pCode": "SD18",
+   "level": 1,
+   "name": "West Kordofan",
+   "nameAr": "غرب كردفان"
+  },
+  {
+   "pCode": "SD19",
+   "level": 1,
+   "name": "Abyei PCA",
+   "nameAr": "إدارية أبيي"
+  },
+  {
+   "pCode": "SD01001",
+   "level": 2,
+   "name": "Jebel Awlia",
+   "nameAr": "جبل أولياء"
+  },
+  {
+   "pCode": "SD01002",
+   "level": 2,
+   "name": "Um Bada",
+   "nameAr": "أمبدة"
+  },
+  {
+   "pCode": "SD01003",
+   "level": 2,
+   "name": "Bahri",
+   "nameAr": "بحري"
+  },
+  {
+   "pCode": "SD01004",
+   "level": 2,
+   "name": "Sharg An Neel",
+   "nameAr": "شرق النيل"
+  },
+  {
+   "pCode": "SD01005",
+   "level": 2,
+   "name": "Karrari",
+   "nameAr": "كرري"
+  },
+  {
+   "pCode": "SD01006",
+   "level": 2,
+   "name": "Um Durman",
+   "nameAr": "أم درمان"
+  },
+  {
+   "pCode": "SD01007",
+   "level": 2,
+   "name": "Khartoum",
+   "nameAr": "الخرطوم"
+  },
+  {
+   "pCode": "SD02113",
+   "level": 2,
+   "name": "Dar As Salam",
+   "nameAr": "دار السلام"
+  },
+  {
+   "pCode": "SD02114",
+   "level": 2,
+   "name": "Al Fasher",
+   "nameAr": "الفاشر"
+  },
+  {
+   "pCode": "SD02116",
+   "level": 2,
+   "name": "Al Koma",
+   "nameAr": "الكومة"
+  },
+  {
+   "pCode": "SD02117",
+   "level": 2,
+   "name": "Al Malha",
+   "nameAr": "المالحة"
+  },
+  {
+   "pCode": "SD02118",
+   "level": 2,
+   "name": "As Serief",
+   "nameAr": "السريف"
+  },
+  {
+   "pCode": "SD02119",
+   "level": 2,
+   "name": "At Tawisha",
+   "nameAr": "الطويشة"
+  },
+  {
+   "pCode": "SD02120",
+   "level": 2,
+   "name": "Um Baru",
+   "nameAr": "أم برو"
+  },
+  {
+   "pCode": "SD02124",
+   "level": 2,
+   "name": "Kebkabiya",
+   "nameAr": "كبكابية"
+  },
+  {
+   "pCode": "SD02126",
+   "level": 2,
+   "name": "Kelemando",
+   "nameAr": "كلمندو"
+  },
+  {
+   "pCode": "SD02128",
+   "level": 2,
+   "name": "Kutum",
+   "nameAr": "كتم"
+  },
+  {
+   "pCode": "SD02129",
+   "level": 2,
+   "name": "Melit",
+   "nameAr": "مليط"
+  },
+  {
+   "pCode": "SD02133",
+   "level": 2,
+   "name": "Saraf Omra",
+   "nameAr": "سرف عمرة"
+  },
+  {
+   "pCode": "SD02136",
+   "level": 2,
+   "name": "Um Kadadah",
+   "nameAr": "أم كدادة"
+  },
+  {
+   "pCode": "SD02168",
+   "level": 2,
+   "name": "Kernoi",
+   "nameAr": "كرنوي"
+  },
+  {
+   "pCode": "SD02169",
+   "level": 2,
+   "name": "Al Lait",
+   "nameAr": "اللعيت"
+  },
+  {
+   "pCode": "SD02170",
+   "level": 2,
+   "name": "Tawila",
+   "nameAr": "طويلة"
+  },
+  {
+   "pCode": "SD02171",
+   "level": 2,
+   "name": "At Tina",
+   "nameAr": "الطينة"
+  },
+  {
+   "pCode": "SD03141",
+   "level": 2,
+   "name": "Al Radoum",
+   "nameAr": "الردوم"
+  },
+  {
+   "pCode": "SD03143",
+   "level": 2,
+   "name": "Ed Al Fursan",
+   "nameAr": "عد الفرسان"
+  },
+  {
+   "pCode": "SD03144",
+   "level": 2,
+   "name": "Kas",
+   "nameAr": "كاس"
+  },
+  {
+   "pCode": "SD03145",
+   "level": 2,
+   "name": "Mershing",
+   "nameAr": "مرشنج"
+  },
+  {
+   "pCode": "SD03146",
+   "level": 2,
+   "name": "Um Dafoug",
+   "nameAr": "أم دافوق"
+  },
+  {
+   "pCode": "SD03147",
+   "level": 2,
+   "name": "Sharg Aj Jabal",
+   "nameAr": "شرق الجبل"
+  },
+  {
+   "pCode": "SD03149",
+   "level": 2,
+   "name": "Tulus",
+   "nameAr": "تلس"
+  },
+  {
+   "pCode": "SD03150",
+   "level": 2,
+   "name": "Al Wihda",
+   "nameAr": "الوحدة"
+  },
+  {
+   "pCode": "SD03151",
+   "level": 2,
+   "name": "Nitega",
+   "nameAr": "نتيقة"
+  },
+  {
+   "pCode": "SD03153",
+   "level": 2,
+   "name": "Gereida",
+   "nameAr": "قريضة"
+  },
+  {
+   "pCode": "SD03154",
+   "level": 2,
+   "name": "Shattaya",
+   "nameAr": "شطاية"
+  },
+  {
+   "pCode": "SD03156",
+   "level": 2,
+   "name": "As Sunta",
+   "nameAr": "السنطة"
+  },
+  {
+   "pCode": "SD03157",
+   "level": 2,
+   "name": "Kubum",
+   "nameAr": "كبم"
+  },
+  {
+   "pCode": "SD03158",
+   "level": 2,
+   "name": "Rehaid Albirdi",
+   "nameAr": "رهيد البردي"
+  },
+  {
+   "pCode": "SD03159",
+   "level": 2,
+   "name": "Kateila",
+   "nameAr": "كتيلا"
+  },
+  {
+   "pCode": "SD03161",
+   "level": 2,
+   "name": "Buram",
+   "nameAr": "برام"
+  },
+  {
+   "pCode": "SD03162",
+   "level": 2,
+   "name": "Beliel",
+   "nameAr": "بليل"
+  },
+  {
+   "pCode": "SD03164",
+   "level": 2,
+   "name": "Nyala Shimal",
+   "nameAr": "نيالا شمال"
+  },
+  {
+   "pCode": "SD03166",
+   "level": 2,
+   "name": "As Salam - SD",
+   "nameAr": "السلام - ج د"
+  },
+  {
+   "pCode": "SD03167",
+   "level": 2,
+   "name": "Nyala Janoub",
+   "nameAr": "نيالا جنوب"
+  },
+  {
+   "pCode": "SD03172",
+   "level": 2,
+   "name": "Damso",
+   "nameAr": "دمسو"
+  },
+  {
+   "pCode": "SD04111",
+   "level": 2,
+   "name": "Beida",
+   "nameAr": "بيضا"
+  },
+  {
+   "pCode": "SD04115",
+   "level": 2,
+   "name": "Ag Geneina",
+   "nameAr": "الجنينة"
+  },
+  {
+   "pCode": "SD04121",
+   "level": 2,
+   "name": "Foro Baranga",
+   "nameAr": "فور برنقا"
+  },
+  {
+   "pCode": "SD04122",
+   "level": 2,
+   "name": "Habila - WD",
+   "nameAr": "هبيلة - غ د"
+  },
+  {
+   "pCode": "SD04123",
+   "level": 2,
+   "name": "Jebel Moon",
+   "nameAr": "جبل مون"
+  },
+  {
+   "pCode": "SD04125",
+   "level": 2,
+   "name": "Kereneik",
+   "nameAr": "كرينك"
+  },
+  {
+   "pCode": "SD04127",
+   "level": 2,
+   "name": "Kulbus",
+   "nameAr": "كلبس"
+  },
+  {
+   "pCode": "SD04134",
+   "level": 2,
+   "name": "Sirba",
+   "nameAr": "سربا"
+  },
+  {
+   "pCode": "SD05139",
+   "level": 2,
+   "name": "Adila",
+   "nameAr": "عديلة"
+  },
+  {
+   "pCode": "SD05140",
+   "level": 2,
+   "name": "Abu Jabrah",
+   "nameAr": "أبو جابرة"
+  },
+  {
+   "pCode": "SD05142",
+   "level": 2,
+   "name": "Ad Du'ayn",
+   "nameAr": "الضعين"
+  },
+  {
+   "pCode": "SD05148",
+   "level": 2,
+   "name": "Shia'ria",
+   "nameAr": "شعيرية"
+  },
+  {
+   "pCode": "SD05152",
+   "level": 2,
+   "name": "Al Firdous",
+   "nameAr": "الفردوس"
+  },
+  {
+   "pCode": "SD05155",
+   "level": 2,
+   "name": "Abu Karinka",
+   "nameAr": "أبو كارنكا"
+  },
+  {
+   "pCode": "SD05160",
+   "level": 2,
+   "name": "Bahr Al Arab",
+   "nameAr": "بحر العرب"
+  },
+  {
+   "pCode": "SD05163",
+   "level": 2,
+   "name": "Assalaya",
+   "nameAr": "عسلاية"
+  },
+  {
+   "pCode": "SD05165",
+   "level": 2,
+   "name": "Yassin",
+   "nameAr": "يس"
+  },
+  {
+   "pCode": "SD06110",
+   "level": 2,
+   "name": "Azum",
+   "nameAr": "أزوم"
+  },
+  {
+   "pCode": "SD06112",
+   "level": 2,
+   "name": "Bendasi",
+   "nameAr": "بندسي"
+  },
+  {
+   "pCode": "SD06130",
+   "level": 2,
+   "name": "Mukjar",
+   "nameAr": "مكجر"
+  },
+  {
+   "pCode": "SD06131",
+   "level": 2,
+   "name": "Gharb Jabal Marrah",
+   "nameAr": "غرب جبل مرة"
+  },
+  {
+   "pCode": "SD06132",
+   "level": 2,
+   "name": "Shamal Jabal Marrah",
+   "nameAr": "شمال جبل مرة"
+  },
+  {
+   "pCode": "SD06135",
+   "level": 2,
+   "name": "Um Dukhun",
+   "nameAr": "أم دخن"
+  },
+  {
+   "pCode": "SD06137",
+   "level": 2,
+   "name": "Wadi Salih",
+   "nameAr": "وادي صالح"
+  },
+  {
+   "pCode": "SD06138",
+   "level": 2,
+   "name": "Zalingi",
+   "nameAr": "زالنجى"
+  },
+  {
+   "pCode": "SD06139",
+   "level": 2,
+   "name": "Wasat Jabal Marrah",
+   "nameAr": "وسط جبل مرة"
+  },
+  {
+   "pCode": "SD07088",
+   "level": 2,
+   "name": "Abu Jubayhah",
+   "nameAr": "أبو جبيهة"
+  },
+  {
+   "pCode": "SD07089",
+   "level": 2,
+   "name": "Talawdi",
+   "nameAr": "تلودي"
+  },
+  {
+   "pCode": "SD07090",
+   "level": 2,
+   "name": "Abassiya",
+   "nameAr": "العباسية"
+  },
+  {
+   "pCode": "SD07091",
+   "level": 2,
+   "name": "Um Durein",
+   "nameAr": "أم دورين"
+  },
+  {
+   "pCode": "SD07093",
+   "level": 2,
+   "name": "Ar Rashad",
+   "nameAr": "الرشاد"
+  },
+  {
+   "pCode": "SD07094",
+   "level": 2,
+   "name": "Al Quoz",
+   "nameAr": "القوز"
+  },
+  {
+   "pCode": "SD07095",
+   "level": 2,
+   "name": "Dilling",
+   "nameAr": "الدلنج"
+  },
+  {
+   "pCode": "SD07096",
+   "level": 2,
+   "name": "Heiban",
+   "nameAr": "هيبان"
+  },
+  {
+   "pCode": "SD07097",
+   "level": 2,
+   "name": "Ar Reif Ash Shargi",
+   "nameAr": "الريف الشرقي"
+  },
+  {
+   "pCode": "SD07098",
+   "level": 2,
+   "name": "Kadugli",
+   "nameAr": "كادقلي"
+  },
+  {
+   "pCode": "SD07099",
+   "level": 2,
+   "name": "Al Buram",
+   "nameAr": "البرام"
+  },
+  {
+   "pCode": "SD07103",
+   "level": 2,
+   "name": "Habila - SK",
+   "nameAr": "هبيلة - ج ك"
+  },
+  {
+   "pCode": "SD07104",
+   "level": 2,
+   "name": "Abu Kershola",
+   "nameAr": "أبو كرشولا"
+  },
+  {
+   "pCode": "SD07105",
+   "level": 2,
+   "name": "Al Leri",
+   "nameAr": "الليري"
+  },
+  {
+   "pCode": "SD07106",
+   "level": 2,
+   "name": "At Tadamon - SK",
+   "nameAr": "التضامن - ج ك"
+  },
+  {
+   "pCode": "SD07107",
+   "level": 2,
+   "name": "Delami",
+   "nameAr": "دلامي"
+  },
+  {
+   "pCode": "SD07108",
+   "level": 2,
+   "name": "Ghadeer",
+   "nameAr": "غدير"
+  },
+  {
+   "pCode": "SD08104",
+   "level": 2,
+   "name": "Baw",
+   "nameAr": "باو"
+  },
+  {
+   "pCode": "SD08105",
+   "level": 2,
+   "name": "Ed Damazine",
+   "nameAr": "الدمازين"
+  },
+  {
+   "pCode": "SD08106",
+   "level": 2,
+   "name": "Al Kurmuk",
+   "nameAr": "الكرمك"
+  },
+  {
+   "pCode": "SD08107",
+   "level": 2,
+   "name": "Ar Rusayris",
+   "nameAr": "الروصيرص"
+  },
+  {
+   "pCode": "SD08108",
+   "level": 2,
+   "name": "At Tadamon - BN",
+   "nameAr": "التضامن - ن ق"
+  },
+  {
+   "pCode": "SD08109",
+   "level": 2,
+   "name": "Geisan",
+   "nameAr": "قيسان"
+  },
+  {
+   "pCode": "SD08110",
+   "level": 2,
+   "name": "Wad Al Mahi",
+   "nameAr": "ود الماحي"
+  },
+  {
+   "pCode": "SD09044",
+   "level": 2,
+   "name": "Ad Diwaim",
+   "nameAr": "الدويم"
+  },
+  {
+   "pCode": "SD09045",
+   "level": 2,
+   "name": "Um Rimta",
+   "nameAr": "أم رمتة"
+  },
+  {
+   "pCode": "SD09046",
+   "level": 2,
+   "name": "Rabak",
+   "nameAr": "ربك"
+  },
+  {
+   "pCode": "SD09047",
+   "level": 2,
+   "name": "Kosti",
+   "nameAr": "كوستي"
+  },
+  {
+   "pCode": "SD09048",
+   "level": 2,
+   "name": "Tendalti",
+   "nameAr": "تندلتي"
+  },
+  {
+   "pCode": "SD09049",
+   "level": 2,
+   "name": "As Salam / Ar Rawat",
+   "nameAr": "السلام / الراوات"
+  },
+  {
+   "pCode": "SD09050",
+   "level": 2,
+   "name": "Al Gitaina",
+   "nameAr": "القطينة"
+  },
+  {
+   "pCode": "SD09051",
+   "level": 2,
+   "name": "Aj Jabalain",
+   "nameAr": "الجبلين"
+  },
+  {
+   "pCode": "SD09052",
+   "level": 2,
+   "name": "Guli",
+   "nameAr": "قلي"
+  },
+  {
+   "pCode": "SD10063",
+   "level": 2,
+   "name": "Dordieb",
+   "nameAr": "درديب"
+  },
+  {
+   "pCode": "SD10064",
+   "level": 2,
+   "name": "Port Sudan",
+   "nameAr": "بورتسودان"
+  },
+  {
+   "pCode": "SD10065",
+   "level": 2,
+   "name": "Tawkar",
+   "nameAr": "طوكر"
+  },
+  {
+   "pCode": "SD10066",
+   "level": 2,
+   "name": "Hala'ib",
+   "nameAr": "حلايب"
+  },
+  {
+   "pCode": "SD10067",
+   "level": 2,
+   "name": "Jubayt Elma'aadin",
+   "nameAr": "جبيت المعادن"
+  },
+  {
+   "pCode": "SD10068",
+   "level": 2,
+   "name": "Sawakin",
+   "nameAr": "سواكن"
+  },
+  {
+   "pCode": "SD10069",
+   "level": 2,
+   "name": "Al Ganab",
+   "nameAr": "القنب"
+  },
+  {
+   "pCode": "SD10070",
+   "level": 2,
+   "name": "Haya",
+   "nameAr": "هيا"
+  },
+  {
+   "pCode": "SD10071",
+   "level": 2,
+   "name": "Sinkat",
+   "nameAr": "سنكات"
+  },
+  {
+   "pCode": "SD10072",
+   "level": 2,
+   "name": "Agig",
+   "nameAr": "عقيق"
+  },
+  {
+   "pCode": "SD11052",
+   "level": 2,
+   "name": "Halfa Aj Jadeedah",
+   "nameAr": "حلفا الجديدة"
+  },
+  {
+   "pCode": "SD11053",
+   "level": 2,
+   "name": "Madeinat Kassala",
+   "nameAr": "مدينة كسلا"
+  },
+  {
+   "pCode": "SD11054",
+   "level": 2,
+   "name": "Reifi Gharb Kassala",
+   "nameAr": "ريفى غرب كسلا"
+  },
+  {
+   "pCode": "SD11055",
+   "level": 2,
+   "name": "Reifi Aroma",
+   "nameAr": "ريفى أروما"
+  },
+  {
+   "pCode": "SD11056",
+   "level": 2,
+   "name": "Reifi Kassla",
+   "nameAr": "ريفى كسلا"
+  },
+  {
+   "pCode": "SD11057",
+   "level": 2,
+   "name": "Reifi Shamal Ad Delta",
+   "nameAr": "ريفى شمال الدلتا"
+  },
+  {
+   "pCode": "SD11058",
+   "level": 2,
+   "name": "Reifi Hamashkureib",
+   "nameAr": "ريفى همش كوريب"
+  },
+  {
+   "pCode": "SD11059",
+   "level": 2,
+   "name": "Reifi Telkok",
+   "nameAr": "ريفى تلكوك"
+  },
+  {
+   "pCode": "SD11060",
+   "level": 2,
+   "name": "Reifi Khashm Elgirba",
+   "nameAr": "ريفى خشم القربة"
+  },
+  {
+   "pCode": "SD11061",
+   "level": 2,
+   "name": "Reifi Wad Elhilaiw",
+   "nameAr": "ريفى ود الحليو"
+  },
+  {
+   "pCode": "SD11062",
+   "level": 2,
+   "name": "Reifi Nahr Atbara",
+   "nameAr": "ريفى نهر عطبرة"
+  },
+  {
+   "pCode": "SD12073",
+   "level": 2,
+   "name": "Al Butanah",
+   "nameAr": "البطانة"
+  },
+  {
+   "pCode": "SD12074",
+   "level": 2,
+   "name": "Al Fao",
+   "nameAr": "الفاو"
+  },
+  {
+   "pCode": "SD12075",
+   "level": 2,
+   "name": "Al Fashaga",
+   "nameAr": "الفشقة"
+  },
+  {
+   "pCode": "SD12076",
+   "level": 2,
+   "name": "Al Qureisha",
+   "nameAr": "القريشة"
+  },
+  {
+   "pCode": "SD12077",
+   "level": 2,
+   "name": "Basundah",
+   "nameAr": "باسندة"
+  },
+  {
+   "pCode": "SD12078",
+   "level": 2,
+   "name": "Al Galabat Al Gharbyah - Kassab",
+   "nameAr": "القلابات الغربية - كساب"
+  },
+  {
+   "pCode": "SD12079",
+   "level": 2,
+   "name": "Gala'a Al Nahal",
+   "nameAr": "قلع النحل"
+  },
+  {
+   "pCode": "SD12080",
+   "level": 2,
+   "name": "Madeinat Al Gedaref",
+   "nameAr": "مدينة القضارف"
+  },
+  {
+   "pCode": "SD12081",
+   "level": 2,
+   "name": "Wasat Al Gedaref",
+   "nameAr": "وسط القضارف"
+  },
+  {
+   "pCode": "SD12082",
+   "level": 2,
+   "name": "Al Mafaza",
+   "nameAr": "المفازة"
+  },
+  {
+   "pCode": "SD12083",
+   "level": 2,
+   "name": "Galabat Ash-Shargiah",
+   "nameAr": "القلابات الشرقية"
+  },
+  {
+   "pCode": "SD12084",
+   "level": 2,
+   "name": "Ar Rahad",
+   "nameAr": "الرهد"
+  },
+  {
+   "pCode": "SD13023",
+   "level": 2,
+   "name": "Um Rawaba",
+   "nameAr": "أم روابة"
+  },
+  {
+   "pCode": "SD13024",
+   "level": 2,
+   "name": "Sheikan",
+   "nameAr": "شيكان"
+  },
+  {
+   "pCode": "SD13025",
+   "level": 2,
+   "name": "Soudari",
+   "nameAr": "سودري"
+  },
+  {
+   "pCode": "SD13026",
+   "level": 2,
+   "name": "Bara",
+   "nameAr": "بارا"
+  },
+  {
+   "pCode": "SD13027",
+   "level": 2,
+   "name": "Gebrat Al Sheikh",
+   "nameAr": "جبرة الشيخ"
+  },
+  {
+   "pCode": "SD13028",
+   "level": 2,
+   "name": "Um Dam Haj Ahmed",
+   "nameAr": "أم دم حاج أحمد"
+  },
+  {
+   "pCode": "SD13029",
+   "level": 2,
+   "name": "Gharb Bara",
+   "nameAr": "غرب بارا"
+  },
+  {
+   "pCode": "SD13030",
+   "level": 2,
+   "name": "Ar Rahad",
+   "nameAr": "الرهد"
+  },
+  {
+   "pCode": "SD14037",
+   "level": 2,
+   "name": "Abu Hujar",
+   "nameAr": "أبو حجار"
+  },
+  {
+   "pCode": "SD14038",
+   "level": 2,
+   "name": "Sennar",
+   "nameAr": "سنار"
+  },
+  {
+   "pCode": "SD14039",
+   "level": 2,
+   "name": "Ad Dali",
+   "nameAr": "الدالي"
+  },
+  {
+   "pCode": "SD14040",
+   "level": 2,
+   "name": "Ad Dinder",
+   "nameAr": "الدندر"
+  },
+  {
+   "pCode": "SD14041",
+   "level": 2,
+   "name": "As Suki",
+   "nameAr": "السوكي"
+  },
+  {
+   "pCode": "SD14042",
+   "level": 2,
+   "name": "Sharg Sennar",
+   "nameAr": "شرق سنار"
+  },
+  {
+   "pCode": "SD14043",
+   "level": 2,
+   "name": "Sinja",
+   "nameAr": "سنجة"
+  },
+  {
+   "pCode": "SD15030",
+   "level": 2,
+   "name": "Medani Al Kubra",
+   "nameAr": "مدني الكبري"
+  },
+  {
+   "pCode": "SD15031",
+   "level": 2,
+   "name": "Janub Al Jazirah",
+   "nameAr": "جنوب الجزيرة"
+  },
+  {
+   "pCode": "SD15032",
+   "level": 2,
+   "name": "Um Algura",
+   "nameAr": "أم القري"
+  },
+  {
+   "pCode": "SD15033",
+   "level": 2,
+   "name": "Sharg Al Jazirah",
+   "nameAr": "شرق الجزيرة"
+  },
+  {
+   "pCode": "SD15034",
+   "level": 2,
+   "name": "Al Hasahisa",
+   "nameAr": "الحصاحيصا"
+  },
+  {
+   "pCode": "SD15035",
+   "level": 2,
+   "name": "Al Kamlin",
+   "nameAr": "الكاملين"
+  },
+  {
+   "pCode": "SD15036",
+   "level": 2,
+   "name": "Al Manaqil",
+   "nameAr": "المناقل"
+  },
+  {
+   "pCode": "SD15037",
+   "level": 2,
+   "name": "Al Qurashi",
+   "nameAr": "القرشي"
+  },
+  {
+   "pCode": "SD16008",
+   "level": 2,
+   "name": "Abu Hamad",
+   "nameAr": "أبو حمد"
+  },
+  {
+   "pCode": "SD16009",
+   "level": 2,
+   "name": "Al Matama",
+   "nameAr": "المتمة"
+  },
+  {
+   "pCode": "SD16010",
+   "level": 2,
+   "name": "Shendi",
+   "nameAr": "شندي"
+  },
+  {
+   "pCode": "SD16011",
+   "level": 2,
+   "name": "Ad Damar",
+   "nameAr": "الدامر"
+  },
+  {
+   "pCode": "SD16012",
+   "level": 2,
+   "name": "Atbara",
+   "nameAr": "عطبرة"
+  },
+  {
+   "pCode": "SD16013",
+   "level": 2,
+   "name": "Barbar",
+   "nameAr": "بربر"
+  },
+  {
+   "pCode": "SD16014",
+   "level": 2,
+   "name": "Al Buhaira",
+   "nameAr": "البحيرة"
+  },
+  {
+   "pCode": "SD17014",
+   "level": 2,
+   "name": "Halfa",
+   "nameAr": "حلفا"
+  },
+  {
+   "pCode": "SD17015",
+   "level": 2,
+   "name": "Delgo",
+   "nameAr": "دلقو"
+  },
+  {
+   "pCode": "SD17016",
+   "level": 2,
+   "name": "Al Burgaig",
+   "nameAr": "البرقيق"
+  },
+  {
+   "pCode": "SD17017",
+   "level": 2,
+   "name": "Dongola",
+   "nameAr": "دنقلا"
+  },
+  {
+   "pCode": "SD17018",
+   "level": 2,
+   "name": "Al Golid",
+   "nameAr": "القولد"
+  },
+  {
+   "pCode": "SD17019",
+   "level": 2,
+   "name": "Ad Dabbah",
+   "nameAr": "الدبة"
+  },
+  {
+   "pCode": "SD17020",
+   "level": 2,
+   "name": "Merwoe",
+   "nameAr": "مروي"
+  },
+  {
+   "pCode": "SD18021",
+   "level": 2,
+   "name": "Ghubaish",
+   "nameAr": "غبيش"
+  },
+  {
+   "pCode": "SD18022",
+   "level": 2,
+   "name": "An Nuhud",
+   "nameAr": "النهود"
+  },
+  {
+   "pCode": "SD18028",
+   "level": 2,
+   "name": "Abu Zabad",
+   "nameAr": "أبو زبد"
+  },
+  {
+   "pCode": "SD18029",
+   "level": 2,
+   "name": "Wad Bandah",
+   "nameAr": "ود بندة"
+  },
+  {
+   "pCode": "SD18085",
+   "level": 2,
+   "name": "Keilak",
+   "nameAr": "كيلك"
+  },
+  {
+   "pCode": "SD18086",
+   "level": 2,
+   "name": "As Salam - WK",
+   "nameAr": "السلام - غ ك"
+  },
+  {
+   "pCode": "SD18087",
+   "level": 2,
+   "name": "Abyei",
+   "nameAr": "أبيي"
+  },
+  {
+   "pCode": "SD18092",
+   "level": 2,
+   "name": "As Sunut",
+   "nameAr": "السنوط"
+  },
+  {
+   "pCode": "SD18100",
+   "level": 2,
+   "name": "Babanusa",
+   "nameAr": "بابنوسة"
+  },
+  {
+   "pCode": "SD18102",
+   "level": 2,
+   "name": "Al Lagowa",
+   "nameAr": "لقاوة"
+  },
+  {
+   "pCode": "SD18103",
+   "level": 2,
+   "name": "Al Dibab",
+   "nameAr": "الدبب"
+  },
+  {
+   "pCode": "SD18104",
+   "level": 2,
+   "name": "Al Idia",
+   "nameAr": "الأضية"
+  },
+  {
+   "pCode": "SD18105",
+   "level": 2,
+   "name": "Al Khiwai",
+   "nameAr": "الخوي"
+  },
+  {
+   "pCode": "SD18106",
+   "level": 2,
+   "name": "Al Meiram",
+   "nameAr": "الميرم"
+  },
+  {
+   "pCode": "SD19001",
+   "level": 2,
+   "name": "Abyei PCA area",
+   "nameAr": "إدارية أبيي"
+  }
+ ]
+}
