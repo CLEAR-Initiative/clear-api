@@ -1224,6 +1224,14 @@ export const mutationTypeDef = gql`
     is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
+    """The run that makes these Links, for the grouping log (ADR-0021).
+    \`runKind\` defaults to LIVE; a replay job sends REPLAY. \`pipelineVersion\`
+    is the clear-pipeline git SHA and \`runId\` the Dagster run id. clear-api
+    logs a Link only for a call with an API key: a Link that a person makes
+    writes no row."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input UpdateEventInput {
@@ -1270,6 +1278,14 @@ export const mutationTypeDef = gql`
     """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float
+    """The run that makes these Links, for the grouping log (ADR-0021).
+    \`runKind\` defaults to LIVE; a replay job sends REPLAY. \`pipelineVersion\`
+    is the clear-pipeline git SHA and \`runId\` the Dagster run id. clear-api
+    logs a Link only for a call with an API key: a Link that a person makes
+    writes no row."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input CreateDataSourceInput {

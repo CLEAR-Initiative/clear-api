@@ -68,7 +68,7 @@ describe("foldSourceDays", () => {
 describe("computeSignalsGrouped and computeSingleSignalEvents", () => {
   it("each run one query with the range, the location and the sources, and fold what comes back", async () => {
     for (const [compute, marker] of [
-      [computeSignalsGrouped, '"signal_to_events" se2'],
+      [computeSignalsGrouped, '"signal_grouping_log" g2'],
       [computeSingleSignalEvents, "first_ingested"],
     ] as const) {
       const $queryRaw = vi.fn(async () => [{ source: "dataminr", day: day("2026-10-27"), numerator: 3, denominator: 4 }]);

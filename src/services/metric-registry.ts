@@ -276,7 +276,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "SIGNALS",
     description:
-      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping, each Signal once. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists. The location filter keeps the Signals whose current location is in the place. The newest buckets read low until grouping has caught up with them (ADR-0018).",
+      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping, each Signal once. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists. The location filter keeps the Signals whose current location is in the place. The newest buckets read low until grouping has caught up with them (ADR-0018). It reads the links that a Live pipeline run made, so a replay does not change a past bucket (ADR-0021).",
     timeBasis: "The Signal's publishedAt.",
     groupable: true,
     locationScoped: true,
@@ -289,7 +289,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "EVENTS",
     description:
-      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged. The location filter keeps the Events any of whose places is in the place. The newest buckets read high until grouping has caught up with them (ADR-0018).",
+      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged. The location filter keeps the Events any of whose places is in the place. The newest buckets read high until grouping has caught up with them (ADR-0018). It reads the links that a Live pipeline run made, so a replay does not change a past bucket (ADR-0021).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: true,
     locationScoped: true,
