@@ -193,11 +193,26 @@ Rules 1 and 2 keep the rows. They do not say which Events a history series
 counts. After a re-grouping replay, a replaced Event and its replacement
 both exist, and the Alert is on the replacement.
 
-- **The Events of a history series are the Events with a `LIVE` row in the
-  grouping log.** An Event that a replay created has only `REPLAY` rows, so
-  it adds nothing to a past bucket. This applies to every Event-based
-  metric: Events with one Signal, time to detection, `EVENTS_ESCALATED` and
-  the Alert side of `ACLED_EVENTS_ALERTED`.
+- **The Events of a history series are the Events that a Replay run did not
+  create.** An Event records the kind of run that created it
+  (`events.created_by_run_kind`: `LIVE`, `REPLAY`, or null when a person
+  created it). `createEvent` sets it once, from the run kind the pipeline
+  sends, and no mutation changes it. An Event that a replay created is never
+  in a history series, whatever joins it later. This applies to every
+  Event-based metric: Events with one Signal, time to detection,
+  `EVENTS_ESCALATED` and the Alert side of `ACLED_EVENTS_ALERTED`.
+- **Why the origin is on the Event, and not read from the Links.** The first
+  draft counted an Event when it had a `LIVE` Link. That fails in this case:
+  in August the pipeline makes Events A, B and C. In November a replay
+  merges them into a new Event D. The next day a new Signal about the same
+  attack arrives, and the drain adds it to D, which is the live Event. D now
+  has a `LIVE` Link, and its oldest Signal is from August, so August would
+  show four Events and not three. With the origin on the Event, August
+  keeps three.
+- **A Signal that a Live run adds to a replay-created Event still counts for
+  the Signal.** It is in `SIGNALS_GROUPED` for its own bucket, as grouped:
+  the Event held other Signals when the Live run made the Link. It adds no
+  Event to an Event-based series.
 - **A history reader follows a replaced Event to its replacement** to find
   what a person or a later run attached there. A replaced Event counts as
   alerted when it or its replacement has an Alert, and as escalated when it
@@ -205,10 +220,11 @@ both exist, and the Alert is on the replacement.
 - Time to alert reads Alerts, not Events. It counts every Alert that a Live
   run raised, also an Alert that now sits archived on a replaced Event
   (ADR-0022). An Alert that a Replay run raised is not counted.
-- An Event with no ingested Signal has no row in the log (a web case, a
-  manual Signal). `EVENTS_ESCALATED` counts those Events today. Its history
-  series keeps them: it counts an Event when it has a `LIVE` row or no row
-  at all, and not when it has only `REPLAY` rows.
+- An Event that a person created (a web case, a manual Signal) has no run
+  kind. `EVENTS_ESCALATED` counts those Events today, and its history series
+  keeps them.
+- **Backfill**: every existing Event that holds an ingested Signal gets
+  `LIVE`. No replay has created an Event yet.
 
 ## Considered options
 
@@ -226,6 +242,9 @@ both exist, and the Alert is on the replacement.
   Same ruler view.
 - **Only the Same ruler view, or only As delivered.** Rejected: each has a
   blind spot that the other shows (decision 4).
+- **A replay-created Event enters history at its first `LIVE` Link**, dated
+  by that Signal. Rejected: an attack of August would show as a new Event of
+  November, and its detection delay would read as months.
 - **The onset in the grouping log.** Rejected: an onset changes without a new
   Link, and a Link is made without a new onset.
 - **A log per metric.** Rejected: four metrics read the same Links.
@@ -236,7 +255,7 @@ both exist, and the Alert is on the replacement.
 ## Consequences
 
 - Two new tables (the grouping log, the Event facts log), two columns on
-  `alerts`, and five write paths. A re-grouping replay of N Links adds N
+  `alerts`, one column on `events` (`created_by_run_kind`), and five write paths. A re-grouping replay of N Links adds N
   rows, and one row per Event it writes.
 - The pipeline sends `runKind`, `pipelineVersion` and `runId` on the Event
   and Alert mutations too (`pipeline_run` in clear-pipeline carries them).
@@ -262,16 +281,14 @@ both exist, and the Alert is on the replacement.
 - **The onset** (11 Nov 2026, James): kept as each run gave it, for the
   history series. The live onset is the second view. Both are collected.
 - **Replaced Events** (11 Nov 2026, James): kept and marked. See ADR-0022.
+- **An Event that a replay created** (11 Nov 2026, James): never in a history
+  series, also when a Live run later adds a Signal to it. The Event records
+  the run kind that created it (decision 6).
 - **Who sees the two views** (11 Nov 2026, James): platform admins only, as
   two tabs on `/metrics`.
 
 ## Open points for a person
 
-- **An Event with both kinds of rows.** A Live run can add a Signal to an
-  Event that a replay created, while its grouping window is open. That Event
-  then has a `LIVE` row and counts beside the Event it replaced (decision 6).
-  Record the run kind that created an Event, or define how such an Event
-  counts.
 - **The onset instant for time to detection.** This ADR takes the last `LIVE`
   row of the Event. The other choice is the onset at the first ingested
   Signal, which is often poor: one Signal says little about the start date.

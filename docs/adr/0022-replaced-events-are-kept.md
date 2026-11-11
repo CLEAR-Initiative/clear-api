@@ -95,7 +95,9 @@ is a frozen record of what the pipeline made.
 - **The pipeline** reads Live Events only: grouping, alert checks and
   recomputes never see a Replaced Event.
 - **The history series of `/metrics`** read Replaced Events (ADR-0021,
-  decision 6). They are the only readers that do.
+  decision 6). They are the only readers that do. They leave out an Event
+  that a replay created (`created_by_run_kind` is `REPLAY`), so a
+  Replacement that a replay made adds no Event to a past bucket.
 - **Mutations** refuse a write to a Replaced Event with a message that names
   the Replacement. A person does not add a comment to a hidden Event.
 
