@@ -68,6 +68,10 @@ function makePrisma(opts: {
     teamLocations: {
       findMany: vi.fn(async () => opts.teamLocations ?? []),
     },
+    // createSignal copies the location's level onto the arrival Outcome (ADR-0020).
+    locations: {
+      findUnique: vi.fn(async () => ({ level: 2 })),
+    },
   };
 }
 

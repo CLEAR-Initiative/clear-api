@@ -57,6 +57,17 @@ export type ActivityAction =
   | "signal.location_challenge.accept"
   | "signal.location_challenge.correct"
   | "signal.location_challenge.decline"
+  // The unresolved place-name queue (ADR-0019): a decider gave a queued name
+  // a location (which wrote a place alias and moved the waiting Signals),
+  // marked it not a place, or marked it ambiguous.
+  | "place_name.resolve"
+  | "place_name.not_a_place"
+  | "place_name.ambiguous"
+  // The place alias list (ADR-0019): a decider added an alias by hand,
+  // changed its target, scope or note, or deleted it.
+  | "place_alias.create"
+  | "place_alias.update"
+  | "place_alias.delete"
   // Product analytics (Exponential #1213), recorded by clear-mvp through
   // `recordOnboardingCompleted` / `recordReportExported`. Ids and fixed
   // values only — never analysis content.
@@ -69,6 +80,8 @@ export type ActivityAction =
  */
 export type ActivityResourceType =
   | "metric_annotation"
+  | "place_name"
+  | "place_alias"
   | "signal"
   | "event"
   | "alert"

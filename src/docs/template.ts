@@ -127,7 +127,7 @@ export function renderDocsBody(schema: SchemaData): string {
           <thead><tr><th>Tier</th><th>What it represents</th></tr></thead>
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
-            <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
+            <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
             <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district &mdash; or to a state or country when its signals couldn&rsquo;t be placed more precisely.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
@@ -205,7 +205,7 @@ export function renderDocsBody(schema: SchemaData): string {
         <table class="feature-table">
           <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
           <tbody>
-            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
+            <tr><td>Coordinates (ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
             <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
             <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
           </tbody>

@@ -60,6 +60,26 @@ async function signal(opts: {
     },
   });
   signalIds.push(s.id);
+  // The Outcome the backfill migration writes for an existing Signal
+  // (ADR-0020): COALESCE(processedAt, collectedAt) and the pipeline location.
+  // The metric reads this row, so every ADR-0012 assertion below also checks
+  // that the log gives the series the live rows gave.
+  if (!opts.history && !opts.manual) {
+    const located = opts.locationCorrectedAt
+      ? (opts.pipelineLocationId ?? null)
+      : (opts.locationId ?? opts.originId ?? opts.destinationId ?? null);
+    const level = located ? (await prisma.locations.findUnique({ where: { id: located }, select: { level: true } }))!.level : null;
+    await prisma.signalLocationOutcomes.create({
+      data: {
+        signalId: s.id,
+        locatedAt: at(opts.processedAt ?? opts.collectedAt),
+        locationId: located,
+        level,
+        runKind: "LIVE",
+        step: opts.processedAt ? "PROCESSED" : "ARRIVAL",
+      },
+    });
+  }
   return s.id;
 }
 

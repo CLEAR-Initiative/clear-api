@@ -322,6 +322,10 @@ async function seed() {
   await prisma.notifications.deleteMany();
   await prisma.signalEvents.deleteMany();
   await prisma.events.deleteMany();
+  // The queue and the aliases hold their state with ON DELETE RESTRICT
+  // (ADR-0019), so they go before seedLocations() deletes every location.
+  await prisma.unresolvedPlaceNames.deleteMany();
+  await prisma.placeAliases.deleteMany();
   await prisma.signals.deleteMany();
   await prisma.featureFlags.deleteMany();
   await prisma.disasterTypes.deleteMany();

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { computeEscalationMetrics } from "../../src/services/escalation-metrics.js";
 import { describeIfDb } from "../helpers/db.js";
+import { backfillHistory, clearHistory } from "../helpers/history-backfill.js";
 
 const RUN = `esc-db-${Date.now()}`;
 const COUNTRY = `${RUN}-country`;
@@ -51,6 +52,7 @@ describeIfDb("events escalated against the real schema", () => {
   });
 
   afterAll(async () => {
+    await clearHistory(prisma, eventIds);
     await prisma.eventEscaladedByUsers.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.user.deleteMany({ where: { id: { in: USERS } } });
@@ -68,6 +70,8 @@ describeIfDb("events escalated against the real schema", () => {
     await event({ firstSignalAt: "2026-10-15T09:00:00Z", escalatedBy: [USERS[1]!], locationId: ABROAD });
 
     const range = { from: "2026-10-12T00:00:00Z", to: "2026-10-18T23:59:59.999Z", granularity: "DAY" as const };
+    // The logs as the backfill migration leaves them (ADR-0021): the assertions below are from before the switch.
+    await backfillHistory(prisma, eventIds);
     const m = await computeEscalationMetrics(prisma, { ...range, locationId: COUNTRY });
     expect(m).toMatchObject({ events: 3, escalated: 2 });
     expect(m.series.map((b) => [b.label, b.events, b.escalated])).toEqual([

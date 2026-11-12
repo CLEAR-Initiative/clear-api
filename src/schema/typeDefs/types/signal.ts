@@ -1,6 +1,15 @@
 import { gql } from "graphql-tag";
 
 export const signalTypeDef = gql`
+  """Which kind of pipeline run wrote a log row: a location Outcome (ADR-0020)
+  or a grouping log Link (ADR-0021)."""
+  enum LocationRunKind {
+    """The run that processes a Signal for the first time, after ingest."""
+    LIVE
+    """A run that re-processes a Signal that a Live run already processed."""
+    REPLAY
+  }
+
   """Durable processing status for the Dagster event-driven drain (pending
   work only; see \`retracted\`). NEW = awaiting first grouping; PROCESSED =
   classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
@@ -39,7 +48,7 @@ export const signalTypeDef = gql`
     revision: Int!
     """Pointer to the raw payload blob in the S3 data lake, when landed there."""
     rawS3Key: String
-    """Stable upstream identifier (e.g. "dataminr:{alertId}"). Used to
+    """Stable upstream identifier (e.g. "acled:{event_id_cnty}"). Used to
     deduplicate ingestion — (source, externalId) is unique."""
     externalId: String
     publishedAt: DateTime!
@@ -50,7 +59,7 @@ export const signalTypeDef = gql`
     """Severity score (1–5). From data source or estimated by pipeline."""
     severity: Int
     """Reported casualties for the signal. Sourced from ACLED's fatalities
-    field; for Dataminr, parsed from raw text via regex."""
+    field; for some other feeds, parsed from the raw text via regex."""
     casualties: Int
     """Real-world event onset extracted from this signal by the shared
     event-classification LLM. Null when no onset was resolved."""

@@ -100,6 +100,7 @@ type AlertStatus = "draft" | "published" | "archived";
 interface CommonFilter {
   teamId?: string | null;
   locationId?: string | null;
+  locationIds?: string[] | null;
   eventTypes?: string[] | null;
   severityMin?: number | null;
   severityMax?: number | null;
@@ -138,18 +139,37 @@ function dateFilter(from?: Date | string | null, to?: Date | string | null) {
   return f;
 }
 
+type LocationFilter = Pick<CommonFilter, "locationId" | "locationIds">;
+
 /**
- * Resolve a `locationId` to "this location OR any descendant", expressed as
- * an event-shaped where (origin / destination / general). Returns null when
- * no locationId given.
+ * Every location id a filter covers: `locationId` and each of `locationIds`,
+ * each with its descendants. Null when neither is set or nothing resolves,
+ * so no location condition is added (as for an unknown `locationId` before).
+ */
+async function filterLocationIds(
+  prisma: Context["prisma"],
+  f: LocationFilter,
+): Promise<string[] | null> {
+  const roots = new Set(f.locationIds ?? []);
+  if (f.locationId) roots.add(f.locationId);
+  const ids = new Set<string>();
+  for (const root of roots) {
+    for (const id of await getLocationIdsWithDescendants(prisma, root)) ids.add(id);
+  }
+  return ids.size > 0 ? [...ids] : null;
+}
+
+/**
+ * Resolve `locationId` / `locationIds` to "under any of these locations",
+ * expressed as an event-shaped where (origin / destination / general).
+ * Returns null when no location filter is set.
  */
 async function locationWhereForEvent(
   prisma: Context["prisma"],
-  locationId?: string | null,
+  f: LocationFilter,
 ) {
-  if (!locationId) return null;
-  const ids = await getLocationIdsWithDescendants(prisma, locationId);
-  if (ids.length === 0) return null;
+  const ids = await filterLocationIds(prisma, f);
+  if (!ids) return null;
   return {
     OR: [
       { originId: { in: ids } },
@@ -161,11 +181,10 @@ async function locationWhereForEvent(
 
 async function locationWhereForSignal(
   prisma: Context["prisma"],
-  locationId?: string | null,
+  f: LocationFilter,
 ) {
-  if (!locationId) return null;
-  const ids = await getLocationIdsWithDescendants(prisma, locationId);
-  if (ids.length === 0) return null;
+  const ids = await filterLocationIds(prisma, f);
+  if (!ids) return null;
   return {
     OR: [
       { originId: { in: ids } },
@@ -199,7 +218,7 @@ async function buildEventsWhere(
     }
   }
 
-  const locWhere = await locationWhereForEvent(prisma, f.locationId);
+  const locWhere = await locationWhereForEvent(prisma, f);
   if (locWhere) ands.push(locWhere);
 
   return ands.length > 0 ? { AND: ands } : {};
@@ -229,7 +248,7 @@ async function buildSignalsWhere(
     }
   }
 
-  const locWhere = await locationWhereForSignal(prisma, f.locationId);
+  const locWhere = await locationWhereForSignal(prisma, f);
   if (locWhere) ands.push(locWhere);
 
   return ands.length > 0 ? { AND: ands } : {};
@@ -424,10 +443,8 @@ async function statsScope(
     const ids = await getTeamScopeLocationIds(prisma, input.teamId);
     if (ids) conds.push(inLocations(ids));
   }
-  if (input.locationId) {
-    const ids = await getLocationIdsWithDescendants(prisma, input.locationId);
-    if (ids.length > 0) conds.push(inLocations(ids));
-  }
+  const locationIds = await filterLocationIds(prisma, input);
+  if (locationIds) conds.push(inLocations(locationIds));
 
   // Prisma.join keeps each condition's bound values attached.
   const finalWhere = conds.length > 0

@@ -161,8 +161,22 @@ export const mutationTypeDef = gql`
     after recomputing a changed signal's events. Sets status (PROCESSED, or
     FAILED) and processedAt. Pass exactly one of \`ids\` (unconditional) or
     \`items\` (compare-and-set: a row is updated only if its revision still
-    matches). Returns rows updated. Idempotent. Admin/pipeline only."""
-    markSignalsProcessed(ids: [String!], items: [SignalRevisionInput!], status: SignalStatus): Int!
+    matches). Returns rows updated. Idempotent. Admin/pipeline only.
+
+    Each marked Signal a pipeline brought in also gets one row in the location
+    Outcome log (ADR-0020): the location it has now, at the new processedAt.
+    \`runKind\` says which kind of run this is (default LIVE); a Signal that a
+    run already finished is recorded as REPLAY whatever is sent.
+    \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\` the Dagster
+    run id."""
+    markSignalsProcessed(
+      ids: [String!]
+      items: [SignalRevisionInput!]
+      status: SignalStatus
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Int!
 
     """Put signals back in the Dagster drain queue for a backfill: sets status
     NEW and clears processedAt, so the next drain re-classifies and re-groups
@@ -196,8 +210,19 @@ export const mutationTypeDef = gql`
     arrive with text only. The location is an admin area matched from the
     text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
     can key on its admin-2 district instead of creating an isolated event.
-    Admin/pipeline only."""
-    updateSignalLocation(id: String!, locationId: String!): Signal!
+    Admin/pipeline only.
+
+    The drain marks the Signal afterwards, and that mark writes the location
+    Outcome (ADR-0020). A replay job that moves a Signal without the drain
+    passes \`runKind: REPLAY\`: the move then writes a REPLAY Outcome itself,
+    with \`pipelineVersion\` (the clear-pipeline git SHA) and \`runId\`."""
+    updateSignalLocation(
+      id: String!
+      locationId: String!
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Signal!
 
     """Apply an in-place change to a signal, identified by \`id\` or by
     (\`sourceId\`, \`externalId\`). Content is written when contentHash differs,
@@ -215,8 +240,18 @@ export const mutationTypeDef = gql`
     values were computed from; if the live members differ, nothing is written
     and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
     it; do not retry).
+    \`runKind\`, \`pipelineVersion\` and \`runId\` name the run, for the Event
+    facts log (ADR-0021): a call with an API key writes the Event's onset,
+    first Signal date and places as this run left them.
     Admin/pipeline only."""
-    setEventAggregates(id: String!, input: EventAggregatesInput!, members: [SignalRevisionInput!]!): Event!
+    setEventAggregates(
+      id: String!
+      input: EventAggregatesInput!
+      members: [SignalRevisionInput!]!
+      runKind: LocationRunKind
+      pipelineVersion: String
+      runId: String
+    ): Event!
 
     """File a Location challenge on a Signal for a team, with an optional
     corrected point. Auth: an analyst on that team, or a platform admin; the
@@ -242,6 +277,49 @@ export const mutationTypeDef = gql`
       """The point to write: required with CORRECT, refused otherwise."""
       point: LocationChallengePointInput
     ): SignalLocationChallenge!
+
+    """Record a place name that geocoding could not place inside a Signal's
+    area (ADR-0019). Creates the queue row for (country, normalised spelling,
+    state), or adds the Signal to the row that exists. A Signal counts once
+    per row, so a re-run changes nothing. The row's status never changes
+    here: a row marked not a place stays closed and only its count and dates
+    move. Auth: admin or pipeline."""
+    recordUnresolvedPlaceName(input: RecordUnresolvedPlaceNameInput!): UnresolvedPlaceName!
+
+    """Resolve a row of the unresolved place-name queue (ADR-0019). A location
+    answer (LOCATION, GEONAMES or POINT) writes a place alias for the spelling
+    in the row's state, closes the row as RESOLVED and moves the waiting
+    Signals to the alias location. A Signal moves only when the alias location
+    is inside its current location and no person corrected it. NOT_A_PLACE and
+    AMBIGUOUS close the row with no alias. Auth: a platform admin, or a team
+    admin when the row is inside their team's area; a team admin must place
+    the answer inside the row's state. CONFLICT when the row is already
+    resolved or marked not a place, or when the spelling has an alias."""
+    resolveUnresolvedPlaceName(
+      """The queue row."""
+      id: String!
+      resolution: UnresolvedPlaceNameResolutionInput!
+      """Why, at most 2000 characters. Kept on the row and on the alias."""
+      note: String
+    ): UnresolvedPlaceName!
+
+    """Add a place alias by hand (source MANUAL), to an existing location or
+    to a new point. It also resolves the open queue rows with the same
+    spelling in its scope, and moves their waiting Signals. Auth: a platform
+    admin, or a team admin for a scope inside their team's area; a
+    country-wide alias needs a platform admin. CONFLICT when the scope already
+    has an alias for the spelling."""
+    createPlaceAlias(input: CreatePlaceAliasInput!): PlaceAlias!
+
+    """Change a place alias's target, scope or note. Signals it moved before
+    stay where they are: the change applies to new Signals. Auth as
+    createPlaceAlias, for the alias's scope and for the new one."""
+    updatePlaceAlias(id: String!, input: UpdatePlaceAliasInput!): PlaceAlias!
+
+    """Delete a place alias. Signals it moved stay where they are. The queue
+    row it came from goes back to OPEN. Auth as createPlaceAlias. Returns
+    true."""
+    deletePlaceAlias(id: String!): Boolean!
 
     # ─── Events ────────────────────────────────────────────────────────────────
     """Create a new event from signals."""
@@ -927,6 +1005,15 @@ export const mutationTypeDef = gql`
     """The event ID to create an alert from."""
     eventId: String!
     status: AlertStatus
+    """The run that raises the Alert (ADR-0021). \`runKind\` defaults to LIVE;
+    a replay job sends REPLAY, and that Alert is not part of the history
+    series. Read only for a call with an API key: an Alert that a person
+    raises has no run kind. \`pipelineVersion\` and \`runId\` are accepted so
+    the pipeline sends one run block on every write; the Alert does not
+    store them."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input UpdateAlertInput {
@@ -969,7 +1056,7 @@ export const mutationTypeDef = gql`
     """Stable upstream identifier for idempotent ingestion. If a signal with
     the same (sourceId, externalId) already exists, createSignal returns the
     existing row instead of creating a duplicate. Recommended prefix scheme:
-    "dataminr:{alertId}", "gdacs:{eventid}", "acled:{event_id_cnty}"."""
+    "gdacs:{eventid}", "acled:{event_id_cnty}"."""
     externalId: String
     """Fingerprint of rawData, for sources whose records get revised in
     place (e.g. IDMC). Optional — most sources never revise a signal after
@@ -985,6 +1072,12 @@ export const mutationTypeDef = gql`
     rawS3Key: String
     publishedAt: String!
     collectedAt: String
+    """The clear-pipeline git SHA, kept on the Signal's first location Outcome
+    (ADR-0020). Optional."""
+    pipelineVersion: String
+    """The Dagster run id, kept on the Signal's first location Outcome
+    (ADR-0020). Optional."""
+    runId: String
     url: String
     title: String
     description: String
@@ -1150,6 +1243,14 @@ export const mutationTypeDef = gql`
     is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
+    """The run that makes this write, for the grouping log and the Event
+    facts log (ADR-0021). \`runKind\` defaults to LIVE; a replay job sends
+    REPLAY. \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\`
+    the Dagster run id. clear-api writes to the logs only for a call with
+    an API key: a person's Link or edit writes no row."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input UpdateEventInput {
@@ -1196,6 +1297,14 @@ export const mutationTypeDef = gql`
     """Aggregated casualties for the event (sum across constituent signals)."""
     casualties: Int
     rank: Float
+    """The run that makes this write, for the grouping log and the Event
+    facts log (ADR-0021). \`runKind\` defaults to LIVE; a replay job sends
+    REPLAY. \`pipelineVersion\` is the clear-pipeline git SHA and \`runId\`
+    the Dagster run id. clear-api writes to the logs only for a call with
+    an API key: a person's Link or edit writes no row."""
+    runKind: LocationRunKind
+    pipelineVersion: String
+    runId: String
   }
 
   input CreateDataSourceInput {

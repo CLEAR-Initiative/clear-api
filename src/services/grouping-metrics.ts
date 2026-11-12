@@ -22,9 +22,24 @@
  * when either Event gives it company. The newest buckets read before grouping
  * has caught up with them: low for Signals grouped, high for Events with one
  * Signal. The API returns counts only.
+ *
+ * Both proxies read the grouping log, not `signal_to_events` (ADR-0021): the
+ * `LIVE` rows are what the pipeline delivered, and a re-grouping replay adds
+ * `REPLAY` rows only. So "linked" below means "has a `LIVE` row". A Signal is
+ * grouped when the Event of one of its `LIVE` rows has:
+ *
+ * 1. a `LIVE` row for another ingested Signal; or
+ * 2. a row of any run kind for another ingested Signal, not later than the
+ *    Signal's own `LIVE` row. This is a Signal that a Live run added to an
+ *    Event whose other Signals a replay put there.
+ *
+ * The other Signal is checked when the series is read, so a Signal loses its
+ * company when its only companion is retracted.
  */
 
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
+import { hasLiveLink } from "./signal-grouping-log.js";
+import { historyEvent } from "./event-facts-log.js";
 import {
   bucketIndex,
   bucketsOf,
@@ -112,9 +127,8 @@ const inSources = (sourceNames: string[], column: Prisma.Sql) =>
   sourceNames.length > 0 ? Prisma.sql`AND ${column} IN (${Prisma.join(sourceNames)})` : Prisma.empty;
 
 /**
- * Ingested Signals that have been through grouping, by source and UTC day
- * of `publishedAt`, with how many share their Event with another ingested
- * Signal.
+ * Ingested Signals that a Live run put in an Event, by source and UTC day
+ * of `publishedAt`, with how many are grouped (see the two rules above).
  */
 export async function fetchGroupedSignalRows(
   prisma: PrismaClient,
@@ -126,10 +140,11 @@ export async function fetchGroupedSignalRows(
     SELECT ds."name" AS "source",
       FLOOR(EXTRACT(EPOCH FROM s."published_at") / 86400)::int AS "day",
       COUNT(*) FILTER (WHERE EXISTS (
-        SELECT 1 FROM "signal_to_events" se
-        JOIN "signal_to_events" se2 ON se2."event_id" = se."event_id" AND se2."signal_id" <> se."signal_id"
-        JOIN "signals" o ON o."id" = se2."signal_id" AND ${ingestedSignal("o")}
-        WHERE se."signal_id" = s."id"
+        SELECT 1 FROM "signal_grouping_log" g
+        JOIN "signal_grouping_log" g2 ON g2."event_id" = g."event_id" AND g2."signal_id" <> g."signal_id"
+          AND (g2."run_kind" = 'LIVE' OR g2."linked_at" <= g."linked_at")
+        JOIN "signals" o ON o."id" = g2."signal_id" AND ${ingestedSignal("o")}
+        WHERE g."signal_id" = s."id" AND g."run_kind" = 'LIVE'
       ))::int AS "numerator",
       COUNT(*)::int AS "denominator"
     FROM "signals" s
@@ -137,7 +152,7 @@ export async function fetchGroupedSignalRows(
     WHERE ${ingestedSignal("s")}
       AND s."published_at" >= ${range.from}
       AND s."published_at" <= ${range.to}
-      AND EXISTS (SELECT 1 FROM "signal_to_events" se0 WHERE se0."signal_id" = s."id")
+      AND ${hasLiveLink("s")}
       ${inSources(sourceNames, Prisma.raw('ds."name"'))}
       ${signalsInLocation(locationId)}
     GROUP BY 1, 2
@@ -145,8 +160,8 @@ export async function fetchGroupedSignalRows(
 }
 
 /**
- * Events with an ingested Signal, by the source and UTC day of their first
- * ingested Signal, with how many hold exactly one.
+ * Events with an ingested Signal that a Live run linked, by the source and
+ * UTC day of the first such Signal, with how many hold exactly one.
  */
 export async function fetchSingleSignalEventRows(
   prisma: PrismaClient,
@@ -156,18 +171,18 @@ export async function fetchSingleSignalEventRows(
 ): Promise<SourceDayRow[]> {
   return prisma.$queryRaw<SourceDayRow[]>`
     WITH first_ingested AS (
-      SELECT se."event_id", MIN(s."published_at") AS "at", COUNT(*)::int AS "n"
-      FROM "signal_to_events" se
+      SELECT se."event_id", MIN(s."published_at") AS "at", COUNT(DISTINCT s."id")::int AS "n"
+      FROM "signal_grouping_log" se
       JOIN "signals" s ON s."id" = se."signal_id"
-      WHERE ${ingestedSignal("s")}
+      WHERE se."run_kind" = 'LIVE' AND ${ingestedSignal("s")}
       GROUP BY se."event_id"
     ),
     first_source AS (
       SELECT DISTINCT ON (se."event_id") se."event_id", ds."name" AS "source"
-      FROM "signal_to_events" se
+      FROM "signal_grouping_log" se
       JOIN "signals" s ON s."id" = se."signal_id"
       JOIN "data_sources" ds ON ds."id" = s."source_id"
-      WHERE ${ingestedSignal("s")}
+      WHERE se."run_kind" = 'LIVE' AND ${ingestedSignal("s")}
       ORDER BY se."event_id", s."published_at" ASC, s."id" ASC
     )
     SELECT fs."source",
@@ -178,6 +193,7 @@ export async function fetchSingleSignalEventRows(
     JOIN first_ingested fi ON fi."event_id" = e."id"
     JOIN first_source fs ON fs."event_id" = e."id"
     WHERE NOT e."isDummy"
+      AND ${historyEvent("e")}
       AND fi."at" >= ${range.from}
       AND fi."at" <= ${range.to}
       ${inSources(sourceNames, Prisma.raw('fs."source"'))}

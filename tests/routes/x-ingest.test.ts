@@ -52,6 +52,9 @@ const { resolveRequestAuthMock, prismaStub } = vi.hoisted(() => {
         },
       ),
     },
+    // The arrival Outcomes (ADR-0020) ride in one transaction with the insert.
+    $executeRaw: vi.fn(async () => 0),
+    $transaction: vi.fn(async (ops: Array<Promise<unknown>>) => Promise.all(ops)),
   };
   return { resolveRequestAuthMock: vi.fn(), prismaStub };
 });
@@ -128,6 +131,8 @@ describe("POST /api/x/ingest", () => {
     resolveRequestAuthMock.mockReset();
     prismaStub.dataSources.findMany.mockClear();
     prismaStub.signals.createMany.mockClear();
+    prismaStub.$executeRaw.mockClear();
+    prismaStub.$transaction.mockClear();
     prismaStub.__seenExternalIds.clear();
     prismaStub.__sources.length = 0;
     prismaStub.__sources.push({
@@ -157,6 +162,9 @@ describe("POST /api/x/ingest", () => {
     expect(row.description).toBe(SAMPLE_EVENT.text);
     // The drain owns processing status — the route must never set it.
     expect(row).not.toHaveProperty("status");
+    // One transaction: the insert, then the arrival Outcomes of the new Signals.
+    expect(prismaStub.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaStub.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it("skips a redelivered batch: 200 { created: 0, skipped: 1 }", async () => {

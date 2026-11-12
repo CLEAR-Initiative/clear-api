@@ -53,6 +53,18 @@ export function resolvePipelineIso3ByPcode(pcode: string | null | undefined): st
   return hit ? hit.iso3.toLowerCase() : null;
 }
 
+/**
+ * The name of the pipeline country with this admin-0 pcode (ISO-2, e.g. "SD"),
+ * or null. `ensureCountryLocation` creates a country's level-0 location under
+ * this name and with no pcode, so the name is how such a location is matched
+ * to its ISO code.
+ */
+export function pipelineCountryNameByPcode(pcode: string | null | undefined): string | null {
+  if (!pcode) return null;
+  const want = pcode.trim().toUpperCase();
+  return PIPELINE_COUNTRIES.find((c) => c.pcode.toUpperCase() === want)?.name ?? null;
+}
+
 export const pipelineCountryResolvers = {
   Query: {
     pipelineCountries: (_parent: unknown, _args: unknown, context: Context) => {

@@ -84,6 +84,60 @@ export const metricSeriesTypeDef = gql`
     sourceNames: [String!]
     """Split the series into groups. Refused with BAD_USER_INPUT for a metric that cannot be grouped."""
     groupBy: MetricGroupBy
+    """
+    Read the replay series of one Replay run instead of the history series
+    (ADR-0020): only the Signals in range that the run re-processed, each at
+    the result the run gave it, in the bucket the history series has it in.
+    The two series then compare the same Signals bucket by bucket. Take the id
+    from \`locationReplayRuns\`. Only \`DISTRICT_OR_FINER\` has a replay
+    series; another metric refuses it with BAD_USER_INPUT. A run with no
+    Signal in range gives an all-zero series.
+    """
+    replayRunId: String
+    """
+    The onset a delay metric measures from (ADR-0021). \`AS_DELIVERED\`, the
+    default, is the history series. \`CURRENT\` is the "same ruler" view, only
+    for \`DETECTED_BY_NEXT_DAY\`, \`DETECTED_SAME_DAY\`, \`ALERTED_BY_NEXT_DAY\`
+    and \`ALERTED_SAME_DAY\`; another metric refuses it with BAD_USER_INPUT.
+    The bucket shape is the same for both.
+    """
+    onsetBasis: MetricOnsetBasis
+  }
+
+  """Which onset a delay metric measures from (ADR-0021, decision 4)."""
+  enum MetricOnsetBasis {
+    """Every value as the Live pipeline run gave it at the time: the onset on the Alert, or the last onset a Live run gave the Event. Past buckets do not move after the Event settles, and no replay moves them."""
+    AS_DELIVERED
+    """The same instants, measured against the onset the Event has today. Past buckets move when the onset changes; every bucket has one ruler."""
+    CURRENT
+  }
+
+  """Which Replay runs to list: the range and filters of the series they are drawn on."""
+  input LocationReplayRunsInput {
+    """Start of the range, inclusive. Defaults as \`metricSeries\` does."""
+    from: DateTime
+    """End of the range, inclusive. Defaults to now."""
+    to: DateTime
+    """Only Signals whose Live Outcome is in this location or inside it."""
+    locationId: String
+    """Only these sources, by \`DataSource.name\`."""
+    sourceNames: [String!]
+  }
+
+  """
+  One Replay run of the pipeline that re-located Signals in the range
+  (ADR-0020). A Replay run re-processes Signals that a run already finished;
+  its results are kept beside the history, never in place of it.
+  """
+  type LocationReplayRun {
+    """The id the pipeline gave the run: a Dagster run id, or a replay job's own id. Pass it as \`MetricSeriesInput.replayRunId\`."""
+    runId: String!
+    """The clear-pipeline git SHA of the run; null when the pipeline sent none."""
+    pipelineVersion: String
+    """The instant of the run's first result for a Signal in range."""
+    startedAt: DateTime!
+    """How many ingested Signals in range the run re-processed: the denominator total of its replay series."""
+    signals: Int!
   }
 
   """One bucket of one group. The metric is \`numerator / denominator\`; a bucket with a zero denominator measured nothing."""

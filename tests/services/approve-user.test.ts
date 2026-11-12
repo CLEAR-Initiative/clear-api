@@ -41,6 +41,7 @@ vi.mock("../../src/utils/activity-log.js", () => ({
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 import { accountApproved } from "../../src/services/messaging/templates.js";
+import { sendApprovalEmail } from "../../src/services/approval-email.js";
 import {
   approvalSummary,
   approveUserById,
@@ -55,12 +56,22 @@ const pendingUser = {
   isActive: true,
 };
 
+/** In-memory stand-in for the one user row. `updateMany` applies its
+ *  `role` guard against the live row, like the real conditional UPDATE, so
+ *  overlapping approvals race the way they would in Postgres. */
 function fakePrisma(user: typeof pendingUser | null = pendingUser) {
-  const update = vi.fn(async ({ data }: { data: { role: string } }) => ({ ...user!, ...data }));
+  const row = user ? { ...user } : null;
+  const updateMany = vi.fn(
+    async ({ where, data }: { where: { id: string; role: string }; data: { role: string } }) => {
+      if (!row || row.id !== where.id || row.role !== where.role) return { count: 0 };
+      row.role = data.role;
+      return { count: 1 };
+    },
+  );
   const prisma = {
-    user: { findUnique: vi.fn(async () => user), update },
+    user: { findUnique: vi.fn(async () => (row ? { ...row } : null)), updateMany },
   } as unknown as PrismaClient;
-  return { prisma, update };
+  return { prisma, updateMany };
 }
 
 beforeEach(() => {
@@ -96,11 +107,14 @@ describe("accountApproved template", () => {
 
 describe("approveUserById", () => {
   it("flips the role to member and emails the user", async () => {
-    const { prisma, update } = fakePrisma();
+    const { prisma, updateMany } = fakePrisma();
 
     const result = await approveUserById(prisma, "admin1", "u1");
 
-    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { role: "member" } });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "u1", role: "pending" },
+      data: { role: "member" },
+    });
     expect(sendMock).toHaveBeenCalledTimes(1);
     const mail = sendMock.mock.calls[0][0];
     expect(mail.to).toBe("ada@example.org");
@@ -155,11 +169,11 @@ describe("approveUserById", () => {
 
   it("keeps the approval when the email provider throws, and says why", async () => {
     sendMock.mockRejectedValue(new Error("Postmark error: inactive recipient"));
-    const { prisma, update } = fakePrisma();
+    const { prisma, updateMany } = fakePrisma();
 
     const result = await approveUserById(prisma, "admin1", "u1");
 
-    expect(update).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalled();
     expect(result.user.role).toBe("member");
     expect(result.emailSent).toBe(false);
     expect(result.emailError).toBe("Postmark error: inactive recipient");
@@ -193,12 +207,39 @@ describe("approveUserById", () => {
   });
 
   it("refuses a user who is not pending, without emailing them", async () => {
-    const { prisma, update } = fakePrisma({ ...pendingUser, role: "member" });
+    const { prisma, updateMany } = fakePrisma({ ...pendingUser, role: "member" });
 
     await expect(approveUserById(prisma, "admin1", "u1")).rejects.toThrow(/not pending/);
-    expect(update).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
     expect(sendMock).not.toHaveBeenCalled();
     expect(syncApprovedContactMock).not.toHaveBeenCalled();
+  });
+
+  it("emails once when two approvals overlap", async () => {
+    const { prisma } = fakePrisma();
+
+    // Both requests read the row while it is still pending.
+    const results = await Promise.allSettled([
+      approveUserById(prisma, "admin1", "u1"),
+      approveUserById(prisma, "admin2", "u1"),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const loser = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(loser.reason)).toMatch(/already approved/);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(syncApprovedContactMock).toHaveBeenCalledTimes(1);
+    expect(logActivityMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sendApprovalEmail", () => {
+  it("reports a stalled provider as a timeout instead of waiting on it", async () => {
+    sendMock.mockReturnValue(new Promise(() => {}));
+
+    const result = await sendApprovalEmail({ email: "ada@example.org", name: "Ada" }, 20);
+
+    expect(result).toEqual({ ok: false, reason: "timed out after 20ms" });
   });
 });
 

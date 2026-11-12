@@ -87,6 +87,36 @@ grouping changes. The share of Signals with no district, listed in the
 ticket, is the complement of "At district or finer" (ADR-0012) and is not
 served twice.
 
+**Amended by ADR-0021 (11 Nov 2026).** The two grouping proxies read the
+grouping log (`signal_grouping_log`), not `signal_to_events`. The definitions
+above stay; these rules change:
+
+- "Linked to an Event" means "has a `LIVE` row": a Live run made the Link.
+  A re-grouping replay writes `REPLAY` rows, so it changes no past bucket.
+- A Signal is grouped when the Event of its `LIVE` row has a `LIVE` row for
+  another ingested Signal, or a row of any run kind for another ingested
+  Signal that is not later than its own `LIVE` row.
+- An Event counts when it has a `LIVE` row for an ingested Signal. Its first
+  Signal and its Signal count come from those rows.
+- A Link that a person makes writes no row, so it is in neither proxy. The
+  backfill gave every Link from before the log a `LIVE` row, also a Link
+  that a person made: `signal_to_events` does not say who made a Link.
+- The log has its own indexes for these reads: `(signal_id, run_kind)` and
+  `(event_id, run_kind, linked_at)`.
+
+**Amended by ADR-0021 for the recall proxy (11 Nov 2026).** "ACLED events
+alerted nearby" keeps its definition and reads the logs:
+
+- **The members** of an alerted Event (a Signal from a source other than
+  ACLED) come from the `LIVE` rows of the grouping log.
+- **The Event's date and districts** come from its last `LIVE` row in the
+  Event facts log. The row holds the district of each place, copied when the
+  run wrote it, so a gazetteer re-import does not move a past bucket.
+- **The Events** are those that a Replay run did not create, and **the
+  Alerts** are those that a Replay run did not raise.
+- "Events with one Signal" also leaves out an Event that a Replay run
+  created.
+
 ## Considered options
 
 - **Signals per Event as a ratio.** A ratio is not a share, and the page

@@ -23,9 +23,11 @@ import {
   bucketsOf,
   computeDetectionMetrics,
   resolveGranularity,
+  resolveOnsetBasis,
   type Bucket,
   type DetectionMetricsInput,
   type Granularity,
+  type OnsetBasis,
 } from "./detection-metrics.js";
 import { computeEscalationMetrics } from "./escalation-metrics.js";
 import { computeSignalsGrouped, computeSingleSignalEvents } from "./grouping-metrics.js";
@@ -67,6 +69,10 @@ export interface MetricSeriesInput {
   locationId?: string | null;
   sourceNames?: string[] | null;
   groupBy?: MetricGroupBy | null;
+  /** Read the replay series of this Replay run (ADR-0020); only `DISTRICT_OR_FINER` has one. */
+  replayRunId?: string | null;
+  /** The onset the delay metrics measure from (ADR-0021); `CURRENT` only for the four delay metrics. */
+  onsetBasis?: OnsetBasis | null;
 }
 
 /** One bucket of one group: the metric is `numerator / denominator`. */
@@ -127,7 +133,11 @@ function ungroupedShare<Row extends Bucket>(
   pick: (row: Row) => { numerator: number; denominator: number },
 ): RegistryEntry["series"] {
   return async (prisma, input, now) => {
-    const m = await compute(prisma, { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity }, now);
+    const m = await compute(
+      prisma,
+      { from: input.from, to: input.to, locationId: input.locationId, granularity: input.granularity, onsetBasis: input.onsetBasis },
+      now,
+    );
     return {
       metric,
       granularity: m.granularity,
@@ -163,7 +173,7 @@ function addUp(buckets: MetricBucket[], range: { from: Date; to: Date }, granula
 }
 
 /** The input every per-source service accepts; a service that ignores a field (source health and the location) still receives it. */
-type PerSourceInput = Pick<MetricSeriesInput, "from" | "to" | "locationId" | "sourceNames" | "granularity">;
+type PerSourceInput = Pick<MetricSeriesInput, "from" | "to" | "locationId" | "sourceNames" | "granularity" | "replayRunId">;
 
 /**
  * A share per source read from the service that owns it: grouped, the
@@ -183,7 +193,14 @@ function perSourceShare<Row extends Bucket & { source: string }>(
   return async (prisma, input, now) => {
     const m = await compute(
       prisma,
-      { from: input.from, to: input.to, locationId: input.locationId, sourceNames: input.sourceNames, granularity: input.granularity },
+      {
+        from: input.from,
+        to: input.to,
+        locationId: input.locationId,
+        sourceNames: input.sourceNames,
+        granularity: input.granularity,
+        replayRunId: input.replayRunId,
+      },
       now,
     );
     const base = { metric, granularity: m.granularity, from: m.from, to: m.to };
@@ -193,6 +210,17 @@ function perSourceShare<Row extends Bucket & { source: string }>(
   };
 }
 
+/** The metrics that can be read for one Replay run (`replayRunId`): those that read an Outcome log (ADR-0020). */
+const REPLAY_SERIES_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>(["DISTRICT_OR_FINER"]);
+
+/** The delay metrics: they measure from an onset, so they have a "same ruler" view (`onsetBasis: CURRENT`, ADR-0021). */
+export const ONSET_BASIS_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>([
+  "DETECTED_BY_NEXT_DAY",
+  "DETECTED_SAME_DAY",
+  "ALERTED_BY_NEXT_DAY",
+  "ALERTED_SAME_DAY",
+]);
+
 const REGISTRY: Record<MetricKey, RegistryEntry> = {
   DETECTED_BY_NEXT_DAY: {
     key: "DETECTED_BY_NEXT_DAY",
@@ -200,7 +228,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "TIMELINESS",
     unit: "EVENTS",
     description:
-      "Share of measured Events whose first ingested Signal arrived on the onset day or the day after. An Event is measured when it has a day-precise onset and a first ingested Signal with a time of day on or after the onset day; every other Event in range is excluded under one reason (ADR-0011).",
+      "Share of measured Events whose first ingested Signal arrived on the onset day or the day after. An Event is measured when it has a day-precise onset and a first ingested Signal with a time of day on or after the onset day; every other Event in range is excluded under one reason (ADR-0011). As delivered, the onset is the last one a Live pipeline run gave the Event, and no replay moves a past bucket; with onsetBasis CURRENT it is the onset the Event has today (ADR-0021).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: false,
     locationScoped: true,
@@ -226,7 +254,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "TIMELINESS",
     unit: "EVENTS",
     description:
-      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its creation instant is real and its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason, including the Alerts whose createdAt was backfilled when the column was added in May 2026. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017).",
+      "Share of measured Alerts raised on the Event's onset day or the day after: one hop past time to detection. An Alert is measured when its creation instant is real and its Event has a day-precise onset on or before the day the Alert was raised; every other Alert in range is excluded under one reason, including the Alerts whose createdAt was backfilled when the column was added in May 2026. Every status counts: an Alert archived later was still raised when it was created, and one the pipeline created already archived is a late Alert (ADR-0017). As delivered, the onset is the one the Alert was raised on, and no replay moves a past bucket; with onsetBasis CURRENT it is the onset the Event has today (ADR-0021).",
     timeBasis: "The instant the Alert was raised: its createdAt.",
     groupable: false,
     locationScoped: true,
@@ -251,8 +279,8 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "SIGNALS",
     description:
-      "Share of ingested Signals placed at a district (admin-2) or at a point inside one, out of every ingested Signal located in the bucket; the rest sit at state or country level or have no location. Grouping keys on district, so this is the share grouping can use. A Signal a person corrected counts at the location the pipeline gave it (ADR-0012).",
-    timeBasis: "The instant the Signal was last located: processedAt, else collectedAt.",
+      "Share of ingested Signals placed at a district (admin-2) or at a point inside one, out of every ingested Signal located in the bucket; the rest sit at state or country level or have no location. Grouping keys on district, so this is the share grouping can use. A Signal a person corrected counts at the location the pipeline gave it (ADR-0012). The level and the instant are the ones the pipeline recorded when it first finished the Signal, so a later replay does not change a past bucket (ADR-0020).",
+    timeBasis: "The instant the pipeline first finished locating the Signal, or its arrival while no run has finished it. A later replay does not move it.",
     groupable: true,
     locationScoped: true,
     adr: "ADR-0012",
@@ -264,7 +292,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "SIGNALS",
     description:
-      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping, each Signal once. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists. The location filter keeps the Signals whose current location is in the place. The newest buckets read low until grouping has caught up with them (ADR-0018).",
+      "Share of ingested Signals whose Event holds at least one other ingested Signal, out of every ingested Signal that has been through grouping, each Signal once. A grouping proxy, not a judgement: high can mean good merging or over-merging, low under-merging or many isolated reports; read it beside the correctness sample when one exists. The location filter keeps the Signals whose current location is in the place. The newest buckets read low until grouping has caught up with them (ADR-0018). It reads the links that a Live pipeline run made, so a replay does not change a past bucket (ADR-0021).",
     timeBasis: "The Signal's publishedAt.",
     groupable: true,
     locationScoped: true,
@@ -277,7 +305,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     dimension: "ACCURACY",
     unit: "EVENTS",
     description:
-      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged. The location filter keeps the Events any of whose places is in the place. The newest buckets read high until grouping has caught up with them (ADR-0018).",
+      "Share of Events holding exactly one ingested Signal, out of every Event with an ingested Signal in range, grouped by the source of the Event's first ingested Signal. A grouping proxy for duplicates that were never merged. The location filter keeps the Events any of whose places is in the place. The newest buckets read high until grouping has caught up with them (ADR-0018). It reads the links that a Live pipeline run made, so a replay does not change a past bucket (ADR-0021).",
     timeBasis: "The Event's first ingested Signal: its publishedAt.",
     groupable: true,
     locationScoped: true,
@@ -317,7 +345,7 @@ const REGISTRY: Record<MetricKey, RegistryEntry> = {
     unit: "EVENTS",
     description:
       "Share of Events a user escalated to the team, out of every Event whose first Signal arrived in the bucket. An interim usefulness proxy until actionability is recorded: an analyst escalating an Event is a decision that it mattered (ADR-0017).",
-    timeBasis: "The Event's firstSignalCreatedAt.",
+    timeBasis: "The Event's firstSignalCreatedAt, as a Live pipeline run last gave it.",
     groupable: false,
     locationScoped: true,
     adr: "ADR-0017",
@@ -357,6 +385,12 @@ export async function computeMetricSeries(
   }
   if (input.groupBy && !entry.groupable) {
     throw badInput(`\`${entry.key}\` has no groups; leave \`groupBy\` out.`);
+  }
+  if (input.replayRunId?.trim() && !REPLAY_SERIES_METRICS.has(entry.key)) {
+    throw badInput(`\`${entry.key}\` has no replay series; leave \`replayRunId\` out.`);
+  }
+  if (resolveOnsetBasis(input.onsetBasis) === "CURRENT" && !ONSET_BASIS_METRICS.has(entry.key)) {
+    throw badInput(`\`${entry.key}\` has one view; leave \`onsetBasis\` out.`);
   }
   // Validate the granularity up front, so a bad value fails the same way whichever service runs.
   resolveGranularity(input.granularity);

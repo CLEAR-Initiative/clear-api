@@ -168,4 +168,50 @@ describe("metricSeries schema contract", () => {
     expect(forbidden.result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
     expect(forbidden.prisma.$queryRaw).not.toHaveBeenCalled();
   });
+
+  it("reads the replay series of one Replay run, and refuses a replay run for a metric with no Outcome log", async () => {
+    const replayed = [{ source: "sudan-war-x", day: day("2026-10-27"), level: 2, count: 2 }];
+    const { result, prisma } = await run(
+      admin,
+      METRIC_SERIES,
+      { input: { metric: "DISTRICT_OR_FINER", ...range, replayRunId: "place-names-backfill:plan.jsonl" } },
+      [replayed, []],
+    );
+    expect(result.errors).toBeUndefined();
+    const series = result.data?.metricSeries as { buckets: Array<{ label: string; numerator: number; denominator: number }> };
+    expect(series.buckets).toEqual([expect.objectContaining({ label: "2026-W44", numerator: 2, denominator: 2 })]);
+    // The first query is the replay reader: it joins the run's Outcomes by run id.
+    const sql = (prisma.$queryRaw.mock.calls[0]![0] as string[]).join("?");
+    expect(sql).toContain(`ro."run_id" = ?`);
+    expect(prisma.$queryRaw.mock.calls[0]).toContain("place-names-backfill:plan.jsonl");
+
+    const refused = await run(admin, METRIC_SERIES, { input: { metric: "SIGNALS_GROUPED", replayRunId: "run-1" } }, []);
+    expect(refused.result.errors?.[0]?.extensions?.code).toBe("BAD_USER_INPUT");
+    expect(refused.prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+const LOCATION_REPLAY_RUNS = `
+  query LocationReplayRuns($input: LocationReplayRunsInput) {
+    locationReplayRuns(input: $input) { runId pipelineVersion startedAt signals }
+  }
+`;
+
+describe("locationReplayRuns schema contract", () => {
+  it("lists the Replay runs for an admin and refuses everyone else", async () => {
+    const rows = [
+      { runId: "place-names-backfill:plan.jsonl", pipelineVersion: "def456", startedAt: new Date("2026-11-09T10:00:00Z"), signals: 40 },
+      { runId: "dagster-run-1", pipelineVersion: null, startedAt: new Date("2026-11-02T10:00:00Z"), signals: 1 },
+    ];
+    const { result } = await run(admin, LOCATION_REPLAY_RUNS, { input: { ...range, sourceNames: ["sudan-war-x"] } }, [rows]);
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.locationReplayRuns).toEqual([
+      { runId: "place-names-backfill:plan.jsonl", pipelineVersion: "def456", startedAt: "2026-11-09T10:00:00.000Z", signals: 40 },
+      { runId: "dagster-run-1", pipelineVersion: null, startedAt: "2026-11-02T10:00:00.000Z", signals: 1 },
+    ]);
+
+    const forbidden = await run({ id: "u", role: "analyst" }, LOCATION_REPLAY_RUNS, {}, []);
+    expect(forbidden.result.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+    expect(forbidden.prisma.$queryRaw).not.toHaveBeenCalled();
+  });
 });
