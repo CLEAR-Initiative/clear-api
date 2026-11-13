@@ -568,6 +568,52 @@ The CLEAR team`,
   };
 }
 
+/**
+ * Sent when an admin approves a self-signed-up account (`approveUser`).
+ * Fulfils the "You'll get an email as soon as it's approved" promise made
+ * by the signup acknowledgement and the Welcome page. Sent from this API,
+ * not from a CRM automation, so approval never depends on the CRM.
+ */
+export function accountApproved(
+  userName: string,
+  apiKeysUrl: string,
+): EmailContent {
+  const displayName = userName?.trim() || "there";
+  const safeName = escapeHtml(displayName);
+
+  return {
+    subject: "Your CLEAR account is approved",
+
+    textBody: `Hi ${displayName},
+
+Good news: your CLEAR account has been approved. API keys and usage analytics are now unlocked in the Developer Portal.
+
+Create your first API key here:
+
+${apiKeysUrl}
+
+Best,
+The CLEAR team`,
+
+    htmlBody: wrapHtml(
+      "Account approved",
+      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
+        Hi ${safeName},
+      </p>
+      <p style="margin: 0 0 24px; font-size: 15px; color: #525252; line-height: 1.5;">
+        Good news: your CLEAR account has been approved. API keys and usage analytics are now unlocked in the Developer Portal.
+      </p>
+      ${ctaButton("Create an API key", apiKeysUrl)}
+      <p style="margin: 0; font-size: 12px; color: #737373; word-break: break-all; line-height: 1.4;">
+        ${apiKeysUrl}
+      </p>
+      <p style="margin: 24px 0 0; font-size: 15px; color: #171717; line-height: 1.5;">
+        Best,<br />The CLEAR team
+      </p>`,
+    ),
+  };
+}
+
 /** Strip CR/LF so a user-supplied name can't fold into a new mail header. */
 function headerSafe(text: string): string {
   return text.replace(/[\r\n]+/g, " ").trim();
@@ -796,6 +842,25 @@ export interface AlertNotificationExtras {
 /**
  * Immediate alert notification - single alert sent to a subscriber.
  */
+/**
+ * The direction a text reads in, from its first strong character: "rtl" for
+ * Arabic or Hebrew script, else "ltr".
+ *
+ * An event title can mix scripts: "Explosions in Al-Kanabi (الكنابي),
+ * Northern" (Exponential #1258). In an Arabic email the document is
+ * right-to-left, so a bare English-led title takes that direction and its
+ * parentheses, comma and word order come out wrong. The title's own element
+ * gets this direction instead. It is written out, not `dir="auto"`: some
+ * mail clients drop `auto`, and none drop `ltr` / `rtl`.
+ */
+export function textDirection(text: string | null | undefined): "ltr" | "rtl" {
+  for (const ch of text ?? "") {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(ch)) return "rtl";
+    if (/\p{L}/u.test(ch)) return "ltr";
+  }
+  return "ltr";
+}
+
 export function alertNotification(
   userName: string,
   alertTitle: string,
@@ -908,7 +973,7 @@ export function alertNotification(
           <!-- Alert title -->
           <tr>
             <td style="padding: 10px 32px 0;">
-              <h1 style="margin: 0; font-size: 28px; font-weight: 800; color: #171717; line-height: 1.2;">${alertTitle}</h1>
+              <h1 dir="${textDirection(alertTitle)}" style="margin: 0; font-size: 28px; font-weight: 800; color: #171717; line-height: 1.2; text-align: ${dir === "rtl" ? "right" : "left"};">${alertTitle}</h1>
             </td>
           </tr>
 
@@ -997,7 +1062,7 @@ export function alertDigest(
       (a) =>
         `<div style="margin: 8px 0; padding: 12px 16px; background: #F5F5F5; border-radius: 6px; border-left: 3px solid #E85D3D;">
           <a href="${a.url}" style="text-decoration: none;">
-            <p style="margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #171717;">${a.title}</p>
+            <p dir="${textDirection(a.title)}" style="margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #171717; text-align: left;">${a.title}</p>
             ${a.description ? `<p style="margin: 0; font-size: 13px; color: #525252;">${a.description}</p>` : ""}
           </a>
         </div>`,

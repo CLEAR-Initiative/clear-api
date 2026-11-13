@@ -7,9 +7,14 @@ import { describe, expect, it } from "vitest";
 import { GraphQLError } from "graphql";
 import {
   EXCLUSION_REASONS,
+  bucketLabel,
+  bucketsOf,
   classify,
   isoWeekLabel,
+  nextBucketStart,
+  resolveGranularity,
   resolveRange,
+  startOfBucket,
   startOfIsoWeek,
   summarise,
   type DetectionEventRow,
@@ -170,6 +175,97 @@ describe("summarise", () => {
     expect(m.weekly.map((w) => [w.isoWeek, w.isPartial, w.counted, w.eventsInRange])).toEqual([
       ["2026-W40", true, 0, 0],
       ["2026-W41", false, 0, 0],
+    ]);
+  });
+});
+
+describe("buckets (ADR-0014)", () => {
+  it("starts a bucket at the UTC day, the ISO week's Monday or the first of the month", () => {
+    expect(startOfBucket(at("2026-10-29T18:33:00Z"), "DAY").toISOString()).toBe("2026-10-29T00:00:00.000Z");
+    expect(startOfBucket(at("2026-10-29T18:33:00Z"), "WEEK").toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    expect(startOfBucket(at("2026-10-29T18:33:00Z"), "MONTH").toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    expect(nextBucketStart(at("2026-10-29T00:00:00Z"), "DAY").toISOString()).toBe("2026-10-30T00:00:00.000Z");
+    expect(nextBucketStart(at("2026-10-26T00:00:00Z"), "WEEK").toISOString()).toBe("2026-11-02T00:00:00.000Z");
+    expect(nextBucketStart(at("2026-12-01T00:00:00Z"), "MONTH").toISOString()).toBe("2027-01-01T00:00:00.000Z");
+  });
+
+  it("labels a day, an ISO week and a month", () => {
+    expect(bucketLabel(at("2026-10-29T00:00:00Z"), "DAY")).toBe("2026-10-29");
+    expect(bucketLabel(at("2026-10-26T00:00:00Z"), "WEEK")).toBe("2026-W44");
+    expect(bucketLabel(at("2026-10-01T00:00:00Z"), "MONTH")).toBe("2026-10");
+  });
+
+  it("covers every bucket the range touches and marks the partly covered ones", () => {
+    const days = bucketsOf({ from: at("2026-10-29T10:00:00Z"), to: at("2026-10-31T23:59:59.999Z") }, "DAY");
+    expect(days.map((b) => [b.label, b.isPartial])).toEqual([
+      ["2026-10-29", true],
+      ["2026-10-30", false],
+      ["2026-10-31", false],
+    ]);
+    const months = bucketsOf({ from: at("2026-12-20T00:00:00Z"), to: at("2027-01-10T00:00:00Z") }, "MONTH");
+    expect(months.map((b) => [b.label, b.isPartial])).toEqual([
+      ["2026-12", true],
+      ["2027-01", true],
+    ]);
+    const full = bucketsOf({ from: at("2026-10-01T00:00:00Z"), to: at("2026-10-31T23:59:59.999Z") }, "MONTH");
+    expect(full.map((b) => [b.label, b.isPartial])).toEqual([["2026-10", false]]);
+    // The ISO-week rule is unchanged: Monday to Sunday's last millisecond is one full week.
+    const weeks = bucketsOf({ from: at("2026-10-26T00:00:00Z"), to: at("2026-11-01T23:59:59.999Z") }, "WEEK");
+    expect(weeks.map((b) => [b.label, b.isPartial])).toEqual([["2026-W44", false]]);
+  });
+
+  it("defaults the granularity to WEEK and refuses an unknown one", () => {
+    expect(resolveGranularity(null)).toBe("WEEK");
+    expect(resolveGranularity(undefined)).toBe("WEEK");
+    expect(resolveGranularity("DAY")).toBe("DAY");
+    expectBadInput(() => resolveGranularity("HOUR"), /granularity/);
+  });
+});
+
+describe("summarise series (ADR-0014)", () => {
+  const range = { from: at("2026-09-28T00:00:00Z"), to: at("2026-10-14T09:00:00Z") };
+  const rows = [
+    row("2026-09-29T00:00:00Z", "2026-09-29T10:00:00Z"), // same day
+    row("2026-09-29T00:00:00Z", "2026-09-30T10:00:00Z"), // next day
+    row("2026-10-01T00:00:00Z", "2026-10-06T10:00:00Z"), // +5d
+    row(null, "2026-10-02T10:00:00Z"), // excluded, in range on 2 Oct
+  ];
+
+  it("equals weekly row for row at WEEK, the default", () => {
+    const m = summarise(rows, range);
+    expect(m.granularity).toBe("WEEK");
+    expect(m.series).toEqual(
+      m.weekly.map((w) => ({
+        start: w.weekStart,
+        label: w.isoWeek,
+        isPartial: w.isPartial,
+        eventsInRange: w.eventsInRange,
+        counted: w.counted,
+        sameDay: w.sameDay,
+        byNextDay: w.byNextDay,
+      })),
+    );
+  });
+
+  it("buckets by UTC day, zero-filled over the whole range, leaving weekly alone", () => {
+    const m = summarise(rows, range, "DAY");
+    expect(m.granularity).toBe("DAY");
+    expect(m.series).toHaveLength(17);
+    expect(m.series[0]).toMatchObject({ label: "2026-09-28", eventsInRange: 0, counted: 0, isPartial: false });
+    expect(m.series[1]).toMatchObject({ label: "2026-09-29", eventsInRange: 1, counted: 1, sameDay: 1, byNextDay: 1 });
+    expect(m.series[2]).toMatchObject({ label: "2026-09-30", eventsInRange: 1, counted: 1, sameDay: 0, byNextDay: 1 });
+    expect(m.series[4]).toMatchObject({ label: "2026-10-02", eventsInRange: 1, counted: 0 });
+    expect(m.series[8]).toMatchObject({ label: "2026-10-06", eventsInRange: 1, counted: 1, sameDay: 0, byNextDay: 0 });
+    expect(m.series[16]).toMatchObject({ label: "2026-10-14", isPartial: true });
+    expect(m.weekly.map((w) => w.isoWeek)).toEqual(["2026-W40", "2026-W41", "2026-W42"]);
+    expect(m).toMatchObject({ eventsInRange: 4, counted: 3, sameDay: 1, byNextDay: 2 });
+  });
+
+  it("buckets by calendar month", () => {
+    const m = summarise(rows, range, "MONTH");
+    expect(m.series.map((b) => [b.label, b.eventsInRange, b.counted, b.byNextDay, b.isPartial])).toEqual([
+      ["2026-09", 2, 2, 2, true],
+      ["2026-10", 2, 1, 0, true],
     ]);
   });
 });

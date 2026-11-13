@@ -46,3 +46,12 @@ export function normalizeGazetteerName(s: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * The statement the importer (`scripts/import-geonames.ts`) runs before each
+ * reload. CASCADE follows foreign keys, so a table with a foreign key to
+ * `geonames` or `geonames_name` is emptied too. CLEAR's own tables (place
+ * aliases, unresolved place names: ADR-0019) must have none. A DB test runs
+ * this exact statement to prove it.
+ */
+export const GEONAMES_TRUNCATE_SQL = "TRUNCATE geonames, geonames_name RESTART IDENTITY CASCADE";

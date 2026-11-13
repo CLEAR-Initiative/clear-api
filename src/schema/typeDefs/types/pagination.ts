@@ -76,6 +76,9 @@ export const paginationTypeDef = gql`
     """Restrict to alerts whose event sits under this location (or any of
     its descendants)."""
     locationId: String
+    """Like \`locationId\`, for several locations: keeps alerts whose event
+    sits under any of them or under \`locationId\`. An empty list is no filter."""
+    locationIds: [String!]
     """Glide codes — alert event must contain at least one of these in its
     \`types\` array. Case-sensitive."""
     eventTypes: [String!]
@@ -98,6 +101,9 @@ export const paginationTypeDef = gql`
 
     teamId: String
     locationId: String
+    """Like \`locationId\`, for several locations: keeps rows under any of
+    them or under \`locationId\`. An empty list is no filter."""
+    locationIds: [String!]
     eventTypes: [String!]
     severityMin: Int
     severityMax: Int
@@ -114,7 +120,10 @@ export const paginationTypeDef = gql`
 
     teamId: String
     locationId: String
-    """Restrict to signals whose source name is in this list (e.g. ["acled","dataminr"])."""
+    """Like \`locationId\`, for several locations: keeps rows under any of
+    them or under \`locationId\`. An empty list is no filter."""
+    locationIds: [String!]
+    """Restrict to signals whose source name is in this list (e.g. ["acled","gdacs"])."""
     sourceNames: [String!]
     severityMin: Int
     severityMax: Int
@@ -152,6 +161,9 @@ export const paginationTypeDef = gql`
     groupBy: StatsGroupBy
     teamId: String
     locationId: String
+    """Like \`locationId\`, for several locations: keeps rows under any of
+    them or under \`locationId\`. An empty list is no filter."""
+    locationIds: [String!]
     eventTypes: [String!]
     severityMin: Int
     severityMax: Int

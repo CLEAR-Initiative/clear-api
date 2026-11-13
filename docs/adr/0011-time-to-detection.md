@@ -68,6 +68,21 @@ histogram has exactly nine rows (0 to 7 days, then 8 and more), its exclusions
 exactly four, and its weekly rows cover every ISO week the range touches,
 zero-filled, with a partly covered week marked `isPartial`.
 
+**Amended by ADR-0021 (11 Nov 2026).** The definition above stays. The
+metric now reads what the pipeline delivered, not the live rows:
+
+- **The Events** are every Event that a Replay run did not create
+  (`events.created_by_run_kind` is not `REPLAY`).
+- **The first ingested Signal** comes from the `LIVE` rows of the grouping
+  log, not from `signal_to_events`. A Link that a person makes is not in it.
+- **The onset** has two views. *As delivered*, the default and the history
+  series: the onset in the last `LIVE` row of the Event facts log. *Same
+  ruler*: the onset the Event has today (`metricSeries` with
+  `onsetBasis: CURRENT`).
+- An Event with no `LIVE` row in the Event facts log (a person created it,
+  and no pipeline run wrote it) reads its own onset in both views.
+- A replay writes `REPLAY` rows only, so it changes no As delivered bucket.
+
 ## Considered options
 
 - **Hours instead of days.** More precise on paper, but onset is a date. Hours
@@ -91,6 +106,8 @@ zero-filled, with a partly covered week marked `isPartial`.
 - A pipeline that starts writing a precision flag on `publishedAt` lets the
   date-only test move from the midnight heuristic to that flag, without
   changing the definition.
+- The weekly rows are the `WEEK` case of the bucket rule in ADR-0014; `series`
+  reads the same tally by day, week or month (`granularity`).
 - The query reads every live ingested Signal link once per call. It is an
   admin page called on demand; if it gets slow, an index on
   `signal_to_events(event_id)` or a stored first-ingested time is the next

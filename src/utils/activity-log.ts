@@ -21,6 +21,8 @@ import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespac
  * forces every call site to compile against it.
  */
 export type ActivityAction =
+  | "metric_annotation.create"
+  | "metric_annotation.delete"
   | "auth.login"
   | "auth.logout"
   | "signal.create_manual"
@@ -30,6 +32,10 @@ export type ActivityAction =
   | "feedback.create"
   | "dev_user.provisioned"
   | "dev_user.api_key_rotated"
+  // An admin opened / closed one data source's Signals for an API-only
+  // developer. Actor is the admin; resource is the developer.
+  | "api_signal_source.grant"
+  | "api_signal_source.revoke"
   | "user.approved"
   | "user.role_updated"
   // A platform admin read another user's Conversation (or listed them).
@@ -51,6 +57,17 @@ export type ActivityAction =
   | "signal.location_challenge.accept"
   | "signal.location_challenge.correct"
   | "signal.location_challenge.decline"
+  // The unresolved place-name queue (ADR-0019): a decider gave a queued name
+  // a location (which wrote a place alias and moved the waiting Signals),
+  // marked it not a place, or marked it ambiguous.
+  | "place_name.resolve"
+  | "place_name.not_a_place"
+  | "place_name.ambiguous"
+  // The place alias list (ADR-0019): a decider added an alias by hand,
+  // changed its target, scope or note, or deleted it.
+  | "place_alias.create"
+  | "place_alias.update"
+  | "place_alias.delete"
   // Product analytics (Exponential #1213), recorded by clear-mvp through
   // `recordOnboardingCompleted` / `recordReportExported`. Ids and fixed
   // values only — never analysis content.
@@ -62,6 +79,9 @@ export type ActivityAction =
  * on in the dashboard ("all crisis activity for user X").
  */
 export type ActivityResourceType =
+  | "metric_annotation"
+  | "place_name"
+  | "place_alias"
   | "signal"
   | "event"
   | "alert"

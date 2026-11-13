@@ -72,10 +72,17 @@ describe("pendingSignals", () => {
   });
 });
 
+/** Prisma for the ids path: one updateMany and the Outcome insert, in one $transaction. */
+function idsPrisma(updateMany: ReturnType<typeof vi.fn>) {
+  const $executeRaw = vi.fn(() => 0);
+  const $transaction = vi.fn(async (ops: unknown[]) => Promise.all(ops));
+  return { signals: { updateMany }, $executeRaw, $transaction };
+}
+
 describe("markSignalsProcessed", () => {
   it("marks PROCESSED with processedAt and returns the updated count", async () => {
     const updateMany = vi.fn(async () => ({ count: 2 }));
-    const context = ctx({ signals: { updateMany } });
+    const context = ctx(idsPrisma(updateMany));
 
     const n = await signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a", "b"] }, context);
 
@@ -89,14 +96,14 @@ describe("markSignalsProcessed", () => {
   it("honours an explicit FAILED status", async () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     await signalResolvers.Mutation.markSignalsProcessed(
-      {}, { ids: ["x"], status: "FAILED" }, ctx({ signals: { updateMany } }),
+      {}, { ids: ["x"], status: "FAILED" }, ctx(idsPrisma(updateMany)),
     );
     expect(updateMany.mock.calls[0][0].data.status).toBe("FAILED");
   });
 
   it("short-circuits on an empty id list without touching the DB", async () => {
     const updateMany = vi.fn();
-    const n = await signalResolvers.Mutation.markSignalsProcessed({}, { ids: [] }, ctx({ signals: { updateMany } }));
+    const n = await signalResolvers.Mutation.markSignalsProcessed({}, { ids: [] }, ctx(idsPrisma(updateMany)));
     expect(n).toBe(0);
     expect(updateMany).not.toHaveBeenCalled();
   });
@@ -105,7 +112,7 @@ describe("markSignalsProcessed", () => {
     const updateMany = vi.fn();
     await expect(
       signalResolvers.Mutation.markSignalsProcessed(
-        {}, { ids: ["a"], status: "NEW" }, ctx({ signals: { updateMany } }),
+        {}, { ids: ["a"], status: "NEW" }, ctx(idsPrisma(updateMany)),
       ),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(updateMany).not.toHaveBeenCalled();
@@ -114,7 +121,7 @@ describe("markSignalsProcessed", () => {
   it("accepts a pipeline-role user", async () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     await signalResolvers.Mutation.markSignalsProcessed(
-      {}, { ids: ["a"] }, ctx({ signals: { updateMany } }, "pipeline"),
+      {}, { ids: ["a"] }, ctx(idsPrisma(updateMany), "pipeline"),
     );
     expect(updateMany).toHaveBeenCalled();
   });
@@ -122,7 +129,7 @@ describe("markSignalsProcessed", () => {
   it("rejects a viewer (admin/pipeline only)", async () => {
     const updateMany = vi.fn();
     await expect(
-      signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a"] }, ctx({ signals: { updateMany } }, "viewer")),
+      signalResolvers.Mutation.markSignalsProcessed({}, { ids: ["a"] }, ctx(idsPrisma(updateMany), "viewer")),
     ).rejects.toBeInstanceOf(GraphQLError);
     expect(updateMany).not.toHaveBeenCalled();
   });
@@ -148,8 +155,10 @@ describe("markSignalsProcessed", () => {
 
 function itemsPrisma(counts: number[]) {
   const updateMany = vi.fn((_args: unknown) => ({ __op: true, count: counts[updateMany.mock.calls.length - 1] ?? 0 }));
+  // The last op of the transaction is the Outcome insert (ADR-0020).
+  const $executeRaw = vi.fn(() => ({ __outcomes: true, count: 0 }));
   const $transaction = vi.fn(async (ops: { count: number }[]) => ops.map((o) => ({ count: o.count })));
-  return { signals: { updateMany }, $transaction };
+  return { signals: { updateMany }, $executeRaw, $transaction };
 }
 
 describe("markSignalsProcessed items (CAS)", () => {
@@ -162,7 +171,9 @@ describe("markSignalsProcessed items (CAS)", () => {
     );
     expect(n).toBe(2);
     expect(p.$transaction).toHaveBeenCalledTimes(1);
-    expect(p.$transaction.mock.calls[0][0]).toHaveLength(3);
+    // three marks, then the Outcome insert
+    expect(p.$transaction.mock.calls[0][0]).toHaveLength(4);
+    expect(p.$executeRaw).toHaveBeenCalledTimes(1);
     expect(p.signals.updateMany).toHaveBeenCalledTimes(3);
     const calls = p.signals.updateMany.mock.calls.map((c) => c[0] as { where: unknown; data: Record<string, unknown> });
     expect(calls.map((c) => c.where)).toEqual([

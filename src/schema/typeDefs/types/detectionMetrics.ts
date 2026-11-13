@@ -19,6 +19,16 @@ export const detectionMetricsTypeDef = gql`
   }
 
   """
+  The bucket a metric series is read in (ADR-0014): a UTC calendar day, an
+  ISO week from Monday 00:00 UTC, or a UTC calendar month.
+  """
+  enum MetricGranularity {
+    DAY
+    WEEK
+    MONTH
+  }
+
+  """
   The range and place to measure time to detection over. Every field is
   optional.
   """
@@ -29,6 +39,8 @@ export const detectionMetricsTypeDef = gql`
     to: DateTime
     """Only Events whose origin, destination or general location is this location or inside it."""
     locationId: String
+    """Bucket size of \`series\`. Defaults to \`WEEK\`."""
+    granularity: MetricGranularity
   }
 
   """
@@ -60,6 +72,28 @@ export const detectionMetricsTypeDef = gql`
     weekly: [DetectionWeek!]!
     """Events in range not measured, by reason: exactly 4 rows, one per reason."""
     exclusions: [DetectionExclusion!]!
+    """The bucket size \`series\` was read in."""
+    granularity: MetricGranularity!
+    """The same tally as \`weekly\` per bucket of \`granularity\` (ADR-0014): zero-filled over every bucket the range touches, ascending. With \`WEEK\` it equals \`weekly\` row for row."""
+    series: [DetectionBucket!]!
+  }
+
+  """Counted Events whose first ingested Signal falls in one bucket of the requested granularity."""
+  type DetectionBucket {
+    """Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month."""
+    start: DateTime!
+    """\`2026-10-29\` for a day, \`2026-W44\` for an ISO week, \`2026-10\` for a month."""
+    label: String!
+    """Events in range in this bucket, counted plus excluded."""
+    eventsInRange: Int!
+    """Counted Events first signalled in this bucket."""
+    counted: Int!
+    """Of those, first signalled on their onset day."""
+    sameDay: Int!
+    """Of those, first signalled on their onset day or the day after."""
+    byNextDay: Int!
+    """True when the range covers only part of the bucket, e.g. the current one."""
+    isPartial: Boolean!
   }
 
   """Counted Events whose first ingested Signal came this many days after onset."""

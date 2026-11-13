@@ -158,6 +158,12 @@ async function call(field: GraphQLField<unknown, Context>, user: { id: string; r
     authMethod: user ? "api-key" : "none",
     viaAgent: false,
     locale: "en",
+    // `worker` is a service role, so createContext resolves it to full Signal
+    // visibility. The signal-access helpers never default a missing scope to
+    // full (a fail-open default is the bug that feature prevents), so this
+    // fake has to state it or the Signal resolvers throw before reaching the
+    // sentinel prisma this test asserts on.
+    signalScope: { kind: "full" },
   } as unknown as Context;
   // A getter, so a resolver that consults the caller's identity is seen doing so.
   Object.defineProperty(context, "user", {

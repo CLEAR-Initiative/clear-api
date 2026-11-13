@@ -1,0 +1,35 @@
+name: gitleaks
+
+# Secret scanning on every PR and on pushes to the integration branch.
+# Enforces what the local pre-commit hook can't (a hook is bypassable with
+# --no-verify). Runs the gitleaks binary directly rather than the marketplace
+# action, which avoids the org-license requirement for private repos.
+#
+# Pre-existing/accepted findings live in .gitleaksignore (by fingerprint), so
+# this job fails only on NEW secrets.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the scan sees all commits in the PR
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --config .gitleaks.toml --redact --verbose --exit-code 1

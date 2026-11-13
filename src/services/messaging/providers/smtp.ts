@@ -42,7 +42,11 @@ export class SMTPEmailProvider implements EmailProvider {
   }
 
   async send(options: SendEmailOptions): Promise<boolean> {
-    const from = options.fromEmail ?? this.defaultFrom;
+    const address = options.fromEmail ?? this.defaultFrom;
+    // Keep the verified address; optionally dress it with a display name.
+    const from = options.fromName
+      ? `${options.fromName} <${address}>`
+      : address;
     console.log(
       `[SMTP] Sending email: to=${options.to}, from=${from}, subject="${options.subject}"`,
     );
@@ -51,6 +55,7 @@ export class SMTPEmailProvider implements EmailProvider {
       const info = await this.transporter.sendMail({
         from,
         to: options.to,
+        replyTo: options.replyTo,
         subject: options.subject,
         text: options.textBody,
         html: options.htmlBody,

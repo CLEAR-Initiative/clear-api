@@ -24,10 +24,15 @@
  * with none, its `firstSignalCreatedAt` does. Dummy Events, and retracted or
  * dummy Signals, take no part. The API returns counts only; clear-mvp turns
  * them into shares.
+ *
+ * `weekly` is always ISO weeks; `series` is the same tally at the caller's
+ * granularity (UTC day, ISO week or calendar month, ADR-0014). The bucket
+ * helpers below are shared by every metric service.
  */
 
 import { GraphQLError } from "graphql";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
+import { historyEvent, LIVE_EVENT_FACTS } from "./event-facts-log.js";
 
 export const EXCLUSION_REASONS = [
   "NO_INGESTED_SIGNAL",
@@ -47,6 +52,20 @@ export const MAX_SPAN_DAYS = 364;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
+
+/** The bucket sizes a metric series can be read in (ADR-0014). */
+export const GRANULARITIES = ["DAY", "WEEK", "MONTH"] as const;
+export type Granularity = (typeof GRANULARITIES)[number];
+
+/** One bucket of a series: when it starts, how it is labelled, and whether the range covers only part of it. */
+export interface Bucket {
+  /** 00:00 UTC of the day, the week's Monday, or the first of the month. */
+  start: Date;
+  /** `2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month. */
+  label: string;
+  /** True when the range covers only part of the bucket, e.g. the current one. */
+  isPartial: boolean;
+}
 
 /** One Event in range, as the metric needs it. */
 export interface DetectionEventRow {
@@ -69,6 +88,15 @@ export type Classification =
   | { counted: true; days: number }
   | { counted: false; reason: ExclusionReason };
 
+/** One bucket of the detection series: counted Events by the instant of their first ingested Signal. */
+export interface DetectionBucketRow extends Bucket {
+  /** Events in range whose in-range instant falls in this bucket: counted plus excluded. */
+  eventsInRange: number;
+  counted: number;
+  sameDay: number;
+  byNextDay: number;
+}
+
 export interface DetectionMetrics {
   from: Date;
   to: Date;
@@ -89,12 +117,38 @@ export interface DetectionMetrics {
     isPartial: boolean;
   }>;
   exclusions: Array<{ reason: ExclusionReason; count: number }>;
+  /** The bucket size `series` was read in. */
+  granularity: Granularity;
+  /** The same tally as `weekly` at `granularity` (ADR-0014), zero-filled, ascending; equal to `weekly` for WEEK. */
+  series: DetectionBucketRow[];
 }
+
+/**
+ * Which onset a delay metric measures from (ADR-0021, decision 4).
+ * `AS_DELIVERED`: the onset as the Live run gave it at the time; the default
+ * and the history series. `CURRENT`: the onset the Event has today ("same
+ * ruler").
+ */
+export const ONSET_BASES = ["AS_DELIVERED", "CURRENT"] as const;
+export type OnsetBasis = (typeof ONSET_BASES)[number];
 
 export interface DetectionMetricsInput {
   from?: Date | string | null;
   to?: Date | string | null;
   locationId?: string | null;
+  /** Bucket size of `series`; defaults to WEEK. */
+  granularity?: Granularity | null;
+  /** Only time to detection and time to alert read it; defaults to AS_DELIVERED. */
+  onsetBasis?: OnsetBasis | null;
+}
+
+/** The onset basis a caller asked for; `AS_DELIVERED` when none. Refuses an unknown value. */
+export function resolveOnsetBasis(onsetBasis: OnsetBasis | null | undefined): OnsetBasis {
+  if (onsetBasis == null) return "AS_DELIVERED";
+  if (!(ONSET_BASES as readonly string[]).includes(onsetBasis)) {
+    throw new GraphQLError(`\`onsetBasis\` must be one of ${ONSET_BASES.join(", ")}.`, { extensions: { code: "BAD_USER_INPUT" } });
+  }
+  return onsetBasis;
 }
 
 const badInput = (message: string) => new GraphQLError(message, { extensions: { code: "BAD_USER_INPUT" } });
@@ -122,6 +176,85 @@ export function isoWeekLabel(at: Date): string {
   const firstThursday = startOfIsoWeek(new Date(Date.UTC(year, 0, 4))).getTime() + 3 * DAY_MS;
   const week = Math.round((thursday.getTime() - firstThursday) / WEEK_MS) + 1;
   return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+/** 00:00 UTC of the calendar day `at` falls on. */
+export function startOfUtcDay(at: Date): Date {
+  return new Date(utcDay(at) * DAY_MS);
+}
+
+/** 00:00 UTC on the first of the calendar month `at` falls in. */
+export function startOfUtcMonth(at: Date): Date {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
+}
+
+/** The start of the bucket `at` falls in: its UTC day, ISO week or calendar month (ADR-0014). */
+export function startOfBucket(at: Date, granularity: Granularity): Date {
+  switch (granularity) {
+    case "DAY":
+      return startOfUtcDay(at);
+    case "WEEK":
+      return startOfIsoWeek(at);
+    case "MONTH":
+      return startOfUtcMonth(at);
+  }
+}
+
+/** The start of the bucket after the one that starts at `start`. */
+export function nextBucketStart(start: Date, granularity: Granularity): Date {
+  switch (granularity) {
+    case "DAY":
+      return new Date(start.getTime() + DAY_MS);
+    case "WEEK":
+      return new Date(start.getTime() + WEEK_MS);
+    case "MONTH":
+      return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+  }
+}
+
+/** A bucket's label: `2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month. */
+export function bucketLabel(start: Date, granularity: Granularity): string {
+  switch (granularity) {
+    case "DAY":
+      return start.toISOString().slice(0, 10);
+    case "WEEK":
+      return isoWeekLabel(start);
+    case "MONTH":
+      return start.toISOString().slice(0, 7);
+  }
+}
+
+/**
+ * Every bucket the range touches, ascending, for the caller to zero-fill. A
+ * bucket is partial when the range covers only part of it; `to` is inclusive,
+ * so a range ending at a bucket's last millisecond covers that bucket.
+ */
+export function bucketsOf(range: { from: Date; to: Date }, granularity: Granularity): Bucket[] {
+  const buckets: Bucket[] = [];
+  const last = startOfBucket(range.to, granularity).getTime();
+  for (let start = startOfBucket(range.from, granularity); start.getTime() <= last; start = nextBucketStart(start, granularity)) {
+    const end = nextBucketStart(start, granularity).getTime();
+    buckets.push({
+      start,
+      label: bucketLabel(start, granularity),
+      isPartial: start.getTime() < range.from.getTime() || end > range.to.getTime() + 1,
+    });
+  }
+  return buckets;
+}
+
+/** Bucket index by start instant, for constant-time lookups while summarising. */
+export function bucketIndex(buckets: Bucket[]): Map<number, number> {
+  return new Map(buckets.map((bucket, i) => [bucket.start.getTime(), i]));
+}
+
+/** The caller's granularity, WEEK when none was given. */
+export function resolveGranularity(value: Granularity | string | null | undefined): Granularity {
+  if (value == null) return "WEEK";
+  if (!(GRANULARITIES as readonly string[]).includes(value)) {
+    throw badInput(`\`granularity\` must be one of ${GRANULARITIES.join(", ")}.`);
+  }
+  return value as Granularity;
 }
 
 function toDate(value: Date | string, name: string): Date {
@@ -164,8 +297,12 @@ export function classify(row: DetectionEventRow): Classification {
   return { counted: true, days };
 }
 
-/** The metric over the Events in range. */
-export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Date }): DetectionMetrics {
+/** The metric over the Events in range, with `series` read at `granularity` (ADR-0014). */
+export function summarise(
+  rows: DetectionEventRow[],
+  range: { from: Date; to: Date },
+  granularity: Granularity = "WEEK",
+): DetectionMetrics {
   const histogram = Array.from({ length: OPEN_ENDED_DAYS + 1 }, (_, d) => ({
     daysAfterOnset: d,
     isOpenEnded: d === OPEN_ENDED_DAYS,
@@ -173,23 +310,37 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
   }));
   const exclusions = new Map<ExclusionReason, number>(EXCLUSION_REASONS.map((r) => [r, 0]));
 
-  const weekly: DetectionMetrics["weekly"] = [];
-  const weekIndex = new Map<number, number>();
-  const lastWeek = startOfIsoWeek(range.to).getTime();
-  for (let start = startOfIsoWeek(range.from).getTime(); start <= lastWeek; start += WEEK_MS) {
-    weekIndex.set(start, weekly.length);
-    weekly.push({
-      isoWeek: isoWeekLabel(new Date(start)),
-      weekStart: new Date(start),
-      eventsInRange: 0,
-      counted: 0,
-      sameDay: 0,
-      byNextDay: 0,
-      // A week only partly inside the range: `to` is inclusive, so a range
-      // ending at Sunday 23:59:59.999 covers its week.
-      isPartial: start < range.from.getTime() || start + WEEK_MS > range.to.getTime() + 1,
-    });
-  }
+  // `weekly` is always ISO weeks, for the cards that predate `series`; `series`
+  // is the same tally at the requested granularity (identical rows for WEEK).
+  const weekBuckets = bucketsOf(range, "WEEK");
+  const weekIndex = bucketIndex(weekBuckets);
+  const weekly: DetectionMetrics["weekly"] = weekBuckets.map((bucket) => ({
+    isoWeek: bucket.label,
+    weekStart: bucket.start,
+    eventsInRange: 0,
+    counted: 0,
+    sameDay: 0,
+    byNextDay: 0,
+    isPartial: bucket.isPartial,
+  }));
+  const seriesBuckets = bucketsOf(range, granularity);
+  const seriesIndex = bucketIndex(seriesBuckets);
+  const series: DetectionBucketRow[] = seriesBuckets.map((bucket) => ({
+    ...bucket,
+    eventsInRange: 0,
+    counted: 0,
+    sameDay: 0,
+    byNextDay: 0,
+  }));
+  /** The weekly row and the series row an instant falls in; either can be missing at the range's edges. */
+  const cellsAt = (at: Date) => {
+    const cells: Array<{ eventsInRange: number; counted: number; sameDay: number; byNextDay: number }> = [];
+    const w = weekIndex.get(startOfIsoWeek(at).getTime());
+    if (w !== undefined) cells.push(weekly[w]!);
+    const i = seriesIndex.get(startOfBucket(at, granularity).getTime());
+    if (i !== undefined) cells.push(series[i]!);
+    return cells;
+  };
 
   let withOnset = 0;
   let counted = 0;
@@ -198,8 +349,7 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
   for (const row of rows) {
     if (row.startedAt) withOnset++;
     const inRangeAt = row.firstIngestedAt ?? row.inRangeAt ?? null;
-    const weekOf = inRangeAt ? weekIndex.get(startOfIsoWeek(inRangeAt).getTime()) : undefined;
-    if (weekOf !== undefined) weekly[weekOf]!.eventsInRange++;
+    if (inRangeAt) for (const cell of cellsAt(inRangeAt)) cell.eventsInRange++;
     const c = classify(row);
     if (!c.counted) {
       exclusions.set(c.reason, exclusions.get(c.reason)! + 1);
@@ -209,12 +359,10 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
     if (c.days === 0) sameDay++;
     if (c.days <= 1) byNextDay++;
     histogram[Math.min(c.days, OPEN_ENDED_DAYS)]!.count++;
-    const i = weekIndex.get(startOfIsoWeek(row.firstIngestedAt!).getTime());
-    if (i !== undefined) {
-      const week = weekly[i]!;
-      week.counted++;
-      if (c.days === 0) week.sameDay++;
-      if (c.days <= 1) week.byNextDay++;
+    for (const cell of cellsAt(row.firstIngestedAt!)) {
+      cell.counted++;
+      if (c.days === 0) cell.sameDay++;
+      if (c.days <= 1) cell.byNextDay++;
     }
   }
 
@@ -229,6 +377,8 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
     histogram,
     weekly,
     exclusions: EXCLUSION_REASONS.map((reason) => ({ reason, count: exclusions.get(reason)! })),
+    granularity,
+    series,
   };
 }
 
@@ -240,37 +390,92 @@ export function summarise(rows: DetectionEventRow[], range: { from: Date; to: Da
  * `rawData.manual` is true). `locationId` keeps the Events whose origin, destination or
  * general location is that location or inside it, as `eventsByLocation` does.
  */
-export async function fetchDetectionEvents(
-  prisma: PrismaClient,
-  range: { from: Date; to: Date },
-  locationId: string | null,
-): Promise<DetectionEventRow[]> {
-  const inLocation = locationId
+/**
+ * The predicate that makes a Signal (aliased `alias`, a code-owned name) an
+ * ingested one: brought in by a pipeline (not an accepted web case, not filed
+ * by hand) and live (not retracted, not dummy). The one definition every
+ * Signal-based metric reads, so a change to what "ingested" means is made once.
+ */
+export function ingestedSignal(alias: string): Prisma.Sql {
+  return Prisma.raw(
+    `${alias}."submitted_by_id" IS NULL AND ${alias}."raw_data"->>'manual' IS DISTINCT FROM 'true' AND NOT ${alias}."retracted" AND NOT ${alias}."isDummy"`,
+  );
+}
+
+/**
+ * The `WHERE` clause that keeps the Signals (aliased `alias`, a code-owned
+ * name) whose current location (general, else origin, else destination) is
+ * `locationId` or inside it; empty for no location. Signal-based metrics read
+ * a Signal where it is now; location precision alone reads a corrected Signal
+ * where the pipeline put it (ADR-0012).
+ */
+export function signalsInLocation(locationId: string | null, alias = "s"): Prisma.Sql {
+  if (!locationId) return Prisma.empty;
+  const place = Prisma.raw(`COALESCE(${alias}."location_id", ${alias}."origin_id", ${alias}."destination_id")`);
+  return Prisma.sql`AND EXISTS (
+        SELECT 1 FROM "locations" l
+        WHERE l."id" = ${place}
+          AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
+      )`;
+}
+
+/** Source names as a caller gave them: trimmed, empty ones dropped, duplicates removed. */
+export function normaliseSourceNames(sourceNames: string[] | null | undefined): string[] {
+  return [...new Set((sourceNames ?? []).map((name) => name.trim()).filter(Boolean))];
+}
+
+/**
+ * The `WHERE` clause that keeps the Events (aliased `e`) whose origin,
+ * destination or general location is `locationId` or inside it, as
+ * `eventsByLocation` reads it; empty for no location. Shared by every
+ * Event-based metric so they scope alike.
+ */
+export function eventsInLocation(locationId: string | null): Prisma.Sql {
+  return locationId
     ? Prisma.sql`AND EXISTS (
         SELECT 1 FROM "locations" l
         WHERE l."id" IN (e."origin_id", e."destination_id", e."location_id")
           AND (l."id" = ${locationId} OR ${locationId} = ANY(l."ancestor_ids"))
       )`
     : Prisma.empty;
+}
+
+/**
+ * The Events of the history series in range (ADR-0021): every Event that a
+ * Replay run did not create. The first ingested Signal comes from the `LIVE`
+ * rows of the grouping log. The onset comes from the last `LIVE` row of the
+ * Event facts log (`AS_DELIVERED`) or from the live Event (`CURRENT`). An
+ * Event with no `LIVE` facts row (a person created it) reads its own fields.
+ */
+export async function fetchDetectionEvents(
+  prisma: PrismaClient,
+  range: { from: Date; to: Date },
+  locationId: string | null,
+  onsetBasis: OnsetBasis = "AS_DELIVERED",
+): Promise<DetectionEventRow[]> {
+  const inLocation = eventsInLocation(locationId);
+  const delivered = (column: string) => Prisma.raw(`CASE WHEN f."id" IS NULL THEN e."${column}" ELSE f."${column}" END`);
+  const onset = onsetBasis === "CURRENT" ? Prisma.raw('e."started_at"') : delivered("started_at");
+  const accuracy = onsetBasis === "CURRENT" ? Prisma.raw('e."started_at_accuracy"') : delivered("started_at_accuracy");
+  const inRangeAt = Prisma.raw('COALESCE(fi."at", f."first_signal_created_at", e."first_signal_created_at")');
   return prisma.$queryRaw<DetectionEventRow[]>`
     WITH first_ingested AS (
-      SELECT se."event_id", MIN(s."published_at") AS "at"
-      FROM "signal_to_events" se
-      JOIN "signals" s ON s."id" = se."signal_id"
-      WHERE s."submitted_by_id" IS NULL
-        AND s."raw_data"->>'manual' IS DISTINCT FROM 'true'
-        AND NOT s."retracted"
-        AND NOT s."isDummy"
-      GROUP BY se."event_id"
+      SELECT g."event_id", MIN(s."published_at") AS "at"
+      FROM "signal_grouping_log" g
+      JOIN "signals" s ON s."id" = g."signal_id"
+      WHERE g."run_kind" = 'LIVE' AND ${ingestedSignal("s")}
+      GROUP BY g."event_id"
     )
-    SELECT e."started_at" AS "startedAt", e."started_at_accuracy" AS "startedAtAccuracy",
+    SELECT ${onset} AS "startedAt", ${accuracy} AS "startedAtAccuracy",
       fi."at" AS "firstIngestedAt",
-      COALESCE(fi."at", e."first_signal_created_at") AS "inRangeAt"
+      ${inRangeAt} AS "inRangeAt"
     FROM "events" e
     LEFT JOIN first_ingested fi ON fi."event_id" = e."id"
+    LEFT JOIN ${LIVE_EVENT_FACTS} f ON f."event_id" = e."id"
     WHERE NOT e."isDummy"
-      AND COALESCE(fi."at", e."first_signal_created_at") >= ${range.from}
-      AND COALESCE(fi."at", e."first_signal_created_at") <= ${range.to}
+      AND ${historyEvent("e")}
+      AND ${inRangeAt} >= ${range.from}
+      AND ${inRangeAt} <= ${range.to}
       ${inLocation}
   `;
 }
@@ -282,6 +487,7 @@ export async function computeDetectionMetrics(
   now: Date = new Date(),
 ): Promise<DetectionMetrics> {
   const range = resolveRange(input, now);
-  const rows = await fetchDetectionEvents(prisma, range, input.locationId || null);
-  return summarise(rows, range);
+  const granularity = resolveGranularity(input.granularity);
+  const rows = await fetchDetectionEvents(prisma, range, input.locationId || null, resolveOnsetBasis(input.onsetBasis));
+  return summarise(rows, range, granularity);
 }

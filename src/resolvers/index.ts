@@ -12,6 +12,7 @@ import { locationResolvers } from "./location.resolver.js";
 import { notificationResolvers } from "./notification.resolver.js";
 import { featureFlagResolvers } from "./featureFlag.resolver.js";
 import { apiKeyResolvers } from "./apiKey.resolver.js";
+import { apiSignalSourceGrantResolvers } from "./apiSignalSourceGrant.resolver.js";
 import { devUserResolvers } from "./devUser.resolver.js";
 import { publicEventResolvers } from "./publicEvent.resolver.js";
 import { disasterTypeResolvers } from "./disasterType.resolver.js";
@@ -29,9 +30,12 @@ import { pipelineCountryResolvers } from "./pipelineCountry.resolver.js";
 import { translationResolvers } from "./translation.resolver.js";
 import { knowledgebaseResolvers } from "./knowledgebase.resolver.js";
 import { gazetteerResolvers } from "./gazetteer.resolver.js";
+import { unresolvedPlaceNameResolvers } from "./unresolvedPlaceName.resolver.js";
+import { placeAliasResolvers } from "./placeAlias.resolver.js";
 import { datapointResolvers } from "./datapoint.resolver.js";
 import { situationAnalysisResolvers } from "./situationAnalysis.resolver.js";
 import { analysisResolvers } from "./analysis.resolver.js";
+import { analysisDatapointResolvers } from "./analysisDatapoint.resolver.js";
 import { reportFigureResolvers } from "./reportFigure.resolver.js";
 import { webhookResolvers } from "./webhook.resolver.js";
 import { groundResolvers } from "./ground.resolver.js";
@@ -54,6 +58,7 @@ export const resolvers: IResolvers[] = [
   notificationResolvers,
   featureFlagResolvers,
   apiKeyResolvers,
+  apiSignalSourceGrantResolvers,
   devUserResolvers,
   publicEventResolvers,
   disasterTypeResolvers,
@@ -71,9 +76,12 @@ export const resolvers: IResolvers[] = [
   translationResolvers,
   knowledgebaseResolvers,
   gazetteerResolvers,
+  unresolvedPlaceNameResolvers,
+  placeAliasResolvers,
   datapointResolvers,
   situationAnalysisResolvers,
   analysisResolvers,
+  analysisDatapointResolvers,
   reportFigureResolvers,
   webhookResolvers,
   groundResolvers,

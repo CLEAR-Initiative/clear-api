@@ -75,8 +75,39 @@ const envSchema = z.object({
    *  {@link normaliseServerUrl} for why a path here is never valid. */
   BETTER_AUTH_URL: z.string().url().transform(normaliseServerUrl),
 
-  // Frontend URL (for verification links)
+  // Frontend URL (for verification links). The platform default; a calling
+  // frontend can override per request via a `frontendBaseUrl` argument, but
+  // on unauthenticated flows that override is only honoured when its origin
+  // is in ALLOWED_FRONTEND_ORIGINS (see below).
   FRONTEND_URL: z.string().default("http://localhost:3000"),
+
+  // Operator allowlist of frontend origins that may appear in the links of
+  // UNAUTHENTICATED touchpoint emails (password reset). A caller-supplied
+  // `frontendBaseUrl` whose origin is not listed falls back to FRONTEND_URL,
+  // so a request can never inject an arbitrary host into a token-bearing
+  // link (account-takeover guard). Comma-separated; each entry is reduced to
+  // its bare origin and invalid entries are dropped with a warning. Empty
+  // (the default) means "no overrides trusted" — every unauthenticated link
+  // uses FRONTEND_URL. FRONTEND_URL's own origin is always implicitly
+  // trusted. Authenticated flows (invite, verify) trust the arg directly and
+  // do not consult this list.
+  ALLOWED_FRONTEND_ORIGINS: z
+    .string()
+    .default("")
+    .transform((s) => {
+      const origins = new Set<string>();
+      for (const raw of s.split(",").map((e) => e.trim()).filter(Boolean)) {
+        try {
+          origins.add(new URL(raw).origin);
+        } catch {
+          console.warn(
+            `[ENV] ALLOWED_FRONTEND_ORIGINS entry "${raw}" is not a valid ` +
+              `URL; ignoring it.`,
+          );
+        }
+      }
+      return [...origins];
+    }),
 
   // Email provider: "smtp" | "postmark"
   EMAIL_PROVIDER: z.string().default("smtp"),

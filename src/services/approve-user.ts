@@ -5,17 +5,18 @@
  * surface so admins get the same outcome regardless of how they
  * approve.
  *
- * Returns the updated user row plus a CRM sync status (sync is
- * best-effort — local role flip is authoritative).
+ * Returns the updated user row plus the outcome of the two side
+ * effects: the approval email and the CRM mirror. Both are best-effort —
+ * the local role flip is authoritative and neither can undo it. The CRM
+ * is optional: with no EXPONENTIAL_* config it is skipped silently.
  */
 
 import { GraphQLError } from "graphql";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { logActivity } from "../utils/activity-log.js";
-import {
-  findContactByEmail,
-  moveProspectToApproved,
-} from "./exponential.js";
+import { sendApprovalEmail } from "./approval-email.js";
+import { syncApprovedContact } from "./exponential.js";
+import { splitName } from "./signup.js";
 
 export interface ApproveUserResult {
   user: {
@@ -25,6 +26,10 @@ export interface ApproveUserResult {
     role: string | null;
     isActive: boolean | null;
   };
+  /** False when the email provider threw or rejected the send. */
+  emailSent: boolean;
+  /** Why the email failed; null when it was sent. */
+  emailError: string | null;
   crmMoved: boolean;
   crmWarnings: string[];
 }
@@ -37,8 +42,8 @@ export interface ApproveUserResult {
  * click doesn't repeatedly hit the CRM. Throws `NOT_FOUND` when the
  * user id doesn't resolve.
  *
- * On success returns the updated user + a CRM-sync summary the caller
- * can use to surface a retry affordance.
+ * On success returns the updated user + email and CRM-sync summaries
+ * the caller surfaces to the admin.
  */
 export async function approveUserById(
   prisma: PrismaClient,
@@ -58,34 +63,39 @@ export async function approveUserById(
     );
   }
 
-  // Local role flip first — authoritative even if Exponential is
-  // unreachable, so the user gets access immediately. `member` is the default
-  // approved human role (formerly `viewer`).
-  const updated = await prisma.user.update({
-    where: { id: user.id },
+  // Local role flip first — authoritative even if the mail provider or CRM
+  // is unreachable, so the user gets access immediately. `member` is the
+  // default approved human role (formerly `viewer`). Conditional on
+  // `pending` so that of two overlapping approvals only one wins the flip
+  // and goes on to email the user.
+  const flipped = await prisma.user.updateMany({
+    where: { id: user.id, role: "pending" },
     data: { role: "member" },
   });
+  if (flipped.count === 0) {
+    throw new GraphQLError("User is not pending (already approved)", {
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  const updated = { ...user, role: "member" };
 
-  // Resolve the CRM contact by email (no pointer stored on the user
-  // row by design). Every CRM failure is non-fatal and surfaced as a
-  // warning string on the result so the admin UI can offer a retry
-  // without re-approving the user.
+  // Independent side effects; neither throws.
+  const [email, synced] = await Promise.all([
+    sendApprovalEmail({ email: user.email, name: user.name }),
+    syncApprovedContact({ email: user.email, ...splitName(user.name) }),
+  ]);
+  const emailSent = email.ok;
+  const emailError = email.ok ? null : email.reason;
+
+  // CRM mirror. Every failure is non-fatal and surfaced as a warning
+  // string so the admin sees it; an unconfigured CRM is not a failure.
   let crmMoved = false;
   const crmWarnings: string[] = [];
-
-  const lookup = await findContactByEmail(user.email);
-  if (!lookup.ok) {
-    crmWarnings.push(`crm_lookup_failed:${lookup.reason}`);
-  } else if (!lookup.value) {
-    crmWarnings.push("crm_contact_not_found");
-  } else {
-    const moved = await moveProspectToApproved(lookup.value.id);
-    if (!moved.ok) {
-      crmWarnings.push(`crm_move_failed:${moved.reason}`);
-    } else {
-      crmMoved = true;
-      crmWarnings.push(...moved.value.warnings);
-    }
+  if (synced.ok) {
+    crmMoved = true;
+    crmWarnings.push(...synced.value.warnings);
+  } else if (synced.reason !== "not_configured") {
+    crmWarnings.push(`crm_sync_failed:${synced.reason}`);
   }
 
   await logActivity(prisma, {
@@ -95,6 +105,8 @@ export async function approveUserById(
     resourceId: updated.id,
     metadata: {
       email: user.email,
+      emailSent,
+      emailError,
       crmMoved,
       crmWarnings,
     },
@@ -108,7 +120,22 @@ export async function approveUserById(
       role: updated.role,
       isActive: updated.isActive,
     },
+    emailSent,
+    emailError,
     crmMoved,
     crmWarnings,
   };
+}
+
+/** One-line outcome for the admin portal's flash message. */
+export function approvalSummary(result: ApproveUserResult): string {
+  const parts = [
+    result.emailSent
+      ? "Approved. Approval email sent."
+      : `Approved, but the approval email failed (${result.emailError}). Let them know another way.`,
+  ];
+  if (result.crmWarnings.length > 0) {
+    parts.push(`CRM sync issues: ${result.crmWarnings.join(", ")}`);
+  }
+  return parts.join(" ");
 }

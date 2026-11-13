@@ -25,6 +25,8 @@ const DETECTION_METRICS = `
       byNextDay
       histogram { daysAfterOnset isOpenEnded count }
       weekly { isoWeek weekStart counted sameDay byNextDay isPartial }
+      granularity
+      series { start label eventsInRange counted sameDay byNextDay isPartial }
       exclusions { reason count }
     }
   }
@@ -65,6 +67,10 @@ describe("detectionMetrics schema contract", () => {
       sameDay: 1,
       byNextDay: 1,
       weekly: [{ isoWeek: "2026-W41", weekStart: "2026-10-05T00:00:00.000Z", counted: 1, sameDay: 1, byNextDay: 1, isPartial: false }],
+      granularity: "WEEK",
+      series: [
+        { start: "2026-10-05T00:00:00.000Z", label: "2026-W41", eventsInRange: 2, counted: 1, sameDay: 1, byNextDay: 1, isPartial: false },
+      ],
       exclusions: [
         { reason: "NO_INGESTED_SIGNAL", count: 0 },
         { reason: "NO_ONSET", count: 1 },
@@ -74,6 +80,30 @@ describe("detectionMetrics schema contract", () => {
       ],
     });
     expect(m.histogram).toHaveLength(9);
+  });
+
+  it("reads the series by day when asked, and refuses an unknown granularity", async () => {
+    const { result } = await run(
+      { id: "a", role: "admin" },
+      { input: { from: "2026-10-05T00:00:00.000Z", to: "2026-10-11T23:59:59.999Z", granularity: "DAY" } },
+    );
+    expect(result.errors).toBeUndefined();
+    const m = result.data?.detectionMetrics as { granularity: string; series: Array<Record<string, unknown>>; weekly: unknown[] };
+    expect(m.granularity).toBe("DAY");
+    expect(m.series.map((b) => b.label)).toEqual([
+      "2026-10-05",
+      "2026-10-06",
+      "2026-10-07",
+      "2026-10-08",
+      "2026-10-09",
+      "2026-10-10",
+      "2026-10-11",
+    ]);
+    expect(m.series[0]).toMatchObject({ start: "2026-10-05T00:00:00.000Z", eventsInRange: 1, counted: 1, sameDay: 1, byNextDay: 1, isPartial: false });
+    expect(m.series[1]).toMatchObject({ label: "2026-10-06", eventsInRange: 1, counted: 0 });
+    expect(m.weekly).toHaveLength(1);
+    const bad = await run({ id: "a", role: "admin" }, { input: { granularity: "HOUR" } });
+    expect(bad.result.errors?.[0]?.message).toMatch(/MetricGranularity/);
   });
 
   it("takes no input at all, applying the default range", async () => {

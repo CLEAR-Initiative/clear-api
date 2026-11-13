@@ -2,6 +2,12 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
 import { requireContentReader } from "../utils/auth-guard.js";
 import {
+  assertSignalReadable,
+  withSignalScope,
+  FULL_SIGNAL_SCOPE,
+  type SignalScope,
+} from "../utils/signal-access.js";
+import {
   buildEventLocationFilterForTeam,
   buildLocationFilterForTeam,
   getTeamScopeLocationIds,
@@ -94,6 +100,7 @@ type AlertStatus = "draft" | "published" | "archived";
 interface CommonFilter {
   teamId?: string | null;
   locationId?: string | null;
+  locationIds?: string[] | null;
   eventTypes?: string[] | null;
   severityMin?: number | null;
   severityMax?: number | null;
@@ -132,18 +139,37 @@ function dateFilter(from?: Date | string | null, to?: Date | string | null) {
   return f;
 }
 
+type LocationFilter = Pick<CommonFilter, "locationId" | "locationIds">;
+
 /**
- * Resolve a `locationId` to "this location OR any descendant", expressed as
- * an event-shaped where (origin / destination / general). Returns null when
- * no locationId given.
+ * Every location id a filter covers: `locationId` and each of `locationIds`,
+ * each with its descendants. Null when neither is set or nothing resolves,
+ * so no location condition is added (as for an unknown `locationId` before).
+ */
+async function filterLocationIds(
+  prisma: Context["prisma"],
+  f: LocationFilter,
+): Promise<string[] | null> {
+  const roots = new Set(f.locationIds ?? []);
+  if (f.locationId) roots.add(f.locationId);
+  const ids = new Set<string>();
+  for (const root of roots) {
+    for (const id of await getLocationIdsWithDescendants(prisma, root)) ids.add(id);
+  }
+  return ids.size > 0 ? [...ids] : null;
+}
+
+/**
+ * Resolve `locationId` / `locationIds` to "under any of these locations",
+ * expressed as an event-shaped where (origin / destination / general).
+ * Returns null when no location filter is set.
  */
 async function locationWhereForEvent(
   prisma: Context["prisma"],
-  locationId?: string | null,
+  f: LocationFilter,
 ) {
-  if (!locationId) return null;
-  const ids = await getLocationIdsWithDescendants(prisma, locationId);
-  if (ids.length === 0) return null;
+  const ids = await filterLocationIds(prisma, f);
+  if (!ids) return null;
   return {
     OR: [
       { originId: { in: ids } },
@@ -155,11 +181,10 @@ async function locationWhereForEvent(
 
 async function locationWhereForSignal(
   prisma: Context["prisma"],
-  locationId?: string | null,
+  f: LocationFilter,
 ) {
-  if (!locationId) return null;
-  const ids = await getLocationIdsWithDescendants(prisma, locationId);
-  if (ids.length === 0) return null;
+  const ids = await filterLocationIds(prisma, f);
+  if (!ids) return null;
   return {
     OR: [
       { originId: { in: ids } },
@@ -193,7 +218,7 @@ async function buildEventsWhere(
     }
   }
 
-  const locWhere = await locationWhereForEvent(prisma, f.locationId);
+  const locWhere = await locationWhereForEvent(prisma, f);
   if (locWhere) ands.push(locWhere);
 
   return ands.length > 0 ? { AND: ands } : {};
@@ -223,7 +248,7 @@ async function buildSignalsWhere(
     }
   }
 
-  const locWhere = await locationWhereForSignal(prisma, f.locationId);
+  const locWhere = await locationWhereForSignal(prisma, f);
   if (locWhere) ands.push(locWhere);
 
   return ands.length > 0 ? { AND: ands } : {};
@@ -418,10 +443,8 @@ async function statsScope(
     const ids = await getTeamScopeLocationIds(prisma, input.teamId);
     if (ids) conds.push(inLocations(ids));
   }
-  if (input.locationId) {
-    const ids = await getLocationIdsWithDescendants(prisma, input.locationId);
-    if (ids.length > 0) conds.push(inLocations(ids));
-  }
+  const locationIds = await filterLocationIds(prisma, input);
+  if (locationIds) conds.push(inLocations(locationIds));
 
   // Prisma.join keeps each condition's bound values attached.
   const finalWhere = conds.length > 0
@@ -461,6 +484,13 @@ interface SignalsPageInput extends SignalsFilter {
 export async function computeEntityStats(
   prisma: Context["prisma"],
   input: EntityStatsInput,
+  /**
+   * Caller's Signal visibility. Counts are a read of Signal data too — an
+   * unscoped total would tell an API-only developer how many Signals exist
+   * beyond the sources granted to them. Defaults to full for callers that
+   * never count Signals.
+   */
+  signalScope: SignalScope = FULL_SIGNAL_SCOPE,
 ): Promise<{ total: number; buckets: Array<{ key: string; count: number }> }> {
   const groupBy: StatsGroupBy = input.groupBy ?? "none";
 
@@ -475,13 +505,29 @@ export async function computeEntityStats(
       const where = await buildEventsWhere(prisma, input as EventsFilter);
       total = await prisma.events.count({ where });
     } else {
-      const where = await buildSignalsWhere(prisma, input as SignalsFilter);
+      // AND, not spread: buildSignalsWhere can set `sourceId` from a
+      // caller-supplied filter, which a spread would let overwrite the scope.
+      const where = withSignalScope(
+        signalScope,
+        await buildSignalsWhere(prisma, input as SignalsFilter),
+      );
       total = await prisma.signals.count({ where });
     }
     return { total, buckets: [] };
   }
 
-  const { table, whereSql, tsCol, typeExpr } = await statsScope(prisma, input);
+  const { table, whereSql: baseWhereSql, tsCol, typeExpr } = await statsScope(prisma, input);
+
+  // Narrow Signal stats to the caller's granted sources. `statsScope` always
+  // emits a WHERE, so this appends rather than introducing one. An empty grant
+  // list yields `IN (NULL)`, which matches nothing — closed by default, same as
+  // the Prisma path above.
+  const whereSql =
+    input.entity === "signal" && signalScope.kind === "restricted"
+      ? Prisma.sql`${baseWhereSql} AND signals.source_id IN (${Prisma.join(
+          signalScope.sourceIds.length > 0 ? signalScope.sourceIds : [null],
+        )})`
+      : baseWhereSql;
 
   // Build the SELECT key expression based on groupBy.
   let keyExpr: Prisma.Sql;
@@ -610,8 +656,15 @@ export const paginationResolvers = {
       context: Context,
     ) => {
       requireContentReader(context);
+      assertSignalReadable(context.signalScope);
       const input = args.input ?? {};
-      const where = await buildSignalsWhere(context.prisma, input);
+      // Scope first, so both the page and its totalCount describe the same
+      // set — a count that ignored the scope would leak how many Signals
+      // exist beyond the caller's granted sources.
+      const where = withSignalScope(
+        context.signalScope,
+        await buildSignalsWhere(context.prisma, input),
+      );
       const limit = clampLimit(input.limit);
       const offset = clampOffset(input.offset);
 
@@ -644,7 +697,7 @@ export const paginationResolvers = {
       context: Context,
     ) => {
       requireContentReader(context);
-      return computeEntityStats(context.prisma, args.input);
+      return computeEntityStats(context.prisma, args.input, context.signalScope);
     },
   },
 };

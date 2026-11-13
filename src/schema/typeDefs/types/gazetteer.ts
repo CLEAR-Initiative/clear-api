@@ -6,10 +6,20 @@ import { gql } from "graphql-tag";
  * back to LocationIQ/Nominatim for landmarks/POIs the gazetteer lacks.
  */
 export const gazetteerTypeDef = gql`
-  """A GeoNames gazetteer match for a place name. Coordinates come straight
-  from GeoNames — callers still validate them (e.g. the same-A2 check
-  against a signal's source coordinates) before trusting a fuzzy hit."""
+  """Where a gazetteer answer came from."""
+  enum GazetteerSource {
+    """One of CLEAR's own place aliases. \`locationId\` is set."""
+    ALIAS
+    """The GeoNames copy."""
+    GEONAMES
+  }
+
+  """A gazetteer match for a place name: one of CLEAR's own place aliases, or
+  a GeoNames row. GeoNames coordinates come straight from GeoNames, so callers
+  still validate them (e.g. the same-A2 check against a signal's source
+  coordinates) before trusting a fuzzy hit."""
   type GazetteerHit {
+    """The GeoNames id. 0 for an alias whose location has none."""
     geonamesId: Int!
     name: String!
     latitude: Float!
@@ -26,5 +36,9 @@ export const gazetteerTypeDef = gql`
     score: Float!
     """True when matched exactly on the normalised name, false when fuzzy."""
     exact: Boolean!
+    """The CLEAR location an alias points at. Null for a GeoNames match. Use
+    it as the Signal's location directly: do not create a new landmark."""
+    locationId: String
+    source: GazetteerSource!
   }
 `;

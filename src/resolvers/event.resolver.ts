@@ -3,8 +3,12 @@ import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
+import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { logActivity } from "../utils/activity-log.js";
 import { logEventChange } from "../utils/event-log.js";
+import { writeGroupingLinks } from "../services/signal-grouping-log.js";
+import { onsetAtRaise, runKindOf, writeEventFacts } from "../services/event-facts-log.js";
+import type { RunKind } from "../services/signal-location-outcomes.js";
 import { createPointLocation, resolvePointsToCommonAncestor, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
@@ -83,6 +87,9 @@ interface CreateEventInput {
    * no team column.
    */
   teamId?: string;
+  runKind?: RunKind | null;
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 interface UpdateEventInput {
@@ -112,6 +119,9 @@ interface UpdateEventInput {
   casualties?: number;
   rank?: number;
   signalIds?: string[];
+  runKind?: RunKind | null;
+  pipelineVersion?: string | null;
+  runId?: string | null;
 }
 
 /** Absent = leave unchanged; explicit null = clear (`?? undefined` would
@@ -441,51 +451,60 @@ export const eventResolvers = {
         }
       }
 
-      const event = await context.prisma.events.create({
-        data: {
-          title: input.title,
-          description: input.description,
-          description_signals: input.descriptionSignals
-            ? (input.descriptionSignals as InputJsonValue)
-            : undefined,
-          validFrom: new Date(input.validFrom),
-          validTo: input.validTo ? new Date(input.validTo) : null,
-          firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
-          lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
-          startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
-          endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
-          startedAtAccuracy: input.startedAtAccuracy ?? undefined,
-          endedAtAccuracy: input.endedAtAccuracy ?? undefined,
-          magnitude: input.magnitude ?? undefined,
-          magnitudeUnit: input.magnitudeUnit ?? undefined,
-          actors: input.actors ?? undefined,
-          ...(input.countryIds && input.countryIds.length > 0
-            ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
-            : {}),
-          originId,
-          destinationId,
-          locationId,
-          types: input.types,
-          severity: input.severity,
-          populationAffected,
-          populationDisplaced,
-          casualties: input.casualties,
-          rank: input.rank,
-        },
-      });
-
-      // Create signalEvents join entries (dedupe the input array first so
-      // the same signalId repeated in the request doesn't create duplicate links).
+      // The Event, its Links and their grouping log rows are one transaction
+      // (ADR-0021): a Link never exists without the row that records it.
+      // Dedupe the input first so a repeated signalId makes one Link.
       const uniqueSignalIds = [...new Set(input.signalIds)];
-      if (uniqueSignalIds.length > 0) {
-        await context.prisma.signalEvents.createMany({
-          data: uniqueSignalIds.map((signalId) => ({
-            signalId,
-            eventId: event.id,
-            collectedAt: new Date(),
-          })),
+      // The pipeline calls with an API key; a person has a session. Only the
+      // pipeline's writes go to the logs.
+      const byPipeline = context.authMethod === "api-key";
+      const event = await context.prisma.$transaction(async (tx) => {
+        const event = await tx.events.create({
+          data: {
+            title: input.title,
+            description: input.description,
+            description_signals: input.descriptionSignals
+              ? (input.descriptionSignals as InputJsonValue)
+              : undefined,
+            validFrom: new Date(input.validFrom),
+            validTo: input.validTo ? new Date(input.validTo) : null,
+            firstSignalCreatedAt: new Date(input.firstSignalCreatedAt),
+            lastSignalCreatedAt: new Date(input.lastSignalCreatedAt),
+            startedAt: input.startedAt ? new Date(input.startedAt) : undefined,
+            endedAt: input.endedAt ? new Date(input.endedAt) : undefined,
+            startedAtAccuracy: input.startedAtAccuracy ?? undefined,
+            endedAtAccuracy: input.endedAtAccuracy ?? undefined,
+            magnitude: input.magnitude ?? undefined,
+            magnitudeUnit: input.magnitudeUnit ?? undefined,
+            actors: input.actors ?? undefined,
+            ...(input.countryIds && input.countryIds.length > 0
+              ? { countries: { connect: input.countryIds.map((id) => ({ id })) } }
+              : {}),
+            originId,
+            destinationId,
+            locationId,
+            types: input.types,
+            severity: input.severity,
+            populationAffected,
+            populationDisplaced,
+            casualties: input.casualties,
+            rank: input.rank,
+            // The run kind that created the Event; a person's Event has none
+            // (ADR-0021, decision 6). Never changed afterwards.
+            createdByRunKind: byPipeline ? runKindOf(input) : null,
+          },
         });
-      }
+
+        if (uniqueSignalIds.length > 0) {
+          const linkedAt = new Date();
+          await tx.signalEvents.createMany({
+            data: uniqueSignalIds.map((signalId) => ({ signalId, eventId: event.id, collectedAt: linkedAt })),
+          });
+          if (byPipeline) await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
+        }
+        if (byPipeline) await writeEventFacts(tx, event.id, input);
+        return event;
+      });
 
       logEventChange("created", event, uniqueSignalIds);
 
@@ -512,7 +531,14 @@ export const eventResolvers = {
     // its live members. Absent fields are kept; explicit nulls clear them.
     setEventAggregates: async (
       _parent: unknown,
-      args: { id: string; input: EventAggregatesInput; members: { id: string; revision: number }[] },
+      args: {
+        id: string;
+        input: EventAggregatesInput;
+        members: { id: string; revision: number }[];
+        runKind?: RunKind | null;
+        pipelineVersion?: string | null;
+        runId?: string | null;
+      },
       context: Context,
     ) => {
       requireRole(context, ["admin", "pipeline"]);
@@ -574,7 +600,18 @@ export const eventResolvers = {
           );
         }
 
-        return tx.events.update({ where: { id }, data });
+        const row = await tx.events.update({ where: { id }, data });
+        // The facts this run gave the Event (ADR-0021). Of the logged facts,
+        // a recompute sets the onset accuracy only.
+        if (context.authMethod === "api-key") {
+          await writeEventFacts(
+            tx,
+            id,
+            { runKind: args.runKind, pipelineVersion: args.pipelineVersion, runId: args.runId },
+            { startedAtAccuracy: input.startedAtAccuracy !== undefined },
+          );
+        }
+        return row;
       });
       logEventChange("aggregates", updated, [], sent.size);
       return updated;
@@ -610,6 +647,7 @@ export const eventResolvers = {
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
+      const byPipeline = context.authMethod === "api-key";
       let newlyLinked: string[] = [];
       if (input.signalIds !== undefined && input.signalIds.length > 0) {
         const alreadyLinked = await context.prisma.signalEvents.findMany({
@@ -623,12 +661,21 @@ export const eventResolvers = {
         const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
         newlyLinked = toLink;
         if (toLink.length > 0) {
-          await context.prisma.signalEvents.createMany({
-            data: toLink.map((signalId) => ({
-              signalId,
-              eventId: id,
-              collectedAt: new Date(),
-            })),
+          // The new Links and their grouping log rows are one transaction
+          // (ADR-0021). A Link that a person makes (a session, not an API
+          // key) writes no row.
+          const linkedAt = new Date();
+          const uniqueToLink = [...new Set(toLink)];
+          await context.prisma.$transaction(async (tx) => {
+            await tx.signalEvents.createMany({
+              data: uniqueToLink.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
+            });
+            if (byPipeline) {
+              await writeGroupingLinks(tx, id, uniqueToLink, input);
+              // An Event with a Link in the grouping log always has a row in
+              // the Event facts log: the history readers join the two.
+              await writeEventFacts(tx, id, input, {});
+            }
           });
         }
       }
@@ -658,7 +705,7 @@ export const eventResolvers = {
           });
         }
 
-        return tx.events.update({
+        const row = await tx.events.update({
           where: { id },
           data: {
             title: input.title ?? undefined,
@@ -694,6 +741,20 @@ export const eventResolvers = {
             rank: input.rank ?? undefined,
           },
         });
+        // The facts this run gave the Event (ADR-0021); a person's edit writes no row.
+        if (byPipeline) {
+          await writeEventFacts(tx, id, input, {
+            // The same tests as the update above: what it writes, it sets.
+            startedAt: !!input.startedAt,
+            startedAtAccuracy: input.startedAtAccuracy !== undefined,
+            // The first Signal date only moves earlier, so the call sets it when it moves it.
+            firstSignalCreatedAt: !!input.firstSignalCreatedAt && row.firstSignalCreatedAt < existing.firstSignalCreatedAt,
+            locationId: input.locationId !== undefined,
+            originId: input.originId !== undefined,
+            destinationId: input.destinationId !== undefined,
+          });
+        }
+        return row;
       });
       logEventChange("updated", updated, [...new Set(newlyLinked)]);
       return updated;
@@ -759,8 +820,10 @@ export const eventResolvers = {
 
       // Create alert if none exists, and fan out notifications
       if (!existingAlert) {
+        // A person raises this Alert: it holds the onset it was raised on
+        // (ADR-0021) and no run kind.
         const alert = await context.prisma.alerts.create({
-          data: { eventId: args.eventId, status: "published" },
+          data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
         });
 
         // Fan out notifications to subscribers
@@ -1059,7 +1122,12 @@ export const eventResolvers = {
       if (parent.signalEvents) {
         return parent.signalEvents
           .map((l) => l.signal)
-          .filter((s) => (s as { retracted?: boolean }).retracted !== true);
+          .filter((s) => (s as { retracted?: boolean }).retracted !== true)
+          // A deeper include pre-loaded these without knowing the caller's
+          // signal scope, so drop the ones they may not see before they leave
+          // the resolver. An API-only developer reads the Event itself but
+          // only the member Signals from sources granted to them.
+          .filter((s) => canReadSignal(context.signalScope, s as { sourceId: string }));
       }
       // Inspect the GraphQL selection to decide whether to include
       // signal-locations + their translations. /detection's events tab
@@ -1097,7 +1165,10 @@ export const eventResolvers = {
       };
       return context.prisma.signalEvents
         .findMany({
-          where: { eventId: parent.id, signal: { retracted: false } },
+          where: {
+            eventId: parent.id,
+            signal: withSignalScope(context.signalScope, { retracted: false }),
+          },
           include: { signal: { include: signalInclude } },
           take: 50,
           // Intentionally no orderBy: ordering by signal.publishedAt

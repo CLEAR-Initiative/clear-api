@@ -80,6 +80,65 @@ _Avoid_: defaulting null to 1 or 3, treating unknown as low
 How soon after an Event's real-world onset CLEAR received its first **ingested Signal** for it, in whole UTC days (same day = 0, next day = 1). Counted only when the Event has an onset, its first ingested Signal has a time of day, and that Signal is on or after the onset day; every other Event in range is excluded as `NO_INGESTED_SIGNAL`, `NO_ONSET`, `DATE_ONLY_FIRST_SIGNAL` or `BEFORE_ONSET`. An ingested Signal is one a pipeline brought in: not an accepted web case (`submittedById`), not filed by hand (`rawData.manual`), not retracted, not dummy. Served as counts by the admin-only `detectionMetrics` query; clear-mvp's `/metrics` page only formats it. See ADR-0011.
 _Avoid_: latency, lag, response time; computing it anywhere but clear-api
 
+**Location precision**:
+How finely CLEAR placed the **ingested Signals** it located in a period: each counts once under the level of its location (none, country, state, district, or point: a level-4 landmark or coordinate point), per source and ISO week of the instant it was located. The level and the instant come from the Signal's **Live Outcome**, not from the live Signal, so a replay does not change the history. **District or finer** (district + point) is the headline share, because grouping keys on district. The location is the Signal's general location, or for displacement its origin, else its destination; a person's correction writes no Outcome, so a corrected Signal is read at the location the pipeline gave it. Location challenges filed in the period are reported by status as a correctness proxy. Served as counts by the admin-only `locationPrecisionMetrics` query; clear-mvp's `/metrics` page only formats it. See ADR-0012 and ADR-0020.
+
+**Location Outcome**:
+One row that records where one pipeline run placed one Signal: the instant, the location (or none), its level, the run kind and the pipeline version. The **Outcome log** (`signal_location_outcomes`) is append-only. `createSignal` writes the Outcome a Signal arrives with; `markSignalsProcessed` writes the Outcome of each run that finishes it. A **Live run** processes a Signal for the first time; a **Replay run** re-processes a Signal that a run already finished. The **Live Outcome** of a Signal is the last Outcome a Live run wrote for it. The **replay series** of a Replay run counts each Signal the run re-processed at the run's result, in the bucket of its Live Outcome, so it can be drawn beside the history series (`metricSeries` with `replayRunId`; `locationReplayRuns` lists the runs). See ADR-0020.
+_Avoid_: location history, location version, snapshot; updating or deleting an Outcome
+
+**Metric granularity**:
+The bucket a metric series is read in: `DAY` (UTC calendar day), `WEEK` (ISO week from Monday 00:00 UTC, the default) or `MONTH` (UTC calendar month). A series has one zero-filled row per bucket the range touches, labelled `2026-10-29`, `2026-W44` or `2026-10`, with a bucket the range only partly covers marked `isPartial`. The instant that buckets a row is the metric's own (first ingested Signal for time to detection, located-at for location precision). `weekly` remains the `WEEK` case. See ADR-0014.
+
+**Time to alert**:
+How soon after an Event's real-world onset CLEAR raised its Alert, in whole UTC days (same day = 0, next day = 1), one hop past time to detection. An Alert is measured when its Event has a day-precise onset on or before the day the Alert was raised; otherwise it is excluded as `NO_ONSET`, `COARSE_ONSET` or `BEFORE_ONSET`. Every Alert status counts by its `createdAt`: an Alert archived later was still raised, and one created already archived (a suppressed stale Event) is a late Alert; an Alert whose `createdAt` was backfilled when the column was added (May 2026) is excluded as `BACKFILLED_TIMESTAMP`. Served as the registry shares `ALERTED_BY_NEXT_DAY` and `ALERTED_SAME_DAY`. See ADR-0017.
+_Avoid_: publish time (nothing records one); counting published Alerts only
+
+**Source health**:
+Whether each data feed CLEAR expects is still delivering: on each UTC day a source is **on schedule** when it delivered an ingested Signal (by `collectedAt`) within the last N days, N being its cadence, so a daily feed must deliver that very day; the measure is on-schedule days over days that have ended, per source or added up as source-days. The expected feeds and cadences are the `EXPECTED_CADENCE_DAYS` list (the pipeline's polled feeds: daily, weekly, fortnightly); sources outside it (organisation rows, manual channels, event-driven feeds, feeds with no live poller) are not measured, and the location filter does not apply (`locationScoped: false`). Served as the registry share `SOURCES_ON_SCHEDULE`. See ADR-0017.
+_Avoid_: uptime, availability (a feed that is up but silent is off schedule)
+
+**Grouping proxies**:
+Two shares that stand in for event grouping accuracy until analysts record splits and merges: **Signals grouped**, the share of ingested Signals whose Event holds at least one other ingested Signal (by the Signal's `publishedAt` and source; a Signal in two Events counts once), and **Events with one Signal**, the share of Events holding exactly one ingested Signal (by the Event's first ingested Signal and its source). The location filter keeps Signals by their current location and Events by any of their places. Neither is a judgement: high grouping can be good merging or over-merging, and the newest buckets read before grouping has caught up. Both read the `LIVE` rows of the **grouping log**, not the live Links, so a re-grouping replay does not change a past bucket. Served as the registry shares `SIGNALS_GROUPED` and `EVENTS_WITH_ONE_SIGNAL`. See ADR-0018 and ADR-0021.
+_Avoid_: calling either "accuracy"; computing them anywhere but clear-api
+
+**Grouping log**:
+The append-only table `signal_grouping_log`. One row records one **Link** (a Signal is a member of an Event) that a pipeline run made: the Signal, the Event, the instant, the run kind (`LIVE` or `REPLAY`), the pipeline version and the run id. `createEvent` and `updateEvent` (with `signalIds`) write the row in the same transaction as the Link, for a call with an API key only: a Link that a person makes writes no row. A Signal is **grouped** in the history series when the Event of its `LIVE` row has a `LIVE` row for another ingested Signal, or a row of any run kind for another ingested Signal that is not later than its own `LIVE` row. The other Signal is checked when the series is read, so a retracted companion gives no company. See ADR-0021.
+_Avoid_: reading `signal_to_events` for a history series; a stored "grouped" flag on a row
+
+**Event facts log**:
+The append-only table `event_facts_log`. One row records the facts that one pipeline run gave one Event: the onset and its accuracy, the first Signal date, and the three places with the district of each, plus the run kind, the pipeline version and the run id. `createEvent`, `updateEvent` and `setEventAggregates` write the row in the same transaction, for a call with an API key only: a person's edit writes no row. A run writes no second row for an Event when the facts did not change. A `LIVE` row holds what Live runs gave the Event: a fact that the call did not set keeps the value of the last `LIVE` row, so a fact that a replay or a person wrote never enters a `LIVE` row. A `REPLAY` row holds the Event as the replay left it. The history series read the last `LIVE` row of an Event. See ADR-0021.
+_Avoid_: reading `events.started_at` for a history series
+
+**As delivered** and **Same ruler**:
+The two views of time to detection and time to alert. **As delivered** is every value as the Live run gave it at the time: the onset on the Alert (`onset_at_raise`), or the last onset a Live run gave the Event. It is the history series and the default, and no replay moves it. **Same ruler** measures the same instants against the onset the Event has today (`metricSeries` with `onsetBasis: CURRENT`); past buckets move when the onset changes. Both are for platform admins only. See ADR-0021, decision 4.
+_Avoid_: one view without its name on a chart or a link
+
+**Rules for a replay**:
+A replay never deletes an Alert, a Signal or an Event. It sends `runKind: REPLAY` on every write, so it adds `REPLAY` rows to the logs and changes no `LIVE` row. An Event that a Replay run created (`events.created_by_run_kind`) and an Alert that a Replay run raised (`alerts.raised_by_run_kind`) are in no history series. After a replay, every As delivered series is the same as before it. See ADR-0021 (decisions 5 and 6) and ADR-0022.
+
+**Detection recall proxy**:
+Of the events a reference dataset recorded, the share CLEAR raised an Alert for from its other feeds. ACLED is the reference: each ACLED Signal is one ACLED event, dated by `publishedAt` (the event date) and placed under a district; it counts as **alerted nearby** when its district held a CLEAR Alert whose Event is dated within three UTC days either side (by a day-precise onset, else its first Signal), is in the district through any of its places, and holds an ingested Signal from a source other than ACLED. An ACLED event with no district counts as not alerted; the newest week reads low until Alerts and ACLED's weekly release catch up. Served as the registry share `ACLED_EVENTS_ALERTED`. See ADR-0018.
+_Avoid_: recall without "proxy" (ACLED records conflict events, not every crisis); counting Alerts that only ACLED drove
+
+**Metric registry**:
+The list of metrics the admin `/metrics` page can plot over time, one entry per `MetricKey` (`DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY`, `ALERTED_BY_NEXT_DAY`, `ALERTED_SAME_DAY`, `DISTRICT_OR_FINER`, `SIGNALS_GROUPED`, `EVENTS_WITH_ONE_SIGNAL`, `ACLED_EVENTS_ALERTED`, `SOURCES_ON_SCHEDULE`, `EVENTS_ESCALATED`, the last an interim usefulness proxy: the share of Events a user escalated), each with its name, Notion dimension, unit, method text, time basis and whether it can be grouped by source. `metricDefinitions` lists it; `metricSeries` reads any entry as a share per bucket (numerator and denominator) by day, ISO week or calendar month, optionally grouped. The registry defines nothing: every entry reads from the service that owns the metric, so the generic series equals the metric's own query. See ADR-0015, ADR-0017 and ADR-0018.
+
+**Metric annotation**:
+A change that should move a metric (a deploy, a data import, a prompt version), stored as a row with an instant, a label, the `MetricKey` values it bears on, and an optional description and link; drawn as a marker on the `/metrics` charts in the bucket holding its instant. Rows are per environment, admin only, and every write is activity-logged. `metricAnnotations` lists them; `createMetricAnnotation` and `deleteMetricAnnotation` write them. See ADR-0016.
+_Avoid_: geocoding accuracy (precision is how fine, not whether right); computing it anywhere but clear-api
+
+**Unresolved place name**:
+A place name, as written in a Signal, that geocoding could not place inside the Signal's area (the location the pipeline chose for it). The pipeline records each miss with `recordUnresolvedPlaceName`. One row per country, normalised spelling (`normalizeGazetteerName`) and state (the row also keeps its country as a location id, so a row with no state still falls inside a team's area); each Signal that names it is a link with its own spelling, area, time and reason (`no_match`, or `outside_area` when a candidate exists outside the area). Statuses: `open`, `resolved`, `not_a_place` (a stop-list: later misses only add to the count) and `ambiguous`. Deciders read the queue with `unresolvedPlaceNames`: platform admins all rows, team admins the rows inside their team's area. See ADR-0019.
+_Avoid_: failed geocode, unknown location (the Signal still has a location: its state or country)
+
+**Place alias**:
+A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a level-4 landmark. CLEAR owns it, in `place_aliases`, with no foreign key to the GeoNames tables, so a GeoNames re-import never touches it. Its source is `review` (a decider resolved an unresolved place name), `seed` (a loaded list) or `manual`. `resolveGazetteerLocation` checks aliases before GeoNames and answers with `source: ALIAS` and the `locationId`. Resolving a queue row (`resolveUnresolvedPlaceName`) writes the alias, a second alias for the row's Arabic spelling, and moves the waiting Signals: those whose current location holds the alias location and that no person corrected. See ADR-0019.
+_Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNames' own data)
+
+**Alias scope**:
+The area where a place alias applies: one state by default, or the whole country (a null scope, used for facilities). The same spelling can have one alias per scope. A team admin adds, changes and deletes the aliases scoped inside their team's area; a country-wide alias needs a platform admin. Every decider reads the whole list (`placeAliases`).
+
 ### Agent conversations
 
 **Conversation**:
@@ -87,6 +146,13 @@ The stored record of one exchange between a user and the **CLEAR Agent** — wha
 asked, what the Agent answered, and what it drew on to answer (tools run, Source documents
 cited). Owned by that user.
 _Avoid_: chat, session (that is auth), thread (clear-mvp's on-screen view of a Conversation)
+
+**Turn**:
+One Answer the **CLEAR Agent** gave in a **Conversation**, with the usage clear-mvp recorded for
+it (model, tokens, cost, latency). The unit of the Agent's budget and of `agentMetrics`
+(ADR-0013): a turn belongs to the day and week its usage was recorded in.
+_Avoid_: request (one turn makes several model requests), message (a turn is the Answer plus its
+usage, not any one stored message), step (one model call inside a turn)
 
 ### Estimates
 

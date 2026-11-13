@@ -68,8 +68,9 @@ export function buildResetUrl(token: string, kind?: "setup"): string {
  * takes the same token and calls the `resetPassword` mutation, then sends
  * the user to the app's sign-in.
  */
-export function buildAppResetUrl(token: string): string {
-  return `${env.FRONTEND_URL.replace(/\/$/, "")}/auth/reset-password?token=${token}`;
+export function buildAppResetUrl(token: string, base?: string): string {
+  const b = (base ?? env.FRONTEND_URL).replace(/\/$/, "");
+  return `${b}/auth/reset-password?token=${token}`;
 }
 
 /**
@@ -122,6 +123,12 @@ export async function sendPasswordResetEmail(
   prisma: PrismaClient,
   rawEmail: string,
   buildUrl: (token: string) => string = buildResetUrl,
+  /**
+   * Optional per-request sender branding. `fromName` dresses the `From`
+   * display name and `replyTo` routes replies to a calling org's mailbox;
+   * the `From` address itself stays the platform default.
+   */
+  sender: { replyTo?: string; fromName?: string } = {},
 ): Promise<void> {
   // Normalise here rather than at each call site. The `user.email` lookup is
   // case-sensitive, and the portal route and the GraphQL mutation used to
@@ -160,6 +167,8 @@ export async function sendPasswordResetEmail(
       subject: content.subject,
       textBody: content.textBody,
       htmlBody: content.htmlBody,
+      replyTo: sender.replyTo,
+      fromName: sender.fromName,
     });
   } catch (error) {
     console.error(

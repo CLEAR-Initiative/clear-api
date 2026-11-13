@@ -12,7 +12,7 @@
           <thead><tr><th>Tier</th><th>What it represents</th></tr></thead>
           <tbody>
             <tr><td><a href="#type-location">Location</a></td><td>The administrative hierarchy &mdash; country &rarr; state &rarr; district &rarr; point. Everything else hangs off this tree.</td></tr>
-            <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (Dataminr, ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
+            <tr><td><a href="#type-signal">Signal</a></td><td>A single source observation ingested from a source (ACLED, GDACS) or filed manually by a field officer. Upstream payloads are stored internally and are not returned on this type.</td></tr>
             <tr><td><a href="#type-event">Event</a></td><td>A cluster of related signals, classified by disaster type and bound to a district &mdash; or to a state or country when its signals couldn&rsquo;t be placed more precisely.</td></tr>
             <tr><td><a href="#type-alert">Alert</a></td><td>A published advisory raised from a severe event and delivered to subscribed users.</td></tr>
             <tr><td><a href="#type-crisis">Crisis</a></td><td>A user-curated aggregation of related events, enriched by an LLM with a summary, forward scenarios, and a needs analysis.</td></tr>
@@ -90,7 +90,7 @@
         <table class="feature-table">
           <thead><tr><th>The source sends</th><th>The location you get</th></tr></thead>
           <tbody>
-            <tr><td>Coordinates (Dataminr, ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
+            <tr><td>Coordinates (ACLED, GDACS)</td><td>A point (level <code>4</code>) under the smallest area containing it: usually a district, sometimes a state or the country, or none outside every boundary</td></tr>
             <tr><td>Text only (for example, X posts)</td><td>The district, state, or country the text supports; a point when a named place is confirmed inside that area (<code>pointType: "landmark-geocoded"</code>)</td></tr>
             <tr><td>Only a country</td><td>The country (level <code>0</code>)</td></tr>
           </tbody>
@@ -246,6 +246,10 @@ const data = await fetch('/graphql', {
     <td><code>Alert</code></td>
     <td>Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>apiSignalSourceGrants</code></td>
+    <td><code>[ApiSignalSourceGrant!]!</code></td>
+    <td>Data sources opened to one API-only developer. Admin only.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
+  </tr><tr>
     <td><code>signals</code></td>
     <td><code>[Signal!]!</code></td>
     <td>List signals. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span></div></td>
@@ -272,6 +276,31 @@ admin, those filed for the teams they administer (or just teamId, one of
 them); for a platform admin, all of them (or just teamId's). The caller's
 own are included. At most `first` (default and maximum 200).<div class="field-args"><span class="arg"><code>teamId: String</code> — Only this team's challenges.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 200).</span></div></td>
   </tr><tr>
+    <td><code>unresolvedPlaceNames</code></td>
+    <td><code>UnresolvedPlaceNamesPage!</code></td>
+    <td>The unresolved place-name queue: place names that geocoding could not
+place inside a Signal's area (ADR-0019). Open rows come first, then the
+rows with the most Signals. Auth: a platform admin reads every row; a
+team admin reads the rows whose state is inside the areas of the teams
+they administer (a row with no state needs a team that covers the whole
+country). Other roles get FORBIDDEN.<div class="field-args"><span class="arg"><code>status: UnresolvedPlaceNameStatus</code> — Only rows in this state. Omit for every state, open rows first.</span><span class="arg"><code>countryCode: String</code> — Only rows of this country (ISO-3166-1 alpha-2).</span><span class="arg"><code>areaLocationId: String</code> — Only rows of this area. A country keeps all its rows. A state, or a
+place under a state, keeps the rows of that state.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 50).</span><span class="arg"><code>offset: Int</code> — Rows to skip (default 0).</span></div></td>
+  </tr><tr>
+    <td><code>placeNameSuggestions</code></td>
+    <td><code>[PlaceNameSuggestion!]!</code></td>
+    <td>Places a queued name can mean, for a decider: up to 5 GeoNames
+candidates and up to 5 CLEAR districts or landmarks with a similar name,
+in one country. Candidates inside `withinLocationId` come first, then the
+most similar, then the nearest. Computed on each call. Auth: a platform
+admin or a team admin.<div class="field-args"><span class="arg"><code>name: String!</code> — The name as written (Latin script).</span><span class="arg"><code>nameAr: String</code> — The Arabic spelling, when known. Matched exactly.</span><span class="arg"><code>countryCode: String!</code> — ISO-3166-1 alpha-2 (SD, VE, AF).</span><span class="arg"><code>withinLocationId: String</code> — The row's state, or another area. Sets `insideArea` and `distanceKm`.</span></div></td>
+  </tr><tr>
+    <td><code>placeAliases</code></td>
+    <td><code>PlaceAliasesPage!</code></td>
+    <td>The place alias list (ADR-0019): the spellings CLEAR maps to its own
+locations, newest first. Auth: a platform admin or a team admin. Every
+decider reads every alias; `canEdit` says which ones the caller may
+change.<div class="field-args"><span class="arg"><code>countryCode: String</code> — Only aliases of this country (ISO-3166-1 alpha-2).</span><span class="arg"><code>search: String</code> — Matches the spelling (normalised, or as shown) or the target's name.</span><span class="arg"><code>scopeLocationId: String</code> — Only aliases with this scope.</span><span class="arg"><code>source: PlaceAliasSource</code></span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 50).</span><span class="arg"><code>after: String</code> — The `endCursor` of the page before.</span></div></td>
+  </tr><tr>
     <td><code>locationPlacement</code></td>
     <td><code>Location</code></td>
     <td>The existing admin area a point falls in (district, else state, else
@@ -282,7 +311,7 @@ show where a corrected point would be placed before filing it.<div class="field-
     <td><code>[Signal!]!</code></td>
     <td>Signals awaiting their first grouping (status = NEW, not retracted, not
 yet linked to any event), oldest-first — the Dagster event-driven drain.
-`source` filters by DataSource name (e.g. &quot;dataminr&quot;); `first` caps the
+`source` filters by DataSource name (e.g. &quot;acled&quot;); `first` caps the
 batch (default 100, max 500). Admin/pipeline only.<div class="field-args"><span class="arg"><code>first: Int</code></span><span class="arg"><code>source: String</code></span></div></td>
   </tr><tr>
     <td><code>pendingRecomputes</code></td>
@@ -566,6 +595,53 @@ ISO weeks) and optionally one location. Counts only. Admin only. Refuses
 an inverted range or one over 364 days with BAD_USER_INPUT. See
 `DetectionMetrics` and ADR-0011.<div class="field-args"><span class="arg"><code>input: DetectionMetricsInput</code></span></div></td>
   </tr><tr>
+    <td><code>locationPrecisionMetrics</code></td>
+    <td><code>LocationPrecisionMetrics!</code></td>
+    <td>Location precision: how finely CLEAR placed the Signals it ingested, by
+the level of each Signal's location (none, country, state, district,
+point), per source and ISO week of the instant it was located, over a
+range (default: the last 12 ISO weeks), optionally one location and some
+sources. Counts only. Admin only. Refuses an inverted range or one over
+364 days with BAD_USER_INPUT. See `LocationPrecisionMetrics` and ADR-0012.<div class="field-args"><span class="arg"><code>input: LocationPrecisionMetricsInput</code></span></div></td>
+  </tr><tr>
+    <td><code>agentMetrics</code></td>
+    <td><code>AgentMetrics!</code></td>
+    <td>CLEAR Agent usage: cost, latency, turns, Conversations, users, tool
+calls and the pages questions came from, over a range (default: the last
+12 ISO weeks). A turn is an Answer with recorded usage. Counts, sums and
+averages only. Admin only. Refuses an inverted range or one over 364 days
+with BAD_USER_INPUT. Selecting `recentQuestions` is logged as
+`conversation.admin_read`. See `AgentMetrics` and ADR-0013.<div class="field-args"><span class="arg"><code>input: AgentMetricsInput</code></span></div></td>
+  </tr><tr>
+    <td><code>metricDefinitions</code></td>
+    <td><code>[MetricDefinition!]!</code></td>
+    <td>The metrics the admin /metrics page can plot over time, in registry
+order: key, name, dimension, unit, method text, time basis and whether the
+series can be grouped by source. Admin only. See ADR-0015.</td>
+  </tr><tr>
+    <td><code>metricSeries</code></td>
+    <td><code>MetricSeries!</code></td>
+    <td>One metric over a range as a share per bucket (numerator and
+denominator) by day, ISO week or calendar month, optionally grouped by
+source. Read from the service that owns the metric, so it equals that
+metric's own query row for row. Counts only. Admin only. Refuses a
+grouping the metric lacks, an inverted range or one over 364 days with
+BAD_USER_INPUT. See `MetricSeries` and ADR-0015.<div class="field-args"><span class="arg"><code>input: MetricSeriesInput!</code></span></div></td>
+  </tr><tr>
+    <td><code>locationReplayRuns</code></td>
+    <td><code>[LocationReplayRun!]!</code></td>
+    <td>The Replay runs that re-located a Signal in the range, newest first, at
+most 50 (ADR-0020). Each can be drawn as a second line on location
+precision: `metricSeries` with `replayRunId`. Range rules as
+`metricSeries`. Platform admin only.<div class="field-args"><span class="arg"><code>input: LocationReplayRunsInput</code></span></div></td>
+  </tr><tr>
+    <td><code>metricAnnotations</code></td>
+    <td><code>[MetricAnnotation!]!</code></td>
+    <td>The changes that should move a metric (deploys, imports, prompt
+changes), oldest first, in a range and optionally for one metric, drawn
+as markers on the /metrics charts. Admin only. See `MetricAnnotation`
+and ADR-0016.<div class="field-args"><span class="arg"><code>input: MetricAnnotationsInput</code></span></div></td>
+  </tr><tr>
     <td><code>pipelineCountries</code></td>
     <td><code>[PipelineCountry!]!</code></td>
     <td>The countries the CLEAR pipeline publishes a Situation Analysis for, with
@@ -617,8 +693,12 @@ Admin / pipeline only.<div class="field-args"><span class="arg"><code>pcode: Str
   </tr><tr>
     <td><code>resolveGazetteerLocation</code></td>
     <td><code>GazetteerHit</code></td>
-    <td>Resolve a place name against the offline GeoNames gazetteer - the
-first tier of the hybrid geo-resolver. Tries an exact normalised-name
+    <td>Resolve a place name against CLEAR's place aliases, then the offline
+GeoNames gazetteer - the first tier of the hybrid geo-resolver. A place
+alias (ADR-0019) wins: the same normalised name and country, and a scope
+that is the whole country or holds `withinLocationId`. Its hit has
+`source: ALIAS` and a `locationId`, with the location's point as the
+coordinates. Then GeoNames (`source: GEONAMES`): an exact normalised-name
 match, then a `pg_trgm` fuzzy match, preferring populated places / admin
 areas (feature class P/A) and the more-populous tie-break. `countryCode`
 (ISO-3166-1 alpha-2, e.g. &quot;SD&quot;) scopes the search; omit to search every
@@ -1011,6 +1091,16 @@ Best-effort: returns true even if the log write fails. Any signed-in user.<div c
     <td><code>createApiKey</code></td>
     <td><code>CreateApiKeyPayload!</code></td>
     <td>Create a new API key for the authenticated user.<div class="field-args"><span class="arg"><code>input: CreateApiKeyInput!</code></span></div></td>
+  </tr><tr id="mutation-grantapisignalsource">
+    <td><code>grantApiSignalSource</code></td>
+    <td><code>ApiSignalSourceGrant!</code></td>
+    <td>Open one data source's Signals to an API-only developer. Admin only.
+Idempotent: re-granting an existing pair returns the existing row.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>dataSourceId: String!</code></span><span class="arg"><code>reason: String</code></span></div></td>
+  </tr><tr id="mutation-revokeapisignalsource">
+    <td><code>revokeApiSignalSource</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Close one data source for an API-only developer. Admin only.
+Returns false when no such grant existed.<div class="field-args"><span class="arg"><code>userId: String!</code></span><span class="arg"><code>dataSourceId: String!</code></span></div></td>
   </tr><tr id="mutation-revokeapikey">
     <td><code>revokeApiKey</code></td>
     <td><code>ApiKey!</code></td>
@@ -1076,12 +1166,11 @@ Notifies the user by email. Requires global `admin`.<div class="field-args"><spa
     <td><code>approveUser</code></td>
     <td><code>ApproveUserResult!</code></td>
     <td>Approve a self-signed-up user. Flips their role from `pending`
-to `viewer` (granting read access to signals / events / alerts /
-crises) and moves their CRM contact from the prospects collection
-into the approved collection — which fires Exponential's welcome
-automation. The local role flip is authoritative; CRM updates are
-best-effort and surface as fields on the result so the admin UI
-can offer a retry. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
+to `member` (granting read access to signals / events / alerts /
+crises) and emails them that they are approved. When a CRM is
+configured, also moves their contact into the approved collection.
+The role flip is authoritative; the email and CRM sync are
+best-effort and report back on the result. Requires global `admin`.<div class="field-args"><span class="arg"><code>userId: String!</code></span></div></td>
   </tr><tr id="mutation-updateuserrole">
     <td><code>updateUserRole</code></td>
     <td><code>User!</code></td>
@@ -1095,7 +1184,11 @@ HTML form hits the same service via POST
   </tr><tr id="mutation-requestemailverification">
     <td><code>requestEmailVerification</code></td>
     <td><code>Boolean!</code></td>
-    <td>Request an email verification link for the authenticated user.</td>
+    <td>Request an email verification link for the authenticated user.
+
+`frontendBaseUrl` sets the host of the verification link (trusted as
+given for this authenticated call; defaults to `FRONTEND_URL`).
+`senderEmail`/`senderName` set Reply-To and the From display name.<div class="field-args"><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-verifyemail">
     <td><code>verifyEmail</code></td>
     <td><code>Boolean!</code></td>
@@ -1135,7 +1228,14 @@ pipeline only. Returns the number of rows affected.<div class="field-args"><span
 after recomputing a changed signal's events. Sets status (PROCESSED, or
 FAILED) and processedAt. Pass exactly one of `ids` (unconditional) or
 `items` (compare-and-set: a row is updated only if its revision still
-matches). Returns rows updated. Idempotent. Admin/pipeline only.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span></div></td>
+matches). Returns rows updated. Idempotent. Admin/pipeline only.
+
+Each marked Signal a pipeline brought in also gets one row in the location
+Outcome log (ADR-0020): the location it has now, at the new processedAt.
+`runKind` says which kind of run this is (default LIVE); a Signal that a
+run already finished is recorded as REPLAY whatever is sent.
+`pipelineVersion` is the clear-pipeline git SHA and `runId` the Dagster
+run id.<div class="field-args"><span class="arg"><code>ids: [String!]</code></span><span class="arg"><code>items: [SignalRevisionInput!]</code></span><span class="arg"><code>status: SignalStatus</code></span><span class="arg"><code>runKind: LocationRunKind</code></span><span class="arg"><code>pipelineVersion: String</code></span><span class="arg"><code>runId: String</code></span></div></td>
   </tr><tr id="mutation-requeuesignals">
     <td><code>requeueSignals</code></td>
     <td><code>Int!</code></td>
@@ -1176,7 +1276,12 @@ whose author picked no location, and push feeds (e.g. sudan-war-x) that
 arrive with text only. The location is an admin area matched from the
 text, or an L4 from findOrCreateLandmarkL4, so downstream event grouping
 can key on its admin-2 district instead of creating an isolated event.
-Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span></div></td>
+Admin/pipeline only.
+
+The drain marks the Signal afterwards, and that mark writes the location
+Outcome (ADR-0020). A replay job that moves a Signal without the drain
+passes `runKind: REPLAY`: the move then writes a REPLAY Outcome itself,
+with `pipelineVersion` (the clear-pipeline git SHA) and `runId`.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>locationId: String!</code></span><span class="arg"><code>runKind: LocationRunKind</code></span><span class="arg"><code>pipelineVersion: String</code></span><span class="arg"><code>runId: String</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>
@@ -1198,7 +1303,10 @@ explicit nulls clear them. `members` is the (id, revision) snapshot the
 values were computed from; if the live members differ, nothing is written
 and the call fails with STALE_EVENT_MEMBERS (a newer recompute supersedes
 it; do not retry).
-Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span><span class="arg"><code>members: [SignalRevisionInput!]!</code></span></div></td>
+`runKind`, `pipelineVersion` and `runId` name the run, for the Event
+facts log (ADR-0021): a call with an API key writes the Event's onset,
+first Signal date and places as this run left them.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: EventAggregatesInput!</code></span><span class="arg"><code>members: [SignalRevisionInput!]!</code></span><span class="arg"><code>runKind: LocationRunKind</code></span><span class="arg"><code>pipelineVersion: String</code></span><span class="arg"><code>runId: String</code></span></div></td>
   </tr><tr id="mutation-submitsignallocationchallenge">
     <td><code>submitSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
@@ -1219,6 +1327,48 @@ and later source revisions keep it. Writing needs the Signal still within
 the team's area, and the point inside the areas CLEAR covers and, unless
 a platform admin decides, within the team's area. CONFLICT when the
 challenge is no longer open.<div class="field-args"><span class="arg"><code>id: String!</code> — The challenge to decide.</span><span class="arg"><code>decision: SignalLocationChallengeDecision!</code> — ACCEPT, CORRECT or DECLINE.</span><span class="arg"><code>point: LocationChallengePointInput</code> — The point to write: required with CORRECT, refused otherwise.</span></div></td>
+  </tr><tr id="mutation-recordunresolvedplacename">
+    <td><code>recordUnresolvedPlaceName</code></td>
+    <td><code>UnresolvedPlaceName!</code></td>
+    <td>Record a place name that geocoding could not place inside a Signal's
+area (ADR-0019). Creates the queue row for (country, normalised spelling,
+state), or adds the Signal to the row that exists. A Signal counts once
+per row, so a re-run changes nothing. The row's status never changes
+here: a row marked not a place stays closed and only its count and dates
+move. Auth: admin or pipeline.<div class="field-args"><span class="arg"><code>input: RecordUnresolvedPlaceNameInput!</code></span></div></td>
+  </tr><tr id="mutation-resolveunresolvedplacename">
+    <td><code>resolveUnresolvedPlaceName</code></td>
+    <td><code>UnresolvedPlaceName!</code></td>
+    <td>Resolve a row of the unresolved place-name queue (ADR-0019). A location
+answer (LOCATION, GEONAMES or POINT) writes a place alias for the spelling
+in the row's state, closes the row as RESOLVED and moves the waiting
+Signals to the alias location. A Signal moves only when the alias location
+is inside its current location and no person corrected it. NOT_A_PLACE and
+AMBIGUOUS close the row with no alias. Auth: a platform admin, or a team
+admin when the row is inside their team's area; a team admin must place
+the answer inside the row's state. CONFLICT when the row is already
+resolved or marked not a place, or when the spelling has an alias.<div class="field-args"><span class="arg"><code>id: String!</code> — The queue row.</span><span class="arg"><code>resolution: UnresolvedPlaceNameResolutionInput!</code></span><span class="arg"><code>note: String</code> — Why, at most 2000 characters. Kept on the row and on the alias.</span></div></td>
+  </tr><tr id="mutation-createplacealias">
+    <td><code>createPlaceAlias</code></td>
+    <td><code>PlaceAlias!</code></td>
+    <td>Add a place alias by hand (source MANUAL), to an existing location or
+to a new point. It also resolves the open queue rows with the same
+spelling in its scope, and moves their waiting Signals. Auth: a platform
+admin, or a team admin for a scope inside their team's area; a
+country-wide alias needs a platform admin. CONFLICT when the scope already
+has an alias for the spelling.<div class="field-args"><span class="arg"><code>input: CreatePlaceAliasInput!</code></span></div></td>
+  </tr><tr id="mutation-updateplacealias">
+    <td><code>updatePlaceAlias</code></td>
+    <td><code>PlaceAlias!</code></td>
+    <td>Change a place alias's target, scope or note. Signals it moved before
+stay where they are: the change applies to new Signals. Auth as
+createPlaceAlias, for the alias's scope and for the new one.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>input: UpdatePlaceAliasInput!</code></span></div></td>
+  </tr><tr id="mutation-deleteplacealias">
+    <td><code>deletePlaceAlias</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Delete a place alias. Signals it moved stay where they are. The queue
+row it came from goes back to OPEN. Auth as createPlaceAlias. Returns
+true.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr id="mutation-createevent">
     <td><code>createEvent</code></td>
     <td><code>Event!</code></td>
@@ -1251,6 +1401,18 @@ event.<div class="field-args"><span class="arg"><code>eventId: String!</code></s
     <td><code>deleteDataSource</code></td>
     <td><code>Boolean!</code></td>
     <td>Delete a data source.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr id="mutation-createmetricannotation">
+    <td><code>createMetricAnnotation</code></td>
+    <td><code>MetricAnnotation!</code></td>
+    <td>Record a change that should move a metric, as a marker on the /metrics
+charts (ADR-0016). Admin only; logged as `metric_annotation.create`.
+Refuses an empty label, a non-http link, no metric or an unknown one with
+BAD_USER_INPUT.<div class="field-args"><span class="arg"><code>input: CreateMetricAnnotationInput!</code></span></div></td>
+  </tr><tr id="mutation-deletemetricannotation">
+    <td><code>deleteMetricAnnotation</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Remove a metric annotation. Admin only; logged as
+`metric_annotation.delete`. NOT_FOUND when there is none with that id.<div class="field-args"><span class="arg"><code>id: ID!</code></span></div></td>
   </tr><tr id="mutation-resolvedatasource">
     <td><code>resolveDataSource</code></td>
     <td><code>String!</code></td>
@@ -1461,11 +1623,20 @@ a platform admin or an org_admin of the target organisation.<div class="field-ar
   </tr><tr id="mutation-resendinvite">
     <td><code>resendInvite</code></td>
     <td><code>Invitation!</code></td>
-    <td>Resend an invitation email (resets expiry to 7 days).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Resend an invitation email (resets expiry to 7 days). The optional
+sender/frontend arguments brand the email and link the same way as
+inviteUser; trusted as given for this authenticated call.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-requestpasswordreset">
     <td><code>requestPasswordReset</code></td>
     <td><code>Boolean!</code></td>
-    <td>Request a password reset email (public, always returns true).<div class="field-args"><span class="arg"><code>email: String!</code></span></div></td>
+    <td>Request a password reset email (public, always returns true).
+
+`frontendBaseUrl` sets the host of the reset link. Because this mutation
+is unauthenticated, that override is honoured only when its origin is in
+the operator's `ALLOWED_FRONTEND_ORIGINS` allowlist; otherwise it falls
+back to `FRONTEND_URL` (a token-bearing link can never be pointed at an
+arbitrary host). `senderEmail`/`senderName` set Reply-To and the From
+display name.<div class="field-args"><span class="arg"><code>email: String!</code></span><span class="arg"><code>frontendBaseUrl: String</code></span><span class="arg"><code>senderEmail: String</code></span><span class="arg"><code>senderName: String</code></span></div></td>
   </tr><tr id="mutation-resetpassword">
     <td><code>resetPassword</code></td>
     <td><code>Boolean!</code></td>
@@ -1601,6 +1772,13 @@ Admin / pipeline only. The dagster-quickstart datapoints
 extraction asset is the primary caller; hand-invocation is
 supported for backfills and re-extraction. Idempotent — the row
 is uniquely keyed on `report_id`.<div class="field-args"><span class="arg"><code>input: UpsertReportDatapointsInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertanalysisdatapoints">
+    <td><code>upsertAnalysisDatapoints</code></td>
+    <td><code>UpsertAnalysisDatapointsResult!</code></td>
+    <td>Upsert the analysis module's final numbers for one analysis
+generation (clear-pipeline `analysis_numbers_extract`). Keyed on
+`analysisId` (one row per generation) — idempotent replace-in-place.
+Admin / pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertAnalysisDatapointsInput!</code></span></div></td>
   </tr><tr id="mutation-upsertsituationanalysis">
     <td><code>upsertSituationAnalysis</code></td>
     <td><code>UpsertSituationAnalysisResult!</code></td>
@@ -1708,7 +1886,12 @@ given) the team are attributed onto the Dagster ingest run. Omit
 `teamId` only as a global admin; a non-admin must pass a `teamId` they
 belong to. When DAGSTER_URL is unset the mutation still stages the PDF in
 S3 but returns a UNKNOWN-status job with no runId — useful for offline dev
-of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>teamId: ID</code> — Team to attribute the upload to. Required for a non-admin uploader
+of the upload path.<div class="field-args"><span class="arg"><code>file: Upload!</code></span><span class="arg"><code>title: String!</code></span><span class="arg"><code>sourceUrl: String</code></span><span class="arg"><code>publishedAt: DateTime!</code></span><span class="arg"><code>countryIso3: String</code> — Optional ISO3 country code (e.g. `&quot;SDN&quot;`) the document is about —
+selects the knowledge-base country partition it is ingested into
+(`kb_downstream_job`). When omitted, the country is derived from the
+analysis automation's frame (its locations' level-0 ancestor), so a normal
+frame-attached upload needs no explicit value. Required only when there is
+no automation to derive from. Must resolve to a pipeline country.</span><span class="arg"><code>teamId: ID</code> — Team to attribute the upload to. Required for a non-admin uploader
 (must be a team they belong to); optional for a global admin.</span><span class="arg"><code>analysisAutomationId: ID</code> — Optionally attach this upload to an analysis automation. The file is
 ingested into the knowledgebase exactly as a normal upload; in addition
 its name (with the resulting `reportId`/`s3Key`) is recorded against
@@ -2003,9 +2186,10 @@ kind in the Brief exactly once, in the new order.<div class="field-args"><span c
   </tr><tr id="mutation-sendbrieftest">
     <td><code>sendBriefTest</code></td>
     <td><code>Boolean!</code></td>
-    <td>Email the Brief to the caller's own address only, with [TEST] in
-the subject. Changes nothing. False when the email provider refused
-it.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+    <td>Email the Brief to one address, with [TEST] in the subject and no
+unsubscribe link. `to` defaults to the caller's own address (also
+when blank). Changes nothing. False when the email provider refused
+it.<div class="field-args"><span class="arg"><code>id: String!</code></span><span class="arg"><code>to: String</code></span></div></td>
   </tr><tr id="mutation-sendbrief">
     <td><code>sendBrief</code></td>
     <td><code>BriefSendResult!</code></td>
@@ -2050,7 +2234,7 @@ beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>De
 `not_documented` when the method is unknown, e.g. figures backfilled from
 the pipeline's Event fields.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>exposure_model</code></td><td>—</td></tr><tr><td><code>model_inference</code></td><td>—</td></tr><tr><td><code>rapid_assessment</code></td><td>—</td></tr><tr><td><code>formal_assessment</code></td><td>—</td></tr><tr><td><code>registration</code></td><td>—</td></tr><tr><td><code>field_staff_judgement</code></td><td>—</td></tr><tr><td><code>partner_or_cluster_figure</code></td><td>—</td></tr><tr><td><code>prior_caseload_analogue</code></td><td>—</td></tr><tr><td><code>government_figure</code></td><td>—</td></tr><tr><td><code>media_report</code></td><td>—</td></tr><tr><td><code>not_documented</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemetric"><code>EstimateMetric</code> <span class="type-badge">enum</span></h3><p>Which of the seven distinct figures an Estimate is (the Domain
 Ontology's Metric types). The sector routinely conflates them; keeping
-them apart is the point.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>people_affected</code></td><td>—</td></tr><tr><td><code>people_displaced_new</code></td><td>—</td></tr><tr><td><code>people_displaced_cumulative</code></td><td>—</td></tr><tr><td><code>people_in_need</code></td><td>—</td></tr><tr><td><code>people_targeted</code></td><td>—</td></tr><tr><td><code>people_reached</code></td><td>—</td></tr><tr><td><code>households_affected</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
+them apart is the point.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>people_affected</code></td><td>—</td></tr><tr><td><code>people_displaced_new</code></td><td>—</td></tr><tr><td><code>people_displaced_cumulative</code></td><td>—</td></tr><tr><td><code>people_in_need</code></td><td>—</td></tr><tr><td><code>people_targeted</code></td><td>—</td></tr><tr><td><code>people_reached</code></td><td>—</td></tr><tr><td><code>households_affected</code></td><td>—</td></tr></tbody></table><h3 id="type-eventorderby"><code>EventOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LAST_SIGNAL_DESC</code></td><td>Newest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>LAST_SIGNAL_ASC</code></td><td>Oldest signal first (lastSignalCreatedAt).</td></tr><tr><td><code>CREATED_DESC</code></td><td>Newest first by firstSignalCreatedAt.</td></tr><tr><td><code>CREATED_ASC</code></td><td>Oldest first by firstSignalCreatedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-frequency"><code>Frequency</code> <span class="type-badge">enum</span></h3><p>How often a user receives alert notifications.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>immediately</code></td><td>—</td></tr><tr><td><code>daily</code></td><td>—</td></tr><tr><td><code>weekly</code></td><td>—</td></tr><tr><td><code>monthly</code></td><td>—</td></tr></tbody></table><h3 id="type-gazetteersource"><code>GazetteerSource</code> <span class="type-badge">enum</span></h3><p>Where a gazetteer answer came from.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ALIAS</code></td><td>One of CLEAR's own place aliases. `locationId` is set.</td></tr><tr><td><code>GEONAMES</code></td><td>The GeoNames copy.</td></tr></tbody></table><h3 id="type-globalrole"><code>GlobalRole</code> <span class="type-badge">enum</span></h3><p>Assignable global platform roles. `pending` is not in this
 enum — those users must go through `approveUser` first. `analyst` is no
 longer global — it is a TeamMemberRole.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>member</code></td><td>—</td></tr><tr><td><code>admin</code></td><td>—</td></tr></tbody></table><h3 id="type-groundpipelinestage"><code>GroundPipelineStage</code> <span class="type-badge">enum</span></h3><p>A clear-pipeline ground drain stage that can give up on a message.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ENRICH</code></td><td>ground_hotline_enrich — classification + thread draft.</td></tr><tr><td><code>TRANSCRIBE</code></td><td>ground_transcribe — voice-note transcription.</td></tr></tbody></table><h3 id="type-groundtranslationstatus"><code>GroundTranslationStatus</code> <span class="type-badge">enum</span></h3><p>Where a message's on-demand translation stands.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Requested; the pipeline's translate drain hasn't written it yet.</td></tr><tr><td><code>ready</code></td><td>Translated — `text` holds it.</td></tr><tr><td><code>unavailable</code></td><td>Not requested, nothing to translate (no text), or the drain gave
 up. Requesting again re-queues it.</td></tr></tbody></table><h3 id="type-impactpriorstate"><code>ImpactPriorState</code> <span class="type-badge">enum</span></h3><p>The state a V1–V3 whole-prior proposal was left in. Retired: none is
@@ -2066,7 +2250,9 @@ incidents the frame is asking for).</td></tr><tr><td><code>TOPICAL</code></td><t
 relevance (soft), gating weak incidents below a similarity floor and
 giving reports a small rank preference.</td></tr></tbody></table><h3 id="type-knowledgebasetier"><code>KnowledgebaseTier</code> <span class="type-badge">enum</span></h3><p>A knowledgebase tier (ADR-0006). `report` = the ReliefWeb state/analysis
 KB; `incident` = an event card from the incident index (lower-tier, possibly
-unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
+unverified). Lowercase values match the stored tier strings.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>report</code></td><td>—</td></tr><tr><td><code>incident</code></td><td>—</td></tr></tbody></table><h3 id="type-locationrunkind"><code>LocationRunKind</code> <span class="type-badge">enum</span></h3><p>Which kind of pipeline run wrote a log row: a location Outcome (ADR-0020)
+or a grouping log Link (ADR-0021).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LIVE</code></td><td>The run that processes a Signal for the first time, after ingest.</td></tr><tr><td><code>REPLAY</code></td><td>A run that re-processes a Signal that a Live run already processed.</td></tr></tbody></table><h3 id="type-metricdimension"><code>MetricDimension</code> <span class="type-badge">enum</span></h3><p>The Notion Metrics table's dimension a metric sits under.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>TIMELINESS</code></td><td>—</td></tr><tr><td><code>ACCURACY</code></td><td>—</td></tr><tr><td><code>COVERAGE</code></td><td>—</td></tr><tr><td><code>RELIABILITY</code></td><td>—</td></tr><tr><td><code>USEFULNESS</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgranularity"><code>MetricGranularity</code> <span class="type-badge">enum</span></h3><p>The bucket a metric series is read in (ADR-0014): a UTC calendar day, an
+ISO week from Monday 00:00 UTC, or a UTC calendar month.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr></tbody></table><h3 id="type-metricgroupby"><code>MetricGroupBy</code> <span class="type-badge">enum</span></h3><p>How a series can be split into groups.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>SOURCE</code></td><td>One series per data source (`DataSource.name`), in the owning query's order: most rows (Signals or Events) first, the expected-cadence list for Sources on schedule.</td></tr></tbody></table><h3 id="type-metrickey"><code>MetricKey</code> <span class="type-badge">enum</span></h3><p>A metric the admin /metrics page can plot over time (ADR-0015). Each value is one registry entry in clear-api.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DETECTED_BY_NEXT_DAY</code></td><td>Share of measured Events first signalled on the onset day or the day after (ADR-0011).</td></tr><tr><td><code>DETECTED_SAME_DAY</code></td><td>Share of measured Events first signalled on the onset day (ADR-0011).</td></tr><tr><td><code>ALERTED_BY_NEXT_DAY</code></td><td>Share of measured Alerts raised on the Event's onset day or the day after (ADR-0017).</td></tr><tr><td><code>ALERTED_SAME_DAY</code></td><td>Share of measured Alerts raised on the Event's onset day (ADR-0017).</td></tr><tr><td><code>DISTRICT_OR_FINER</code></td><td>Share of located ingested Signals placed at a district or a point inside one (ADR-0012).</td></tr><tr><td><code>SIGNALS_GROUPED</code></td><td>Share of ingested Signals whose Event holds another ingested Signal, a grouping proxy (ADR-0018).</td></tr><tr><td><code>EVENTS_WITH_ONE_SIGNAL</code></td><td>Share of Events holding exactly one ingested Signal, a grouping proxy (ADR-0018).</td></tr><tr><td><code>ACLED_EVENTS_ALERTED</code></td><td>Share of ACLED events whose district held a CLEAR Alert from another feed within three days, a recall proxy (ADR-0018).</td></tr><tr><td><code>SOURCES_ON_SCHEDULE</code></td><td>Share of source-days on which an expected data feed was within its cadence (ADR-0017).</td></tr><tr><td><code>EVENTS_ESCALATED</code></td><td>Share of Events a user escalated to the team, an interim usefulness proxy (ADR-0017).</td></tr></tbody></table><h3 id="type-metriconsetbasis"><code>MetricOnsetBasis</code> <span class="type-badge">enum</span></h3><p>Which onset a delay metric measures from (ADR-0021, decision 4).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>AS_DELIVERED</code></td><td>Every value as the Live pipeline run gave it at the time: the onset on the Alert, or the last onset a Live run gave the Event. Past buckets do not move after the Event settles, and no replay moves them.</td></tr><tr><td><code>CURRENT</code></td><td>The same instants, measured against the onset the Event has today. Past buckets move when the onset changes; every bucket has one ruler.</td></tr></tbody></table><h3 id="type-metricunit"><code>MetricUnit</code> <span class="type-badge">enum</span></h3><p>What a metric's denominator counts.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>EVENTS</code></td><td>—</td></tr><tr><td><code>SIGNALS</code></td><td>—</td></tr><tr><td><code>SOURCE_DAYS</code></td><td>One per expected data source per measured UTC day.</td></tr><tr><td><code>ACLED_EVENTS</code></td><td>One ACLED event: the reference dataset's Signal.</td></tr></tbody></table><h3 id="type-notificationstatus"><code>NotificationStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>DELIVERED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>READ</code></td><td>—</td></tr></tbody></table><h3 id="type-orgmemberrole"><code>OrgMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within an organisation.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>org_admin</code></td><td>—</td></tr><tr><td><code>member</code></td><td>—</td></tr></tbody></table><h3 id="type-placealiassource"><code>PlaceAliasSource</code> <span class="type-badge">enum</span></h3><p>Where a place alias came from.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>REVIEW</code></td><td>A decider resolved an unresolved place name.</td></tr><tr><td><code>SEED</code></td><td>A loaded list, for example critical facilities.</td></tr><tr><td><code>MANUAL</code></td><td>A user added it by hand.</td></tr></tbody></table><h3 id="type-placenamesuggestionkind"><code>PlaceNameSuggestionKind</code> <span class="type-badge">enum</span></h3><p>What kind of place a suggestion is.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>GEONAMES</code></td><td>A GeoNames row. Resolve with kind GEONAMES and its `geonamesId`.</td></tr><tr><td><code>LOCATION</code></td><td>A CLEAR district or landmark. Resolve with kind LOCATION and its `locationId`.</td></tr></tbody></table><h3 id="type-signallocationchallengedecision"><code>SignalLocationChallengeDecision</code> <span class="type-badge">enum</span></h3><p>How an admin decides a Location challenge.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>ACCEPT</code></td><td>Write the proposed point onto the Signal.</td></tr><tr><td><code>CORRECT</code></td><td>Write a different point, given as `point`, onto the Signal.</td></tr><tr><td><code>DECLINE</code></td><td>Leave the Signal as it is.</td></tr></tbody></table><h3 id="type-signalorderby"><code>SignalOrderBy</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PUBLISHED_DESC</code></td><td>Newest first by publishedAt.</td></tr><tr><td><code>PUBLISHED_ASC</code></td><td>Oldest first by publishedAt.</td></tr><tr><td><code>SEVERITY_DESC</code></td><td>—</td></tr><tr><td><code>SEVERITY_ASC</code></td><td>—</td></tr></tbody></table><h3 id="type-signalstatus"><code>SignalStatus</code> <span class="type-badge">enum</span></h3><p>Durable processing status for the Dagster event-driven drain (pending
 work only; see `retracted`). NEW = awaiting first grouping; PROCESSED =
 classify→group→alert done; FAILED = terminal failure; NEEDS_RECOMPUTE =
 grouped, then changed (content revision or retraction flip), so its events
@@ -2078,7 +2264,8 @@ API-key caller.</p><table class="ref-table"><thead><tr><th>Value</th><th>Descrip
 PENDING or LEASED → CANCELLED. An expired lease returns the Task to
 PENDING lazily, at the next claim. Tasks are never deleted.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>LEASED</code></td><td>—</td></tr><tr><td><code>COMPLETED</code></td><td>—</td></tr><tr><td><code>FAILED</code></td><td>—</td></tr><tr><td><code>CANCELLED</code></td><td>—</td></tr></tbody></table><h3 id="type-teammemberrole"><code>TeamMemberRole</code> <span class="type-badge">enum</span></h3><p>Role within a team. `analyst` carries elevated, location-scoped powers
 (promote alerts, decide tasks/cases, manage team analyses, act on
-events/alerts/crises within the team's location scope).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+events/alerts/crises within the team's location scope).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>team_admin</code></td><td>—</td></tr><tr><td><code>analyst</code></td><td>—</td></tr><tr><td><code>emergency_response_manager</code></td><td>—</td></tr><tr><td><code>team_member</code></td><td>—</td></tr></tbody></table><h3 id="type-unresolvedplacenamereason"><code>UnresolvedPlaceNameReason</code> <span class="type-badge">enum</span></h3><p>Why geocoding did not place a name.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_MATCH</code></td><td>The gazetteer has no candidate for the spelling.</td></tr><tr><td><code>OUTSIDE_AREA</code></td><td>A candidate exists, but it lies outside the Signal's area.</td></tr></tbody></table><h3 id="type-unresolvedplacenameresolutionkind"><code>UnresolvedPlaceNameResolutionKind</code> <span class="type-badge">enum</span></h3><p>How a decider answers a queued name.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>LOCATION</code></td><td>An existing CLEAR location: give `locationId`.</td></tr><tr><td><code>GEONAMES</code></td><td>A GeoNames suggestion: give `geonamesId`. It becomes a level-4 landmark.</td></tr><tr><td><code>POINT</code></td><td>A new point: give `point`. It becomes a level-4 landmark.</td></tr><tr><td><code>NOT_A_PLACE</code></td><td>The spelling is not a place. The row closes and does not come back.</td></tr><tr><td><code>AMBIGUOUS</code></td><td>The spelling can mean more than one place. The row leaves the open
+queue and stays resolvable.</td></tr></tbody></table><h3 id="type-unresolvedplacenamestatus"><code>UnresolvedPlaceNameStatus</code> <span class="type-badge">enum</span></h3><p>The state of an unresolved place name.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>OPEN</code></td><td>Waits for a decider.</td></tr><tr><td><code>RESOLVED</code></td><td>A decider gave it a location. A place alias holds the answer.</td></tr><tr><td><code>NOT_A_PLACE</code></td><td>The spelling is not a place. A later miss only adds to the count.</td></tr><tr><td><code>AMBIGUOUS</code></td><td>The spelling can mean more than one place. It needs local knowledge.</td></tr></tbody></table><h3 id="type-webhookdeliverystatus"><code>WebhookDeliveryStatus</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>pending</code></td><td>Waiting for the first attempt (rare — the receive route usually attempts inline).</td></tr><tr><td><code>succeeded</code></td><td>Delivered — target returned 2xx on some attempt.</td></tr><tr><td><code>retrying</code></td><td>Failed at least once; a retry is scheduled.</td></tr><tr><td><code>dead</code></td><td>Exhausted all retry attempts. Admin can manually re-fire.</td></tr></tbody></table><h3 id="type-acceptinviteinput"><code>AcceptInviteInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>token</code></td>
     <td><code>String!</code></td>
     <td>—</td>
@@ -2159,6 +2346,14 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
     <td><code>text</code></td>
     <td><code>String</code></td>
     <td>Optional textual feedback.</td>
+  </tr></tbody></table><h3 id="type-agentmetricsinput"><code>AgentMetricsInput</code> <span class="type-badge">input</span></h3><p>The range to measure CLEAR Agent usage over. Both fields are optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
   </tr></tbody></table><h3 id="type-alertdigestinput"><code>AlertDigestInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>alertIds</code></td>
     <td><code>[String!]!</code></td>
@@ -2196,6 +2391,11 @@ events/alerts/crises within the team's location scope).</p><table class="ref-tab
     <td><code>String</code></td>
     <td>Restrict to alerts whose event sits under this location (or any of
 its descendants).</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps alerts whose event
+sits under any of them or under `locationId`. An empty list is no filter.</td>
   </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
@@ -2360,6 +2560,23 @@ never data), at most 10,000 characters as JSON. Omit on update to keep it.</td>
   </tr><tr>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>runKind</code></td>
+    <td><code>LocationRunKind</code></td>
+    <td>The run that raises the Alert (ADR-0021). `runKind` defaults to LIVE;
+a replay job sends REPLAY, and that Alert is not part of the history
+series. Read only for a call with an API key: an Alert that a person
+raises has no run kind. `pipelineVersion` and `runId` are accepted so
+the pipeline sends one run block on every write; the Alert does not
+store them.</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>runId</code></td>
+    <td><code>String</code></td>
     <td>—</td>
   </tr></tbody></table><h3 id="type-createalertwebhookinput"><code>CreateAlertWebhookInput</code> <span class="type-badge">input</span></h3><p>Input for creating a team-scoped clear_alert webhook. The secret is
 generated server-side (openssl rand -hex 32 equivalent) and returned once
@@ -2643,6 +2860,22 @@ any team member on that team instead of a global admin. Purely an
 authorisation hint — the event itself has no team column; team affiliation
 is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr><tr>
+    <td><code>runKind</code></td>
+    <td><code>LocationRunKind</code></td>
+    <td>The run that makes this write, for the grouping log and the Event
+facts log (ADR-0021). `runKind` defaults to LIVE; a replay job sends
+REPLAY. `pipelineVersion` is the clear-pipeline git SHA and `runId`
+the Dagster run id. clear-api writes to the logs only for a call with
+an API key: a person's Link or edit writes no row.</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>runId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-creategroundsourceinput"><code>CreateGroundSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -2765,6 +2998,26 @@ any team member on that team instead of a global admin. Purely an
 authorisation hint — the signal itself has no team column; team affiliation
 is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr></tbody></table><h3 id="type-createmetricannotationinput"><code>CreateMetricAnnotationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>at</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the change reached this environment (UTC).</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>Short label on the chart, at most 120 characters.</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>At most 1000 characters.</td>
+  </tr><tr>
+    <td><code>link</code></td>
+    <td><code>String</code></td>
+    <td>An http(s) URL, at most 500 characters.</td>
+  </tr><tr>
+    <td><code>metricKeys</code></td>
+    <td><code>[MetricKey!]!</code></td>
+    <td>At least one registry metric.</td>
   </tr></tbody></table><h3 id="type-createnotificationinput"><code>CreateNotificationInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
     <td><code>String!</code></td>
@@ -2793,6 +3046,36 @@ Ignored for platform-level callers.</td>
     <td><code>slug</code></td>
     <td><code>String!</code></td>
     <td>URL-friendly identifier. Must be unique.</td>
+  </tr></tbody></table><h3 id="type-createplacealiasinput"><code>CreatePlaceAliasInput</code> <span class="type-badge">input</span></h3><p>An alias added by hand. Give the target as `locationId` or as `point`,
+not both.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling. At most 500 characters.</td>
+  </tr><tr>
+    <td><code>nameAr</code></td>
+    <td><code>String</code></td>
+    <td>The same place in Arabic script. It gets an alias of its own.</td>
+  </tr><tr>
+    <td><code>countryCode</code></td>
+    <td><code>String!</code></td>
+    <td>ISO-3166-1 alpha-2 (SD, VE, AF).</td>
+  </tr><tr>
+    <td><code>scopeLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The state where the alias applies. Omit for the whole country
+(platform admins only).</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>An existing CLEAR location: a district, a state or a level-4 landmark.</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>LocationChallengePointInput</code></td>
+    <td>A new point. It becomes a level-4 landmark. Its name defaults to `name`.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-createpubliceventlinkinput"><code>CreatePublicEventLinkInput</code> <span class="type-badge">input</span></h3><p>Input for the `createPublicEventLink` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>eventId</code></td>
     <td><code>String!</code></td>
@@ -2815,7 +3098,7 @@ URL-history scraping.</td>
     <td>Stable upstream identifier for idempotent ingestion. If a signal with
 the same (sourceId, externalId) already exists, createSignal returns the
 existing row instead of creating a duplicate. Recommended prefix scheme:
-&quot;dataminr:{alertId}&quot;, &quot;gdacs:{eventid}&quot;, &quot;acled:{event_id_cnty}&quot;.</td>
+&quot;gdacs:{eventid}&quot;, &quot;acled:{event_id_cnty}&quot;.</td>
   </tr><tr>
     <td><code>contentHash</code></td>
     <td><code>String</code></td>
@@ -2842,6 +3125,16 @@ for sources not yet landing in the lake.</td>
     <td><code>collectedAt</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>The clear-pipeline git SHA, kept on the Signal's first location Outcome
+(ADR-0020). Optional.</td>
+  </tr><tr>
+    <td><code>runId</code></td>
+    <td><code>String</code></td>
+    <td>The Dagster run id, kept on the Signal's first location Outcome
+(ADR-0020). Optional.</td>
   </tr><tr>
     <td><code>url</code></td>
     <td><code>String</code></td>
@@ -2993,6 +3286,10 @@ optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>Only Events whose origin, destination or general location is this location or inside it.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size of `series`. Defaults to `WEEK`.</td>
   </tr></tbody></table><h3 id="type-entitystatsinput"><code>EntityStatsInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>entity</code></td>
     <td><code>EntityKind!</code></td>
@@ -3009,6 +3306,11 @@ optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
   </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
@@ -3115,6 +3417,11 @@ an explicit null / empty list clears a fact no live member supports.</td>
     <td><code>locationId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
   </tr><tr>
     <td><code>eventTypes</code></td>
     <td><code>[String!]</code></td>
@@ -3290,6 +3597,23 @@ is never mutated: a NEW thread is created instead, with a warning.</td>
     <td><code>[TeamAssignmentInput!]!</code></td>
     <td>Team assignments — at least one team is required. Each entry grants the
 invitee membership in that team with the given role on acceptance.</td>
+  </tr><tr>
+    <td><code>frontendBaseUrl</code></td>
+    <td><code>String</code></td>
+    <td>Base URL of the frontend the invite should link into (e.g.
+`https://app.example.org`). The accept-invite link is built from it.
+Trusted as given for this authenticated call; defaults to the platform
+`FRONTEND_URL` when omitted. May include a path prefix.</td>
+  </tr><tr>
+    <td><code>senderEmail</code></td>
+    <td><code>String</code></td>
+    <td>Address replies to the invite email route to (becomes `Reply-To`).
+The `From` address stays the platform's verified sender.</td>
+  </tr><tr>
+    <td><code>senderName</code></td>
+    <td><code>String</code></td>
+    <td>Display name shown on the invite email's `From` header (e.g. the
+inviting organisation's name).</td>
   </tr></tbody></table><h3 id="type-knowledgebasechunkinput"><code>KnowledgebaseChunkInput</code> <span class="type-badge">input</span></h3><p>One chunk written into the knowledgebase table. Mirrors the
 columns exactly (minus `lexicalTsv`, which the DB trigger fills
 from `embeddedText`, and `createdAt` which uses the column
@@ -3456,6 +3780,130 @@ for groundMessage, whose source is the reporter's language.</td>
     <td><code>String</code></td>
     <td>Display name of the place, at most 500 characters. Without one the
 point shows its admin area's name.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionmetricsinput"><code>LocationPrecisionMetricsInput</code> <span class="type-badge">input</span></h3><p>The range, place and sources to measure location precision over. Every
+field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start (Monday 00:00 UTC) of the ISO week 11 weeks before `to`'s week, so the default range is 12 ISO weeks.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Signals whose location is this location or inside it. A Signal with no location cannot be placed, so it is left out when this is set.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name` (e.g. `sudan-war-x`). Defaults to every source.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size of `series`. Defaults to `WEEK`.</td>
+  </tr></tbody></table><h3 id="type-locationreplayrunsinput"><code>LocationReplayRunsInput</code> <span class="type-badge">input</span></h3><p>Which Replay runs to list: the range and filters of the series they are drawn on.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults as `metricSeries` does.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only Signals whose Live Outcome is in this location or inside it.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name`.</td>
+  </tr></tbody></table><h3 id="type-metricannotationsinput"><code>MetricAnnotationsInput</code> <span class="type-badge">input</span></h3><p>The range and metric to list annotations for. Every field is optional.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Only annotations at or after this instant.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>Only annotations at or before this instant.</td>
+  </tr><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey</code></td>
+    <td>Only annotations tagged with this metric.</td>
+  </tr></tbody></table><h3 id="type-metricseriesinput"><code>MetricSeriesInput</code> <span class="type-badge">input</span></h3><p>The metric, range, bucket size and grouping to read a series for. Only `metric` is required.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity</code></td>
+    <td>Bucket size (ADR-0014). Defaults to `WEEK`.</td>
+  </tr><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime</code></td>
+    <td>Start of the range, inclusive. Defaults to the start of the ISO week 11 weeks before `to`'s week.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime</code></td>
+    <td>End of the range, inclusive. Defaults to now.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>Only rows in this location or inside it, as the owning query reads it. Ignored by a metric whose definition has `locationScoped: false`.</td>
+  </tr><tr>
+    <td><code>sourceNames</code></td>
+    <td><code>[String!]</code></td>
+    <td>Only these sources, by `DataSource.name`; only for metrics that can be grouped by source.</td>
+  </tr><tr>
+    <td><code>groupBy</code></td>
+    <td><code>MetricGroupBy</code></td>
+    <td>Split the series into groups. Refused with BAD_USER_INPUT for a metric that cannot be grouped.</td>
+  </tr><tr>
+    <td><code>replayRunId</code></td>
+    <td><code>String</code></td>
+    <td>Read the replay series of one Replay run instead of the history series
+(ADR-0020): only the Signals in range that the run re-processed, each at
+the result the run gave it, in the bucket the history series has it in.
+The two series then compare the same Signals bucket by bucket. Take the id
+from `locationReplayRuns`. Only `DISTRICT_OR_FINER` has a replay
+series; another metric refuses it with BAD_USER_INPUT. A run with no
+Signal in range gives an all-zero series.</td>
+  </tr><tr>
+    <td><code>onsetBasis</code></td>
+    <td><code>MetricOnsetBasis</code></td>
+    <td>The onset a delay metric measures from (ADR-0021). `AS_DELIVERED`, the
+default, is the history series. `CURRENT` is the &quot;same ruler&quot; view, only
+for `DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY`, `ALERTED_BY_NEXT_DAY`
+and `ALERTED_SAME_DAY`; another metric refuses it with BAD_USER_INPUT.
+The bucket shape is the same for both.</td>
+  </tr></tbody></table><h3 id="type-recordunresolvedplacenameinput"><code>RecordUnresolvedPlaceNameInput</code> <span class="type-badge">input</span></h3><p>One geocode miss, sent by the pipeline.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>The Signal that named the place.</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>The place name as the pipeline read it. At most 500 characters.</td>
+  </tr><tr>
+    <td><code>nameAr</code></td>
+    <td><code>String</code></td>
+    <td>The Arabic spelling from the Signal's text, when one was found.</td>
+  </tr><tr>
+    <td><code>countryCode</code></td>
+    <td><code>String!</code></td>
+    <td>ISO-3166-1 alpha-2 (SD, VE, AF).</td>
+  </tr><tr>
+    <td><code>areaLocationId</code></td>
+    <td><code>String!</code></td>
+    <td>The area the pipeline chose for the Signal. The server derives the
+row's state from it.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>UnresolvedPlaceNameReason</code></td>
+    <td>Why geocoding did not place the name. Default NO_MATCH.</td>
+  </tr><tr>
+    <td><code>seenAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When the miss happened. Default now. A backfill passes the real date.</td>
   </tr></tbody></table><h3 id="type-replytocommentinput"><code>ReplyToCommentInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>repliedToCommentId</code></td>
     <td><code>String!</code></td>
@@ -3595,9 +4043,14 @@ requester. Retained for backward compatibility; its value has no effect.</td>
     <td><code>String</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>Like `locationId`, for several locations: keeps rows under any of
+them or under `locationId`. An empty list is no filter.</td>
+  </tr><tr>
     <td><code>sourceNames</code></td>
     <td><code>[String!]</code></td>
-    <td>Restrict to signals whose source name is in this list (e.g. [&quot;acled&quot;,&quot;dataminr&quot;]).</td>
+    <td>Restrict to signals whose source name is in this list (e.g. [&quot;acled&quot;,&quot;gdacs&quot;]).</td>
   </tr><tr>
     <td><code>severityMin</code></td>
     <td><code>Int</code></td>
@@ -3711,6 +4164,22 @@ caller from its own price table.</p><table class="ref-table"><thead><tr><th>Fiel
     <td><code>teamRole</code></td>
     <td><code>TeamMemberRole!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-unresolvedplacenameresolutioninput"><code>UnresolvedPlaceNameResolutionInput</code> <span class="type-badge">input</span></h3><p>One answer: `kind`, and the one field that kind needs.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>kind</code></td>
+    <td><code>UnresolvedPlaceNameResolutionKind!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>With LOCATION: a district, a state or a level-4 landmark in the row's country.</td>
+  </tr><tr>
+    <td><code>geonamesId</code></td>
+    <td><code>Int</code></td>
+    <td>With GEONAMES: the suggestion's GeoNames id.</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>LocationChallengePointInput</code></td>
+    <td>With POINT: the place. Its name defaults to the row's spelling.</td>
   </tr></tbody></table><h3 id="type-updatealertinput"><code>UpdateAlertInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>status</code></td>
     <td><code>AlertStatus</code></td>
@@ -3932,6 +4401,22 @@ the set when provided; omit to leave unchanged.</td>
     <td><code>rank</code></td>
     <td><code>Float</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>runKind</code></td>
+    <td><code>LocationRunKind</code></td>
+    <td>The run that makes this write, for the grouping log and the Event
+facts log (ADR-0021). `runKind` defaults to LIVE; a replay job sends
+REPLAY. `pipelineVersion` is the clear-pipeline git SHA and `runId`
+the Dagster run id. clear-api writes to the logs only for a call with
+an API key: a person's Link or edit writes no row.</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>runId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-updategroundsourceinput"><code>UpdateGroundSourceInput</code> <span class="type-badge">input</span></h3><p>Partial update of a source's policy record. Null/omitted fields are
 left unchanged, except teamId, where null unassigns the team;
 transportId is immutable (it is the identity that externalIds are minted
@@ -4009,6 +4494,23 @@ see and triage its threads. Null unassigns it (platform admins only).</td>
     <td><code>isActive</code></td>
     <td><code>Boolean</code></td>
     <td>Set active/inactive status.</td>
+  </tr></tbody></table><h3 id="type-updateplacealiasinput"><code>UpdatePlaceAliasInput</code> <span class="type-badge">input</span></h3><p>What to change. A field left out stays as it is.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>A new target: an existing CLEAR location.</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>LocationChallengePointInput</code></td>
+    <td>A new target: a point, which becomes a level-4 landmark.</td>
+  </tr><tr>
+    <td><code>scopeLocationId</code></td>
+    <td><code>String</code></td>
+    <td>A new scope: a state, or null for the whole country (platform admins
+only). Leave the field out to keep the scope.</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>A new note. Null or empty removes it.</td>
   </tr></tbody></table><h3 id="type-updateprofileinput"><code>UpdateProfileInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String</code></td>
@@ -4184,6 +4686,43 @@ optional — provide only what you want to change.</p><table class="ref-table"><
     <td><code>active</code></td>
     <td><code>Boolean</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisdatapointsinput"><code>UpsertAnalysisDatapointsInput</code> <span class="type-badge">input</span></h3><p>Input for `upsertAnalysisDatapoints`. Upsert is keyed on `analysisId`
+(one row per generation), so re-running an extraction replaces in place.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>analysisId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>contributingReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>origin</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>newestSourceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>oldestSourceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>dataQualityScore</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportCount</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-upsertanalysisinput"><code>UpsertAnalysisInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>locationIds</code></td>
     <td><code>[String!]</code></td>
@@ -4219,6 +4758,15 @@ optional — provide only what you want to change.</p><table class="ref-table"><
   </tr><tr>
     <td><code>generationCostUsd</code></td>
     <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Provider-reported token usage of the generation, summed across component
+calls. Optional — omitted for deterministic-only runs.</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
     <td>—</td>
   </tr><tr>
     <td><code>schemaVersion</code></td>
@@ -4537,6 +5085,158 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>costUsd</code></td>
     <td><code>Float!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-agentmetrics"><code>AgentMetrics</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a range: what it cost, how fast it answered, how much
+it was used and what for. The unit is a **turn**: one Answer with the usage
+clear-mvp recorded for it. A turn is in range when its usage was recorded in
+the range (server time, as the daily budget counts). Counts, sums and
+averages only; clear-mvp formats them. See ADR-0013.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns in range: Answers with recorded usage.</td>
+  </tr><tr>
+    <td><code>turnsUnrecorded</code></td>
+    <td><code>Int!</code></td>
+    <td>Answers written in range (by `createdAt`) whose usage was never recorded: failed turns, or a lost record. Not in any other number here.</td>
+  </tr><tr>
+    <td><code>conversations</code></td>
+    <td><code>Int!</code></td>
+    <td>Conversations with at least one turn in range.</td>
+  </tr><tr>
+    <td><code>newConversations</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, Conversations created in range.</td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>Int!</code></td>
+    <td>Users with at least one turn in range.</td>
+  </tr><tr>
+    <td><code>totalCostUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>Sum of the turns' cost, USD.</td>
+  </tr><tr>
+    <td><code>costPerTurnUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Mean cost of a turn, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>costPerTurnP95Usd</code></td>
+    <td><code>Float</code></td>
+    <td>95th percentile (nearest rank) cost of a turn, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>costPerConversationUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Total cost over the Conversations with a turn in range, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>latencyMedianMs</code></td>
+    <td><code>Float</code></td>
+    <td>Median turn latency, milliseconds, over turns that recorded one. Null with none.</td>
+  </tr><tr>
+    <td><code>latencyP95Ms</code></td>
+    <td><code>Float</code></td>
+    <td>95th percentile (nearest rank) turn latency, milliseconds. Null with none.</td>
+  </tr><tr>
+    <td><code>totalInputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>Sum of input tokens over the turns. Every step of a turn's tool loop counts, so one turn can report far more than one request.</td>
+  </tr><tr>
+    <td><code>totalOutputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>Sum of output tokens over the turns.</td>
+  </tr><tr>
+    <td><code>inputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean input tokens per turn. Null with no turns.</td>
+  </tr><tr>
+    <td><code>outputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean output tokens per turn. Null with no turns.</td>
+  </tr><tr>
+    <td><code>toolCallsPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean tool calls per turn, from the Answers' stored parts. Null with no turns.</td>
+  </tr><tr>
+    <td><code>turnsWithoutTools</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns that called no tool.</td>
+  </tr><tr>
+    <td><code>turnsWithManyToolCalls</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns with more than 5 tool calls: the tool-thrash signal.</td>
+  </tr><tr>
+    <td><code>budgetLimitUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>The daily per-user Agent budget in force, USD.</td>
+  </tr><tr>
+    <td><code>budgetHits</code></td>
+    <td><code>Int!</code></td>
+    <td>User-days (one user, one UTC day) whose recorded spend reached the budget.</td>
+  </tr><tr>
+    <td><code>byModel</code></td>
+    <td><code>[AgentModelUsage!]!</code></td>
+    <td>Turns by the model that answered, most turns first. `unknown` when none was recorded.</td>
+  </tr><tr>
+    <td><code>byTool</code></td>
+    <td><code>[AgentToolUsage!]!</code></td>
+    <td>Tool calls by tool, most calls first.</td>
+  </tr><tr>
+    <td><code>byPage</code></td>
+    <td><code>[AgentPageUsage!]!</code></td>
+    <td>Turns by the page they were asked from (the first segment of the preceding user turn's route, ids left out), most turns first. `unknown` when no view was sent.</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[AgentWeek!]!</code></td>
+    <td>Turns per ISO week of their usage record, ascending, one row per week the range touches (zero-filled).</td>
+  </tr><tr>
+    <td><code>recentQuestions</code></td>
+    <td><code>[AgentQuestion!]!</code></td>
+    <td>The newest questions asked in range (user turns by `createdAt`), newest first, each cut to 160 characters, without the user. Reading them is logged as `conversation.admin_read`, so select this field only when the questions will be shown.<div class="field-args"><span class="arg"><code>first: Int</code> — How many to return (1–50, default 20).</span></div></td>
+  </tr></tbody></table><h3 id="type-agentmodelusage"><code>AgentModelUsage</code> <span class="type-badge">object</span></h3><p>Turns one model answered in range.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>model</code></td>
+    <td><code>String!</code></td>
+    <td>The model, as clear-mvp recorded it (e.g. `anthropic/claude-sonnet-5-5`).</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>inputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>outputTokens</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentpageusage"><code>AgentPageUsage</code> <span class="type-badge">object</span></h3><p>Turns asked from one page.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>page</code></td>
+    <td><code>String!</code></td>
+    <td>The first segment of the route, e.g. `/map`, `/dashboard`, `/event`; `unknown` when no view was sent.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-agentquestion"><code>AgentQuestion</code> <span class="type-badge">object</span></h3><p>One question a user asked the Agent, without the user.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>askedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>question</code></td>
+    <td><code>String!</code></td>
+    <td>The question's text, cut to 160 characters.</td>
+  </tr><tr>
+    <td><code>page</code></td>
+    <td><code>String!</code></td>
+    <td>The page it was asked from, as in `byPage`.</td>
   </tr></tbody></table><h3 id="type-agentrouteusage"><code>AgentRouteUsage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>route</code></td>
     <td><code>String!</code></td>
@@ -4549,6 +5249,18 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>distinctUsers</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-agenttoolusage"><code>AgentToolUsage</code> <span class="type-badge">object</span></h3><p>Calls to one tool in range.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>tool</code></td>
+    <td><code>String!</code></td>
+    <td>The tool's name, e.g. `clear_list_events`, `navigate`, `nrc_find`.</td>
+  </tr><tr>
+    <td><code>calls</code></td>
+    <td><code>Int!</code></td>
+    <td>Calls, over all turns.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>Turns that called it at least once.</td>
   </tr></tbody></table><h3 id="type-agentusagestats"><code>AgentUsageStats</code> <span class="type-badge">object</span></h3><p>CLEAR Agent usage over a window, from usage metadata only.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>from</code></td>
     <td><code>DateTime!</code></td>
@@ -4590,6 +5302,54 @@ UTC midnight; the budget resets at the next UTC midnight.</p><table class="ref-t
     <td><code>byDay</code></td>
     <td><code>[AgentDailyUsage!]!</code></td>
     <td>Per UTC day, ascending.</td>
+  </tr></tbody></table><h3 id="type-agentweek"><code>AgentWeek</code> <span class="type-badge">object</span></h3><p>Agent usage in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W42`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr><tr>
+    <td><code>turns</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>conversations</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costUsd</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>costPerTurnUsd</code></td>
+    <td><code>Float</code></td>
+    <td>Mean cost of a turn this week, USD. Null with no turns.</td>
+  </tr><tr>
+    <td><code>latencyMedianMs</code></td>
+    <td><code>Float</code></td>
+    <td>Median turn latency this week, milliseconds. Null with no turns.</td>
+  </tr><tr>
+    <td><code>inputTokensPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean input tokens per turn this week. Null with no turns.</td>
+  </tr><tr>
+    <td><code>toolCallsPerTurn</code></td>
+    <td><code>Float</code></td>
+    <td>Mean tool calls per turn this week. Null with no turns.</td>
+  </tr><tr>
+    <td><code>models</code></td>
+    <td><code>[String!]!</code></td>
+    <td>The models that answered this week, sorted. A change from one week to the next marks a model change on a chart.</td>
   </tr></tbody></table><h3 id="type-agentworkingmemory"><code>AgentWorkingMemory</code> <span class="type-badge">object</span></h3><p>What the CLEAR Agent keeps about you across Threads (its working memory).
 Yours only: no one else, admins included, can read or write it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>userId</code></td>
@@ -4851,6 +5611,16 @@ many aggregated-datapoints rows, so there is no single bucket reference.</td>
     <td><code>Float</code></td>
     <td>—</td>
   </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>Token usage of the LLM generation, summed across component calls
+(provider-reported). Null for deterministic-only runs. USD cost is derived
+from these where current prices are known — none is frozen on the row.</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
     <td><code>generatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
@@ -4965,6 +5735,50 @@ rolling (&quot;to present&quot;), so they carry no `windowEnd`.</p><table class=
     <td><code>url</code></td>
     <td><code>String</code></td>
     <td>Short-lived link for preview. Null when the file cannot be signed.</td>
+  </tr></tbody></table><h3 id="type-analysisdatapoint"><code>AnalysisDatapoint</code> <span class="type-badge">object</span></h3><p>The extracted + aggregated final figures for one analysis generation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>analysisId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>Figures — same QualityEnvelope leaf structure as `AggregatedDatapoint.data`.</td>
+  </tr><tr>
+    <td><code>contributingReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Report ids that fed these figures (web gap-fill evidence is cited per-figure in `data`).</td>
+  </tr><tr>
+    <td><code>origin</code></td>
+    <td><code>String</code></td>
+    <td>Coarse provenance: `kb` | `aggregated` | `web` (dominant origin for mixed rows).</td>
+  </tr><tr>
+    <td><code>newestSourceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>oldestSourceAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>dataQualityScore</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>reportCount</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>computedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-analysisrequest"><code>AnalysisRequest</code> <span class="type-badge">object</span></h3><p>An on-demand analysis generation request (ADR-0007 §4). A user enqueues a
 frame that may not exist yet; a pipeline sensor drains `pendingAnalyses`,
 generates + upserts the analysis, and marks the request `GENERATED`. Scheduled
@@ -5057,20 +5871,56 @@ check for this request.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-apisignalsourcegrant"><code>ApiSignalSourceGrant</code> <span class="type-badge">object</span></h3><p>One data source opened to one API-only developer.
+
+API-only users (a `member` who holds a live API key and belongs to no
+organisation or team) read NO Signals by default — including the Signals
+nested under an Event. Each grant opens exactly one source to one user.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>user</code></td>
+    <td><code>User!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>dataSource</code></td>
+    <td><code>DataSource!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>grantedBy</code></td>
+    <td><code>User</code></td>
+    <td>Admin who issued it. Null if that account was deleted.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>String</code></td>
+    <td>Why this source was opened to this user.</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-approveuserresult"><code>ApproveUserResult</code> <span class="type-badge">object</span></h3><p>Result of the admin-only `approveUser` mutation. Flips a `pending`
-user's role to `viewer` and moves the matching CRM contact from
-the prospects collection into the approved collection, triggering
-Exponential's welcome automation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+user's role to `member`, emails them that they are approved, and
+mirrors the approval into the CRM when one is configured.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>user</code></td>
     <td><code>User!</code></td>
     <td>The approved user (with the new role).</td>
   </tr><tr>
+    <td><code>emailSent</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the approval email was handed to the email provider.
+False means the user is approved but was not told; `emailError`
+says why.</td>
+  </tr><tr>
+    <td><code>emailError</code></td>
+    <td><code>String</code></td>
+    <td>Why the approval email failed. Null when it was sent.</td>
+  </tr><tr>
     <td><code>crmMoved</code></td>
     <td><code>Boolean!</code></td>
-    <td>True when the CRM-side list move completed cleanly. False means
-the user is approved locally but the CRM record still sits in the
-prospects list — the admin can retry from /portal/admin without
-re-approving the user.</td>
+    <td>True when the CRM contact landed in the approved collection. False
+when no CRM is configured or the sync failed; a failure also adds
+an entry to `crmWarnings`. The approval stands either way.</td>
   </tr><tr>
     <td><code>crmWarnings</code></td>
     <td><code>[String!]!</code></td>
@@ -5732,6 +6582,34 @@ Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline A
     <td><code>uniqueUsers</code></td>
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in on this date.</td>
+  </tr></tbody></table><h3 id="type-detectionbucket"><code>DetectionBucket</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one bucket of the requested granularity.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>eventsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Events in range in this bucket, counted plus excluded.</td>
+  </tr><tr>
+    <td><code>counted</code></td>
+    <td><code>Int!</code></td>
+    <td>Counted Events first signalled in this bucket.</td>
+  </tr><tr>
+    <td><code>sameDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day.</td>
+  </tr><tr>
+    <td><code>byNextDay</code></td>
+    <td><code>Int!</code></td>
+    <td>Of those, first signalled on their onset day or the day after.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket, e.g. the current one.</td>
   </tr></tbody></table><h3 id="type-detectionexclusion"><code>DetectionExclusion</code> <span class="type-badge">object</span></h3><p>Events in range left out of time to detection for one reason.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reason</code></td>
     <td><code>DetectionExclusionReason!</code></td>
@@ -5797,6 +6675,14 @@ or, with none, its `firstSignalCreatedAt`. Dummy Events are left out.</p><table 
     <td><code>exclusions</code></td>
     <td><code>[DetectionExclusion!]!</code></td>
     <td>Events in range not measured, by reason: exactly 4 rows, one per reason.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size `series` was read in.</td>
+  </tr><tr>
+    <td><code>series</code></td>
+    <td><code>[DetectionBucket!]!</code></td>
+    <td>The same tally as `weekly` per bucket of `granularity` (ADR-0014): zero-filled over every bucket the range touches, ascending. With `WEEK` it equals `weekly` row for row.</td>
   </tr></tbody></table><h3 id="type-detectionweek"><code>DetectionWeek</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one ISO week.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>isoWeek</code></td>
     <td><code>String!</code></td>
@@ -6314,12 +7200,13 @@ a new event now advances it just like a new report.</td>
     <td><code>eventsCount</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
-  </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A GeoNames gazetteer match for a place name. Coordinates come straight
-from GeoNames — callers still validate them (e.g. the same-A2 check
-against a signal's source coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+  </tr></tbody></table><h3 id="type-gazetteerhit"><code>GazetteerHit</code> <span class="type-badge">object</span></h3><p>A gazetteer match for a place name: one of CLEAR's own place aliases, or
+a GeoNames row. GeoNames coordinates come straight from GeoNames, so callers
+still validate them (e.g. the same-A2 check against a signal's source
+coordinates) before trusting a fuzzy hit.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>geonamesId</code></td>
     <td><code>Int!</code></td>
-    <td>—</td>
+    <td>The GeoNames id. 0 for an alias whose location has none.</td>
   </tr><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
@@ -6358,6 +7245,15 @@ pg_trgm similarity of the best fuzzy match.</td>
     <td><code>exact</code></td>
     <td><code>Boolean!</code></td>
     <td>True when matched exactly on the normalised name, false when fuzzy.</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>The CLEAR location an alias points at. Null for a GeoNames match. Use
+it as the Signal's location directly: do not create a new landmark.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>GazetteerSource!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-groundingestresult"><code>GroundIngestResult</code> <span class="type-badge">object</span></h3><p>Result of a chat-export ingest (also returned by the REST upload
 route as JSON).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>created</code></td>
@@ -7171,6 +8067,26 @@ Pass current: false to include the full history.<div class="field-args"><span cl
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>Last write — useful for tracking admin polygon (re-)loads.</td>
+  </tr></tbody></table><h3 id="type-locationcorrectioncounts"><code>LocationCorrectionCounts</code> <span class="type-badge">object</span></h3><p>Location challenges filed in range, by status.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>open</code></td>
+    <td><code>Int!</code></td>
+    <td>Awaiting a decision (status `consideration`).</td>
+  </tr><tr>
+    <td><code>accepted</code></td>
+    <td><code>Int!</code></td>
+    <td>The analyst's proposed point was written onto the Signal.</td>
+  </tr><tr>
+    <td><code>corrected</code></td>
+    <td><code>Int!</code></td>
+    <td>The decider placed a different point.</td>
+  </tr><tr>
+    <td><code>declined</code></td>
+    <td><code>Int!</code></td>
+    <td>Declined: the location stood.</td>
+  </tr><tr>
+    <td><code>superseded</code></td>
+    <td><code>Int!</code></td>
+    <td>Replaced by a newer challenge on the same Signal.</td>
   </tr></tbody></table><h3 id="type-locationmetadata"><code>LocationMetadata</code> <span class="type-badge">object</span></h3><p>Arbitrary per-location metadata keyed by type. History is preserved:
 writes close the current row (set validTo = now()) and insert a new one.
 The CURRENT value for a (location, type) is the row where validTo is null.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -7205,6 +8121,178 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-locationprecisionbucket"><code>LocationPrecisionBucket</code> <span class="type-badge">object</span></h3><p>One source's ingested Signals located in one bucket of the requested granularity, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket, e.g. the current one.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionmetrics"><code>LocationPrecisionMetrics</code> <span class="type-badge">object</span></h3><p>Location precision: how finely CLEAR placed the Signals it ingested, per
+source and ISO week. Each ingested Signal in range counts once under the
+level of its location (general location, or for displacement its origin,
+else its destination): no location, country (0), state (1), district (2)
+or point (a level-4 landmark or coordinate point). &quot;District or finer&quot; is
+district plus point. A Signal a person corrected counts at the location the
+pipeline gave it, not the corrected point. Counts only; shares are the
+caller's. See ADR-0012.
+
+The level and the instant come from the Signal's Live Outcome in the
+location Outcome log (ADR-0020), not from the live Signal. The instant is
+when the pipeline first finished the Signal, or its `collectedAt` while no
+run has finished it. A Signal is in range by that instant. A replay adds
+rows to the log and changes no past bucket. Ingested means brought in by a
+pipeline (not submitted or filed by hand), not retracted, not dummy.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the range measured.</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>End of the range measured.</td>
+  </tr><tr>
+    <td><code>signalsInRange</code></td>
+    <td><code>Int!</code></td>
+    <td>Ingested Signals located in range, under the filters.</td>
+  </tr><tr>
+    <td><code>bySource</code></td>
+    <td><code>[LocationPrecisionSource!]!</code></td>
+    <td>One row per source with a Signal in range, most Signals first.</td>
+  </tr><tr>
+    <td><code>weekly</code></td>
+    <td><code>[LocationPrecisionWeek!]!</code></td>
+    <td>Each source in `bySource` by ISO week of the instant its Signals were located, zero-filled over every week the range touches, ascending.</td>
+  </tr><tr>
+    <td><code>corrections</code></td>
+    <td><code>LocationCorrectionCounts!</code></td>
+    <td>Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists.</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size `series` was read in.</td>
+  </tr><tr>
+    <td><code>series</code></td>
+    <td><code>[LocationPrecisionBucket!]!</code></td>
+    <td>Each source in `bySource` per bucket of `granularity` (ADR-0014): zero-filled over every bucket the range touches, in `bySource` order then ascending. With `WEEK` it equals `weekly` row for row.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionsource"><code>LocationPrecisionSource</code> <span class="type-badge">object</span></h3><p>Ingested Signals of one source in range, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>All of the source's ingested Signals in range.</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals with no location at all.</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a country (level 0).</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a state or province (level 1).</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a district (level 2).</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>Signals at a point: a level-4 landmark or coordinate point inside a district.</td>
+  </tr></tbody></table><h3 id="type-locationprecisionweek"><code>LocationPrecisionWeek</code> <span class="type-badge">object</span></h3><p>One source's ingested Signals located in one ISO week, by the level of their location.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>isoWeek</code></td>
+    <td><code>String!</code></td>
+    <td>The ISO week, e.g. `2026-W44`.</td>
+  </tr><tr>
+    <td><code>weekStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Monday 00:00 UTC of the week.</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>String!</code></td>
+    <td>`DataSource.name`.</td>
+  </tr><tr>
+    <td><code>total</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>noLocation</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>country</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>state</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>district</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>point</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the week, e.g. the current week.</td>
+  </tr></tbody></table><h3 id="type-locationreplayrun"><code>LocationReplayRun</code> <span class="type-badge">object</span></h3><p>One Replay run of the pipeline that re-located Signals in the range
+(ADR-0020). A Replay run re-processes Signals that a run already finished;
+its results are kept beside the history, never in place of it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>runId</code></td>
+    <td><code>String!</code></td>
+    <td>The id the pipeline gave the run: a Dagster run id, or a replay job's own id. Pass it as `MetricSeriesInput.replayRunId`.</td>
+  </tr><tr>
+    <td><code>pipelineVersion</code></td>
+    <td><code>String</code></td>
+    <td>The clear-pipeline git SHA of the run; null when the pipeline sent none.</td>
+  </tr><tr>
+    <td><code>startedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>The instant of the run's first result for a Signal in range.</td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>Int!</code></td>
+    <td>How many ingested Signals in range the run re-processed: the denominator total of its replay series.</td>
   </tr></tbody></table><h3 id="type-maupoint"><code>MauPoint</code> <span class="type-badge">object</span></h3><p>One month in a MAU time series.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>month</code></td>
     <td><code>String!</code></td>
@@ -7214,6 +8302,126 @@ The CURRENT value for a (location, type) is the row where validTo is null.</p><t
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in at least once during the
 calendar month.</td>
+  </tr></tbody></table><h3 id="type-metricannotation"><code>MetricAnnotation</code> <span class="type-badge">object</span></h3><p>A change that should move a metric, drawn as a marker on the admin /metrics
+charts (ADR-0016): a deploy, a data import, a prompt change. Rows are per
+environment, because a change reaches dev and prod at different instants.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>at</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the change reached this environment (UTC).</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>Short label on the chart.</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String</code></td>
+    <td>What changed and why it should move the metric.</td>
+  </tr><tr>
+    <td><code>link</code></td>
+    <td><code>String</code></td>
+    <td>Where to read more: a pull request, a ticket, an ADR.</td>
+  </tr><tr>
+    <td><code>metricKeys</code></td>
+    <td><code>[MetricKey!]!</code></td>
+    <td>The registry metrics the change bears on (ADR-0015); at least one.</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-metricbucket"><code>MetricBucket</code> <span class="type-badge">object</span></h3><p>One bucket of one group. The metric is `numerator / denominator`; a bucket with a zero denominator measured nothing.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>start</code></td>
+    <td><code>DateTime!</code></td>
+    <td>Start of the bucket: 00:00 UTC of the day, the week's Monday, or the first of the month.</td>
+  </tr><tr>
+    <td><code>label</code></td>
+    <td><code>String!</code></td>
+    <td>`2026-10-29` for a day, `2026-W44` for an ISO week, `2026-10` for a month.</td>
+  </tr><tr>
+    <td><code>isPartial</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the range covers only part of the bucket.</td>
+  </tr><tr>
+    <td><code>group</code></td>
+    <td><code>String</code></td>
+    <td>The group this bucket belongs to; null for an ungrouped series.</td>
+  </tr><tr>
+    <td><code>numerator</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>denominator</code></td>
+    <td><code>Int!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-metricdefinition"><code>MetricDefinition</code> <span class="type-badge">object</span></h3><p>What a client needs to list, group and explain a metric.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>key</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>The metric's name, as the Notion Metrics table names it.</td>
+  </tr><tr>
+    <td><code>dimension</code></td>
+    <td><code>MetricDimension!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>unit</code></td>
+    <td><code>MetricUnit!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>description</code></td>
+    <td><code>String!</code></td>
+    <td>The method in one paragraph: what counts, over what.</td>
+  </tr><tr>
+    <td><code>timeBasis</code></td>
+    <td><code>String!</code></td>
+    <td>The instant that puts a row in a bucket.</td>
+  </tr><tr>
+    <td><code>groupable</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when the series can be read with `groupBy: SOURCE`.</td>
+  </tr><tr>
+    <td><code>locationScoped</code></td>
+    <td><code>Boolean!</code></td>
+    <td>True when `locationId` scopes the series. False for a metric that reads every country (Sources on schedule): clients should drop the country filter from its reading and label it so.</td>
+  </tr><tr>
+    <td><code>adr</code></td>
+    <td><code>String!</code></td>
+    <td>The ADR that owns the definition, e.g. `ADR-0012`.</td>
+  </tr></tbody></table><h3 id="type-metricseries"><code>MetricSeries</code> <span class="type-badge">object</span></h3><p>One metric over a range as a share per bucket, read from the service that
+owns the metric's definition, so it never disagrees with the metric's own
+query (ADR-0015). Counts only; shares are the caller's to compute.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>metric</code></td>
+    <td><code>MetricKey!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>granularity</code></td>
+    <td><code>MetricGranularity!</code></td>
+    <td>The bucket size the series was read in.</td>
+  </tr><tr>
+    <td><code>from</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>to</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>groups</code></td>
+    <td><code>[String!]!</code></td>
+    <td>Group names in the owning query's order; empty when ungrouped.</td>
+  </tr><tr>
+    <td><code>buckets</code></td>
+    <td><code>[MetricBucket!]!</code></td>
+    <td>Group by group, ascending buckets within each, zero-filled over every bucket the range touches.</td>
   </tr></tbody></table><h3 id="type-nlreportsearch"><code>NlReportSearch</code> <span class="type-badge">object</span></h3><p>Result of `searchReportsNaturalLanguage` — the parsed interpretation plus
 the matching reports, so the caller sees both the answer and how the question
 was understood.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -7385,6 +8593,132 @@ stored name is often the long official form, which exact-name lookup misses.</td
     <td><code>bbox</code></td>
     <td><code>[Float!]!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-placealias"><code>PlaceAlias</code> <span class="type-badge">object</span></h3><p>A spelling that CLEAR maps to a CLEAR location. CLEAR owns it: a
+GeoNames re-import never touches it.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nameNorm</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling after the gazetteer's normalisation.</td>
+  </tr><tr>
+    <td><code>nameDisplay</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling to show.</td>
+  </tr><tr>
+    <td><code>countryCode</code></td>
+    <td><code>String!</code></td>
+    <td>ISO-3166-1 alpha-2 (SD, VE, AF).</td>
+  </tr><tr>
+    <td><code>scopeLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The area where the alias applies. Null means the whole country.</td>
+  </tr><tr>
+    <td><code>scopeLocation</code></td>
+    <td><code>Location</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String!</code></td>
+    <td>The CLEAR location the spelling means.</td>
+  </tr><tr>
+    <td><code>location</code></td>
+    <td><code>Location</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>source</code></td>
+    <td><code>PlaceAliasSource!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdById</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of whoever created the alias. Null for a seed.</td>
+  </tr><tr>
+    <td><code>createdByName</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>updatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>note</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>canEdit</code></td>
+    <td><code>Boolean!</code></td>
+    <td>Whether the caller may change or delete this alias: a platform admin
+always, a team admin when the scope is inside their team's area.</td>
+  </tr></tbody></table><h3 id="type-placealiasespage"><code>PlaceAliasesPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>items</code></td>
+    <td><code>[PlaceAlias!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>totalCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Aliases that match the filters, before paging.</td>
+  </tr><tr>
+    <td><code>hasMore</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>endCursor</code></td>
+    <td><code>String</code></td>
+    <td>Pass as `after` to read the next page. Null on the last page.</td>
+  </tr></tbody></table><h3 id="type-placenamesuggestion"><code>PlaceNameSuggestion</code> <span class="type-badge">object</span></h3><p>A place that a queued name can mean.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>kind</code></td>
+    <td><code>PlaceNameSuggestionKind!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>geonamesId</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationId</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>name</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int</code></td>
+    <td>The level of a CLEAR location: 2 district, 4 landmark.</td>
+  </tr><tr>
+    <td><code>featureClass</code></td>
+    <td><code>String</code></td>
+    <td>GeoNames feature class (P populated place, A admin area, S spot, ...).</td>
+  </tr><tr>
+    <td><code>featureCode</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>latitude</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>longitude</code></td>
+    <td><code>Float!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>score</code></td>
+    <td><code>Float!</code></td>
+    <td>0 to 1: trigram similarity to the name, 1 for an exact match.</td>
+  </tr><tr>
+    <td><code>insideArea</code></td>
+    <td><code>Boolean</code></td>
+    <td>Whether the point is inside `withinLocationId`. Null without one.</td>
+  </tr><tr>
+    <td><code>distanceKm</code></td>
+    <td><code>Float</code></td>
+    <td>Kilometres from `withinLocationId` (0 inside it). Null without one.</td>
   </tr></tbody></table><h3 id="type-publicevent"><code>PublicEvent</code> <span class="type-badge">object</span></h3><p>The slim, unauthenticated view of an event used for share-link
 rendering. Deliberately a new type — not a slim wrapper around
 `Event` — so the field set is auditable in one place and field-
@@ -7948,7 +9282,7 @@ token for markSignalsProcessed(items:).</td>
   </tr><tr>
     <td><code>externalId</code></td>
     <td><code>String</code></td>
-    <td>Stable upstream identifier (e.g. &quot;dataminr:{alertId}&quot;). Used to
+    <td>Stable upstream identifier (e.g. &quot;acled:{event_id_cnty}&quot;). Used to
 deduplicate ingestion — (source, externalId) is unique.</td>
   </tr><tr>
     <td><code>publishedAt</code></td>
@@ -7978,7 +9312,7 @@ deduplicate ingestion — (source, externalId) is unique.</td>
     <td><code>casualties</code></td>
     <td><code>Int</code></td>
     <td>Reported casualties for the signal. Sourced from ACLED's fatalities
-field; for Dataminr, parsed from raw text via regex.</td>
+field; for some other feeds, parsed from the raw text via regex.</td>
   </tr><tr>
     <td><code>startDate</code></td>
     <td><code>DateTime</code></td>
@@ -8544,6 +9878,146 @@ introduced — treat null as &quot;all fields stale&quot;.</td>
     <td><code>updatedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-unresolvedplacename"><code>UnresolvedPlaceName</code> <span class="type-badge">object</span></h3><p>A place name, as written in a Signal, that geocoding could not place
+inside the Signal's area. One row per country, normalised spelling and
+state: the same village name in two states gives two rows.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>ID!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nameNorm</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling after the gazetteer's normalisation. Part of the row's key.</td>
+  </tr><tr>
+    <td><code>nameAsWritten</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling in the first Signal that named it.</td>
+  </tr><tr>
+    <td><code>nameAr</code></td>
+    <td><code>String</code></td>
+    <td>The Arabic spelling from the Signal's text, when one was found.</td>
+  </tr><tr>
+    <td><code>countryCode</code></td>
+    <td><code>String!</code></td>
+    <td>ISO-3166-1 alpha-2 (SD, VE, AF).</td>
+  </tr><tr>
+    <td><code>stateLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The state that holds the Signals' area. Null when the area is the
+country itself.</td>
+  </tr><tr>
+    <td><code>stateLocation</code></td>
+    <td><code>Location</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>countryLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The country that holds the Signals' area.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>UnresolvedPlaceNameStatus!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signalCount</code></td>
+    <td><code>Int!</code></td>
+    <td>The number of Signals recorded on the row. A Signal counts once.</td>
+  </tr><tr>
+    <td><code>firstSeenAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSeenAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>resolvedById</code></td>
+    <td><code>String</code></td>
+    <td>Auth user id of whoever closed the row.</td>
+  </tr><tr>
+    <td><code>resolvedByName</code></td>
+    <td><code>String</code></td>
+    <td>Display name of whoever closed the row.</td>
+  </tr><tr>
+    <td><code>resolvedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>resolutionNote</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>placeAliasId</code></td>
+    <td><code>String</code></td>
+    <td>The alias that the resolution created.</td>
+  </tr><tr>
+    <td><code>placeAlias</code></td>
+    <td><code>PlaceAlias</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signalsMoved</code></td>
+    <td><code>Int!</code></td>
+    <td>The number of its Signals that a resolution moved to the alias location.</td>
+  </tr><tr>
+    <td><code>signals</code></td>
+    <td><code>[UnresolvedPlaceNameSignal!]!</code></td>
+    <td>The Signals that named it, newest first.<div class="field-args"><span class="arg"><code>first: Int</code> — Max rows to return (1 to 50, default 5).</span></div></td>
+  </tr></tbody></table><h3 id="type-unresolvedplacenamesignal"><code>UnresolvedPlaceNameSignal</code> <span class="type-badge">object</span></h3><p>One Signal that named an unresolved place name.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>signalId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>signal</code></td>
+    <td><code>Signal</code></td>
+    <td>Null when the caller may not read the Signal.</td>
+  </tr><tr>
+    <td><code>areaLocationId</code></td>
+    <td><code>String</code></td>
+    <td>The area the pipeline chose for the Signal. Geocoding looked inside it.</td>
+  </tr><tr>
+    <td><code>areaLocation</code></td>
+    <td><code>Location</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nameAsWritten</code></td>
+    <td><code>String!</code></td>
+    <td>The spelling in this Signal.</td>
+  </tr><tr>
+    <td><code>reason</code></td>
+    <td><code>UnresolvedPlaceNameReason!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>seenAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>When the miss happened.</td>
+  </tr><tr>
+    <td><code>relocatedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When a resolution moved the Signal to the alias location.</td>
+  </tr></tbody></table><h3 id="type-unresolvedplacenamespage"><code>UnresolvedPlaceNamesPage</code> <span class="type-badge">object</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>items</code></td>
+    <td><code>[UnresolvedPlaceName!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>totalCount</code></td>
+    <td><code>Int!</code></td>
+    <td>Rows that match the filters, before paging.</td>
+  </tr><tr>
+    <td><code>hasMore</code></td>
+    <td><code>Boolean!</code></td>
+    <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertanalysisdatapointsresult"><code>UpsertAnalysisDatapointsResult</code> <span class="type-badge">object</span></h3><p>Result of `upsertAnalysisDatapoints` — summary for logs.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>analysisId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>createdOrReplaced</code></td>
+    <td><code>Boolean!</code></td>
+    <td>`true` when the mutation replaced a previously extracted row,
+`false` when it created the first row for the analysis.</td>
   </tr></tbody></table><h3 id="type-upsertanalysisresult"><code>UpsertAnalysisResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertAnalysis` mutation — whether it superseded a previous
 row, or was skipped by the 24h regeneration floor (ADR-0008).</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>analysisId</code></td>

@@ -17,6 +17,9 @@ export const queryTypeDef = gql`
     """Look up an alert by ID. Requires authentication. Non-admins can only access alerts within their team scope."""
     alert(id: String!): Alert
 
+    """Data sources opened to one API-only developer. Admin only."""
+    apiSignalSourceGrants(userId: String!): [ApiSignalSourceGrant!]!
+
     """List signals. Requires authentication. includeDummy defaults to false."""
     signals(teamId: String, includeDummy: Boolean): [Signal!]!
 
@@ -43,6 +46,60 @@ export const queryTypeDef = gql`
       first: Int
     ): [SignalLocationChallenge!]!
 
+    """The unresolved place-name queue: place names that geocoding could not
+    place inside a Signal's area (ADR-0019). Open rows come first, then the
+    rows with the most Signals. Auth: a platform admin reads every row; a
+    team admin reads the rows whose state is inside the areas of the teams
+    they administer (a row with no state needs a team that covers the whole
+    country). Other roles get FORBIDDEN."""
+    unresolvedPlaceNames(
+      """Only rows in this state. Omit for every state, open rows first."""
+      status: UnresolvedPlaceNameStatus
+      """Only rows of this country (ISO-3166-1 alpha-2)."""
+      countryCode: String
+      """Only rows of this area. A country keeps all its rows. A state, or a
+      place under a state, keeps the rows of that state."""
+      areaLocationId: String
+      """Max rows to return (1 to 200, default 50)."""
+      first: Int
+      """Rows to skip (default 0)."""
+      offset: Int
+    ): UnresolvedPlaceNamesPage!
+
+    """Places a queued name can mean, for a decider: up to 5 GeoNames
+    candidates and up to 5 CLEAR districts or landmarks with a similar name,
+    in one country. Candidates inside \`withinLocationId\` come first, then the
+    most similar, then the nearest. Computed on each call. Auth: a platform
+    admin or a team admin."""
+    placeNameSuggestions(
+      """The name as written (Latin script)."""
+      name: String!
+      """The Arabic spelling, when known. Matched exactly."""
+      nameAr: String
+      """ISO-3166-1 alpha-2 (SD, VE, AF)."""
+      countryCode: String!
+      """The row's state, or another area. Sets \`insideArea\` and \`distanceKm\`."""
+      withinLocationId: String
+    ): [PlaceNameSuggestion!]!
+
+    """The place alias list (ADR-0019): the spellings CLEAR maps to its own
+    locations, newest first. Auth: a platform admin or a team admin. Every
+    decider reads every alias; \`canEdit\` says which ones the caller may
+    change."""
+    placeAliases(
+      """Only aliases of this country (ISO-3166-1 alpha-2)."""
+      countryCode: String
+      """Matches the spelling (normalised, or as shown) or the target's name."""
+      search: String
+      """Only aliases with this scope."""
+      scopeLocationId: String
+      source: PlaceAliasSource
+      """Max rows to return (1 to 200, default 50)."""
+      first: Int
+      """The \`endCursor\` of the page before."""
+      after: String
+    ): PlaceAliasesPage!
+
     """The existing admin area a point falls in (district, else state, else
     country), or null when it is outside the areas CLEAR covers. Lets a client
     show where a corrected point would be placed before filing it."""
@@ -55,7 +112,7 @@ export const queryTypeDef = gql`
 
     """Signals awaiting their first grouping (status = NEW, not retracted, not
     yet linked to any event), oldest-first — the Dagster event-driven drain.
-    \`source\` filters by DataSource name (e.g. "dataminr"); \`first\` caps the
+    \`source\` filters by DataSource name (e.g. "acled"); \`first\` caps the
     batch (default 100, max 500). Admin/pipeline only."""
     pendingSignals(first: Int, source: String): [Signal!]!
 
@@ -315,6 +372,49 @@ export const queryTypeDef = gql`
     an inverted range or one over 364 days with BAD_USER_INPUT. See
     \`DetectionMetrics\` and ADR-0011."""
     detectionMetrics(input: DetectionMetricsInput): DetectionMetrics!
+
+    """Location precision: how finely CLEAR placed the Signals it ingested, by
+    the level of each Signal's location (none, country, state, district,
+    point), per source and ISO week of the instant it was located, over a
+    range (default: the last 12 ISO weeks), optionally one location and some
+    sources. Counts only. Admin only. Refuses an inverted range or one over
+    364 days with BAD_USER_INPUT. See \`LocationPrecisionMetrics\` and ADR-0012."""
+    locationPrecisionMetrics(input: LocationPrecisionMetricsInput): LocationPrecisionMetrics!
+
+    """CLEAR Agent usage: cost, latency, turns, Conversations, users, tool
+    calls and the pages questions came from, over a range (default: the last
+    12 ISO weeks). A turn is an Answer with recorded usage. Counts, sums and
+    averages only. Admin only. Refuses an inverted range or one over 364 days
+    with BAD_USER_INPUT. Selecting \`recentQuestions\` is logged as
+    \`conversation.admin_read\`. See \`AgentMetrics\` and ADR-0013."""
+    agentMetrics(input: AgentMetricsInput): AgentMetrics!
+
+    """The metrics the admin /metrics page can plot over time, in registry
+    order: key, name, dimension, unit, method text, time basis and whether the
+    series can be grouped by source. Admin only. See ADR-0015."""
+    metricDefinitions: [MetricDefinition!]!
+
+    """One metric over a range as a share per bucket (numerator and
+    denominator) by day, ISO week or calendar month, optionally grouped by
+    source. Read from the service that owns the metric, so it equals that
+    metric's own query row for row. Counts only. Admin only. Refuses a
+    grouping the metric lacks, an inverted range or one over 364 days with
+    BAD_USER_INPUT. See \`MetricSeries\` and ADR-0015."""
+    metricSeries(input: MetricSeriesInput!): MetricSeries!
+
+    """
+    The Replay runs that re-located a Signal in the range, newest first, at
+    most 50 (ADR-0020). Each can be drawn as a second line on location
+    precision: \`metricSeries\` with \`replayRunId\`. Range rules as
+    \`metricSeries\`. Platform admin only.
+    """
+    locationReplayRuns(input: LocationReplayRunsInput): [LocationReplayRun!]!
+
+    """The changes that should move a metric (deploys, imports, prompt
+    changes), oldest first, in a range and optionally for one metric, drawn
+    as markers on the /metrics charts. Admin only. See \`MetricAnnotation\`
+    and ADR-0016."""
+    metricAnnotations(input: MetricAnnotationsInput): [MetricAnnotation!]!
     # ─── Pipeline config ───────────────────────────────────────────────────────
     """The countries the CLEAR pipeline publishes a Situation Analysis for, with
     each Country's bounding box. The scheduled publisher reads this to know which
@@ -364,8 +464,12 @@ export const queryTypeDef = gql`
       adminLevel: Int
     ): String
 
-    """Resolve a place name against the offline GeoNames gazetteer - the
-    first tier of the hybrid geo-resolver. Tries an exact normalised-name
+    """Resolve a place name against CLEAR's place aliases, then the offline
+    GeoNames gazetteer - the first tier of the hybrid geo-resolver. A place
+    alias (ADR-0019) wins: the same normalised name and country, and a scope
+    that is the whole country or holds \`withinLocationId\`. Its hit has
+    \`source: ALIAS\` and a \`locationId\`, with the location's point as the
+    coordinates. Then GeoNames (\`source: GEONAMES\`): an exact normalised-name
     match, then a \`pg_trgm\` fuzzy match, preferring populated places / admin
     areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every

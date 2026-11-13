@@ -63,7 +63,7 @@ describe("signal recompute schema contract", () => {
       `mutation MarkSignalsProcessed($ids: [String!], $status: SignalStatus) {
          markSignalsProcessed(ids: $ids, status: $status) }`,
       { ids: ["a", "b"], status: "FAILED" },
-      { signals: { updateMany } },
+      { signals: { updateMany }, $executeRaw: vi.fn(() => 0), $transaction: vi.fn(async (ops: unknown[]) => Promise.all(ops)) },
     );
     expect(r.errors).toBeUndefined();
     expect(r.data?.markSignalsProcessed).toBe(2);
@@ -76,10 +76,20 @@ describe("signal recompute schema contract", () => {
       `mutation MarkSignalsProcessed($items: [SignalRevisionInput!], $status: SignalStatus) {
          markSignalsProcessed(items: $items, status: $status) }`,
       { items: [{ id: "a", revision: 1 }, { id: "b", revision: 2 }], status: "PROCESSED" },
-      { signals: { updateMany }, $transaction },
+      { signals: { updateMany }, $executeRaw: vi.fn(() => ({ count: 0 })), $transaction },
     );
     expect(r.errors).toBeUndefined();
     expect(r.data?.markSignalsProcessed).toBe(2);
+  });
+
+  it("the run inputs of the location Outcome log validate: runKind, pipelineVersion, runId", async () => {
+    const r = await exec(
+      `mutation Mark($ids: [String!], $runKind: LocationRunKind, $pipelineVersion: String, $runId: String) {
+         markSignalsProcessed(ids: $ids, runKind: $runKind, pipelineVersion: $pipelineVersion, runId: $runId) }`,
+      { ids: [], runKind: "REPLAY", pipelineVersion: "abc123", runId: "run-1" },
+    );
+    expect(r.errors).toBeUndefined();
+    expect(r.data?.markSignalsProcessed).toBe(0);
   });
 
   it("API-S-06 a SignalRevisionInput missing revision fails validation", async () => {

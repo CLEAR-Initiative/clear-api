@@ -451,8 +451,10 @@ export const briefResolvers = {
       return { sent, failed };
     },
 
-    sendBriefTest: async (_parent: unknown, args: { id: string }, context: Context) => {
+    sendBriefTest: async (_parent: unknown, args: { id: string; to?: string | null }, context: Context) => {
       const user = requireRole(context, ADMIN);
+      // Blank or missing means the caller's own address.
+      const to = args.to?.trim() ? normaliseEmail(args.to) : user.email;
       const row = await context.prisma.brief.findUnique({
         where: { id: args.id },
         include: { items: true },
@@ -470,7 +472,7 @@ export const briefResolvers = {
       // both are a refused test send.
       try {
         const provider = await getEmailProvider();
-        return await provider.send({ to: user.email, ...content });
+        return await provider.send({ to, ...content });
       } catch (err) {
         console.error("[BRIEFS] test send failed:", err instanceof Error ? err.message : err);
         return false;

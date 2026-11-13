@@ -27,6 +27,10 @@
 
 import { env } from "../utils/env.js";
 
+/** Per-call deadline. Signup and approval wait on these calls, so a
+ *  stalled CRM must fail fast rather than hold the reply open. */
+const CRM_TIMEOUT_MS = 10_000;
+
 interface ExponentialContact {
   id: string;
   email: string | null;
@@ -83,7 +87,12 @@ async function trpcCall<T>(
 
   let response: Response;
   try {
-    response = await fetch(url, { method, headers: authHeaders(), body });
+    response = await fetch(url, {
+      method,
+      headers: authHeaders(),
+      body,
+      signal: AbortSignal.timeout(CRM_TIMEOUT_MS),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[exponential] ${procedure} network error: ${msg}`);
@@ -126,11 +135,6 @@ function trpcMutation<T>(procedure: string, input: Record<string, unknown>) {
   return trpcCall<T>("POST", procedure, input);
 }
 
-/** Shorthand for queries (GET). */
-function trpcQuery<T>(procedure: string, input: Record<string, unknown>) {
-  return trpcCall<T>("GET", procedure, input);
-}
-
 /**
  * Create a CRM contact. Exponential dedupes server-side on email
  * (since their 2026-06-23 change), so resubmitting the same email
@@ -143,10 +147,9 @@ export async function createContact(input: {
   email: string;
   firstName?: string;
   lastName?: string;
-  /** `profileType` is the field Exponential's onboarding automations
-   *  trigger off. Set to `"clear_prospect"` at signup time and
-   *  `"clear_approved"` at approval time so the right automation
-   *  fires. */
+  /** `"clear_prospect"` at signup, `"clear_approved"` at approval.
+   *  Exponential automations can segment on it; CLEAR sends its own
+   *  signup and approval emails, so none of them should email. */
   profileType?: string;
 }): Promise<Result<ExponentialContact>> {
   if (!isConfigured()) return { ok: false, reason: "not_configured" };
@@ -160,29 +163,8 @@ export async function createContact(input: {
 }
 
 /**
- * Look up a CRM contact by email within the configured workspace.
- * Uses Exponential's globally-unique `emailHash` index so exact-match
- * is O(1) and returns at most one row. Used by `approveUser` to find
- * the contact id we never stored locally.
- */
-export async function findContactByEmail(
-  email: string,
-): Promise<Result<ExponentialContact | null>> {
-  if (!isConfigured()) return { ok: false, reason: "not_configured" };
-  const result = await trpcQuery<{
-    contacts: ExponentialContact[];
-    nextCursor?: string;
-  }>("crmApi.contactList", {
-    workspaceId: env.EXPONENTIAL_WORKSPACE_ID,
-    email,
-  });
-  if (!result.ok) return result;
-  return { ok: true, value: result.value.contacts[0] ?? null };
-}
-
-/**
- * Update an existing contact. Mainly used to flip `profileType` at
- * approval time so the welcome automation fires.
+ * Update an existing contact. Used to flip `profileType` to
+ * `clear_approved` at approval time.
  */
 export async function updateContact(input: {
   id: string;
@@ -266,7 +248,7 @@ export async function pushToProspects(input: {
 
 /**
  * Composite helper: move a contact from prospects → approved and flip
- * the profileType to `clear_approved` so the welcome automation fires.
+ * the profileType to `clear_approved`.
  * Operations are best-effort and run in this order so a contact never
  * ends up missing from both lists:
  *
@@ -313,4 +295,29 @@ export async function moveProspectToApproved(
   }
 
   return { ok: true, value: { contactId, warnings } };
+}
+
+/**
+ * Mirror an approval into the CRM: create-or-fetch the contact by email
+ * (Exponential dedupes on email), then move it into the approved
+ * collection. Creating rather than looking up means a signup whose
+ * prospects push failed still lands in the CRM at approval time.
+ *
+ * Best-effort like everything here; approval never waits on it.
+ */
+export async function syncApprovedContact(input: {
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}): Promise<Result<{ contactId: string; warnings: string[] }>> {
+  if (
+    !isConfigured() ||
+    !env.EXPONENTIAL_PROSPECTS_COLLECTION_ID ||
+    !env.EXPONENTIAL_APPROVED_COLLECTION_ID
+  ) {
+    return { ok: false, reason: "not_configured" };
+  }
+  const contact = await createContact({ ...input, profileType: "clear_approved" });
+  if (!contact.ok) return { ok: false, reason: `contact_upsert_failed:${contact.reason}` };
+  return moveProspectToApproved(contact.value.id);
 }

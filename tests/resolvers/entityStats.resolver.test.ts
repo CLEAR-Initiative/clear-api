@@ -40,6 +40,7 @@ const RUN = `entity-stats-${Date.now()}`;
 const SOURCE_NAME = `${RUN}-source`;
 const CHILD_TEAM = `${RUN}-team-child`;
 const GLOBAL_TEAM = `${RUN}-team-global`;
+const OTHER_LOCATION = `${RUN}-other`;
 
 describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
   let parentId: string;
@@ -160,7 +161,7 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
     if (sourceId) await prisma.dataSources.delete({ where: { id: sourceId } });
     // Cascades to the teams and their location bindings.
     if (organisationId) await prisma.organisations.delete({ where: { id: organisationId } });
-    await prisma.$executeRaw`DELETE FROM "locations" WHERE id = ANY(${[childId, parentId].filter(Boolean)}::text[])`;
+    await prisma.$executeRaw`DELETE FROM "locations" WHERE id = ANY(${[childId, parentId, OTHER_LOCATION].filter(Boolean)}::text[])`;
     await prisma.$disconnect();
   });
 
@@ -273,6 +274,48 @@ describeIfDb("Query.entityStats — raw SQL against the real schema", () => {
       expect(await stats("event", "type", { teamId: GLOBAL_TEAM })).toEqual(
         await stats("event", "type"),
       );
+    });
+  });
+
+  describe("locationIds", () => {
+    // A second root outside the parent's tree, with one real event and one
+    // real signal, so "under any of the listed locations" differs from any
+    // single one of them. It shifts no count above: those all filter on the
+    // parent or the child.
+    beforeAll(async () => {
+      await prisma.$executeRaw`
+        INSERT INTO "locations" (id, name, level, ancestor_ids, geometry)
+        VALUES (${OTHER_LOCATION}, ${`${RUN} other`}, 0, '{}',
+                ST_SetSRID(ST_MakePoint(0, 0), 4326))`;
+      const at = new Date("2020-01-16T12:00:00Z");
+      const ev = await prisma.events.create({
+        data: {
+          types: ["EQ"], severity: 3, isDummy: false, validTo: at,
+          firstSignalCreatedAt: at, lastSignalCreatedAt: at, rank: 0, locationId: OTHER_LOCATION,
+        },
+      });
+      eventIds.push(ev.id);
+      const sig = await prisma.signals.create({
+        data: { sourceId, rawData: {}, publishedAt: at, severity: 3, isDummy: false, originId: OTHER_LOCATION },
+      });
+      signalIds.push(sig.id);
+    });
+
+    const both = () => ({ locationId: undefined, locationIds: [childId, OTHER_LOCATION] });
+
+    it("keeps rows under any of the listed locations", async () => {
+      expect(await stats("event", "type", both())).toEqual({ total: 2, buckets: { DR: 1, EQ: 1 } });
+      expect(await stats("signal", "severity", both())).toEqual({ total: 2, buckets: { "1": 1, "3": 1 } });
+    });
+
+    it("filters the list path (groupBy none) the same way", async () => {
+      expect((await stats("event", "none", both())).total).toBe(2);
+      expect((await stats("signal", "none", both())).total).toBe(2);
+    });
+
+    it("adds locationIds to locationId", async () => {
+      // The parent's tree (2 real events + the child's 1) plus the other root.
+      expect((await stats("event", "none", { locationIds: [OTHER_LOCATION] })).total).toBe(4);
     });
   });
 

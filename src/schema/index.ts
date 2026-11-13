@@ -2,9 +2,14 @@ import { scalarTypeDef } from "./typeDefs/scalars.js";
 import { queryTypeDef } from "./typeDefs/query.js";
 import { mutationTypeDef } from "./typeDefs/mutation.js";
 import { userTypeDef } from "./typeDefs/types/user.js";
+import { apiSignalSourceGrantTypeDef } from "./typeDefs/types/apiSignalSourceGrant.js";
 import { alertTypeDef } from "./typeDefs/types/alert.js";
 import { detectionTypeDef } from "./typeDefs/types/detection.js";
 import { detectionMetricsTypeDef } from "./typeDefs/types/detectionMetrics.js";
+import { locationPrecisionMetricsTypeDef } from "./typeDefs/types/locationPrecisionMetrics.js";
+import { agentMetricsTypeDef } from "./typeDefs/types/agentMetrics.js";
+import { metricSeriesTypeDef } from "./typeDefs/types/metricSeries.js";
+import { metricAnnotationTypeDef } from "./typeDefs/types/metricAnnotation.js";
 import { signalTypeDef } from "./typeDefs/types/signal.js";
 import { signalLocationChallengeTypeDef } from "./typeDefs/types/signalLocationChallenge.js";
 import { eventTypeDef } from "./typeDefs/types/event.js";
@@ -30,9 +35,11 @@ import { pipelineCountryTypeDef } from "./typeDefs/types/pipelineCountry.js";
 import { translationTypeDef } from "./typeDefs/types/translation.js";
 import { knowledgebaseTypeDef } from "./typeDefs/types/knowledgebase.js";
 import { gazetteerTypeDef } from "./typeDefs/types/gazetteer.js";
+import { unresolvedPlaceNameTypeDef } from "./typeDefs/types/unresolvedPlaceName.js";
 import { datapointTypeDef } from "./typeDefs/types/datapoint.js";
 import { situationAnalysisTypeDef } from "./typeDefs/types/situationAnalysis.js";
 import { analysisTypeDef } from "./typeDefs/types/analysis.js";
+import { analysisDatapointTypeDef } from "./typeDefs/types/analysisDatapoint.js";
 import { reportFigureTypeDef } from "./typeDefs/types/reportFigure.js";
 import { webhookTypeDef } from "./typeDefs/types/webhook.js";
 import { groundTypeDef } from "./typeDefs/types/ground.js";
@@ -45,9 +52,14 @@ export const typeDefs = [
   queryTypeDef,
   mutationTypeDef,
   userTypeDef,
+  apiSignalSourceGrantTypeDef,
   alertTypeDef,
   detectionTypeDef,
   detectionMetricsTypeDef,
+  locationPrecisionMetricsTypeDef,
+  agentMetricsTypeDef,
+  metricSeriesTypeDef,
+  metricAnnotationTypeDef,
   signalTypeDef,
   signalLocationChallengeTypeDef,
   eventTypeDef,
@@ -73,9 +85,11 @@ export const typeDefs = [
   translationTypeDef,
   knowledgebaseTypeDef,
   gazetteerTypeDef,
+  unresolvedPlaceNameTypeDef,
   datapointTypeDef,
   situationAnalysisTypeDef,
   analysisTypeDef,
+  analysisDatapointTypeDef,
   reportFigureTypeDef,
   webhookTypeDef,
   groundTypeDef,

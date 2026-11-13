@@ -140,6 +140,39 @@ describe("sendBriefTest", () => {
   });
 });
 
+describe("sendBriefTest with a chosen address", () => {
+  const ctx = () =>
+    buildContext(ADMIN, {
+      brief: { findUnique: vi.fn(async () => ({ ...DRAFT, items: [] })) },
+      briefItem: { findMany: vi.fn(async () => []) },
+    });
+
+  it("emails the given address, trimmed and lower-cased", async () => {
+    send.mockReset();
+    send.mockResolvedValue(true);
+    await briefResolvers.Mutation.sendBriefTest(null, { id: "b1", to: "  Tester@Example.ORG " }, ctx());
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].to).toBe("tester@example.org");
+    expect(send.mock.calls[0][0].subject).toMatch(/^\[TEST\] /);
+  });
+
+  it.each([null, "", "   "])("falls back to the caller for %j", async (to) => {
+    send.mockReset();
+    send.mockResolvedValue(true);
+    await briefResolvers.Mutation.sendBriefTest(null, { id: "b1", to }, ctx());
+    expect(send.mock.calls[0][0].to).toBe("admin@example.org");
+  });
+
+  it("refuses a malformed address without sending", async () => {
+    send.mockReset();
+    const err = await briefResolvers.Mutation.sendBriefTest(null, { id: "b1", to: "not-an-email" }, ctx()).catch(
+      (e: unknown) => e,
+    );
+    expect((err as GraphQLError).extensions.code).toBe("BAD_USER_INPUT");
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
 describe("sendBriefTest delivery failure", () => {
   it("returns false when the provider throws", async () => {
     send.mockRejectedValue(new Error("SMTP 550"));

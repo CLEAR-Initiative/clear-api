@@ -111,23 +111,25 @@ model user {
   defaultTeamId String? @map("default_team_id")
   defaultTeam   teams?  @relation("DefaultTeam", fields: [defaultTeamId], references: [id], onDelete: SetNull)
 
-  alerts                userAlerts[]
-  apiKeys               apiKeys[]
-  notifications         notifications[]
-  organisations         organisationUsers[]
-  teamMemberships       teamMembers[]
-  eventEscaladedByUsers eventEscaladedByUsers[]
-  userFeedbacks         userFeedbacks[]
-  userComments          userComments[]
-  commentTags           commentTags[]
-  invitationsSent       invitations[]           @relation("InvitedBy")
-  activityLogs          activityLogs[]
-  conversations         conversations[]
+  alerts                 userAlerts[]
+  apiKeys                apiKeys[]
+  notifications          notifications[]
+  organisations          organisationUsers[]
+  teamMemberships        teamMembers[]
+  eventEscaladedByUsers  eventEscaladedByUsers[]
+  userFeedbacks          userFeedbacks[]
+  userComments           userComments[]
+  commentTags            commentTags[]
+  invitationsSent        invitations[]           @relation("InvitedBy")
+  activityLogs           activityLogs[]
+  conversations          conversations[]
   /// Signals this person submitted (the Domain Ontology's `submitted_by_user`).
-  submittedSignals      signals[]               @relation("SignalSubmittedBy")
-  agentWorkingMemory    agentWorkingMemory?
-  estimatesCreated      estimate[]              @relation("EstimateCreatedBy")
-  developerProfile      developerProfile?
+  submittedSignals       signals[]               @relation("SignalSubmittedBy")
+  agentWorkingMemory     agentWorkingMemory?
+  estimatesCreated       estimate[]              @relation("EstimateCreatedBy")
+  developerProfile       developerProfile?
+  signalSourceGrants     apiSignalSourceGrant[]  @relation("GrantHolder")
+  signalSourceGrantsMade apiSignalSourceGrant[]  @relation("GrantIssuer")
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -136,6 +138,34 @@ model user {
 /// surface activity stats and per-user usage. Logging is best-effort:
 /// the `logActivity()` helper swallows any error so a write failure can
 /// never break the original action.
+/// A change that should move a metric, drawn as a marker on the admin /metrics
+/// charts (ADR-0016). Rows are per environment: a deploy reaches dev and prod
+/// at different instants, so each database carries its own markers.
+model metricAnnotations {
+  id String @id @default(cuid())
+
+  /// When the change reached this environment (UTC).
+  at DateTime
+
+  /// Short label on the chart, e.g. "Geocoding inside the model's area".
+  label String
+
+  /// What changed and why it should move the metric; optional.
+  description String?
+
+  /// Where to read more: a pull request, a ticket, an ADR; optional.
+  link String?
+
+  /// The registry keys (`MetricKey` values, ADR-0015) the change bears on; at least one.
+  metricKeys String[] @map("metric_keys")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([at])
+  @@map("metric_annotations")
+}
+
 model activityLogs {
   id String @id @default(cuid())
 
@@ -497,14 +527,23 @@ model locations {
   // sourceLinks sourceLocations[]
 
   // Reverse relations for signal
-  signalOrigins      signals[] @relation("SignalOrigin")
-  signalDestinations signals[] @relation("SignalDestination")
-  signalLocations    signals[] @relation("SignalLocation")
-  signalCountries    signals[] @relation("SignalCountries")
+  signalOrigins           signals[] @relation("SignalOrigin")
+  signalDestinations      signals[] @relation("SignalDestination")
+  signalLocations         signals[] @relation("SignalLocation")
+  signalPipelineLocations signals[] @relation("SignalPipelineLocation")
+  signalLocationOutcomes  signalLocationOutcomes[] @relation("SignalLocationOutcomeLocation")
+  signalCountries         signals[] @relation("SignalCountries")
 
   // Reverse relations for Location challenges
   challengePreviousLocations signalLocationChallenges[] @relation("ChallengePreviousLocation")
   challengeAppliedLocations  signalLocationChallenges[] @relation("ChallengeAppliedLocation")
+
+  // Reverse relations for unresolved place names and place aliases (ADR-0019)
+  unresolvedPlaceNameStates      unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameState")
+  unresolvedPlaceNameCountries   unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameCountry")
+  unresolvedPlaceNameSignalAreas unresolvedPlaceNameSignals[] @relation("UnresolvedPlaceNameSignalArea")
+  placeAliasScopes               placeAliases[]               @relation("PlaceAliasScope")
+  placeAliasLocations            placeAliases[]               @relation("PlaceAliasLocation")
 
   // Reverse relations for event
   eventOrigins      events[] @relation("EventOrigin")
@@ -585,8 +624,9 @@ model dataSources {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  signals          signals[]
-  reportDatapoints reportDatapoint[]
+  signals            signals[]
+  reportDatapoints   reportDatapoint[]
+  signalSourceGrants apiSignalSourceGrant[]
 
   @@index([type])
   @@index([isActive])
@@ -709,6 +749,13 @@ model signals {
   /// (updateSignalContent) keeps the corrected location and countries.
   locationCorrectedAt DateTime? @map("location_corrected_at")
 
+  /// The location the pipeline gave this Signal (general location, else
+  /// origin, else destination), kept when the first accepted Location
+  /// challenge overwrote it, so location precision (ADR-0012) measures the
+  /// pipeline rather than the person. Null while the Signal is uncorrected.
+  pipelineLocationId String?    @map("pipeline_location_id")
+  pipelineLocation   locations? @relation("SignalPipelineLocation", fields: [pipelineLocationId], references: [id], onDelete: SetNull)
+
   /// Result of the text-based geoparser (clear-pipeline runs it at ingest).
   /// Additive enrichment for comparison against the source's coords —
   /// never used for routing or alert decisions in this phase.
@@ -733,15 +780,144 @@ model signals {
   userFeedbacks userFeedbacks[]
   userComments  userComments[]
   signalEvents  signalEvents[]
+  groupingLinks signalGroupingLinks[]
 
   signalLocationChallenges signalLocationChallenges[]
+  unresolvedPlaceNames     unresolvedPlaceNameSignals[]
   estimates                estimate[]
+  locationOutcomes         signalLocationOutcomes[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
   @@index([publishedAt])
   /// Drives the Dagster drain query: pending signals (status = NEW) oldest-first.
   @@index([status, publishedAt])
+}
+
+/// Which kind of pipeline run wrote a location Outcome (ADR-0020).
+enum LocationRunKind {
+  /// The run that processes a Signal for the first time, after ingest.
+  LIVE
+  /// A run that re-processes a Signal a Live run already processed.
+  REPLAY
+}
+
+/// The pipeline step that wrote a location Outcome (ADR-0020).
+enum LocationOutcomeStep {
+  /// `createSignal`: the location the Signal arrived with.
+  ARRIVAL
+  /// `markSignalsProcessed`: the location the Signal had when a run finished it.
+  PROCESSED
+  /// `updateSignalLocation` with `runKind: REPLAY`: a replay job moved the
+  /// Signal without sending it through the drain.
+  RELOCATED
+}
+
+/// The Outcome log (ADR-0020): one row records where one pipeline run placed
+/// one Signal. Append-only: no mutation updates or deletes a row. Location
+/// precision reads the last `LIVE` row of each Signal, so a replay adds rows
+/// and changes no history.
+model signalLocationOutcomes {
+  id       BigInt  @id @default(autoincrement())
+  signalId String  @map("signal_id")
+  signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The instant the run placed the Signal: `collectedAt` for an `ARRIVAL`
+  /// row, the new `processedAt` for a `PROCESSED` row.
+  locatedAt  DateTime   @map("located_at")
+  /// Null when the run found no location.
+  locationId String?    @map("location_id")
+  location   locations? @relation("SignalLocationOutcomeLocation", fields: [locationId], references: [id], onDelete: SetNull)
+  /// `locations.level` copied at write time, so a gazetteer re-import that
+  /// changes or removes the location does not change what the run produced.
+  level      Int?
+
+  runKind         LocationRunKind     @default(LIVE) @map("run_kind")
+  step            LocationOutcomeStep
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?             @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?             @map("run_id")
+
+  /// The Live Outcome of a Signal, and "was this Signal processed before".
+  @@index([signalId, runKind, locatedAt])
+  /// The series: Live Outcomes in a time range.
+  @@index([runKind, locatedAt])
+  /// The replay series: one run's Outcomes, Signal by Signal.
+  @@index([runId, signalId])
+  @@map("signal_location_outcomes")
+}
+
+/// The grouping log (ADR-0021): one row per Link that a pipeline run makes
+/// between a Signal and an Event. Append-only: no mutation updates or deletes
+/// a row. The grouping metrics read the `LIVE` rows, so a re-grouping replay
+/// adds `REPLAY` rows and changes no history. A Link that a person makes
+/// writes no row.
+model signalGroupingLinks {
+  id       BigInt  @id @default(autoincrement())
+  signalId String  @map("signal_id")
+  /// `deleteSignal` removes the rows of the Signal it deletes, as for the
+  /// Outcome log. A replay never deletes a Signal (ADR-0021, rule 2).
+  signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  /// Plain text with no foreign key, so a row outlives its Event.
+  eventId  String  @map("event_id")
+
+  /// The instant of the Link: `signal_to_events.collected_at`.
+  linkedAt DateTime @map("linked_at")
+
+  /// The kinds are the same for every log, so the enum of ADR-0020 is reused.
+  runKind         LocationRunKind @default(LIVE) @map("run_kind")
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?         @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?         @map("run_id")
+
+  /// The Links of a Signal, and "does this Signal have a Live Link".
+  @@index([signalId, runKind])
+  /// The company of a Signal: the other rows of its Event.
+  @@index([eventId, runKind, linkedAt])
+  /// One run's Links (a later replay series).
+  @@index([runId])
+  @@map("signal_grouping_log")
+}
+
+/// The Event facts log (ADR-0021, decision 3): one row records the onset,
+/// the first Signal date and the places that one pipeline run gave one
+/// Event. Append-only: no mutation updates or deletes a row. The history
+/// series read the last `LIVE` row of an Event, so a replay adds `REPLAY`
+/// rows and changes no history. A person's edit writes no row.
+model eventFacts {
+  id         BigInt   @id @default(autoincrement())
+  /// Plain text with no foreign key, so a row outlives its Event.
+  eventId    String   @map("event_id")
+  recordedAt DateTime @map("recorded_at")
+
+  startedAt            DateTime?     @map("started_at")
+  startedAtAccuracy    DateAccuracy? @map("started_at_accuracy")
+  firstSignalCreatedAt DateTime      @map("first_signal_created_at")
+
+  /// The three places of the Event, as plain text, each with its district
+  /// (the level-2 location among the place and its ancestors) copied at
+  /// write time. A gazetteer re-import then does not change what the run
+  /// produced.
+  locationId            String? @map("location_id")
+  locationDistrictId    String? @map("location_district_id")
+  originId              String? @map("origin_id")
+  originDistrictId      String? @map("origin_district_id")
+  destinationId         String? @map("destination_id")
+  destinationDistrictId String? @map("destination_district_id")
+
+  runKind         LocationRunKind @default(LIVE) @map("run_kind")
+  /// The clear-pipeline git SHA. Null for backfilled rows and old clients.
+  pipelineVersion String?         @map("pipeline_version")
+  /// The Dagster run id; links to `pipeline_run` in clear-pipeline-insights.
+  runId           String?         @map("run_id")
+
+  /// The last row of an Event for one run kind.
+  @@index([eventId, runKind, id])
+  /// One run's rows (a later replay series).
+  @@index([runId])
+  @@map("event_facts_log")
 }
 
 /// An analyst's Location challenge on a Signal, with an optional corrected
@@ -832,6 +1008,11 @@ model events {
   /// non-conflict events.
   actors               String[]
   isDummy              Boolean       @default(false)
+  /// The kind of pipeline run that created the Event (ADR-0021, decision 6):
+  /// `LIVE`, `REPLAY`, or null for an Event that a person created.
+  /// `createEvent` sets it once; no mutation changes it. A history series
+  /// leaves out an Event that a Replay run created.
+  createdByRunKind     LocationRunKind? @map("created_by_run_kind")
 
   originId       String?    @map("origin_id")
   originLocation locations? @relation("EventOrigin", fields: [originId], references: [id])
@@ -922,6 +1103,18 @@ model alerts {
   /// Updated automatically by Prisma on every write — useful for tracking
   /// status transitions (draft → published → archived).
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// The Event's onset and its accuracy at the instant the Alert was raised
+  /// (ADR-0021, decision 3). Set once, when the Alert is created; no
+  /// mutation changes them. Time to alert "as delivered" reads them, so a
+  /// later onset does not move a past bucket.
+  onsetAtRaise         DateTime?     @map("onset_at_raise")
+  onsetAccuracyAtRaise DateAccuracy? @map("onset_accuracy_at_raise")
+  /// The kind of pipeline run that raised the Alert: `LIVE`, `REPLAY`, or
+  /// null for an Alert that a person raised and for every Alert from before
+  /// this column. An Alert that a Replay run raised is not part of the
+  /// history series.
+  raisedByRunKind      LocationRunKind? @map("raised_by_run_kind")
 
   event      events       @relation(fields: [eventId], references: [id])
   userAlerts userAlerts[]
@@ -1144,6 +1337,7 @@ model signalEvents {
 
   /// A signal can only be linked to a given event once.
   @@unique([signalId, eventId])
+  @@index([eventId])
   @@map("signal_to_events")
 }
 
@@ -1811,6 +2005,53 @@ model aggregatedDatapoint {
   @@map("aggregated_datapoints")
 }
 
+/// The analysis module's final numbers for ONE analysis generation (clear-
+/// pipeline `analysis_numbers_extract`). A dedicated, frame-numbers store
+/// separate from `aggregated_datapoints` so analysis-sourced figures never
+/// collide with the KB report-aggregation path (no edits to the live
+/// `refreshAggregatedDatapoints` resolver).
+///
+/// Identity is `analysis_id` (non-null, unique): one row per generation. The
+/// frame + window live on the parent `analyses` row (reachable via the FK), and
+/// bitemporality is the analyses chain's — each generation is a new `analyses`
+/// row and thus a new `analysis_datapoints` row; "current numbers" are those of
+/// the current (`valid_to IS NULL`) analyses row.
+model analysisDatapoint {
+  id String @id @default(cuid())
+
+  /// The analysis generation these figures belong to. Unique → one row per
+  /// generation; ON DELETE CASCADE since the figures are owned by the analysis.
+  analysisId String   @unique @map("analysis_id")
+  analysis   analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  /// Final figures. Same QualityEnvelope leaf structure as
+  /// `aggregated_datapoints.data` (value + quality + per-figure provenance);
+  /// multi-location frames key figures by location inside the blob.
+  data Json
+
+  /// Report ids that fed these figures (denormalised provenance). Web gap-fill
+  /// evidence is cited per-figure inside `data`, not here.
+  contributingReportIds String[] @map("contributing_report_ids")
+
+  /// Coarse provenance of the figures: "kb" | "aggregated" | "web" (mixed rows
+  /// mark the dominant origin). Per-figure detail lives in `data`.
+  origin String?
+
+  /// Freshness / quality metadata, surfaced as columns like
+  /// `aggregated_datapoints` — nullable because analysis-extracted numbers may
+  /// not carry source dates / a bucket quality score.
+  newestSourceAt   DateTime? @map("newest_source_at")
+  oldestSourceAt   DateTime? @map("oldest_source_at")
+  dataQualityScore Float?    @map("data_quality_score")
+  reportCount      Int?      @map("report_count")
+
+  /// Matches the analysis output `schema_version` (re-key on version bumps).
+  schemaVersion String   @map("schema_version")
+  computedAt    DateTime @default(now()) @map("computed_at")
+
+  @@map("analysis_datapoints")
+}
+
 /// Pre-computed situation-analysis snapshot per (country × year).
 /// Consumed by the situation-analysis dashboard as a single-row read;
 /// regenerated weekly by the Dagster `weekly_situation_analyses` asset
@@ -1956,9 +2197,16 @@ model analysis {
   /// rows, so there is no single bucket to reference here.
   sourceReportIds String[] @map("source_report_ids")
 
-  generatedByModel  String   @map("generated_by_model")
-  generationCostUsd Float?   @map("generation_cost_usd")
-  generatedAt       DateTime @default(now()) @map("generated_at")
+  generatedByModel       String   @map("generated_by_model")
+  generationCostUsd      Float?   @map("generation_cost_usd")
+  /// Token usage of the LLM generation, summed across the component calls
+  /// (provider-reported input/output counts). Null for deterministic-only runs
+  /// or when the provider reported no usage. USD cost is derived from these
+  /// downstream where current prices are known — no volatile price is frozen on
+  /// the row (the native-Anthropic generation returns tokens, not cost).
+  generationInputTokens  Int?     @map("generation_input_tokens")
+  generationOutputTokens Int?     @map("generation_output_tokens")
+  generatedAt            DateTime @default(now()) @map("generated_at")
 
   /// Last time any trigger CHECKED this frame (manual sync or automation),
   /// whether or not it regenerated (ADR-0008). Bumped on a gate skip (within
@@ -1979,6 +2227,11 @@ model analysis {
   /// Per-locale translation overlays; cascade-delete with the row. Written
   /// by the generation pipeline (Phase 3); unused until then.
   translations translations[]
+
+  /// The analysis module's extracted + aggregated final figures for this
+  /// generation (clear-pipeline analysis_numbers_extract). At most one current
+  /// row; history accrues via the analyses chain itself.
+  analysisDatapoint analysisDatapoint?
 
   /// Partial unique index lives in the migration SQL — Prisma can't express
   /// partial or NULLS-NOT-DISTINCT indexes:
@@ -2178,6 +2431,129 @@ model geonamesName {
   @@index([countryCode])
   @@index([nameNorm(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("geonames_name")
+}
+
+// ─── Unresolved place names and place aliases (ADR-0019) ─────────────────────
+//
+// CLEAR's own tables beside the GeoNames copy. None of them has a foreign key
+// to `geonames` or `geonames_name`: the importer runs
+// `TRUNCATE ... RESTART IDENTITY CASCADE`, which would empty them.
+
+/// A place name, as written in a Signal, that geocoding could not place
+/// inside the Signal's area. One row per country, normalised spelling and
+/// state. Unique on (countryCode, nameNorm, stateLocationId) with
+/// NULLS NOT DISTINCT; the index is written by hand in the migration,
+/// because Prisma cannot express it.
+model unresolvedPlaceNames {
+  id String @id @default(cuid())
+
+  /// The spelling after `normalizeGazetteerName`, the importer's normalisation.
+  nameNorm      String  @map("name_norm")
+  /// The spelling in the first Signal that named it.
+  nameAsWritten String  @map("name_as_written")
+  /// The Arabic spelling from the Signal's text, when one was found.
+  nameAr        String? @map("name_ar")
+  /// ISO-3166-1 alpha-2 (SD, VE, AF).
+  countryCode   String  @map("country_code")
+
+  /// The state (level 1) that holds the area the pipeline chose. Null when
+  /// that area is the country itself.
+  stateLocationId   String?    @map("state_location_id")
+  stateLocation     locations? @relation("UnresolvedPlaceNameState", fields: [stateLocationId], references: [id], onDelete: Restrict)
+  /// The country (level 0) that holds the area. Not part of the key: it
+  /// places a row with no state inside a team's area, where `countryCode`
+  /// cannot (a country location does not always carry its ISO code).
+  countryLocationId String?    @map("country_location_id")
+  countryLocation   locations? @relation("UnresolvedPlaceNameCountry", fields: [countryLocationId], references: [id], onDelete: SetNull)
+
+  /// "open", "resolved", "not_a_place" or "ambiguous" (DB CHECK).
+  status      String   @default("open")
+  /// The number of Signals recorded on this row. A Signal counts once.
+  signalCount Int      @default(0) @map("signal_count")
+  firstSeenAt DateTime @map("first_seen_at")
+  lastSeenAt  DateTime @map("last_seen_at")
+
+  /// Auth user id of whoever closed the row, and when.
+  resolvedById   String?       @map("resolved_by_id")
+  resolvedAt     DateTime?     @map("resolved_at")
+  resolutionNote String?       @map("resolution_note")
+  /// The alias that a resolution created.
+  placeAliasId   String?       @map("place_alias_id")
+  placeAlias     placeAliases? @relation(fields: [placeAliasId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  signals unresolvedPlaceNameSignals[]
+
+  @@index([status, signalCount(sort: Desc)])
+  @@index([stateLocationId])
+  @@index([countryLocationId])
+  @@index([placeAliasId])
+  @@map("unresolved_place_names")
+}
+
+/// One Signal that named an unresolved place name. A Signal counts once per row.
+model unresolvedPlaceNameSignals {
+  unresolvedPlaceNameId String               @map("unresolved_place_name_id")
+  unresolvedPlaceName   unresolvedPlaceNames @relation(fields: [unresolvedPlaceNameId], references: [id], onDelete: Cascade)
+  signalId              String               @map("signal_id")
+  signal                signals              @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  /// The area the pipeline chose for the Signal: geocoding looked inside it.
+  areaLocationId String?    @map("area_location_id")
+  areaLocation   locations? @relation("UnresolvedPlaceNameSignalArea", fields: [areaLocationId], references: [id], onDelete: SetNull)
+
+  /// The spelling in this Signal.
+  nameAsWritten String @map("name_as_written")
+  /// "no_match" (no gazetteer candidate) or "outside_area" (a candidate
+  /// exists, but it lies outside the area). DB CHECK.
+  reason        String @default("no_match")
+
+  /// When the miss happened. A backfill passes the real date.
+  seenAt      DateTime  @map("seen_at")
+  /// When a resolution moved the Signal to the alias location.
+  relocatedAt DateTime? @map("relocated_at")
+
+  @@id([unresolvedPlaceNameId, signalId])
+  @@index([signalId])
+  @@index([areaLocationId])
+  @@map("unresolved_place_name_signals")
+}
+
+/// A spelling that CLEAR maps to a CLEAR location. Unique on
+/// (countryCode, nameNorm, scopeLocationId) with NULLS NOT DISTINCT; the
+/// index is written by hand in the migration.
+model placeAliases {
+  id String @id @default(cuid())
+
+  /// The spelling after `normalizeGazetteerName`.
+  nameNorm    String @map("name_norm")
+  /// The spelling to show.
+  nameDisplay String @map("name_display")
+  /// ISO-3166-1 alpha-2 (SD, VE, AF).
+  countryCode String @map("country_code")
+
+  /// The area where the alias applies. Null = the whole country.
+  scopeLocationId String?    @map("scope_location_id")
+  scopeLocation   locations? @relation("PlaceAliasScope", fields: [scopeLocationId], references: [id], onDelete: Restrict)
+  /// The CLEAR location the spelling means.
+  locationId      String     @map("location_id")
+  location        locations  @relation("PlaceAliasLocation", fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// "review" (from the queue), "seed" (a loaded list) or "manual" (DB CHECK).
+  source      String
+  /// Auth user id of whoever created the alias. Null for a seed.
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  note        String?
+
+  unresolvedPlaceNames unresolvedPlaceNames[]
+
+  @@index([locationId])
+  @@index([scopeLocationId])
+  @@map("place_aliases")
 }
 
 // ─── Ground intel staging tier ───────────────────────────────────────────────
@@ -2957,4 +3333,35 @@ model recipientListMember {
 
   @@unique([listId, email])
   @@map("recipient_list_members")
+}
+
+/// Per-user whitelist of the data sources an API-only user may read Signals from.
+///
+/// API-only users (a `member` who holds a live API key and belongs to no
+/// organisation or team) get NO Signals by default — including the Signals
+/// nested under an Event. A row here opens exactly one source to one user.
+/// Absence of rows means no access, so the default is closed and adding a
+/// source is an explicit, audited act.
+///
+/// Scope is the data source only. Location/time scoping is deliberately not
+/// modelled here: nobody has asked for it, and a second axis would make the
+/// effective grant much harder to reason about.
+model apiSignalSourceGrant {
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  dataSourceId String @map("data_source_id")
+
+  /// Admin who issued the grant, for audit. Null if the granter was deleted.
+  grantedById String?  @map("granted_by_id")
+  /// Free text: why this source was opened to this user.
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user       user        @relation("GrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy  user?       @relation("GrantIssuer", fields: [grantedById], references: [id], onDelete: SetNull)
+  dataSource dataSources @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dataSourceId])
+  @@index([userId])
+  @@map("api_signal_source_grants")
 }

@@ -18,6 +18,7 @@ import {
   type RepresentativePointLoader,
 } from "./utils/representative-point-loader.js";
 import { enqueueTranslationDurable } from "./services/translation-queue.js";
+import { resolveSignalScope, type SignalScope } from "./utils/signal-access.js";
 
 export interface Context {
   prisma: PrismaClient;
@@ -50,6 +51,15 @@ export interface Context {
    * Alert.representativePoint.
    */
   representativePointLoader: RepresentativePointLoader;
+  /**
+   * What Signals this caller may see, decided once per request.
+   *
+   * `full` for app users and service roles; `restricted` (to a granted set of
+   * data sources, possibly empty) for an API-only developer. Every
+   * `prisma.signals` read must narrow with `withSignalScope(...)` — see
+   * `utils/signal-access.ts`.
+   */
+  signalScope: SignalScope;
 }
 
 /**
@@ -126,11 +136,14 @@ export async function createContext(
     ? forceLocaleHeader
     : resolveLocale(user, nextLocaleCookie, acceptLanguage);
 
+  const signalScope = await resolveSignalScope(prisma, user);
+
   return {
     prisma,
     user,
     session,
     authMethod,
+    signalScope,
     viaAgent,
     locale,
     translationLoader: createTranslationLoader(
