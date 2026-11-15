@@ -6,13 +6,17 @@
  * every self-signup and repairs the CRM: missed signups get backfilled,
  * approvals that never reached the approved collection get moved.
  *
- * Who counts as a self-signup: the users table has no "how was this
- * account created" column, and the CRM is only for Portal self-signups,
+ * Who counts as a self-signup: the CRM is only for Portal self-signups,
  * not invited staff, admin-provisioned developers or service accounts.
  *   - `pending` users: only the Portal signup creates them.
- *   - approved users: those with a `user.approved` activity-log row (only
- *     approveUserById writes it) whose role is still `member` or `admin`.
+ *   - approved users: `approvedAt` set (approveUserById sets it in the
+ *     same UPDATE as the role flip) and role still `member` or `admin`.
  * Inactive users are skipped.
+ *
+ * Roles can change while a run is going (an admin approves someone
+ * mid-backfill), so each user's current state is re-read right before
+ * their CRM write, and re-checked after a prospects push in case the
+ * approval's own CRM move ran first and the push re-added them.
  *
  * Idempotent: every CRM call is a create-or-fetch or a set membership, and
  * the summary counts a user as changed only when a contact was created or
@@ -46,6 +50,8 @@ export interface CrmSyncSummary {
   candidates: { prospects: number; approved: number };
   changed: number;
   unchanged: number;
+  /** Stopped being a candidate (approved elsewhere, deactivated…) mid-run. */
+  skipped: number;
   failed: Array<{ email: string; target: CrmTarget; reason: string }>;
   /** Partial-sync warnings (e.g. profileType update failed) per user. */
   warnings: Array<{ email: string; warnings: string[] }>;
@@ -55,49 +61,82 @@ export interface CrmSyncSummary {
  *  pipeline, agent) are never CRM contacts. */
 const APPROVED_ROLES = ["member", "admin"];
 
+/** Which collection a user belongs in right now, or null for none. */
+function targetFor(user: { role: string; isActive: boolean; approvedAt: Date | null }): CrmTarget | null {
+  if (!user.isActive) return null;
+  if (user.role === "pending") return "prospects";
+  if (user.approvedAt && APPROVED_ROLES.includes(user.role)) return "approved";
+  return null;
+}
+
 /** Every user the CRM should hold, and which collection they belong in. */
 export async function findCrmSyncCandidates(prisma: PrismaClient): Promise<CrmSyncCandidate[]> {
-  const approvals = await prisma.activityLogs.findMany({
-    where: { action: "user.approved", resourceType: "user", resourceId: { not: null } },
-    select: { resourceId: true },
-    distinct: ["resourceId"],
-  });
-  const approvedIds = approvals.map((a) => a.resourceId).filter((id): id is string => id !== null);
-
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
-      OR: [{ role: "pending" }, { id: { in: approvedIds }, role: { in: APPROVED_ROLES } }],
+      OR: [{ role: "pending" }, { approvedAt: { not: null }, role: { in: APPROVED_ROLES } }],
     },
-    select: { id: true, email: true, name: true, role: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, approvedAt: true },
     orderBy: { createdAt: "asc" },
   });
 
-  return users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
-    target: u.role === "pending" ? "prospects" : "approved",
-  }));
+  return users.flatMap((u) => {
+    const target = targetFor(u);
+    return target ? [{ id: u.id, email: u.email, name: u.name, target }] : [];
+  });
+}
+
+/** Re-read one user's collection at write time. */
+async function currentTarget(prisma: PrismaClient, userId: string): Promise<CrmTarget | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, isActive: true, approvedAt: true },
+  });
+  return user ? targetFor(user) : null;
 }
 
 type MirrorResult =
   | { ok: true; value: { changed: boolean; warnings: string[] } }
   | { ok: false; reason: string };
 
-/** Put one candidate in the collection it belongs in. */
-async function mirror(candidate: CrmSyncCandidate): Promise<MirrorResult> {
+/** Put one contact in the given collection. */
+async function mirror(candidate: CrmSyncCandidate, target: CrmTarget): Promise<MirrorResult> {
   const contact = { email: candidate.email, ...splitName(candidate.name) };
-  if (candidate.target === "approved") return syncApprovedContact(contact);
+  if (target === "approved") return syncApprovedContact(contact);
   const pushed = await pushToProspects(contact);
   return pushed.ok ? { ok: true, value: { changed: pushed.value.changed, warnings: [] } } : pushed;
+}
+
+/** Sync one user against their current state. Null when they are no
+ *  longer a candidate. */
+async function syncOne(
+  prisma: PrismaClient,
+  candidate: CrmSyncCandidate,
+): Promise<{ target: CrmTarget; result: MirrorResult } | null> {
+  const target = await currentTarget(prisma, candidate.id);
+  if (!target) return null;
+  const result = await mirror(candidate, target);
+  if (!result.ok || target !== "prospects") return { target, result };
+
+  // Approved while we were adding them to prospects: approval's own move
+  // may have run before our add and been undone by it. Move them again.
+  if ((await currentTarget(prisma, candidate.id)) !== "approved") return { target, result };
+  const moved = await mirror(candidate, "approved");
+  if (!moved.ok) return { target: "approved", result: moved };
+  return {
+    target: "approved",
+    result: {
+      ok: true,
+      value: { changed: true, warnings: moved.value.warnings },
+    },
+  };
 }
 
 /**
  * Bring the CRM in line with the users table. With `dryRun` it only
  * counts candidates and makes no CRM calls. Users are synced one at a
- * time to stay gentle on Exponential; a failure on one user is recorded
- * and the run carries on.
+ * time to stay gentle on Exponential; a failure on one user, returned or
+ * thrown, is recorded and the run carries on.
  */
 export async function syncCrm(
   prisma: PrismaClient,
@@ -113,16 +152,28 @@ export async function syncCrm(
     },
     changed: 0,
     unchanged: 0,
+    skipped: 0,
     failed: [],
     warnings: [],
   };
   if (options.dryRun || !summary.configured) return summary;
 
   for (const candidate of candidates) {
-    const result = await mirror(candidate);
-
+    let synced: Awaited<ReturnType<typeof syncOne>>;
+    try {
+      synced = await syncOne(prisma, candidate);
+    } catch (err) {
+      const reason = `threw:${err instanceof Error ? err.message : String(err)}`;
+      summary.failed.push({ email: candidate.email, target: candidate.target, reason });
+      continue;
+    }
+    if (!synced) {
+      summary.skipped += 1;
+      continue;
+    }
+    const { target, result } = synced;
     if (!result.ok) {
-      summary.failed.push({ email: candidate.email, target: candidate.target, reason: result.reason });
+      summary.failed.push({ email: candidate.email, target, reason: result.reason });
       continue;
     }
     if (result.value.changed) summary.changed += 1;
@@ -141,7 +192,7 @@ export function formatCrmSyncSummary(summary: CrmSyncSummary): string {
   if (!summary.configured) return `${head}. CRM not configured (EXPONENTIAL_* unset): nothing synced.`;
   if (summary.dryRun) return `${head}. Dry run: no CRM calls made. Re-run with --apply to sync.`;
   const lines = [
-    `${head}. Changed ${summary.changed}, unchanged ${summary.unchanged}, failed ${summary.failed.length}.`,
+    `${head}. Changed ${summary.changed}, unchanged ${summary.unchanged}, skipped ${summary.skipped}, failed ${summary.failed.length}.`,
     ...summary.failed.map((f) => `  failed ${f.email} (${f.target}): ${f.reason}`),
     ...summary.warnings.map((w) => `  warning ${w.email}: ${w.warnings.join(", ")}`),
   ];

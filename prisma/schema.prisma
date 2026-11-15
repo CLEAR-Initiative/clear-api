@@ -94,6 +94,11 @@ model user {
   role          String  @default("member")
   isActive      Boolean @default(true) @map("is_active")
   language      String  @default("en")
+  /// When an admin approved this Portal self-signup (approveUserById sets it
+  /// in the same UPDATE as the pending → member flip). Null for invited,
+  /// provisioned and service users. The durable marker the CRM sync uses to
+  /// tell an approved self-signup apart from any other member.
+  approvedAt    DateTime? @map("approved_at")
 
   inAppNotification Boolean @default(false) @map("in_app_notification")
   emailNotification Boolean @default(false) @map("email_notification")

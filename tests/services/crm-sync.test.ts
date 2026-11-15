@@ -30,20 +30,25 @@ import {
   type CrmSyncSummary,
 } from "../../src/services/crm-sync.js";
 
+const APPROVED_AT = new Date("2026-11-01T00:00:00Z");
 const USERS = [
-  { id: "u1", email: "pending@example.org", name: "Ada Lovelace", role: "pending" },
-  { id: "u2", email: "member@example.org", name: "Grace Hopper", role: "member" },
-  { id: "u3", email: "admin@example.org", name: "Alan", role: "admin" },
+  { id: "u1", email: "pending@example.org", name: "Ada Lovelace", role: "pending", isActive: true, approvedAt: null },
+  { id: "u2", email: "member@example.org", name: "Grace Hopper", role: "member", isActive: true, approvedAt: APPROVED_AT },
+  { id: "u3", email: "admin@example.org", name: "Alan", role: "admin", isActive: true, approvedAt: APPROVED_AT },
 ];
 
-function fakePrisma(users = USERS) {
-  const activityFindMany = vi.fn(async () => [{ resourceId: "u2" }, { resourceId: "u3" }]);
-  const userFindMany = vi.fn(async () => users);
+type FakeUser = (typeof USERS)[number];
+
+/** `findUnique` reads the live rows, so a test can change a user's state
+ *  mid-run (as an admin approving someone during a backfill would). */
+function fakePrisma(users: FakeUser[] = USERS) {
+  const rows = new Map(users.map((u) => [u.id, { ...u }]));
+  const userFindMany = vi.fn(async () => [...rows.values()]);
+  const userFindUnique = vi.fn(async ({ where }: { where: { id: string } }) => rows.get(where.id) ?? null);
   const prisma = {
-    activityLogs: { findMany: activityFindMany },
-    user: { findMany: userFindMany },
+    user: { findMany: userFindMany, findUnique: userFindUnique },
   } as unknown as PrismaClient;
-  return { prisma, activityFindMany, userFindMany };
+  return { prisma, rows, userFindMany };
 }
 
 beforeEach(() => {
@@ -56,20 +61,15 @@ beforeEach(() => {
 
 describe("findCrmSyncCandidates", () => {
   it("asks for active pending users plus approved users still member or admin", async () => {
-    const { prisma, activityFindMany, userFindMany } = fakePrisma();
+    const { prisma, userFindMany } = fakePrisma();
 
     const candidates = await findCrmSyncCandidates(prisma);
 
-    expect(activityFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { action: "user.approved", resourceType: "user", resourceId: { not: null } },
-      }),
-    );
     expect(userFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           isActive: true,
-          OR: [{ role: "pending" }, { id: { in: ["u2", "u3"] }, role: { in: ["member", "admin"] } }],
+          OR: [{ role: "pending" }, { approvedAt: { not: null }, role: { in: ["member", "admin"] } }],
         },
       }),
     );
@@ -146,6 +146,60 @@ describe("syncCrm", () => {
       { email: "member@example.org", warnings: ["profile_type_update_failed:x"] },
     ]);
   });
+
+  it("records a thrown CRM error and carries on with the next user", async () => {
+    pushToProspectsMock.mockRejectedValue(new Error("Cannot read properties of null (reading 'id')"));
+
+    const summary = await syncCrm(fakePrisma().prisma, { dryRun: false });
+
+    expect(summary.failed).toEqual([
+      {
+        email: "pending@example.org",
+        target: "prospects",
+        reason: "threw:Cannot read properties of null (reading 'id')",
+      },
+    ]);
+    expect(syncApprovedContactMock).toHaveBeenCalledTimes(2);
+    expect(summary).toMatchObject({ changed: 2 });
+  });
+
+  it("uses a user's current state, not the one from the start of the run", async () => {
+    const { prisma, rows, userFindMany } = fakePrisma();
+    // State changes after the candidate list is read, before the writes.
+    userFindMany.mockImplementationOnce(async () => {
+      const snapshot = [...rows.values()].map((r) => ({ ...r }));
+      // Approved by an admin before the sync reaches them: goes to approved.
+      rows.set("u1", { ...rows.get("u1")!, role: "member", approvedAt: new Date() });
+      // Deactivated before the sync reaches them: left alone.
+      rows.set("u3", { ...rows.get("u3")!, isActive: false });
+      return snapshot;
+    });
+
+    const summary = await syncCrm(prisma, { dryRun: false });
+
+    expect(pushToProspectsMock).not.toHaveBeenCalled();
+    expect(syncApprovedContactMock.mock.calls.map((c) => c[0].email)).toEqual([
+      "pending@example.org",
+      "member@example.org",
+    ]);
+    expect(summary).toMatchObject({ changed: 2, skipped: 1 });
+  });
+
+  it("moves a user approved during their prospects push into approved", async () => {
+    const { prisma, rows } = fakePrisma([USERS[0]]);
+    // The approval lands while the prospects push is in flight.
+    pushToProspectsMock.mockImplementation(async () => {
+      rows.set("u1", { ...rows.get("u1")!, role: "member", approvedAt: new Date() });
+      return { ok: true, value: { contactId: "c", changed: true } };
+    });
+    syncApprovedContactMock.mockResolvedValue({ ok: true, value: { contactId: "c", warnings: [], changed: false } });
+
+    const summary = await syncCrm(prisma, { dryRun: false });
+
+    expect(pushToProspectsMock).toHaveBeenCalledTimes(1);
+    expect(syncApprovedContactMock).toHaveBeenCalledTimes(1);
+    expect(summary).toMatchObject({ changed: 1, failed: [] });
+  });
 });
 
 describe("formatCrmSyncSummary", () => {
@@ -155,6 +209,7 @@ describe("formatCrmSyncSummary", () => {
     candidates: { prospects: 1, approved: 2 },
     changed: 1,
     unchanged: 1,
+    skipped: 0,
     failed: [{ email: "a@b.org", target: "prospects", reason: "boom" }],
     warnings: [{ email: "c@d.org", warnings: ["w1"] }],
   };
@@ -162,7 +217,7 @@ describe("formatCrmSyncSummary", () => {
   it("lists counts, failures and warnings after a real run", () => {
     expect(formatCrmSyncSummary(base)).toBe(
       [
-        "3 self-signups (1 pending → prospects, 2 approved → approved). Changed 1, unchanged 1, failed 1.",
+        "3 self-signups (1 pending → prospects, 2 approved → approved). Changed 1, unchanged 1, skipped 0, failed 1.",
         "  failed a@b.org (prospects): boom",
         "  warning c@d.org: w1",
       ].join("\n"),
