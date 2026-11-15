@@ -175,6 +175,15 @@ const envSchema = z.object({
   /** Collection id holding admin-approved contacts. The approval action
    *  removes the contact from prospects and adds it here. */
   EXPONENTIAL_APPROVED_COLLECTION_ID: z.string().optional(),
+  /** Hours between scheduled CRM syncs (src/services/crm-sync.ts), which
+   *  repair the CRM from the users table. Unset or empty (the default)
+   *  means no schedule; run `dist/cli/sync-crm.js` by hand instead. Turn
+   *  it on only once Exponential's automations on the two collections
+   *  have their email steps off, or every synced user gets emailed. */
+  CRM_SYNC_INTERVAL_HOURS: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().positive().optional(),
+  ),
 
   // ─── Developer sign-up notifications ─────────────────────────────
   /** Comma-separated addresses told about every new Developer Portal
