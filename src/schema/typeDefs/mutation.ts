@@ -719,6 +719,13 @@ export const mutationTypeDef = gql`
     canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only."""
     upsertAnalysis(input: UpsertAnalysisInput!): UpsertAnalysisResult!
 
+    """Pipeline: upsert the per-node results of an on-demand node deep-dive — one
+    bitemporal row per (frame × taxonomy node × schemaVersion), each superseding
+    its own previous current row in one transaction. The frame-scoped sibling of
+    \`upsertAnalysis\` at node granularity (analysis-node-deepdive). Admin /
+    pipeline only."""
+    upsertNodeAnalyses(input: UpsertNodeAnalysesInput!): UpsertNodeAnalysesResult!
+
     """Pipeline: bump the current analysis row's \`lastSyncedAt\` for a frame
     WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
     (within the 24h floor, or no new evidence). Returns false when no current row
