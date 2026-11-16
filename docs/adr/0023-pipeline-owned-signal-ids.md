@@ -47,9 +47,19 @@ disjoint, and a CHECK constraint enforces them.
   `meta.target`. `uniqueViolationFields` in `src/utils/prisma-errors.ts`
   reads them.
 - **CHECK `signals_id_format`**: `id` is a cuid, a Case id or a lowercase
-  UUIDv5. It is added `NOT VALID`, so it checks new rows only.
-  `VALIDATE CONSTRAINT` is a later migration. It ships once the shape query
-  finds no other format in an environment.
+  UUIDv5. It checks existing rows too, so the migration fails in an
+  environment holding another format. Run the shape query there first;
+  it must return no `other` row:
+
+  ```sql
+  SELECT ds.name AS source,
+    CASE WHEN s.id ~ '^c[a-z0-9]{24}$' THEN 'cuid'
+         WHEN s.id ~ '^case[0-9a-f]{32}$' THEN 'case'
+         WHEN s.id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN 'v5'
+         ELSE 'other' END AS fmt, count(*) AS n
+  FROM signals s JOIN data_sources ds ON ds.id = s.source_id
+  GROUP BY 1, 2 ORDER BY 1, 2;
+  ```
 
 ## Unchanged
 
@@ -73,8 +83,8 @@ ingester; their existing rows then get aliases at push time.
 
 ## Consequences
 
-- Deploy order: clear-api (input and CHECK `NOT VALID`), then the shape
-  query, then `VALIDATE`, then clear-pipeline. A pipeline that sends `id` to
+- Deploy order: shape query clean, then clear-api (input and CHECK), then
+  clear-pipeline. A pipeline that sends `id` to
   an older clear-api fails every create.
 - The v5 pattern is written twice, once in TypeScript and once in the CHECK.
   A CHECK cannot import TypeScript. The docstring of the TypeScript pattern
