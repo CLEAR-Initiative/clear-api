@@ -1059,6 +1059,10 @@ export const mutationTypeDef = gql`
   }
 
   input CreateSignalInput {
+    """Signal id minted by the gx pipeline: a lowercase UUIDv5 of the prefixed
+    externalId. Requires externalId and a non-manual rawData; any other shape
+    is refused with BAD_USER_INPUT. Omit it to get a server-minted id."""
+    id: String
     sourceId: String!
     """Stable upstream identifier for idempotent ingestion. If a signal with
     the same (sourceId, externalId) already exists, createSignal returns the

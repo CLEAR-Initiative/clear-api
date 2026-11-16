@@ -3,6 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
+import { uniqueViolationFields } from "../utils/prisma-errors.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
@@ -11,6 +12,26 @@ import { uploadFileToS3 } from "../services/s3.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
 const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
+
+/** A lowercase UUIDv5, the only Signal id a caller may supply. The same shape
+ *  is one branch of the `signals_id_format` CHECK. */
+const PIPELINE_SIGNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** A Signal a person entered: its payload carries `rawData.manual`. */
+const isManualPayload = (rawData: unknown): boolean =>
+  (rawData as { manual?: unknown } | null)?.manual === true;
+
+/** Refuses a supplied id unless it is a lowercase UUIDv5 on a non-manual
+ *  payload with an externalId, so callers can't inject arbitrary ids. */
+function assertSuppliedSignalId(input: CreateSignalInput): void {
+  if (input.id == null) return;
+  if (!PIPELINE_SIGNAL_ID.test(input.id) || !input.externalId || isManualPayload(input.rawData)) {
+    throw new GraphQLError(
+      "createSignal accepts an id only as a lowercase UUIDv5, with an externalId, on a non-manual payload",
+      { extensions: { code: "BAD_USER_INPUT" } },
+    );
+  }
+}
 
 interface FileUpload {
   filename: string;
@@ -47,6 +68,9 @@ interface CreateManualSignalInput {
 type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
 
 interface CreateSignalInput {
+  /** Pipeline-minted Signal id: a lowercase UUIDv5, accepted only with an
+   *  externalId and never on a manual payload. Absent → Prisma mints a cuid. */
+  id?: string | null;
   sourceId: string;
   /** Stable upstream id for idempotent ingestion. If set and a row with
    *  the same (sourceId, externalId) exists, the existing row is returned. */
@@ -384,6 +408,7 @@ export const signalResolvers = {
         input.locationId,
       ]);
       await assertCountryLocations(context.prisma, input.countryIds);
+      assertSuppliedSignalId(input);
 
       // Idempotent ingestion: if an externalId is provided and a signal
       // already exists for (sourceId, externalId), return it as-is. This
@@ -417,7 +442,7 @@ export const signalResolvers = {
       // The Outcome log (ADR-0020): where the Signal arrived, written with it.
       // A Signal a person entered (`rawData.manual`) measures the person.
       const outcome =
-        (input.rawData as { manual?: unknown } | null)?.manual === true
+        isManualPayload(input.rawData)
           ? null
           : await arrivalOutcome(
               context.prisma,
@@ -428,6 +453,7 @@ export const signalResolvers = {
       try {
         return await context.prisma.signals.create({
           data: {
+            ...(input.id != null ? { id: input.id } : {}),
             ...(outcome ? { locationOutcomes: { create: outcome } } : {}),
             sourceId: input.sourceId,
             externalId: input.externalId,
@@ -459,13 +485,25 @@ export const signalResolvers = {
           },
         });
       } catch (err: unknown) {
-        // P2002 = unique constraint violation. If it fires for
-        // (sourceId, externalId), a concurrent writer got there first -
-        // fall back to returning that row so the caller is idempotent.
-        if (
-          typeof err === "object" && err !== null && "code" in err &&
-          (err as { code: unknown }).code === "P2002" && input.externalId
-        ) {
+        const fields = uniqueViolationFields(err);
+        const pkClash = fields?.length === 1 && fields[0] === "id";
+        // A primary-key clash on a supplied id is a concurrent create of the
+        // same Signal only when the holder has this (sourceId, externalId);
+        // any other holder is a real id collision.
+        if (pkClash && input.id != null) {
+          const holder = await context.prisma.signals.findUnique({ where: { id: input.id } });
+          if (holder?.sourceId === input.sourceId && holder.externalId === input.externalId) return holder;
+          if (holder) {
+            throw new GraphQLError(
+              `Signal id ${input.id} already belongs to (sourceId ${holder.sourceId}, externalId ${holder.externalId}), ` +
+                `not (sourceId ${input.sourceId}, externalId ${input.externalId})`,
+              { extensions: { code: "CONFLICT" } },
+            );
+          }
+        }
+        // Any other unique clash is on (sourceId, externalId): a concurrent
+        // writer got there first, so return that row and stay idempotent.
+        if (fields && !pkClash && input.externalId) {
           const existing = await context.prisma.signals.findUnique({
             where: {
               sourceId_externalId: {

@@ -3104,6 +3104,12 @@ passes.</td>
 values produce shorter URLs by reducing the impact of any future
 URL-history scraping.</td>
   </tr></tbody></table><h3 id="type-createsignalinput"><code>CreateSignalInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String</code></td>
+    <td>Signal id minted by the gx pipeline: a lowercase UUIDv5 of the prefixed
+externalId. Requires externalId and a non-manual rawData; any other shape
+is refused with BAD_USER_INPUT. Omit it to get a server-minted id.</td>
+  </tr><tr>
     <td><code>sourceId</code></td>
     <td><code>String!</code></td>
     <td>—</td>
