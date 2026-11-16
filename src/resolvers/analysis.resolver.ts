@@ -598,8 +598,24 @@ export const analysisResolvers = {
       const needSectors = canonicalizeArray(input.frame.needSectors);
       const windowStart = input.frame.windowStart;
       const windowEnd = input.frame.windowEnd ?? null;
+      // Serialize concurrent writers for the SAME frame. Two deep-dives whose
+      // selections overlap on a node would otherwise race on the per-node
+      // current-row unique index: both stamp the old row's validTo, then the
+      // second insert violates the index and rolls back its WHOLE batch (losing
+      // its non-overlapping nodes too). A frame-scoped advisory lock makes
+      // same-frame upserts serial while different frames stay parallel; it is
+      // released automatically at transaction end.
+      const frameLockKey = JSON.stringify([
+        locationIds,
+        eventTypes,
+        needSectors,
+        windowStart instanceof Date ? windowStart.toISOString() : windowStart,
+        windowEnd instanceof Date ? windowEnd.toISOString() : windowEnd,
+        input.schemaVersion,
+      ]);
 
       return context.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${frameLockKey}, 0))`;
         let upserted = 0;
         for (const node of nodes) {
           const match = {

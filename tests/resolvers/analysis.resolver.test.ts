@@ -67,6 +67,8 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     ),
   };
   const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest, nodeAnalysis, teamMembers };
+  // Raw path: the frame advisory lock in upsertNodeAnalyses (no-op in the mock).
+  prisma.$queryRaw = vi.fn(async () => []);
   // upsert passes a callback (tx === the same mock); markRan passes an array.
   prisma.$transaction = vi.fn(async (arg: unknown) =>
     typeof arg === "function"
@@ -418,6 +420,9 @@ describe("analysis resolver", () => {
         );
 
         expect(res).toEqual({ upserted: 2 });
+        // Took the frame advisory lock before any write (serialises same-frame
+        // writers so overlapping selections can't fail a whole batch).
+        expect((prisma.$queryRaw as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
         // Each node: validTo stamped BEFORE the fresh insert (partial-unique safety).
         expect(order).toEqual(["updateMany", "create", "updateMany", "create"]);
         const createArg = (prisma.nodeAnalysis as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data;
