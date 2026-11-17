@@ -1,12 +1,11 @@
 /**
- * The columns of the unique constraint behind a Prisma P2002, or null when
- * `err` is not a P2002. The pg driver adapter reports them (database column
- * names) under `meta.driverAdapterError.cause.constraint.fields`, not under
- * `meta.target`. An empty array means the constraint is unknown.
+ * True when `err` is a Prisma unique-constraint violation (P2002).
+ *
+ * Deliberately says nothing about *which* constraint fired: Prisma reports
+ * that in different places depending on the driver adapter and version
+ * (`meta.target`, or `meta.driverAdapterError.cause.constraint.fields` with
+ * `@prisma/adapter-pg`). Callers decide what clashed by reading the rows.
  */
-export function uniqueViolationFields(err: unknown): string[] | null {
-  if (typeof err !== "object" || err === null || (err as { code?: unknown }).code !== "P2002") return null;
-  const meta = (err as { meta?: { driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } } } }).meta;
-  const fields = meta?.driverAdapterError?.cause?.constraint?.fields;
-  return Array.isArray(fields) ? fields.map(String) : [];
+export function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
 }

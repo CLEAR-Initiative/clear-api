@@ -36,16 +36,15 @@ disjoint, and a CHECK constraint enforces them.
 - **Existing row**: when `(sourceId, externalId)` already exists, clear-api
   returns that row unchanged. Its id may be a cuid created before this ADR.
   The pipeline records that mapping in `gold.signal_id_aliases`.
-- **Unique clash on the primary key**: clear-api reads the row by id again.
-  The same `(sourceId, externalId)` means a concurrent create of the same
-  Signal, so clear-api returns that row. Anything else gets `CONFLICT`, and the
-  message names the source and externalId that hold the id.
-- **Unique clash on `(source_id, external_id)`**: a dedupe race, handled as
-  before.
-- Prisma 7 with `@prisma/adapter-pg` puts the columns of the violated
-  constraint in `meta.driverAdapterError.cause.constraint.fields`, not in
-  `meta.target`. `uniqueViolationFields` in `src/utils/prisma-errors.ts`
-  reads them.
+- **Unique clash on insert**: clear-api works out what clashed by reading
+  rows, not from the error's metadata (Prisma reports the constraint in
+  different places depending on the driver adapter and version).
+  - A row already holds the supplied id: the same `(sourceId, externalId)`
+    means a concurrent create of the same Signal, so clear-api returns that
+    row. Anything else gets `CONFLICT`, and the message names the source and
+    externalId that hold the id.
+  - Otherwise the clash is on `(source_id, external_id)`: a dedupe race,
+    handled as before.
 - **CHECK `signals_id_format`**: `id` is a cuid, a Case id or a lowercase
   UUIDv5. It checks existing rows too, so the migration fails in an
   environment holding another format. Run the shape query there first;

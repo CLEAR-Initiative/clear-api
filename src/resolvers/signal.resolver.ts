@@ -3,7 +3,7 @@ import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
-import { uniqueViolationFields } from "../utils/prisma-errors.js";
+import { isUniqueViolation } from "../utils/prisma-errors.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
 import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
@@ -485,12 +485,14 @@ export const signalResolvers = {
           },
         });
       } catch (err: unknown) {
-        const fields = uniqueViolationFields(err);
-        const pkClash = fields?.length === 1 && fields[0] === "id";
-        // A primary-key clash on a supplied id is a concurrent create of the
-        // same Signal only when the holder has this (sourceId, externalId);
-        // any other holder is a real id collision.
-        if (pkClash && input.id != null) {
+        if (!isUniqueViolation(err)) throw err;
+        // Which constraint clashed is read from the rows, not from the error's
+        // metadata, whose shape depends on the Prisma driver adapter.
+        //
+        // A row already holding the supplied id is a concurrent create of the
+        // same Signal only when it has this (sourceId, externalId); any other
+        // holder is a real id collision.
+        if (input.id != null) {
           const holder = await context.prisma.signals.findUnique({ where: { id: input.id } });
           if (holder?.sourceId === input.sourceId && holder.externalId === input.externalId) return holder;
           if (holder) {
@@ -501,9 +503,9 @@ export const signalResolvers = {
             );
           }
         }
-        // Any other unique clash is on (sourceId, externalId): a concurrent
+        // Otherwise the clash is on (sourceId, externalId): a concurrent
         // writer got there first, so return that row and stay idempotent.
-        if (fields && !pkClash && input.externalId) {
+        if (input.externalId) {
           const existing = await context.prisma.signals.findUnique({
             where: {
               sourceId_externalId: {

@@ -5,7 +5,7 @@
  * `bun run test:db`.
  */
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Context } from "../../src/context.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
@@ -48,6 +48,26 @@ function losingRaceCtx(): Context {
   });
   const client = new Proxy(prisma, { get: (target, key) => (key === "signals" ? signals : bound(target, key)) });
   return { ...ctx, prisma: client } as Context;
+}
+
+/** A context whose unique-clash errors carry no metadata, as a Prisma upgrade
+ *  or another driver adapter might report them: only `code` survives. */
+function bareP2002Ctx(base: Context): Context {
+  const signals = new Proxy(base.prisma.signals, {
+    get: (target, key) =>
+      key !== "create"
+        ? bound(target, key)
+        : async (args: unknown) => {
+            try {
+              return await target.create(args as never);
+            } catch (err) {
+              if ((err as { code?: unknown }).code === "P2002") throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+              throw err;
+            }
+          },
+  });
+  const client = new Proxy(base.prisma, { get: (target, key) => (key === "signals" ? signals : bound(target, key)) });
+  return { ...base, prisma: client } as Context;
 }
 
 describeIfDb("pipeline-owned Signal ids", () => {
@@ -132,6 +152,29 @@ describeIfDb("pipeline-owned Signal ids", () => {
     const winner = await create({ externalId });
     expect(await create({ id: newV5Id(), externalId }, losingRaceCtx())).toEqual(winner);
     expect(await prisma.signals.count({ where: { sourceId, externalId } })).toBe(1);
+  });
+
+  describe("when the unique-clash error carries no constraint metadata", () => {
+    it("still raises CONFLICT for an id held by another externalId", async () => {
+      const id = newV5Id();
+      await create({ id, externalId: `idmc:${RUN}-${n++}` });
+      await expect(create({ id, externalId: `idmc:${RUN}-${n++}` }, bareP2002Ctx(ctx))).rejects.toMatchObject({
+        extensions: { code: "CONFLICT" },
+      });
+    });
+
+    it("still returns the winner's row when a create loses the race to the same UUIDv5", async () => {
+      const id = newV5Id();
+      const externalId = `idmc:${RUN}-${n++}`;
+      const winner = await create({ id, externalId });
+      expect(await create({ id, externalId }, bareP2002Ctx(losingRaceCtx()))).toEqual(winner);
+    });
+
+    it("still returns the winner's row when a create with another id loses the race to the same externalId", async () => {
+      const externalId = `idmc:${RUN}-${n++}`;
+      const winner = await create({ externalId });
+      expect(await create({ id: newV5Id(), externalId }, bareP2002Ctx(losingRaceCtx()))).toEqual(winner);
+    });
   });
 
   it("gives a manual Signal a cuid, distinct from a pipeline id for the same content", async () => {
