@@ -80,6 +80,14 @@ ingester; their existing rows then get aliases at push time.
 - **Accept any UUID version.** Rejected: only v5 is deterministic from the
   externalId, so a v4 or v7 id is not a Pipeline id. The CHECK and the
   analytics allowlist in clear-mvp accept v5 only.
+- **The pipeline mints cuids**, the id format of every other model. Rejected:
+  - A cuid is random, so the lake cannot recompute it from the externalId.
+  - A hash shaped like a cuid would be indistinguishable from Prisma's own
+    cuids, so the CHECK could not keep the formats apart.
+
+  Not a loss of consistency: `signals.id` already allowed two formats (cuid
+  and Case id), so consumers already could not assume a cuid. The pipeline
+  adds a third.
 
 ## Consequences
 
