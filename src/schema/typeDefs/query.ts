@@ -672,6 +672,12 @@ export const queryTypeDef = gql`
     authenticated content reader."""
     analysisById(id: String!): Analysis
 
+    """Read the current per-node deep-dive results for a frame
+    (analysis-node-deepdive) — the L2/L3 leaves generated on demand, one row per
+    taxonomy node (ordered by depth then key). Pass \`schemaVersion\` to pin the
+    payload shape. Requires any authenticated content reader."""
+    nodeAnalyses(frame: AnalysisFrameInput!, schemaVersion: String!): [NodeAnalysis!]!
+
     """List analysis automation subscriptions (ADR-0007 §5). Optionally scope
     to a team or to enabled rows only. Requires any authenticated content
     reader."""

@@ -864,6 +864,13 @@ exists for the frame yet. Requires any authenticated content reader.<div class="
 frame-keyed `analysis` query only returns the current row). Requires any
 authenticated content reader.<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
   </tr><tr>
+    <td><code>nodeAnalyses</code></td>
+    <td><code>[NodeAnalysis!]!</code></td>
+    <td>Read the current per-node deep-dive results for a frame
+(analysis-node-deepdive) — the L2/L3 leaves generated on demand, one row per
+taxonomy node (ordered by depth then key). Pass `schemaVersion` to pin the
+payload shape. Requires any authenticated content reader.<div class="field-args"><span class="arg"><code>frame: AnalysisFrameInput!</code></span><span class="arg"><code>schemaVersion: String!</code></span></div></td>
+  </tr><tr>
     <td><code>analysisAutomations</code></td>
     <td><code>[AnalysisAutomation!]!</code></td>
     <td>List analysis automation subscriptions (ADR-0007 §5). Optionally scope
@@ -1798,6 +1805,14 @@ frame columns (locationIds / eventTypes / needSectors / windowStart /
 windowEnd), stamping `validTo` on the previous current row for the same
 frame in the same transaction. History rows are preserved. Frame arrays are
 canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertAnalysisInput!</code></span></div></td>
+  </tr><tr id="mutation-upsertnodeanalyses">
+    <td><code>upsertNodeAnalyses</code></td>
+    <td><code>UpsertNodeAnalysesResult!</code></td>
+    <td>Pipeline: upsert the per-node results of an on-demand node deep-dive — one
+bitemporal row per (frame × taxonomy node × schemaVersion), each superseding
+its own previous current row in one transaction. The frame-scoped sibling of
+`upsertAnalysis` at node granularity (analysis-node-deepdive). Admin /
+pipeline only.<div class="field-args"><span class="arg"><code>input: UpsertNodeAnalysesInput!</code></span></div></td>
   </tr><tr id="mutation-touchanalysissynced">
     <td><code>touchAnalysisSynced</code></td>
     <td><code>Boolean!</code></td>
@@ -3875,6 +3890,50 @@ default, is the history series. `CURRENT` is the &quot;same ruler&quot; view, on
 for `DETECTED_BY_NEXT_DAY`, `DETECTED_SAME_DAY`, `ALERTED_BY_NEXT_DAY`
 and `ALERTED_SAME_DAY`; another metric refuses it with BAD_USER_INPUT.
 The bucket shape is the same for both.</td>
+  </tr></tbody></table><h3 id="type-nodeanalysisinput"><code>NodeAnalysisInput</code> <span class="type-badge">input</span></h3><p>One node's result in an `upsertNodeAnalyses` call.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>nodeKey</code></td>
+    <td><code>String!</code></td>
+    <td>Stable taxonomy slug path (`task/l1[/l2[/l3]]`).</td>
+  </tr><tr>
+    <td><code>nodeName</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int!</code></td>
+    <td>Taxonomy depth: 1 / 2 / 3.</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-recordunresolvedplacenameinput"><code>RecordUnresolvedPlaceNameInput</code> <span class="type-badge">input</span></h3><p>One geocode miss, sent by the pipeline.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>signalId</code></td>
     <td><code>String!</code></td>
@@ -4000,6 +4059,13 @@ row's state from it.</td>
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>Owning team, for a team-scoped on-demand request.</td>
+  </tr><tr>
+    <td><code>taxonomyNodeKeys</code></td>
+    <td><code>[String!]</code></td>
+    <td>On-demand node deep-dive (analysis-node-deepdive): the specific taxonomy
+node keys (L2/L3 leaves) to drill into. Omitted / empty = the default L1
+situation analysis. Part of the PENDING dedupe identity, so a different node
+selection for the same frame is a distinct request.</td>
   </tr><tr>
     <td><code>force</code></td>
     <td><code>Boolean</code></td>
@@ -4806,6 +4872,18 @@ row's `generatedAt` is a no-op that only bumps `lastSyncedAt`.</td>
     <td><code>data</code></td>
     <td><code>JSON!</code></td>
     <td>JSON payload for this type.</td>
+  </tr></tbody></table><h3 id="type-upsertnodeanalysesinput"><code>UpsertNodeAnalysesInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>frame</code></td>
+    <td><code>AnalysisFrameInput!</code></td>
+    <td>The frame these node results cover (same identity rules as `Analysis`).</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nodes</code></td>
+    <td><code>[NodeAnalysisInput!]!</code></td>
+    <td>One entry per taxonomy node generated (the deep-dive's leaf frontier).</td>
   </tr></tbody></table><h3 id="type-upsertnominatimcacheinput"><code>UpsertNominatimCacheInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>queryHash</code></td>
     <td><code>String!</code></td>
@@ -5818,6 +5896,12 @@ refreshes use `AnalysisAutomation` instead of this one-shot queue.</p><table cla
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>—</td>
+  </tr><tr>
+    <td><code>taxonomyNodeKeys</code></td>
+    <td><code>[String!]!</code></td>
+    <td>On-demand node deep-dive selection (analysis-node-deepdive): the taxonomy
+node keys to generate (the leaf frontier). Empty = the default L1 situation
+fan-out.</td>
   </tr><tr>
     <td><code>force</code></td>
     <td><code>Boolean!</code></td>
@@ -8432,6 +8516,93 @@ was understood.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</t
     <td><code>reports</code></td>
     <td><code>[ReportHit!]!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-nodeanalysis"><code>NodeAnalysis</code> <span class="type-badge">object</span></h3><p>One taxonomy-node deep-dive result (analysis-node-deepdive). The
+frame-scoped sibling of `Analysis`, but at NODE granularity — a current row
+per (frame × taxonomy node × schemaVersion), so a UI can read exactly the
+L2/L3 leaves a user drilled into. Bitemporal, like `Analysis`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>locationIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>eventTypes</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>needSectors</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowStart</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>windowEnd</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>nodeKey</code></td>
+    <td><code>String!</code></td>
+    <td>Stable taxonomy slug path (`task/l1[/l2[/l3]]`) this row answers.</td>
+  </tr><tr>
+    <td><code>nodeName</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>task</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>level</code></td>
+    <td><code>Int!</code></td>
+    <td>Taxonomy depth: 1 = L1, 2 = L2, 3 = L3.</td>
+  </tr><tr>
+    <td><code>data</code></td>
+    <td><code>JSON!</code></td>
+    <td>The node's descriptive finding. Opaque + versioned by `schemaVersion`.</td>
+  </tr><tr>
+    <td><code>status</code></td>
+    <td><code>String!</code></td>
+    <td>Per-node generation status (e.g. `ok` / `best_effort`).</td>
+  </tr><tr>
+    <td><code>sourceReportIds</code></td>
+    <td><code>[String!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedByModel</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationCostUsd</code></td>
+    <td><code>Float</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationInputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generationOutputTokens</code></td>
+    <td><code>Int</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>generatedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validFrom</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>validTo</code></td>
+    <td><code>DateTime</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>schemaVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-nominatimcacheentry"><code>NominatimCacheEntry</code> <span class="type-badge">object</span></h3><p>A cached Nominatim-protocol geocoder response.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>id</code></td>
     <td><code>String!</code></td>
@@ -10050,6 +10221,10 @@ bumped, no new version written). `false` on an actual (re)generation.</td>
     <td><code>chunksInserted</code></td>
     <td><code>Int!</code></td>
     <td>—</td>
+  </tr></tbody></table><h3 id="type-upsertnodeanalysesresult"><code>UpsertNodeAnalysesResult</code> <span class="type-badge">object</span></h3><p>Summary of an `upsertNodeAnalyses` mutation.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>upserted</code></td>
+    <td><code>Int!</code></td>
+    <td>Number of node rows written (one current row per input node).</td>
   </tr></tbody></table><h3 id="type-upsertreportdatapointsresult"><code>UpsertReportDatapointsResult</code> <span class="type-badge">object</span></h3><p>Result of `upsertReportDatapoints` - summary for logs.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>reportId</code></td>
     <td><code>String!</code></td>

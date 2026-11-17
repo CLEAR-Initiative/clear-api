@@ -212,6 +212,10 @@ export const analysisTypeDef = gql`
     status: AnalysisRequestStatus!
     requestedByUserId: String
     teamId: String
+    """On-demand node deep-dive selection (analysis-node-deepdive): the taxonomy
+    node keys to generate (the leaf frontier). Empty = the default L1 situation
+    fan-out."""
+    taxonomyNodeKeys: [String!]!
     """Admin force (ADR-0008): the drain bypasses the 24h floor + freshness
     check for this request."""
     force: Boolean!
@@ -229,9 +233,77 @@ export const analysisTypeDef = gql`
     windowEnd: DateTime
     """Owning team, for a team-scoped on-demand request."""
     teamId: String
+    """On-demand node deep-dive (analysis-node-deepdive): the specific taxonomy
+    node keys (L2/L3 leaves) to drill into. Omitted / empty = the default L1
+    situation analysis. Part of the PENDING dedupe identity, so a different node
+    selection for the same frame is a distinct request."""
+    taxonomyNodeKeys: [String!]
     """Deprecated / ignored: a manual trigger always regenerates now, bypassing
     both the 24h floor and the freshness gate (ADR-0008), for any authorized
     requester. Retained for backward compatibility; its value has no effect."""
     force: Boolean
+  }
+
+  """One taxonomy-node deep-dive result (analysis-node-deepdive). The
+  frame-scoped sibling of \`Analysis\`, but at NODE granularity — a current row
+  per (frame × taxonomy node × schemaVersion), so a UI can read exactly the
+  L2/L3 leaves a user drilled into. Bitemporal, like \`Analysis\`."""
+  type NodeAnalysis {
+    id: String!
+    locationIds: [String!]!
+    eventTypes: [String!]!
+    needSectors: [String!]!
+    windowStart: DateTime!
+    windowEnd: DateTime
+    """Stable taxonomy slug path (\`task/l1[/l2[/l3]]\`) this row answers."""
+    nodeKey: String!
+    nodeName: String!
+    task: String!
+    """Taxonomy depth: 1 = L1, 2 = L2, 3 = L3."""
+    level: Int!
+    """The node's descriptive finding. Opaque + versioned by \`schemaVersion\`."""
+    data: JSON!
+    """Per-node generation status (e.g. \`ok\` / \`best_effort\`)."""
+    status: String!
+    sourceReportIds: [String!]!
+    generatedByModel: String!
+    generationCostUsd: Float
+    generationInputTokens: Int
+    generationOutputTokens: Int
+    generatedAt: DateTime!
+    validFrom: DateTime!
+    validTo: DateTime
+    schemaVersion: String!
+  }
+
+  """One node's result in an \`upsertNodeAnalyses\` call."""
+  input NodeAnalysisInput {
+    """Stable taxonomy slug path (\`task/l1[/l2[/l3]]\`)."""
+    nodeKey: String!
+    nodeName: String!
+    task: String!
+    """Taxonomy depth: 1 / 2 / 3."""
+    level: Int!
+    data: JSON!
+    status: String!
+    sourceReportIds: [String!]
+    generatedByModel: String!
+    generationCostUsd: Float
+    generationInputTokens: Int
+    generationOutputTokens: Int
+  }
+
+  input UpsertNodeAnalysesInput {
+    """The frame these node results cover (same identity rules as \`Analysis\`)."""
+    frame: AnalysisFrameInput!
+    schemaVersion: String!
+    """One entry per taxonomy node generated (the deep-dive's leaf frontier)."""
+    nodes: [NodeAnalysisInput!]!
+  }
+
+  """Summary of an \`upsertNodeAnalyses\` mutation."""
+  type UpsertNodeAnalysesResult {
+    """Number of node rows written (one current row per input node)."""
+    upserted: Int!
   }
 `;

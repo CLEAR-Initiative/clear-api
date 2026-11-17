@@ -42,6 +42,11 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
     update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "rq-1", ...data })),
   };
+  const nodeAnalysis = {
+    findMany: vi.fn(async () => []),
+    updateMany: vi.fn(async () => ({ count: 0 })),
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "na-1", ...data })),
+  };
   // Membership fixture: `u-analyst` is a team `analyst` on team-a (the elevated
   // team role that replaces the old global analyst); `u-viewer` is a plain
   // team_member on team-a.
@@ -61,7 +66,9 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
       Object.keys(MEMBERSHIPS[where.userId] ?? {}).map((teamId) => ({ teamId })),
     ),
   };
-  const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest, teamMembers };
+  const prisma: Record<string, unknown> = { analysis, analysisAutomation, analysisRequest, nodeAnalysis, teamMembers };
+  // Raw path: the frame advisory lock in upsertNodeAnalyses (no-op in the mock).
+  prisma.$queryRaw = vi.fn(async () => []);
   // upsert passes a callback (tx === the same mock); markRan passes an array.
   prisma.$transaction = vi.fn(async (arg: unknown) =>
     typeof arg === "function"
@@ -351,6 +358,121 @@ describe("analysis resolver", () => {
       rq.create.mockRejectedValue(p2002);
       const res = await analysisResolvers.Mutation.requestAnalysis(null, { input: input() }, ctx(admin, prisma));
       expect(res).toEqual({ id: "rq-winner", status: "PENDING" });
+    });
+  });
+
+  describe("node deep-dive (analysis-node-deepdive)", () => {
+    const frame = () => ({
+      locationIds: ["b", "a"], eventTypes: [], needSectors: [],
+      windowStart: new Date("2026-01-01"), windowEnd: new Date("2026-03-31"),
+    });
+    const node = (over: Record<string, unknown> = {}) => ({
+      nodeKey: "pillars_1d/casualties/injured", nodeName: "Injured", task: "Pillars 1D", level: 2,
+      data: { findings: [] }, status: "ok", sourceReportIds: ["r1"],
+      generatedByModel: "deepseek/deepseek-v3.2", ...over,
+    });
+
+    describe("upsertNodeAnalyses — pipeline write", () => {
+      it("rejects a non-pipeline/admin caller", async () => {
+        await expect(
+          analysisResolvers.Mutation.upsertNodeAnalyses(
+            null, { input: { frame: frame(), schemaVersion: "v1", nodes: [node()] } }, ctx(viewer),
+          ),
+        ).rejects.toThrow(/insufficient permissions/i);
+      });
+
+      it("rejects a missing schemaVersion", async () => {
+        await expect(
+          analysisResolvers.Mutation.upsertNodeAnalyses(
+            null, { input: { frame: frame(), schemaVersion: "", nodes: [node()] } }, ctx(pipeline),
+          ),
+        ).rejects.toThrow(GraphQLError);
+      });
+
+      it("no-ops on an empty selection", async () => {
+        const prisma = makePrisma();
+        const res = await analysisResolvers.Mutation.upsertNodeAnalyses(
+          null, { input: { frame: frame(), schemaVersion: "v1", nodes: [] } }, ctx(pipeline, prisma),
+        );
+        expect(res).toEqual({ upserted: 0 });
+        expect((prisma.nodeAnalysis as { create: ReturnType<typeof vi.fn> }).create).not.toHaveBeenCalled();
+      });
+
+      it("supersedes-then-inserts one canonicalised row per node", async () => {
+        const prisma = makePrisma();
+        const order: string[] = [];
+        (prisma.nodeAnalysis as { updateMany: ReturnType<typeof vi.fn> }).updateMany.mockImplementation(async () => {
+          order.push("updateMany"); return { count: 1 };
+        });
+        (prisma.nodeAnalysis as { create: ReturnType<typeof vi.fn> }).create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+          order.push("create"); return { id: "na-9", ...data };
+        });
+
+        const res = await analysisResolvers.Mutation.upsertNodeAnalyses(
+          null,
+          {
+            input: {
+              frame: frame(), schemaVersion: "v1",
+              nodes: [node(), node({ nodeKey: "pillars_1d/casualties/dead", nodeName: "Dead" })],
+            },
+          },
+          ctx(pipeline, prisma),
+        );
+
+        expect(res).toEqual({ upserted: 2 });
+        // Took the frame advisory lock before any write (serialises same-frame
+        // writers so overlapping selections can't fail a whole batch).
+        expect((prisma.$queryRaw as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+        // Each node: validTo stamped BEFORE the fresh insert (partial-unique safety).
+        expect(order).toEqual(["updateMany", "create", "updateMany", "create"]);
+        const createArg = (prisma.nodeAnalysis as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data;
+        expect(createArg.locationIds).toEqual(["a", "b"]); // canonicalised
+        expect(createArg.nodeKey).toBe("pillars_1d/casualties/injured");
+        expect(createArg.schemaVersion).toBe("v1");
+        // Supersede keyed on the SAME canonical frame + node + validTo:null.
+        const whereArg = (prisma.nodeAnalysis as { updateMany: ReturnType<typeof vi.fn> }).updateMany.mock.calls[0][0].where;
+        expect(whereArg.locationIds).toEqual({ equals: ["a", "b"] });
+        expect(whereArg.nodeKey).toBe("pillars_1d/casualties/injured");
+        expect(whereArg.validTo).toBeNull();
+      });
+    });
+
+    describe("nodeAnalyses — frame read", () => {
+      it("requires a content reader", async () => {
+        await expect(
+          analysisResolvers.Query.nodeAnalyses(
+            null, { frame: { locationIds: ["a"], windowStart: new Date("2026-01-01") }, schemaVersion: "v1" }, ctx(null),
+          ),
+        ).rejects.toThrow(GraphQLError);
+      });
+
+      it("reads current rows for the canonical frame + schemaVersion", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Query.nodeAnalyses(
+          null,
+          { frame: { locationIds: ["y", "x"], eventTypes: [], needSectors: [], windowStart: new Date("2026-01-01") }, schemaVersion: "v1" },
+          ctx(viewer, prisma),
+        );
+        const where = (prisma.nodeAnalysis as { findMany: ReturnType<typeof vi.fn> }).findMany.mock.calls[0][0].where;
+        expect(where.locationIds).toEqual({ equals: ["x", "y"] });
+        expect(where.schemaVersion).toBe("v1");
+        expect(where.validTo).toBeNull();
+      });
+    });
+
+    describe("requestAnalysis — node selection", () => {
+      it("canonicalises taxonomyNodeKeys onto the create AND the PENDING dedupe where", async () => {
+        const prisma = makePrisma();
+        await analysisResolvers.Mutation.requestAnalysis(
+          null,
+          { input: { locationIds: ["a"], windowStart: new Date("2026-01-01"), taxonomyNodeKeys: ["z/n", "a/n", "z/n"] } },
+          ctx(admin, prisma),
+        );
+        const createArg = (prisma.analysisRequest as { create: ReturnType<typeof vi.fn> }).create.mock.calls[0][0].data;
+        expect(createArg.taxonomyNodeKeys).toEqual(["a/n", "z/n"]); // sorted + de-duped
+        const dedupeWhere = (prisma.analysisRequest as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mock.calls[0][0].where;
+        expect(dedupeWhere.taxonomyNodeKeys).toEqual({ equals: ["a/n", "z/n"] });
+      });
     });
   });
 
