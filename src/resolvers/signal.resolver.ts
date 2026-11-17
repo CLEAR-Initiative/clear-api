@@ -21,10 +21,20 @@ const PIPELINE_SIGNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]
 const isManualPayload = (rawData: unknown): boolean =>
   (rawData as { manual?: unknown } | null)?.manual === true;
 
-/** Refuses a supplied id unless it is a lowercase UUIDv5 on a non-manual
- *  payload with an externalId, so callers can't inject arbitrary ids. */
-function assertSuppliedSignalId(input: CreateSignalInput): void {
+/** Refuses a supplied id unless a platform admin sends it as a lowercase
+ *  UUIDv5 on a non-manual payload with an externalId, so callers can't inject
+ *  arbitrary ids. */
+function assertSuppliedSignalId(input: CreateSignalInput, context: Context): void {
   if (input.id == null) return;
+  // Only the pipeline mints Signal ids, and it authenticates as a platform
+  // admin. A team analyst could otherwise take the v5 id of a future pipeline
+  // record under another externalId, and that record's push would then fail
+  // with CONFLICT for good (ADR-0023).
+  if (!isPlatformAdmin(context.user)) {
+    throw new GraphQLError("Only a platform admin (the pipeline) can supply a Signal id", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
   if (!PIPELINE_SIGNAL_ID.test(input.id) || !input.externalId || isManualPayload(input.rawData)) {
     throw new GraphQLError(
       "createSignal accepts an id only as a lowercase UUIDv5, with an externalId, on a non-manual payload",
@@ -408,7 +418,7 @@ export const signalResolvers = {
         input.locationId,
       ]);
       await assertCountryLocations(context.prisma, input.countryIds);
-      assertSuppliedSignalId(input);
+      assertSuppliedSignalId(input, context);
 
       // Idempotent ingestion: if an externalId is provided and a signal
       // already exists for (sourceId, externalId), return it as-is. This

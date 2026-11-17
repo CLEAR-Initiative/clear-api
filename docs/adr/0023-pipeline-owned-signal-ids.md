@@ -29,6 +29,12 @@ disjoint, and a CHECK constraint enforces them.
 
 ## The rules
 
+- **Caller**: only a platform admin can supply `id`; anyone else gets
+  `FORBIDDEN`. The pipeline authenticates as one through an API key. A team
+  analyst could otherwise take the id of a future pipeline record under
+  another externalId, and that record's push would fail with `CONFLICT`.
+  This does not check that the id equals `uuid5(NS, externalId)`: a human
+  admin or a buggy pipeline can still send a mismatched one.
 - **Shape**: a supplied `id` that is not a lowercase UUIDv5 gets
   `BAD_USER_INPUT`. The same happens with no externalId, or with a manual
   input (`rawData.manual`). A UUIDv4, an uppercase id and a cuid are all
@@ -97,7 +103,7 @@ ingester; their existing rows then get aliases at push time.
   A CHECK cannot import TypeScript. The docstring of the TypeScript pattern
   points to the migration.
 - `CONFLICT` is a new error for `createSignal`. Only a caller that supplies
-  an `id` can get it, and today that is only the pipeline.
+  an `id` can get it: a platform admin, which in practice is the pipeline.
 - clear-mvp treats a Signal id as one of three formats (Exponential #1486).
 - ADR-0002 joins key parts with NUL. NUL cannot occur in any of the three
   formats, so ADR-0002 still holds.
