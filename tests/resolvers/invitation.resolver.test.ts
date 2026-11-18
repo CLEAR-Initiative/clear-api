@@ -12,7 +12,8 @@
  *   - Query.pendingInvites: admin gate + the active-only filter passed to prisma.
  *   - Query.invitationByToken: NOT_FOUND→null, multi-team payload, legacy
  *     single-team fallback, and the pending/accepted/expired status machine.
- *   - Mutation.inviteUser: empty-teams validation, org/team NOT_FOUND, existing
+ *   - Mutation.inviteUser: org-admin / team-admin gate (team admins only
+ *     into teams they run, only with the member org role), empty-teams validation, org/team NOT_FOUND, existing
  *     org member fast-path (direct team add, no invite email, "already in all
  *     teams" guard), duplicate pending-invite guard, and the happy path
  *     (invite created + email sent).
@@ -519,6 +520,96 @@ describe("Mutation.inviteUser", () => {
 });
 
 // ─── Mutation.acceptInvite ─────────────────────────────────────────────────────
+
+describe("Mutation.inviteUser team-admin gate", () => {
+  const teamAdmin = { id: "ta1", role: "member", name: "Team Admin" };
+  const input = (over: Record<string, unknown> = {}) => ({
+    input: {
+      email: "new@b.dev",
+      organisationId: "o1",
+      teams: [{ teamId: "t1", teamRole: "team_member" }],
+      ...over,
+    },
+  });
+
+  /** Prisma stub for a caller who is a plain org member and team admin of `ledTeamIds`. */
+  function prismaFor(ledTeamIds: string[], create = vi.fn().mockResolvedValue({ id: "i1" })) {
+    const teamMembersFindMany = vi.fn(async (args: { where: { teamId: { in: string[] } } }) =>
+      ledTeamIds
+        .filter((id) => args.where.teamId.in.includes(id))
+        .map((teamId) => ({ teamId })),
+    );
+    return {
+      create,
+      teamMembersFindMany,
+      prisma: {
+        organisationUsers: { findUnique: vi.fn().mockResolvedValue({ role: "member" }) },
+        teamMembers: { findMany: teamMembersFindMany },
+        organisations: { findUnique: vi.fn().mockResolvedValue({ id: "o1", name: "Org" }) },
+        teams: {
+          findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+            args.where.id.in.map((id) => ({ id, name: id })),
+          ),
+        },
+        user: { findUnique: vi.fn().mockResolvedValue(null) },
+        invitations: { findFirst: vi.fn().mockResolvedValue(null), create },
+      } as PrismaStub,
+    };
+  }
+
+  it("lets a team admin invite a new person into their own team", async () => {
+    const { prisma, create, teamMembersFindMany } = prismaFor(["t1"]);
+    await inviteUser(null, input(), buildContext(teamAdmin, prisma));
+    expect(teamMembersFindMany.mock.calls[0][0].where).toMatchObject({
+      userId: "ta1",
+      role: { in: ["team_admin"] },
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      role: "member",
+      invitedById: "ta1",
+      teams: { create: [{ teamId: "t1", teamRole: "team_member" }] },
+    });
+    expect(sendMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a team admin inviting into a team they do not run", async () => {
+    const { prisma, create } = prismaFor(["t1"]);
+    await expect(
+      inviteUser(
+        null,
+        input({ teams: [{ teamId: "t1", teamRole: "team_member" }, { teamId: "t2", teamRole: "team_member" }] }),
+        buildContext(teamAdmin, prisma),
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(create).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a team admin inviting with the org_admin org role", async () => {
+    const { prisma, create } = prismaFor(["t1"]);
+    await expect(
+      inviteUser(null, input({ role: "org_admin" }), buildContext(teamAdmin, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a plain org member who runs no team", async () => {
+    const { prisma, create } = prismaFor([]);
+    await expect(
+      inviteUser(null, input(), buildContext(teamAdmin, prisma)),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("lets an org admin invite with the org_admin role without a team-admin check", async () => {
+    const { prisma, create, teamMembersFindMany } = prismaFor([]);
+    prisma.organisationUsers!.findUnique!.mockResolvedValue({ role: "org_admin" });
+    await inviteUser(null, input({ role: "org_admin" }), buildContext(teamAdmin, prisma));
+    expect(teamMembersFindMany).not.toHaveBeenCalled();
+    expect(create.mock.calls[0][0].data.role).toBe("org_admin");
+  });
+});
 
 describe("Mutation.acceptInvite", () => {
   const input = { token: "tok", name: "New", password: "longenough" };

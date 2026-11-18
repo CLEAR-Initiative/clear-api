@@ -1618,7 +1618,10 @@ a platform admin or an org_admin of the target organisation.<div class="field-ar
   </tr><tr id="mutation-inviteuser">
     <td><code>inviteUser</code></td>
     <td><code>Invitation!</code></td>
-    <td>Invite a user to an organisation (and optionally a team). Sends invite email.<div class="field-args"><span class="arg"><code>input: InviteUserInput!</code></span></div></td>
+    <td>Invite a user to an organisation and one or more of its teams. Sends an
+invite email; an existing org member is added to the teams at once. Org
+admins may invite with any org role. A team admin may invite with the
+member org role into teams they are team admin of.<div class="field-args"><span class="arg"><code>input: InviteUserInput!</code></span></div></td>
   </tr><tr id="mutation-acceptinvite">
     <td><code>acceptInvite</code></td>
     <td><code>Boolean!</code></td>
