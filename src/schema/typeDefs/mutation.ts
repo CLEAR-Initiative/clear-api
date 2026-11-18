@@ -521,7 +521,10 @@ export const mutationTypeDef = gql`
     setDefaultTeam(teamId: String!): Team!
 
     # ─── Invitations ──────────────────────────────────────────────────────────
-    """Invite a user to an organisation (and optionally a team). Sends invite email."""
+    """Invite a user to an organisation and one or more of its teams. Sends an
+    invite email; an existing org member is added to the teams at once. Org
+    admins may invite with any org role. A team admin may invite with the
+    member org role into teams they are team admin of."""
     inviteUser(input: InviteUserInput!): Invitation!
 
     """Accept an invitation. Creates user account if new, adds to org and team."""
