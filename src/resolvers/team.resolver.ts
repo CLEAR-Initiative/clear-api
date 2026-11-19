@@ -33,6 +33,9 @@ function assertTeamMemberRole(role: string): TeamMemberRole {
   return role as TeamMemberRole;
 }
 
+/** How long `addTeamMember` waits on its notification email. */
+export const TEAM_ADD_EMAIL_TIMEOUT_MS = 5_000;
+
 /**
  * Email a user that they were added to a team. Skips silently when the user
  * has no email address on file.
@@ -66,13 +69,28 @@ async function notifyTeamAdd(
     args.role,
     brandedUrl(defaultFrontendBase(), "/dashboard"),
   );
-  const emailProvider = await getEmailProvider();
-  await emailProvider.send({
-    to: target.email,
-    subject: content.subject,
-    textBody: content.textBody,
-    htmlBody: content.htmlBody,
+  // The add has already been saved, so a stalled provider must not hold up
+  // the admin's response: give up on the email after TEAM_ADD_EMAIL_TIMEOUT_MS.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`timed out after ${TEAM_ADD_EMAIL_TIMEOUT_MS}ms`)),
+      TEAM_ADD_EMAIL_TIMEOUT_MS,
+    );
   });
+  try {
+    const send = getEmailProvider().then((provider) =>
+      provider.send({
+        to: target.email,
+        subject: content.subject,
+        textBody: content.textBody,
+        htmlBody: content.htmlBody,
+      }),
+    );
+    await Promise.race([send, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 interface CreateTeamInput {
