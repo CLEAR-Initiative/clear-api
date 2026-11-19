@@ -505,7 +505,10 @@ export const mutationTypeDef = gql`
     """Delete a team."""
     deleteTeam(id: String!): Boolean!
 
-    """Add a member to a team."""
+    """
+    Add an organisation member to a team. Emails them that they were added,
+    unless they added themselves.
+    """
     addTeamMember(teamId: String!, userId: String!, role: TeamMemberRole): TeamMember!
 
     """Remove a member from a team."""
