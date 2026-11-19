@@ -28,7 +28,10 @@ beforeEach(() => {
   sendMock.mockReset();
   sendMock.mockResolvedValue(true);
 });
-import { teamResolvers } from "../../src/resolvers/team.resolver.js";
+import {
+  teamResolvers,
+  TEAM_ADD_EMAIL_TIMEOUT_MS,
+} from "../../src/resolvers/team.resolver.js";
 import type { Context } from "../../src/context.js";
 
 const TEAM_ID = "t1";
@@ -250,6 +253,29 @@ describe("addTeamMember — notification email", () => {
     ).resolves.toMatchObject({ id: "tm-new" });
     expect(createSpy).toHaveBeenCalledOnce();
     errSpy.mockRestore();
+  });
+
+  it("returns the membership when the email provider stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      sendMock.mockReturnValueOnce(new Promise(() => {}));
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { ctx } = buildContext({ id: "u-caller", role: "admin" });
+      const result = addTeamMember(
+        undefined,
+        { teamId: TEAM_ID, userId: TARGET_USER_ID },
+        ctx,
+      );
+      await vi.advanceTimersByTimeAsync(TEAM_ADD_EMAIL_TIMEOUT_MS);
+      await expect(result).resolves.toMatchObject({ id: "tm-new" });
+      expect(errSpy).toHaveBeenCalledWith(
+        "[addTeamMember] team-add notification failed:",
+        expect.any(Error),
+      );
+      errSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends nothing when a non-admin is refused", async () => {
