@@ -7,16 +7,31 @@
  *      and rejects unknown role strings.
  *   2. `updateTeamMemberRole` rejects unknown role strings, and accepts
  *      every value in the canonical 3-role list.
- *   3. The permission helper that gates `addTeamMember` /
+ *   3. `addTeamMember` emails the added user (not when they add themselves),
+ *      and a failed send never undoes the add.
+ *   4. The permission helper that gates `addTeamMember` /
  *      `removeTeamMember` / `updateTeamMemberRole` grants when the caller
  *      is a global admin, an org_admin, or a team_admin, and denies
  *      otherwise. Legacy roles (`owner`, org `admin`, `lead`) were folded
  *      into the new taxonomy by the Phase-3 backfill and no longer bypass.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { GraphQLError } from "graphql";
-import { teamResolvers } from "../../src/resolvers/team.resolver.js";
+
+const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
+vi.mock("../../src/services/messaging/registry.js", () => ({
+  getEmailProvider: vi.fn(async () => ({ send: sendMock })),
+}));
+
+beforeEach(() => {
+  sendMock.mockReset();
+  sendMock.mockResolvedValue(true);
+});
+import {
+  teamResolvers,
+  TEAM_ADD_EMAIL_TIMEOUT_MS,
+} from "../../src/resolvers/team.resolver.js";
 import type { Context } from "../../src/context.js";
 
 const TEAM_ID = "t1";
@@ -40,7 +55,7 @@ interface MockPrismaOptions {
  * and target's membership rows can be configured independently.
  */
 function buildContext(
-  caller: { id: string; role: string } | null,
+  caller: { id: string; role: string; name?: string } | null,
   opts: MockPrismaOptions = {},
 ): { ctx: Context; createSpy: ReturnType<typeof vi.fn>; updateSpy: ReturnType<typeof vi.fn> } {
   const callerId = caller?.id ?? "u-caller";
@@ -64,7 +79,10 @@ function buildContext(
   // verifies the target membership exists before writing. The stubs
   // below just say "already has a default" so the seed call is a no-op
   // and doesn't clutter these role-focused assertions.
-  const userFindUnique = vi.fn(async () => ({ defaultTeamId: "t-seed" }));
+  const userFindUnique = vi.fn(async () => ({
+    defaultTeamId: "t-seed",
+    email: "target@clear.test",
+  }));
   const userUpdate = vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => ({
     id: "u-target",
     ...args.data,
@@ -72,7 +90,14 @@ function buildContext(
 
   const prisma = {
     teams: {
-      findUnique: vi.fn(async () => ({ id: TEAM_ID, organisationId: ORG_ID })),
+      findUnique: vi.fn(async () => ({
+        id: TEAM_ID,
+        name: "Field Ops",
+        organisationId: ORG_ID,
+      })),
+    },
+    organisations: {
+      findUnique: vi.fn(async () => ({ name: "NRC Sudan" })),
     },
     teamMembers: {
       findUnique: vi.fn(async (args: { where: { teamId_userId: { teamId: string; userId: string } } }) => {
@@ -188,6 +213,80 @@ describe("addTeamMember — role validation", () => {
       ),
     ).rejects.toThrow(/Invalid team role/i);
     expect(createSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("addTeamMember — notification email", () => {
+  it("emails the added user that they joined the team", async () => {
+    const { ctx } = buildContext({ id: "u-caller", role: "admin", name: "Amina" });
+    await addTeamMember(
+      undefined,
+      { teamId: TEAM_ID, userId: TARGET_USER_ID, role: "analyst" },
+      ctx,
+    );
+    expect(sendMock).toHaveBeenCalledOnce();
+    const sent = sendMock.mock.calls[0]?.[0];
+    expect(sent.to).toBe("target@clear.test");
+    expect(sent.subject).toContain("Field Ops");
+    expect(sent.textBody).toContain("Amina");
+    expect(sent.textBody).toContain("NRC Sudan");
+    expect(sent.textBody).toContain("analyst");
+    expect(sent.textBody).toContain("/dashboard");
+  });
+
+  it("sends nothing when the caller adds themselves", async () => {
+    const { ctx, createSpy } = buildContext(
+      { id: TARGET_USER_ID, role: "admin" },
+      { callerOrgMembership: { role: "member" } },
+    );
+    await addTeamMember(undefined, { teamId: TEAM_ID, userId: TARGET_USER_ID }, ctx);
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("still adds the member when the email fails to send", async () => {
+    sendMock.mockRejectedValueOnce(new Error("postmark down"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { ctx, createSpy } = buildContext({ id: "u-caller", role: "admin" });
+    await expect(
+      addTeamMember(undefined, { teamId: TEAM_ID, userId: TARGET_USER_ID }, ctx),
+    ).resolves.toMatchObject({ id: "tm-new" });
+    expect(createSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+
+  it("returns the membership when the email provider stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      sendMock.mockReturnValueOnce(new Promise(() => {}));
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { ctx } = buildContext({ id: "u-caller", role: "admin" });
+      const result = addTeamMember(
+        undefined,
+        { teamId: TEAM_ID, userId: TARGET_USER_ID },
+        ctx,
+      );
+      await vi.advanceTimersByTimeAsync(TEAM_ADD_EMAIL_TIMEOUT_MS);
+      await expect(result).resolves.toMatchObject({ id: "tm-new" });
+      expect(errSpy).toHaveBeenCalledWith(
+        "[addTeamMember] team-add notification failed:",
+        expect.any(Error),
+      );
+      errSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends nothing when a non-admin is refused", async () => {
+    const { ctx } = buildContext(
+      { id: "u-caller", role: "member" },
+      { callerTeamMembership: { role: "team_member" } },
+    );
+    await expect(
+      addTeamMember(undefined, { teamId: TEAM_ID, userId: TARGET_USER_ID }, ctx),
+    ).rejects.toThrow(GraphQLError);
+    expect(sendMock).not.toHaveBeenCalled();
   });
 });
 

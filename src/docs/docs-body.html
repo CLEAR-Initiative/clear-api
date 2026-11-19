@@ -1591,7 +1591,8 @@ a platform admin or an org_admin of the target organisation.<div class="field-ar
   </tr><tr id="mutation-addteammember">
     <td><code>addTeamMember</code></td>
     <td><code>TeamMember!</code></td>
-    <td>Add a member to a team.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole</code></span></div></td>
+    <td>Add an organisation member to a team. Emails them that they were added,
+unless they added themselves.<div class="field-args"><span class="arg"><code>teamId: String!</code></span><span class="arg"><code>userId: String!</code></span><span class="arg"><code>role: TeamMemberRole</code></span></div></td>
   </tr><tr id="mutation-removeteammember">
     <td><code>removeTeamMember</code></td>
     <td><code>Boolean!</code></td>
