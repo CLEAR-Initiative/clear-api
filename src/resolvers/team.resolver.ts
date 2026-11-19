@@ -7,6 +7,9 @@ import {
   TEAM_ADMIN_ROLES,
 } from "../utils/auth-guard.js";
 import { ensureDefaultTeam } from "../services/ensure-default-team.js";
+import { getEmailProvider } from "../services/messaging/registry.js";
+import { teamInviteNotification } from "../services/messaging/templates.js";
+import { brandedUrl, defaultFrontendBase } from "../services/branding.js";
 
 // Valid team-member roles. Legacy values (lead/viewer) fold into
 // (team_admin/team_member); the removed `field_coordinator` folds into
@@ -28,6 +31,48 @@ function assertTeamMemberRole(role: string): TeamMemberRole {
     );
   }
   return role as TeamMemberRole;
+}
+
+/**
+ * Email a user that they were added to a team. Skips silently when the user
+ * has no email address on file.
+ */
+async function notifyTeamAdd(
+  context: Context,
+  args: {
+    inviterName: string;
+    targetUserId: string;
+    teamName: string;
+    organisationId: string;
+    role: string;
+  },
+): Promise<void> {
+  const [target, org] = await Promise.all([
+    context.prisma.user.findUnique({
+      where: { id: args.targetUserId },
+      select: { email: true },
+    }),
+    context.prisma.organisations.findUnique({
+      where: { id: args.organisationId },
+      select: { name: true },
+    }),
+  ]);
+  if (!target?.email) return;
+
+  const content = teamInviteNotification(
+    args.inviterName,
+    org?.name ?? "your organisation",
+    args.teamName,
+    args.role,
+    brandedUrl(defaultFrontendBase(), "/dashboard"),
+  );
+  const emailProvider = await getEmailProvider();
+  await emailProvider.send({
+    to: target.email,
+    subject: content.subject,
+    textBody: content.textBody,
+    htmlBody: content.htmlBody,
+  });
 }
 
 interface CreateTeamInput {
@@ -212,6 +257,24 @@ export const teamResolvers = {
       // Seed defaultTeamId when the target user has none. First team wins;
       // subsequent adds don't overwrite an explicit choice.
       await ensureDefaultTeam(context.prisma, args.userId, args.teamId);
+
+      // Tell the person they were added. `inviteUser` already emails an
+      // existing org member it adds to a team; this is the same email for
+      // the "Add member" picker, which adds org members directly. Adding
+      // yourself sends nothing. Best-effort: a failed send never undoes the add.
+      if (args.userId !== user.id) {
+        try {
+          await notifyTeamAdd(context, {
+            inviterName: user.name,
+            targetUserId: args.userId,
+            teamName: team.name,
+            organisationId: team.organisationId,
+            role,
+          });
+        } catch (err) {
+          console.error("[addTeamMember] team-add notification failed:", err);
+        }
+      }
 
       return membership;
     },
