@@ -25,6 +25,19 @@ const NAMES_ENV = /\b(?:dev|prod|production|staging)\b/i;
 const IS_CHECKBOX = /^\s*[-*][ \t]+\[[ xX]\]/;
 // An unindented numbered item or a sub-heading starts a step.
 const STEP_START = /^(?:\d+[.)][ \t]+\S|#{1,6}[ \t]+\S)/;
+// Trailing boilerplate, not a step. Most PR descriptions end with an attribution
+// line, and when "Manual deploy steps" is the last section that line lands
+// inside it: it was then reported as a step missing a command and a prod
+// checkbox, for something nobody wrote as a step (clear #1548). Authors were
+// working around it by putting the section second-to-last, against the order the
+// template suggests.
+//
+// Deliberately narrow: an attribution must be a verb phrase that *ends* in a
+// Markdown link, so a real step ("Generated with the script, then run …") stays
+// a step and is still checked. Dropping a real step in silence would cause the
+// prod incident this check exists to prevent, so the bias is to keep.
+const RULE = /^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
+const ATTRIBUTION = /^[^\w\n]*(?:generated|created|made|co-authored)[ \t]+(?:with|by)\b[^\n]*\[[^\]\n]+\]\([^)\n]+\)[ \t]*$/i;
 
 /** Lines of the text, each with whether it sits inside a fenced code block (fences
  * included) and whether it opens one. */
@@ -89,7 +102,19 @@ export function manualDeploySteps(section) {
   const isIntro = (step) =>
     !/^\d+[.)]/.test(step) && !step.includes("`") && !step.split("\n").some((x) => IS_CHECKBOX.test(x)) && /:\s*$/.test(step);
   if (steps.length > 1 && isIntro(steps[0])) steps.shift();
+  // The mirror image at the end: a trailing block of nothing but a horizontal
+  // rule and an attribution line is the PR's footer, not a step.
+  if (steps.length > 0 && isFooter(steps.at(-1))) steps.pop();
   return steps;
+}
+
+/** A trailing block that is only boilerplate: no checkbox, and every non-blank
+ * line is a horizontal rule or an attribution link. */
+function isFooter(step) {
+  const lines = step.split("\n");
+  if (lines.some((line) => IS_CHECKBOX.test(line))) return false;
+  const content = lines.filter((line) => line.trim());
+  return content.length > 0 && content.every((line) => RULE.test(line) || ATTRIBUTION.test(line));
 }
 
 /** Problems with the PR body's "Manual deploy steps" section; empty when it passes. */
@@ -108,8 +133,18 @@ export function checkManualDeploySteps(body) {
     ];
   }
 
+  const steps = manualDeploySteps(section);
+  // A section holding nothing but the PR's footer says nothing about deploying.
+  // Without this the footer would be dropped as boilerplate and the PR would
+  // pass having declared neither "None" nor a step.
+  if (steps.length === 0) {
+    return [
+      '"Manual deploy steps" says nothing but the PR\'s own footer. Write "None", or list each step with its command and a dev and prod checkbox.',
+    ];
+  }
+
   const errors = [];
-  manualDeploySteps(section).forEach((step, i) => {
+  steps.forEach((step, i) => {
     const which = `Step ${i + 1} ("${step.split("\n")[0].slice(0, 60)}")`;
     if (!step.includes("`")) {
       const bare = !step.split("\n").some((x) => IS_CHECKBOX.test(x));
