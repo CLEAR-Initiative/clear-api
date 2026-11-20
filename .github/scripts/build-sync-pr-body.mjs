@@ -29,10 +29,21 @@
 // the current body in PR_BODY. BASE/HEAD default to prod/dev.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { manualDeploySection, manualDeploySteps } from "./check-manual-deploy-steps.mjs";
 
 export const START = "<!-- sync-pr-body:start -->";
 export const END = "<!-- sync-pr-body:end -->";
+
+// An invisible anchor written before each step, so a tick can be matched to the
+// step that earned it. `<pr>.<ordinal>` alone would move a tick to a different
+// step if a PR's steps were reordered, so the step's own text is hashed in: when
+// a step changes, its anchor changes and the tick is dropped rather than
+// inherited. Markdown hides it; losing it (someone editing the block by hand)
+// only costs a tick, which fails closed.
+const stepAnchor = (number, ordinal, step) =>
+  `<!-- step ${number}.${ordinal} ${createHash("sha1").update(step).digest("hex").slice(0, 8)} -->`;
+const STEP_ANCHOR = /^<!--[ \t]*step[ \t]+([\w.]+[ \t]+[0-9a-f]{8})[ \t]*-->[ \t]*$/;
 
 // "Merge pull request #149 from CLEAR-Initiative/feat/x" (merge commit) and
 // "feat(gx): add the source (#149)" (squash merge, the default here).
@@ -142,7 +153,7 @@ export function renderSyncBody(prs, { base = "prod", head = "dev", sha = "" } = 
     );
     for (const pr of withSteps) {
       out.push(`### ${label(pr)}`, "");
-      out.push(...pr.steps.flatMap((step) => [step, ""]));
+      out.push(...pr.steps.flatMap((step, i) => [stepAnchor(pr.number, i + 1, step), step, ""]));
     }
   } else {
     out.push("## Manual deploy steps", "", "None declared by the PRs in this sync.", "");
@@ -174,22 +185,59 @@ export function renderSyncBody(prs, { base = "prod", head = "dev", sha = "" } = 
   return out.join("\n");
 }
 
-/** `next` with every checkbox re-ticked that was ticked in `previous`, matched on
- * the text after the box. Without this, the workflow's own re-run on
- * `synchronize` would silently clear the prod ticks someone had earned. */
-export function preserveTicks(previous, next) {
-  const ticked = new Set();
-  for (const line of String(previous ?? "").split("\n")) {
-    const match = CHECKBOX_LINE.exec(line);
-    if (match && match[2] !== " ") ticked.add(match[3].trim());
+/** The generated block's contents, or "" when the body has none. Ticks outside
+ * it are none of our business — in particular the PR template's commented-out
+ * example, which a sync PR keeps above the block. */
+function generatedBlock(body) {
+  const text = String(body ?? "");
+  const start = text.indexOf(START);
+  const end = text.indexOf(END);
+  return start === -1 || end === -1 || end < start ? "" : text.slice(start + START.length, end);
+}
+
+/** Ticked checkbox labels from a previous body, grouped by the step anchor they
+ * sit under, so a tick can only come back to the step that earned it. */
+function tickedByStep(previous) {
+  const out = new Map();
+  let anchor = "";
+  for (const line of generatedBlock(previous).split("\n")) {
+    const mark = STEP_ANCHOR.exec(line);
+    if (mark) {
+      anchor = mark[1];
+      continue;
+    }
+    const box = CHECKBOX_LINE.exec(line);
+    if (!box || box[2] === " ") continue;
+    if (!out.has(anchor)) out.set(anchor, new Set());
+    out.get(anchor).add(box[3].trim());
   }
+  return out;
+}
+
+/** `next` with every checkbox re-ticked that was ticked on the same step in
+ * `previous`. Without this, the workflow's own re-run on `synchronize` would
+ * silently clear the prod ticks someone had earned.
+ *
+ * Matching is per step, not per label. Two steps may legitimately carry the same
+ * checkbox text: the gate accepts a bare `- [ ] prod` when the ticket is named
+ * elsewhere in the step, so several steps can read exactly `- [ ] prod`. Keying
+ * on the label alone let one tick approve all of them, and the sync then passed
+ * with prod work undone — the failure this script exists to prevent. */
+export function preserveTicks(previous, next) {
+  const ticked = tickedByStep(previous);
   if (ticked.size === 0) return next;
+  let anchor = "";
   return next
     .split("\n")
     .map((line) => {
-      const match = CHECKBOX_LINE.exec(line);
-      if (!match || match[2] !== " " || !ticked.has(match[3].trim())) return line;
-      return `${match[1]}[x]${match[3]}`;
+      const mark = STEP_ANCHOR.exec(line);
+      if (mark) {
+        anchor = mark[1];
+        return line;
+      }
+      const box = CHECKBOX_LINE.exec(line);
+      if (!box || box[2] !== " " || !ticked.get(anchor)?.has(box[3].trim())) return line;
+      return `${box[1]}[x]${box[3]}`;
     })
     .join("\n");
 }
@@ -206,9 +254,17 @@ export function spliceBody(body, generated) {
   return `${text.slice(0, start)}${generated}${text.slice(end + END.length)}`;
 }
 
-/** Unticked `prod` checkboxes in the body — the sync's remaining work. */
+/** Unticked `prod` checkboxes in the body — the sync's remaining work.
+ *
+ * HTML comments are dropped first. GitHub prefills a new PR with
+ * .github/pull_request_template.md, whose commented-out example contains
+ * `- [ ] prod: …/tickets/<number>`; spliceBody keeps that prose above the
+ * generated block, so counting it would block every sync — including one with
+ * no manual steps at all — on a checkbox nobody can see or tick. Boxes a human
+ * wrote outside the block still count: those are visible and real. */
 export function pendingProdBoxes(body) {
   return String(body ?? "")
+    .replace(/<!--[\s\S]*?-->/g, "")
     .split("\n")
     .filter((line) => PROD_BOX.test(line) && /\[[ ]\]/.test(line))
     .map((line) => line.trim());

@@ -1,6 +1,7 @@
 // Tests for build-sync-pr-body.mjs. Run: node --test .github/scripts/build-sync-pr-body.test.mjs
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   START,
@@ -130,18 +131,78 @@ test("pendingProdBoxes counts only unticked prod boxes", () => {
   assert.deepEqual(pendingProdBoxes(body), ["- [ ] prod: ticket", "- [ ] prod"]);
 });
 
+// Greptile P1 on clear-api #352: GitHub prefills the template, whose commented
+// example holds an unticked prod box, so every sync failed on an invisible
+// checkbox — even one with no manual steps.
+test("pendingProdBoxes ignores boxes inside HTML comments", () => {
+  const template = readFileSync(new URL("../pull_request_template.md", import.meta.url), "utf8");
+  const body = spliceBody(template, renderSyncBody([], { base: "prod", head: "dev" }));
+  assert.ok(/- \[ \] prod/.test(template), "the template really does carry a commented prod example");
+  assert.deepEqual(pendingProdBoxes(body), [], "a sync with no manual steps is not blocked by it");
+});
+
+test("pendingProdBoxes still counts a visible box a human added outside the block", () => {
+  const body = `- [ ] prod: something I noticed\n\n${renderSyncBody([], { base: "prod", head: "dev" })}`;
+  assert.deepEqual(pendingProdBoxes(body), ["- [ ] prod: something I noticed"]);
+});
+
+/** Two steps on one PR, each with a bare `- [ ] prod` box — a shape the gate
+ * accepts, since each names its ticket on its own line. */
+const TWO_BARE_BOXES = `## Manual deploy steps
+
+1. First
+   \`cmd-a\`
+   - [ ] prod
+   ticket https://www.exponential.im/w/clear/products/clear/tickets/1
+2. Second
+   \`cmd-b\`
+   - [ ] prod
+   ticket https://www.exponential.im/w/clear/products/clear/tickets/2
+`;
+
 test("preserveTicks keeps a tick earned on the sync PR across a re-render", () => {
-  const previous = "- [x] prod: https://t/1520\n- [ ] prod: https://t/1521";
-  const next = "- [ ] prod: https://t/1520\n- [ ] prod: https://t/1521";
-  const merged = preserveTicks(previous, next);
-  assert.equal(merged, "- [x] prod: https://t/1520\n- [ ] prod: https://t/1521");
-  assert.deepEqual(pendingProdBoxes(merged), ["- [ ] prod: https://t/1521"]);
+  const prs = [classifyPr({ number: 149, title: "t", url: "u", body: STEPS_BODY })];
+  const first = renderSyncBody(prs, { base: "prod", head: "dev" });
+  assert.deepEqual(pendingProdBoxes(first).length, 1);
+
+  const ticked = first.replace("- [ ] prod:", "- [x] prod:");
+  const merged = preserveTicks(ticked, renderSyncBody(prs, { base: "prod", head: "dev" }));
+  assert.deepEqual(pendingProdBoxes(merged), []);
 });
 
 test("preserveTicks does not invent ticks for new steps", () => {
-  const next = "- [ ] prod: https://t/new";
+  const prs = [classifyPr({ number: 1, title: "t", url: "u", body: STEPS_BODY })];
+  const next = renderSyncBody(prs, { base: "prod", head: "dev" });
   assert.equal(preserveTicks("- [x] prod: https://t/old", next), next);
   assert.equal(preserveTicks("", next), next);
+});
+
+// Greptile P1 on clear-api #352: keyed on the checkbox label alone, one tick
+// re-ticked every identical box, so a sync could pass with prod work undone.
+test("preserveTicks does not let one tick approve another step's identical box", () => {
+  const prs = [classifyPr({ number: 7, title: "two steps", url: "u", body: TWO_BARE_BOXES })];
+  const first = renderSyncBody(prs, { base: "prod", head: "dev" });
+  assert.equal(pendingProdBoxes(first).length, 2, "both bare prod boxes start unticked");
+
+  // Tick only the first one, as a human would in the GitHub UI.
+  const ticked = first.replace("- [ ] prod", "- [x] prod");
+  const merged = preserveTicks(ticked, renderSyncBody(prs, { base: "prod", head: "dev" }));
+  assert.equal(pendingProdBoxes(merged).length, 1, "the second step is still outstanding");
+});
+
+test("preserveTicks drops a tick when the step's text changed", () => {
+  const before = renderSyncBody([classifyPr({ number: 9, title: "t", url: "u", body: STEPS_BODY })], {});
+  const ticked = before.replace("- [ ] prod:", "- [x] prod:");
+  const changed = STEPS_BODY.replace("iom_dtm_flash_alerts", "something_else");
+  const after = renderSyncBody([classifyPr({ number: 9, title: "t", url: "u", body: changed })], {});
+  assert.equal(pendingProdBoxes(preserveTicks(ticked, after)).length, 1, "a rewritten step must be re-done");
+});
+
+test("preserveTicks ignores ticks outside the generated block", () => {
+  const prs = [classifyPr({ number: 1, title: "t", url: "u", body: STEPS_BODY })];
+  const next = renderSyncBody(prs, {});
+  const previous = `- [x] prod: https://www.exponential.im/w/clear/products/clear/tickets/1520\n\n${next}`;
+  assert.equal(pendingProdBoxes(preserveTicks(previous, next)).length, 1);
 });
 
 test("spliceBody replaces the block and keeps surrounding prose", () => {
