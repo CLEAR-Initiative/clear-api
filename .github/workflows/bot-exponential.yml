@@ -1,8 +1,15 @@
 name: Bot / Exponential promote
+# Moves a Ticket QA -> DONE when its code reaches production (clear #1540):
+# on a PR merged into `prod` (a "Sync prod with dev" PR or a prod hotfix), the
+# Tickets linked to that PR or to any feature PR it carries. The sync PR's
+# commits name each feature PR as "(#<n>)" at the end of a squash subject, or as
+# "Merge pull request #<n> from" for a PR merged with a merge commit. A merge into `dev` changes no Ticket: it ships to
+# dev only, and the Ticket stays in QA. Only Tickets in QA move; a BLOCKED or
+# IN_PROGRESS Ticket linked to the same PR is left alone.
 on:
   pull_request:
     types: [closed]
-    branches: [dev]
+    branches: [prod]
 env:
   EXPO_API_URL: https://www.exponential.im
   EXPO_PRODUCT: clear
@@ -24,26 +31,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
           REPO_URL: ${{ github.event.pull_request.base.repo.html_url }}
         run: |
           set -euo pipefail
-          # Child-PR refs (#123) come from the PR's commit messages via the API,
-          # not `git log base..head`: after a squash-merge the head commits are
-          # unreachable (branch auto-deleted), so that range fails on re-runs
-          # and races branch deletion on first runs.
+          # Child-PR refs come from the PR's commit messages via the API, not
+          # `git log base..head` (squash-merged heads are unreachable). A commit
+          # subject names the PR it brought in two ways: "... (#123)" at its end
+          # (a squash merge) or "Merge pull request #123 from ..." at its start (a
+          # merge commit, used for no-automerge PRs). A "#123" elsewhere (a body,
+          # a ticket number) is not a PR this sync carries.
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" \
+            --paginate --jq '.[].commit.message | split("\n")[0]' > /tmp/subjects
+          # The endpoint returns at most 250 commits. Fail rather than leave the
+          # Tickets of the missing commits in QA without anyone knowing.
+          got=$(wc -l < /tmp/subjects | tr -d ' ')
+          if [ "$got" -ne "$PR_COMMITS" ]; then
+            echo "::error::PR #$PR_NUMBER has $PR_COMMITS commits but the API listed $got; move its Tickets to DONE by hand."
+            exit 1
+          fi
           {
             echo "$PR_URL"
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" \
-              --paginate --jq '.[].commit.message' \
-              | { grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -u \
+            { grep -oE '\(#[0-9]+\)[[:space:]]*$|^Merge pull request #[0-9]+ from' /tmp/subjects || true; } \
+              | tr -dc '0-9\n' | sort -u \
               | sed "s@^@${REPO_URL}/pull/@"
           } | sort -u > /tmp/prs
           jq -R -s -c 'split("\n") | map(select(length > 0))' /tmp/prs > /tmp/prs.json
           exponential tickets list --product "$EXPO_PRODUCT" --workspace "$EXPO_WORKSPACE" --json > /tmp/all.json
           jq --slurpfile prs /tmp/prs.json \
-            '[.tickets[] | select(.prUrl != null and (.prUrl as $u | $prs[0] | index($u)))]' \
+            '[.tickets[] | select(.status == "QA" and .prUrl != null and (.prUrl as $u | $prs[0] | index($u)))]' \
             /tmp/all.json > /tmp/tickets.json
-          echo "Matched $(jq length /tmp/tickets.json) ticket(s)."
+          echo "Matched $(jq length /tmp/tickets.json) ticket(s) in QA."
       - name: Promote
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -51,5 +69,5 @@ jobs:
           set -euo pipefail
           jq -r '.[].id' /tmp/tickets.json | while read -r cuid; do
             exponential tickets update --id "$cuid" --status DONE
-            exponential tickets comment add --id "$cuid" -m "Shipped: $PR_URL"
+            exponential tickets comment add --id "$cuid" -m "Shipped to prod: $PR_URL"
           done
