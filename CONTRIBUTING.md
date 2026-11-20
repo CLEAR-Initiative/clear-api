@@ -230,8 +230,16 @@ To add a variable:
 4. If it's one people need to know about, add it to the Configuration table in the README.
 
 Values for the deployed environments are set by the team in a private infrastructure repo. If your
-PR adds a variable, say so in the PR description so it gets added for dev and prod. Never put a real
-value in the PR.
+PR adds a variable, list it under **Manual deploy steps** in the PR description so it gets added for
+dev and prod. Never put a real value in the PR.
+
+### Manual deploy steps
+
+Every PR description has a **Manual deploy steps** section (from `.github/pull_request_template.md`).
+Write "None", or list each step the code needs but no code performs: the exact command, a `- [ ] dev`
+and a `- [ ] prod` checkbox, and a link to the ticket that tracks the prod step. CI fails the PR while
+the section is blank. You own each step until prod is ticked. Prefer code to a manual step: a row
+that code looks up by name ships as a migration, not only in `prisma/seed.ts`.
 
 ## Secrets
 
