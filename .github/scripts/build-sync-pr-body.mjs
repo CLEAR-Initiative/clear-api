@@ -37,13 +37,23 @@ export const END = "<!-- sync-pr-body:end -->";
 
 // An invisible anchor written before each step, so a tick can be matched to the
 // step that earned it. `<pr>.<ordinal>` alone would move a tick to a different
-// step if a PR's steps were reordered, so the step's own text is hashed in: when
-// a step changes, its anchor changes and the tick is dropped rather than
-// inherited. Markdown hides it; losing it (someone editing the block by hand)
-// only costs a tick, which fails closed.
-const stepAnchor = (number, ordinal, step) =>
-  `<!-- step ${number}.${ordinal} ${createHash("sha1").update(step).digest("hex").slice(0, 8)} -->`;
-const STEP_ANCHOR = /^<!--[ \t]*step[ \t]+([\w.]+[ \t]+[0-9a-f]{8})[ \t]*-->[ \t]*$/;
+// step if a PR's steps were reordered, so the step's own text is hashed in too.
+// On the way back, the lines under an anchor are re-hashed and the ticks are
+// only trusted when they still match: a step that was edited, or whose anchor
+// someone deleted, loses its ticks instead of donating them to the step above.
+// Checkbox state is normalised out of the hash, so ticking a box never changes
+// the hash of the step it sits in.
+// Each step is fenced by a pair, rather than marked only at its start: a step
+// may itself contain blank lines and sub-headings, so there is no reliable way
+// to infer where it ends — inferring it swallowed the sections after the last
+// step and dropped every tick. A broken pair (either half deleted) leaves the
+// step unattributable, so its ticks are dropped rather than misapplied.
+const normalizeBoxes = (text) => text.replace(/^([ \t]*[-*][ \t]+)\[[xX]\]/gm, "$1[ ]");
+const stepHash = (step) => createHash("sha1").update(normalizeBoxes(step)).digest("hex").slice(0, 8);
+const stepOpen = (number, ordinal, step) => `<!-- step ${number}.${ordinal} ${stepHash(step)} -->`;
+const stepClose = (number, ordinal) => `<!-- /step ${number}.${ordinal} -->`;
+const STEP_OPEN = /^<!--[ \t]*step[ \t]+([\w.]+)[ \t]+([0-9a-f]{8})[ \t]*-->[ \t]*$/;
+const STEP_CLOSE = /^<!--[ \t]*\/step[ \t]+([\w.]+)[ \t]*-->[ \t]*$/;
 
 // "Merge pull request #149 from CLEAR-Initiative/feat/x" (merge commit) and
 // "feat(gx): add the source (#149)" (squash merge, the default here).
@@ -153,7 +163,9 @@ export function renderSyncBody(prs, { base = "prod", head = "dev", sha = "" } = 
     );
     for (const pr of withSteps) {
       out.push(`### ${label(pr)}`, "");
-      out.push(...pr.steps.flatMap((step, i) => [stepAnchor(pr.number, i + 1, step), step, ""]));
+      out.push(
+        ...pr.steps.flatMap((step, i) => [stepOpen(pr.number, i + 1, step), step, stepClose(pr.number, i + 1), ""]),
+      );
     }
   } else {
     out.push("## Manual deploy steps", "", "None declared by the PRs in this sync.", "");
@@ -195,21 +207,43 @@ function generatedBlock(body) {
   return start === -1 || end === -1 || end < start ? "" : text.slice(start + START.length, end);
 }
 
-/** Ticked checkbox labels from a previous body, grouped by the step anchor they
- * sit under, so a tick can only come back to the step that earned it. */
+/** Ticked checkbox labels from a previous body, keyed by step anchor, so a tick
+ * can only come back to the step that earned it.
+ *
+ * Each anchor's block is re-hashed and skipped unless it still matches. Without
+ * that check, deleting one step's anchor silently filed its boxes under the
+ * previous step's anchor, and the next render ticked *that* step and reset the
+ * edited one — approving work nobody had done. A block that no longer matches
+ * its anchor is unattributable, so its ticks are dropped. */
 function tickedByStep(previous) {
   const out = new Map();
-  let anchor = "";
+  let open = null;
+  let body = [];
   for (const line of generatedBlock(previous).split("\n")) {
-    const mark = STEP_ANCHOR.exec(line);
-    if (mark) {
-      anchor = mark[1];
+    const opens = STEP_OPEN.exec(line);
+    if (opens) {
+      open = { id: opens[1], hash: opens[2] };
+      body = [];
       continue;
     }
-    const box = CHECKBOX_LINE.exec(line);
-    if (!box || box[2] === " ") continue;
-    if (!out.has(anchor)) out.set(anchor, new Set());
-    out.get(anchor).add(box[3].trim());
+    const closes = STEP_CLOSE.exec(line);
+    if (closes) {
+      const block = body.join("\n").trim();
+      if (open?.id === closes[1] && stepHash(block) === open.hash) {
+        const ticked = new Set();
+        for (const inner of block.split("\n")) {
+          const box = CHECKBOX_LINE.exec(inner);
+          if (box && box[2] !== " ") ticked.add(box[3].trim());
+        }
+        // Keyed on id *and* hash: the id alone would let a rewritten step
+        // inherit the tick its earlier text had earned.
+        if (ticked.size > 0) out.set(`${open.id} ${open.hash}`, ticked);
+      }
+      open = null;
+      body = [];
+      continue;
+    }
+    if (open) body.push(line);
   }
   return out;
 }
@@ -226,20 +260,38 @@ function tickedByStep(previous) {
 export function preserveTicks(previous, next) {
   const ticked = tickedByStep(previous);
   if (ticked.size === 0) return next;
+
+  // Only ever rewrite inside the generated block. The CLI hands this the whole
+  // spliced body, and walking all of it left the last step's anchor in scope
+  // past END: a `- [ ] prod` a human had written below the block was ticked on
+  // their behalf whenever the last generated step carried an identical ticked
+  // box, and the gate then passed with that work unfinished.
+  const start = next.indexOf(START);
+  const end = next.indexOf(END);
+  if (start === -1 || end === -1 || end < start) return next;
+  const head = next.slice(0, start + START.length);
+  const tail = next.slice(end);
+
   let anchor = "";
-  return next
+  const block = next
+    .slice(start + START.length, end)
     .split("\n")
     .map((line) => {
-      const mark = STEP_ANCHOR.exec(line);
-      if (mark) {
-        anchor = mark[1];
+      const opens = STEP_OPEN.exec(line);
+      if (opens) {
+        anchor = `${opens[1]} ${opens[2]}`;
+        return line;
+      }
+      if (STEP_CLOSE.test(line)) {
+        anchor = "";
         return line;
       }
       const box = CHECKBOX_LINE.exec(line);
-      if (!box || box[2] !== " " || !ticked.get(anchor)?.has(box[3].trim())) return line;
+      if (!box || box[2] !== " " || !anchor || !ticked.get(anchor)?.has(box[3].trim())) return line;
       return `${box[1]}[x]${box[3]}`;
     })
     .join("\n");
+  return `${head}${block}${tail}`;
 }
 
 /** Replace the generated block in `body`, or append it when there is none, so

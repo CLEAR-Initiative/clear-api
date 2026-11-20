@@ -198,6 +198,41 @@ test("preserveTicks drops a tick when the step's text changed", () => {
   assert.equal(pendingProdBoxes(preserveTicks(ticked, after)).length, 1, "a rewritten step must be re-done");
 });
 
+// Greptile P1 on clear-pipeline #226: the last step's anchor stayed in scope
+// past END, so a box a human wrote below the block was ticked for them.
+test("preserveTicks never ticks a box outside the generated block", () => {
+  const prs = [classifyPr({ number: 7, title: "two steps", url: "u", body: TWO_BARE_BOXES })];
+  const base = renderSyncBody(prs, { base: "prod", head: "dev" });
+  const at = base.lastIndexOf("- [ ] prod");
+  const previous = `${base.slice(0, at)}- [x] prod${base.slice(at + "- [ ] prod".length)}\n\n- [ ] prod`;
+  const next = `${base}\n\n- [ ] prod`;
+
+  const merged = preserveTicks(previous, next);
+  assert.match(merged.slice(merged.indexOf(END)), /- \[ \] prod/, "the human's own box is left alone");
+  assert.equal(pendingProdBoxes(merged).length, 2, "their box plus the step that was never ticked");
+});
+
+// Greptile P1 on clear-pipeline #226: with a step's anchor deleted, its boxes
+// were filed under the previous anchor, so the next render ticked the step
+// above instead of dropping the tick.
+test("preserveTicks drops ticks for a step whose anchor was deleted", () => {
+  const prs = [classifyPr({ number: 7, title: "two steps", url: "u", body: TWO_BARE_BOXES })];
+  const base = renderSyncBody(prs, { base: "prod", head: "dev" });
+  const anchors = base.split("\n").filter((l) => /^<!-- step /.test(l));
+  const mangled = base.replace(`${anchors[1]}\n`, "");
+  const at = mangled.lastIndexOf("- [ ] prod");
+  const previous = `${mangled.slice(0, at)}- [x] prod${mangled.slice(at + "- [ ] prod".length)}`;
+
+  const merged = preserveTicks(previous, renderSyncBody(prs, { base: "prod", head: "dev" }));
+  assert.equal(pendingProdBoxes(merged).length, 2, "nothing is inherited; both steps still need doing");
+});
+
+test("preserveTicks survives a human also ticking the dev box", () => {
+  const prs = [classifyPr({ number: 149, title: "t", url: "u", body: STEPS_BODY })];
+  const previous = renderSyncBody(prs, {}).replace("- [ ] prod:", "- [x] prod:").replace("- [x] dev", "- [X] dev");
+  assert.deepEqual(pendingProdBoxes(preserveTicks(previous, renderSyncBody(prs, {}))), []);
+});
+
 test("preserveTicks ignores ticks outside the generated block", () => {
   const prs = [classifyPr({ number: 1, title: "t", url: "u", body: STEPS_BODY })];
   const next = renderSyncBody(prs, {});
