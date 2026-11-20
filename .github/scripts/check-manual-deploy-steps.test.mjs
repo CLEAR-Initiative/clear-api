@@ -206,3 +206,70 @@ test("a None that names an environment gets one clear message", () => {
     assert.match(errors[0], /Write just "None"/, body);
   }
 });
+
+// clear #1548: when "Manual deploy steps" is the last section, the PR's own
+// attribution footer landed inside it and was reported as a step missing a
+// command and a prod box. Authors worked around it by moving the section away
+// from last, against the order the template suggests.
+const FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
+
+test("a trailing attribution footer is not a step", () => {
+  const body = [
+    "## Manual deploy steps",
+    "",
+    "```bash",
+    "psql \"$DATABASE_URL\" -c \"insert into data_sources (name) values ('x')\"",
+    "```",
+    "- [ ] dev",
+    `- [ ] prod ${TICKET_URL}`,
+    "",
+    FOOTER,
+  ].join("\n");
+  assert.deepEqual(checkManualDeploySteps(body), []);
+});
+
+test("a footer after a horizontal rule is not a step either", () => {
+  // Deliberately NOT a "None" section: that returns before manualDeploySteps is
+  // reached, so the test would pass even with horizontal-rule support removed.
+  const body = [
+    "## Manual deploy steps",
+    "",
+    "Run `bun run backfill` against prod",
+    `- [ ] prod ${TICKET_URL}`,
+    "",
+    "---",
+    "",
+    FOOTER,
+  ].join("\n");
+  assert.deepEqual(checkManualDeploySteps(body), []);
+});
+
+test("a section holding only the footer still fails", () => {
+  const errors = checkManualDeploySteps(["## Manual deploy steps", "", FOOTER].join("\n"));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /nothing but the PR's own footer/);
+});
+
+test("a real step is never mistaken for a footer", () => {
+  // Reads like an attribution but is a step: it does not end in a link, and it
+  // carries a checkbox.
+  const body = [
+    "## Manual deploy steps",
+    "",
+    "Generated with the one-off script, then run `bun run backfill` against prod",
+    "",
+    FOOTER,
+  ].join("\n");
+  const errors = checkManualDeploySteps(body);
+  assert.ok(
+    errors.some((e) => /prod" checkbox/.test(e)),
+    `the step must still be checked, got: ${JSON.stringify(errors)}`,
+  );
+});
+
+test("a footer does not swallow the step above it", () => {
+  const body = ["## Manual deploy steps", "", "Set the secret by hand", "", FOOTER].join("\n");
+  const errors = checkManualDeploySteps(body);
+  assert.ok(errors.length >= 1, "the bare step is still reported");
+  assert.ok(!errors.some((e) => e.includes("Generated with")), `no error should name the footer: ${JSON.stringify(errors)}`);
+});
