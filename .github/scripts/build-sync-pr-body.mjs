@@ -367,15 +367,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const base = process.env.BASE || "prod";
   const head = process.env.HEAD_REF || "dev";
 
-  if (mode === "check") {
+  if (mode === "pending") {
+    // One line per outstanding box, nothing when there are none, and always
+    // exit 0. The workflow acts on this through a label and a review instead of
+    // a failing check: a sync PR's head branch is `dev`, so its head SHA *is*
+    // dev's tip, and a failing check landed on whatever commit had just been
+    // merged there — clear-api #357 looked broken when the gate it tripped
+    // belonged to #358 (clear #1562).
+    for (const box of pendingProdBoxes(process.env.PR_BODY)) console.log(box);
+  } else if (mode === "check") {
+    // Kept for running by hand ("what is still outstanding on this sync?").
+    // CI uses `pending`, because exiting non-zero here is what marked dev red.
     const pending = pendingProdBoxes(process.env.PR_BODY);
     if (pending.length === 0) {
       console.log("Manual deploy steps: every prod box is ticked.");
     } else {
-      console.log(
-        `::error title=Prod steps pending::${pending.length} prod step(s) still unticked. ` +
-          "Run each against prod, tick its box, then merge.",
-      );
+      console.log(`${pending.length} prod step(s) still unticked. Run each against prod, then tick its box.`);
       for (const box of pending) console.log(`  ${box}`);
       process.exit(1);
     }
@@ -385,6 +392,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const generated = renderSyncBody(prs, { base, head, sha: process.env.GITHUB_SHA ?? "" });
     process.stdout.write(preserveTicks(process.env.PR_BODY, spliceBody(process.env.PR_BODY, generated)));
   } else {
-    throw new Error(`unknown mode "${mode}" (expected "render" or "check")`);
+    throw new Error(`unknown mode "${mode}" (expected "render", "pending" or "check")`);
   }
 }

@@ -1,8 +1,8 @@
 name: Sync PR body
 
 # Fills in the description of a `dev → prod` sync PR with every PR it ships and
-# the manual deploy steps those PRs declared, then keeps the PR red until every
-# prod box is ticked.
+# the manual deploy steps those PRs declared, then marks the PR as not ready to
+# merge while any prod step is outstanding.
 #
 # Sync PRs used to be opened with an empty body bundling ~10 PRs, so the manual
 # steps their authors had written down never reached the person merging: #204
@@ -10,18 +10,27 @@ name: Sync PR body
 # `iom_dtm_flash_alerts` source row. See the 2026-11-13 postmortem,
 # recommendation 4 (clear #1525).
 #
+# The outstanding-work signal is a label plus a review, deliberately not a
+# failing check. A sync PR's head branch is `dev`, so its head SHA *is* dev's
+# tip, and GitHub attaches check runs to commits: a failing check landed on
+# whatever commit had just been merged into dev, and clear-api #357 looked
+# broken when the gate it tripped belonged to #358 (clear #1562). This job
+# therefore always succeeds. Enforcement is review approval on `prod`, or the
+# auto-merge bot honouring the label — not a required status check.
+#
 # Only PRs whose head is `dev` are touched — a hotfix straight into `prod` keeps
 # the body its author wrote. Note that hotfix PRs into `prod` are checked by
-# nothing today: check.yml's manual-steps gate only runs on PRs into `dev`.
+# nothing today: check.yml's manual-steps gate only runs on PRs into `dev`
+# (clear #1550).
 
 on:
   pull_request:
     branches: [prod]
-    # `edited` re-runs the gate when someone ticks a prod box in the
-    # description. Writing the body from this workflow does NOT re-trigger it:
-    # GitHub does not start new workflow runs for events raised with
-    # GITHUB_TOKEN. The compare-and-skip step below is belt and braces, and
-    # keeps the PR timeline free of no-op edits.
+    # `edited` re-runs this when someone ticks a prod box in the description.
+    # Writing the body from here does NOT re-trigger it: GitHub does not start
+    # new workflow runs for events raised with GITHUB_TOKEN. The
+    # compare-and-skip step below is belt and braces, and keeps the PR timeline
+    # free of no-op edits.
     types: [opened, synchronize, reopened, edited]
 
 permissions:
@@ -34,13 +43,15 @@ concurrency:
 
 jobs:
   body:
-    name: build body, gate prod steps
+    name: sync pr body
     if: github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
+      LABEL: prod-steps-outstanding
     steps:
       - uses: actions/checkout@v4
 
@@ -71,10 +82,51 @@ jobs:
             echo "PR description updated."
           fi
 
-      # Deliberately the last step and deliberately failing: a red check is the
-      # "do not merge yet" signal. Make this a required check in branch
-      # protection on `prod` so the sync cannot merge with steps outstanding.
-      - name: Prod steps are ticked
+      - name: Flag or clear the outstanding prod steps
         run: |
+          set -euo pipefail
           PR_BODY="$(cat next-body.md)" \
-            node .github/scripts/build-sync-pr-body.mjs check
+            node .github/scripts/build-sync-pr-body.mjs pending > pending.txt
+          count=$(grep -c . pending.txt || true)
+
+          # The bot's own open "changes requested" review, if it has one. Only
+          # one is ever outstanding, so re-runs neither stack reviews nor
+          # re-request changes after a human has ticked everything. No
+          # --paginate: with --jq it would emit one result per page, and a sync
+          # PR never has hundreds of reviews. A dismissed review reads as
+          # DISMISSED, so it is correctly ignored here.
+          open_review=$(gh api "repos/$REPO/pulls/$PR/reviews" \
+            --jq 'map(select(.user.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED")) | last | .id // empty')
+
+          if [ "$count" -gt 0 ]; then
+            echo "::notice title=Prod steps outstanding::$count prod step(s) still unticked on this sync."
+            sed 's/^/  /' pending.txt
+            gh label create "$LABEL" --color B60205 \
+              --description "A dev -> prod sync with manual prod steps still unticked" 2>/dev/null || true
+            gh pr edit "$PR" --add-label "$LABEL"
+            if [ -z "$open_review" ]; then
+              { echo "**$count prod step(s) still unticked.** Run each against prod, tick its box in the description, and this review clears itself.";
+                echo;
+                sed 's/^/- /' pending.txt;
+                echo;
+                echo "_Posted by \`sync-pr-body.yml\`. The checklist above the generated block counts too (clear #1525)._"; } > review.md
+              # GitHub refuses a review on your own PR, so this fails if a sync
+              # is ever opened by this same token. The label is the signal that
+              # must not be lost, so a failed review warns rather than fails.
+              if gh api "repos/$REPO/pulls/$PR/reviews" -f event=REQUEST_CHANGES -F body=@review.md >/dev/null 2>&1; then
+                echo "Requested changes."
+              else
+                echo "::warning title=Review not posted::Could not request changes (a PR opened by this token cannot be reviewed by it). The $LABEL label is set."
+              fi
+            else
+              echo "Changes already requested (review $open_review); leaving it."
+            fi
+          else
+            echo "Every prod box is ticked."
+            gh pr edit "$PR" --remove-label "$LABEL" 2>/dev/null || true
+            if [ -n "$open_review" ]; then
+              gh api "repos/$REPO/pulls/$PR/reviews/$open_review/dismissals" \
+                -X PUT -f message="Every prod step is ticked." -f event=DISMISS >/dev/null
+              echo "Dismissed review $open_review."
+            fi
+          fi

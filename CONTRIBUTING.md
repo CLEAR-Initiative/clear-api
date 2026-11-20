@@ -248,15 +248,25 @@ A `dev -> prod` sync PR is the release. Open it and leave the description alone:
 the **Manual deploy steps** those PRs declared, as a checklist. Anything you write outside the
 generated block is kept.
 
-Work down the checklist against prod, ticking each box as you go — the `Sync PR body` check stays red
-until every `prod` box is ticked, and re-running it keeps the ticks you have already earned. PRs
-merged before the section was required have their **Merge Danger** notes reproduced instead; read
-those by hand.
+Work down the checklist against prod, ticking each box as you go. While any `prod` box is unticked
+the PR carries a **`prod-steps-outstanding`** label and a *changes requested* review listing what is
+left; both clear themselves on the next run once every box is ticked, and re-running keeps the ticks
+you have already earned. PRs merged before the section was required have their **Merge Danger** notes
+reproduced instead; read those by hand.
 
-To see what the next sync would say before opening it:
+The signal is a label and a review rather than a failing check on purpose. A sync PR's head branch is
+`dev`, so its head SHA *is* dev's tip, and GitHub attaches check runs to commits — a failing check
+showed up against whatever had just been merged into `dev` and read as that PR having broken
+something ([clear #1562](https://www.exponential.im/w/clear/products/clear/tickets/1562)). So nothing
+here will ever make `dev` look red, and nothing here blocks a merge mechanically either: treat the
+label as "not ready".
+
+To see what the next sync would say, or what is still outstanding on an open one:
 
 ```bash
 GITHUB_REPOSITORY=CLEAR-Initiative/clear-api node .github/scripts/build-sync-pr-body.mjs render
+
+gh pr view <sync-pr> --json body --jq .body | PR_BODY="$(cat)" node .github/scripts/build-sync-pr-body.mjs check
 ```
 
 A hotfix merged straight into `prod` is not touched: it keeps the body its author wrote, and the
