@@ -22,17 +22,6 @@ HOME=~/.config/agent-homes/<agent> exponential tickets update --id <ticket-cuid>
 
 When mentioning a ticket in chat, commits, PR bodies, or docs, deep-link it: `https://www.exponential.im/w/clear/products/clear/tickets/<number>`, where `<number>` is the ticket's `number` field (not its cuid). Never link to the bare `.../tickets` list page.
 
-## Data source rows
-
-clear-pipeline and the X ingest route look up `data_sources` rows by `name`. If a row is missing, that source's job fails on every run. This happened to `idmc` on prod (2026-10-20) and to `iom_dtm_flash_alerts` (2026-11-13); see [#1520](https://www.exponential.im/w/clear/products/clear/tickets/1520).
-
-When you add a source that code looks up by name:
-
-1. Add a **new** migration that inserts the row if it is missing. Copy the pattern from `prisma/migrations/20261120120000_ensure_pipeline_data_sources/migration.sql` (`INSERT … WHERE NOT EXISTS (… "name" = …)`, with `id` set to the name, because `cuid()` is filled in by Prisma, not by SQL).
-2. Add the same row to `prisma/seed.ts`, because the seed deletes every data source before recreating them.
-
-Never edit a migration that has already been applied: `prisma migrate deploy` skips it on every database where it ran, so the row never arrives. Never ship a source only in `seed.ts`, which runs on local databases only.
-
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
