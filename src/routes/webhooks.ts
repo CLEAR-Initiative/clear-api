@@ -18,6 +18,13 @@
  * for correlation in the admin UI). Everything else is forwarded
  * verbatim to subscribers.
  *
+ * The token travels in the URL because GlitchTip's general webhook recipient
+ * (6.2, and 7.0) can send neither a custom header nor a body signature. The
+ * consequence: anyone who can read the project's alert rules in GlitchTip,
+ * including read-only API tokens, can read the token. `scrubEvent` in
+ * utils/sentry.ts keeps it out of error events; rotation is in clear-infra
+ * docs/error-alerts.md.
+ *
  * Not GraphQL because:
  *   - GlitchTip's webhook config only speaks HTTP + JSON body.
  *   - Splitting external-webhook receive from internal-CRUD API means
