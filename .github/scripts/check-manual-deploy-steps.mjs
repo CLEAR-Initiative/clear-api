@@ -11,7 +11,10 @@
 // The same file lives in clear-api and clear-pipeline; keep them in step.
 
 const HEADING = /^(#{2,6})[ \t]*manual deploy steps[ \t]*$/i;
-const FENCE = /^[ \t]{0,3}(```|~~~)/;
+// A fence opens with 3+ backticks or tildes and closes only with the same
+// character, at least as many times (CommonMark): a ~~~ line inside a ``` block
+// (a heredoc writing Markdown) is content, not a fence.
+const FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const TICKET = /exponential\.im\/w\/[^/\s]+\/products\/[^/\s]+\/tickets\/\d+/i;
 const CHECKBOX = (env) => new RegExp(`^\\s*[-*][ \\t]+\\[[ xX]\\][ \\t]+${env}\\b`, "im");
 // "None", with or without a reason ("None.", "None needed", "None for this PR").
@@ -26,11 +29,14 @@ const STEP_START = /^(?:\d+[.)][ \t]+\S|#{1,6}[ \t]+\S)/;
 /** Lines of the text, each with whether it sits inside a fenced code block (fences
  * included) and whether it opens one. */
 function linesWithFence(text) {
-  let inFence = false;
+  let open = null; // the opening fence, e.g. "```" or "~~~~"
   return text.split("\n").map((line) => {
-    const fence = FENCE.test(line);
-    const entry = { line, code: inFence || fence, opens: fence && !inFence };
-    if (fence) inFence = !inFence;
+    const m = FENCE.exec(line);
+    const closes = open !== null && m !== null && m[1][0] === open[0] && m[1].length >= open.length;
+    const opens = open === null && m !== null;
+    const entry = { line, code: open !== null || opens, opens };
+    if (opens) open = m[1];
+    else if (closes) open = null;
     return entry;
   });
 }
@@ -95,7 +101,12 @@ export function checkManualDeploySteps(body) {
   if (section === "") {
     return ['"Manual deploy steps" is blank. Write "None", or list each step with its command and a dev and prod checkbox.'];
   }
-  if (NONE.test(section) && !NAMES_ENV.test(section)) return [];
+  if (NONE.test(section)) {
+    if (!NAMES_ENV.test(section)) return [];
+    return [
+      '"Manual deploy steps" starts with "None" but names an environment. Write just "None" if nothing is done by hand, or list each step with its command, a prod checkbox and a ticket.',
+    ];
+  }
 
   const errors = [];
   manualDeploySteps(section).forEach((step, i) => {

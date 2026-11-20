@@ -179,3 +179,30 @@ test("an unindented note after the last step fails with a hint to indent it", ()
   const errors = checkManualDeploySteps(body);
   assert.ok(errors.some((e) => e.startsWith("Step 2") && /Indent it under its step/.test(e)));
 });
+
+test("a ~~~ line inside a ``` block is content, not the end of the block", () => {
+  const body = [
+    "## Manual deploy steps",
+    "",
+    "```bash",
+    "cat > notes.md <<'MD'",
+    "~~~",
+    "## Not a heading",
+    "~~~",
+    "MD",
+    "```",
+    `- [ ] prod ${TICKET_URL}`,
+    "",
+    "## Why",
+    "x",
+  ].join("\n");
+  assert.deepEqual(checkManualDeploySteps(body), []);
+});
+
+test("a None that names an environment gets one clear message", () => {
+  for (const body of ["None. No prod impact.", "None: merges into dev only, nothing to run."]) {
+    const errors = checkManualDeploySteps(`## Manual deploy steps\n\n${body}\n`);
+    assert.equal(errors.length, 1, body);
+    assert.match(errors[0], /Write just "None"/, body);
+  }
+});
