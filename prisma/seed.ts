@@ -492,6 +492,15 @@ async function seed() {
         infoUrl: "https://www.internal-displacement.org/",
       },
     }),
+    // Darfur24 RSS feed, read by clear-pipeline. Values copy the dev row.
+    prisma.dataSources.create({
+      data: {
+        name: "darfur24",
+        type: "news",
+        isActive: true,
+        baseUrl: "https://darfur24.com",
+      },
+    }),
   ]);
 
   // Manual-entry source for signals filed through the UI. The Create Signal
@@ -538,7 +547,7 @@ async function seed() {
     },
   });
 
-  console.log("Created 8 data sources + 1 manual source + 1 push feed");
+  console.log("Created 9 data sources + 1 manual source + 1 push feed");
 
   // ─── Signals (directly from data sources, with location links) ─────────────
   const now = new Date();
