@@ -1,0 +1,80 @@
+name: Sync PR body
+
+# Fills in the description of a `dev → prod` sync PR with every PR it ships and
+# the manual deploy steps those PRs declared, then keeps the PR red until every
+# prod box is ticked.
+#
+# Sync PRs used to be opened with an empty body bundling ~10 PRs, so the manual
+# steps their authors had written down never reached the person merging: #204
+# shipped #149 that way and prod ran seven days without the
+# `iom_dtm_flash_alerts` source row. See the 2026-11-13 postmortem,
+# recommendation 4 (clear #1525).
+#
+# Only PRs whose head is `dev` are touched — a hotfix straight into `prod` keeps
+# the body its author wrote. Note that hotfix PRs into `prod` are checked by
+# nothing today: check.yml's manual-steps gate only runs on PRs into `dev`.
+
+on:
+  pull_request:
+    branches: [prod]
+    # `edited` re-runs the gate when someone ticks a prod box in the
+    # description. Writing the body from this workflow does NOT re-trigger it:
+    # GitHub does not start new workflow runs for events raised with
+    # GITHUB_TOKEN. The compare-and-skip step below is belt and braces, and
+    # keeps the PR timeline free of no-op edits.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: sync-pr-body-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: build body, gate prod steps
+    if: github.event.pull_request.head.ref == 'dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The generator decides what a human is asked to do before a prod deploy,
+      # so it is tested in the same run that uses it.
+      - name: Test the generator
+        run: node --test .github/scripts/build-sync-pr-body.test.mjs
+
+      - name: Build the body
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # Read the body from the API, not the event payload: on `synchronize`
+          # the payload can predate ticks someone has just made.
+          gh pr view "$PR" --json body --jq .body > current-body.md
+          PR_BODY="$(cat current-body.md)" \
+            node .github/scripts/build-sync-pr-body.mjs render > next-body.md
+          echo "--- generated body ---"
+          cat next-body.md
+
+      - name: Update the PR description
+        run: |
+          if diff -q current-body.md next-body.md >/dev/null 2>&1; then
+            echo "Body already up to date; nothing to write."
+          else
+            gh pr edit "$PR" --body-file next-body.md
+            echo "PR description updated."
+          fi
+
+      # Deliberately the last step and deliberately failing: a red check is the
+      # "do not merge yet" signal. Make this a required check in branch
+      # protection on `prod` so the sync cannot merge with steps outstanding.
+      - name: Prod steps are ticked
+        run: |
+          PR_BODY="$(cat next-body.md)" \
+            node .github/scripts/build-sync-pr-body.mjs check

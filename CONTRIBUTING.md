@@ -241,6 +241,27 @@ and a `- [ ] prod` checkbox, and a link to the ticket that tracks the prod step.
 the section is blank. You own each step until prod is ticked. Prefer code to a manual step: a row
 that code looks up by name ships as a migration, not only in `prisma/seed.ts`.
 
+### Shipping to prod
+
+A `dev -> prod` sync PR is the release. Open it and leave the description alone:
+[`sync-pr-body.yml`](.github/workflows/sync-pr-body.yml) fills it in with every PR the sync ships and
+the **Manual deploy steps** those PRs declared, as a checklist. Anything you write outside the
+generated block is kept.
+
+Work down the checklist against prod, ticking each box as you go — the `Sync PR body` check stays red
+until every `prod` box is ticked, and re-running it keeps the ticks you have already earned. PRs
+merged before the section was required have their **Merge Danger** notes reproduced instead; read
+those by hand.
+
+To see what the next sync would say before opening it:
+
+```bash
+GITHUB_REPOSITORY=CLEAR-Initiative/clear-api node .github/scripts/build-sync-pr-body.mjs render
+```
+
+A hotfix merged straight into `prod` is not touched: it keeps the body its author wrote, and the
+manual-steps check does not run on it either ([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)).
+
 ## Secrets
 
 - Never commit `.env` or any secret. `.env` is gitignored; keep it that way.
