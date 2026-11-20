@@ -131,6 +131,24 @@ describe("signal resolver — auth model on signal creation", () => {
       ).rejects.toThrow(GraphQLError);
     });
 
+    it("rejects a supplied id from a team analyst with FORBIDDEN", async () => {
+      const id = "3f2a6c1e-8b4d-5a7f-9c2e-1d0b4e6f8a90";
+      const analyst = ctx({ id: ACTOR_ID, role: "member" }, { memberships: [{ teamId: "ta" }], teamLocations: [] });
+      await expect(
+        signalResolvers.Mutation.createSignal(null, { input: { ...base(), id } }, analyst),
+      ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+      expect(analyst.prisma.signals.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a supplied id from a platform admin (the pipeline)", async () => {
+      const id = "3f2a6c1e-8b4d-5a7f-9c2e-1d0b4e6f8a90";
+      const admin = ctx({ id: ACTOR_ID, role: "admin" });
+      await signalResolvers.Mutation.createSignal(null, { input: { ...base(), id } }, admin);
+      expect(admin.prisma.signals.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ id }) }),
+      );
+    });
+
     it("still works for admin (regression)", async () => {
       const result = await signalResolvers.Mutation.createSignal(
         null, { input: { ...base(), title: "TEST admin-created signal" } },
