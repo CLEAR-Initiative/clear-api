@@ -229,7 +229,18 @@ test("a trailing attribution footer is not a step", () => {
 });
 
 test("a footer after a horizontal rule is not a step either", () => {
-  const body = ["## Manual deploy steps", "", "None", "", "---", "", FOOTER].join("\n");
+  // Deliberately NOT a "None" section: that returns before manualDeploySteps is
+  // reached, so the test would pass even with horizontal-rule support removed.
+  const body = [
+    "## Manual deploy steps",
+    "",
+    "Run `bun run backfill` against prod",
+    `- [ ] prod ${TICKET_URL}`,
+    "",
+    "---",
+    "",
+    FOOTER,
+  ].join("\n");
   assert.deepEqual(checkManualDeploySteps(body), []);
 });
 
