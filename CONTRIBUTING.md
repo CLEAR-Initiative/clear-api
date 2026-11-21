@@ -254,12 +254,21 @@ left; both clear themselves on the next run once every box is ticked, and re-run
 you have already earned. PRs merged before the section was required have their **Merge Danger** notes
 reproduced instead; read those by hand.
 
+**The review really does block the merge.** `prod` is a protected branch requiring one approving
+review, so a sync PR sits at `BLOCKED` while the bot's *changes requested* review stands — verified on
+#358, which went from `CLEAN` to `BLOCKED` the moment protection was applied
+([clear #1556](https://www.exponential.im/w/clear/products/clear/tickets/1556)). Ticking the last box
+dismisses the review, and the PR then needs a human approval like any other.
+
+Administrators can still merge without an approval: `enforce_admins` is deliberately off so an
+emergency prod hotfix is never wedged behind an absent reviewer. The gate is loud, not absolute, and
+an override is visible in the PR timeline.
+
 The signal is a label and a review rather than a failing check on purpose. A sync PR's head branch is
 `dev`, so its head SHA *is* dev's tip, and GitHub attaches check runs to commits — a failing check
 showed up against whatever had just been merged into `dev` and read as that PR having broken
 something ([clear #1562](https://www.exponential.im/w/clear/products/clear/tickets/1562)). So nothing
-here will ever make `dev` look red, and nothing here blocks a merge mechanically either: treat the
-label as "not ready".
+here will ever make `dev` look red.
 
 To see what the next sync would say, or what is still outstanding on an open one:
 
