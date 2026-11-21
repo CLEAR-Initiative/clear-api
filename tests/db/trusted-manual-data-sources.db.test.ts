@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { it, expect, afterAll } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { TRUSTED_SOURCE_NAMES } from "../../src/resolvers/signal.resolver.js";
-import { describeIfDb } from "../helpers/db.js";
+import { describeIfDb, describeIfScratchDb } from "../helpers/db.js";
 
 const MIGRATION_DIR = "20261121140000_ensure_trusted_manual_data_sources";
 const MIGRATION = readFileSync(
@@ -45,20 +45,14 @@ it("the migration names every trusted source", () => {
   }
 });
 
-describeIfDb("trusted manual data sources", () => {
-  const rows = () =>
-    prisma.dataSources.findMany({
-      where: { name: { in: TRUSTED } },
-      select: { id: true, name: true, type: true, isActive: true, updatedAt: true },
-      orderBy: { name: "asc" },
-    });
-
-  afterAll(async () => {
-    // Belt and braces: if an assertion below threw between a delete and the
-    // re-run, put the row back rather than leaving the database short.
-    await prisma.$executeRawUnsafe(MIGRATION);
+const rows = () =>
+  prisma.dataSources.findMany({
+    where: { name: { in: TRUSTED } },
+    select: { id: true, name: true, type: true, isActive: true, updatedAt: true },
+    orderBy: { name: "asc" },
   });
 
+describeIfDb("trusted manual data sources", () => {
   it("exist in a database migrated from empty", async () => {
     const found = await rows();
     expect(found.map((r) => r.name).sort()).toEqual([...TRUSTED].sort());
@@ -74,11 +68,28 @@ describeIfDb("trusted manual data sources", () => {
     expect(await rows()).toEqual(before);
   });
 
+});
+
+// Scratch database only: this one deletes a row to watch the migration put it
+// back, and on any real database that row is not ours to delete. It would also
+// simply fail there -- `prisma/seed.ts` creates `field_officer` with a cuid id,
+// so deleting by id finds nothing, and where the id does match, signals
+// referencing it block the delete (RESTRICT). A test that passes in CI and
+// fails on a developer's database is a test nobody trusts.
+describeIfScratchDb("the migration's WHERE NOT EXISTS branch", () => {
+  afterAll(async () => {
+    // If an assertion below threw between the delete and the re-run, put the
+    // row back rather than leaving even the scratch database short.
+    await prisma.$executeRawUnsafe(MIGRATION);
+  });
+
   it("recreates a missing row, and only that one", async () => {
     const [missing, ...kept] = TRUSTED;
     const keptBefore = (await rows()).filter((r) => r.name !== missing);
 
-    await prisma.dataSources.delete({ where: { id: missing } });
+    // By name, not id: the row's id is the name only when this migration
+    // created it, which is true on a scratch database and nowhere else.
+    await prisma.dataSources.deleteMany({ where: { name: missing } });
     expect((await rows()).map((r) => r.name)).not.toContain(missing);
 
     await prisma.$executeRawUnsafe(MIGRATION);
