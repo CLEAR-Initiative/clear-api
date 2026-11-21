@@ -1,0 +1,38 @@
+-- The `inso` row, which clear-pipeline looks up by name and which the two
+-- migrations before this one create and then delete again.
+--
+-- 20261120120000_ensure_pipeline_data_sources creates every row the pipeline
+-- resolves, with id = name. 20261120160000_drop_unowned_inso_sudan_war_x_rows
+-- then deletes `inso` and `sudan-war-x` where id = name and the row is unused —
+-- i.e. exactly the two the first migration had just created. On dev that guard
+-- hit nothing, because every row there predates both migrations and carries a
+-- cuid id. On prod, which has neither row, both migrations act in full, so prod
+-- would end up with 7 of the 8 rows clear-pipeline requires and its next
+-- release would fail on `inso` (clear #1523's deploy gate, clear #1569).
+--
+-- Why `inso` comes back and `sudan-war-x` does not. The two are not alike:
+--
+--   * `inso` is polled by clear-pipeline, and its poll sensor ships STOPPED.
+--     With the row present and the sensor stopped, nothing polls INSO and
+--     nothing resolves the name. Every other surface a data_sources row reaches
+--     ignores it too: `resolveDataSource` matches only type = 'organisation'
+--     rows (this one is 'email'), clear-mvp's Create Signal dropdown filters to
+--     the manual source names, and EXPECTED_CADENCE_DAYS does not list it. The
+--     row is a prerequisite, not a switch — what makes a gx source live is
+--     starting its sensor.
+--
+--   * `sudan-war-x` is pushed TO us: POST /api/x/ingest resolves the batch's
+--     own `source` name against this table and 400s when there is no row. For
+--     that feed the row is close to being the switch, so it stays off prod until
+--     its owners say otherwise. 20261120160000's caution was right about this
+--     one and was applied to `inso` by proximity.
+--
+-- Ordered after 20261120160000 so that migration cannot undo this one.
+-- Idempotent and field values identical to 20261120120000's `inso` row, so an
+-- environment that already has the row (dev, with its cuid id) is untouched.
+--
+-- tests/db/pipeline-data-sources.db.test.ts pins both halves: every name
+-- clear-pipeline requires has a row, and `sudan-war-x` does not.
+INSERT INTO "data_sources" ("id", "name", "type", "is_active", "url_info", "updated_at")
+SELECT 'inso', 'inso', 'email', true, 'https://ngosafety.org/', now()
+WHERE NOT EXISTS (SELECT 1 FROM "data_sources" WHERE "name" = 'inso');
