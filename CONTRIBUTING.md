@@ -280,8 +280,11 @@ gh pr view <sync-pr> --json body --jq .body | PR_BODY="$(cat)" node .github/scri
 
 A hotfix merged straight into `prod` keeps the body its author wrote — `sync-pr-body.yml` only
 touches a PR whose head is `dev`. Its **Manual deploy steps** section *is* now checked, though
-([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)): `check.yml`'s gate
-runs on every PR into `dev` or `prod` whose head branch is not `dev`.
+([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)): the gate runs on
+every PR a person wrote the body of, into `dev` or `prod`. The one exemption is this repo's own
+`dev` → `prod` sync — base `prod`, head `dev`, *and* same repository, since a fork's own branch can
+be called `dev` too. It is the last step in the `check` job and runs even when an earlier step
+failed, so a missing section never hides the lint, type, build or test result.
 
 **Under time pressure the gate warns; it does not block.** This is a deliberate choice, not an
 oversight. The check reds the PR, so a missing step is visible to everyone who looks at it, but `prod`
