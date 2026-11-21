@@ -30,3 +30,15 @@ export const describeIfDb = dbTestsEnabled ? describe : describe.skip;
  */
 export const describeIfSeededDb =
   dbTestsEnabled && process.env.SCRATCH_DB !== "1" ? describe : describe.skip;
+
+/**
+ * The mirror of `describeIfSeededDb`: a suite that may only run on the
+ * throwaway database, because it deletes or rewrites rows it did not create.
+ * `bun run test:db` and CI's db-tests job set `SCRATCH_DB=1`; a developer
+ * pointing `DATABASE_URL` at a real database gets these skipped rather than
+ * having a row deleted under their running app. Prefer `describeIfDb` and
+ * self-seeding; reach for this only when the thing under test is a migration
+ * acting on rows the migration itself owns.
+ */
+export const describeIfScratchDb =
+  dbTestsEnabled && process.env.SCRATCH_DB === "1" ? describe : describe.skip;

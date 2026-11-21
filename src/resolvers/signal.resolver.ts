@@ -11,7 +11,12 @@ import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
-const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
+/** The only `data_sources` names `createManualSignal` accepts. Exported so the
+ *  migration that creates those rows can be checked against this list rather
+ *  than a second copy of it: adding a name here without adding it to
+ *  `20261121140000_ensure_trusted_manual_data_sources` fails
+ *  tests/db/trusted-manual-data-sources.db.test.ts (clear #1568). */
+export const TRUSTED_SOURCE_NAMES = new Set(["field_officer", "partner", "government"]);
 
 /** A lowercase UUIDv5, the only Signal id a caller may supply. The same shape
  *  is one branch of the `signals_id_format` CHECK. */
