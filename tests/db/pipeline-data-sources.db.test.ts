@@ -73,16 +73,10 @@ it("the migration names inso", () => {
 });
 
 describeIfDb("data sources clear-pipeline resolves by name", () => {
-  it("all exist in a database migrated from empty", async () => {
+  it("all exist once the migrations have run", async () => {
     const found = await rows(PIPELINE_REQUIRED);
     expect(found.map((r) => r.name)).toEqual([...PIPELINE_REQUIRED].sort());
     for (const row of found) expect(row.isActive).toBe(true);
-  });
-
-  it("leaves sudan-war-x absent", async () => {
-    // The asymmetry 20261120160000 was right about, pinned so re-adding the row
-    // is a deliberate change in review rather than a side effect.
-    expect(await rows(DELIBERATELY_ABSENT)).toEqual([]);
   });
 
   it("re-running the inso migration changes nothing", async () => {
@@ -92,12 +86,27 @@ describeIfDb("data sources clear-pipeline resolves by name", () => {
   });
 });
 
-// Scratch database only: deletes a row to watch the migration put it back. On
-// any real database that row is not ours to delete, and dev's `inso` has a cuid
-// id with signals behind it. See describeIfScratchDb in tests/helpers/db.ts.
-describeIfScratchDb("the inso migration's WHERE NOT EXISTS branch", () => {
+// Scratch database only, for two different reasons.
+//
+// The absence of `sudan-war-x` holds only here: `prisma/seed.ts` creates that
+// row with a cuid id, and 20261120160000 deliberately keeps a row whose id is
+// not its name — so on any seeded database it exists and asserting otherwise is
+// a false failure. What this pins is the claim that actually matters: migrate
+// from empty and the row is not there.
+//
+// The delete-and-restore case is here because on a real database that row is
+// not ours to delete, and dev's `inso` has a cuid id with signals behind it.
+//
+// See describeIfScratchDb in tests/helpers/db.ts.
+describeIfScratchDb("in a database migrated from empty", () => {
   afterAll(async () => {
     await prisma.$executeRawUnsafe(MIGRATION);
+  });
+
+  it("leaves sudan-war-x absent", async () => {
+    // The asymmetry 20261120160000 was right about, pinned so re-adding the row
+    // is a deliberate change in review rather than a side effect.
+    expect(await rows(DELIBERATELY_ABSENT)).toEqual([]);
   });
 
   it("recreates inso when it is missing, and only inso", async () => {
