@@ -278,8 +278,24 @@ GITHUB_REPOSITORY=CLEAR-Initiative/clear-api node .github/scripts/build-sync-pr-
 gh pr view <sync-pr> --json body --jq .body | PR_BODY="$(cat)" node .github/scripts/build-sync-pr-body.mjs check
 ```
 
-A hotfix merged straight into `prod` is not touched: it keeps the body its author wrote, and the
-manual-steps check does not run on it either ([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)).
+A hotfix merged straight into `prod` keeps the body its author wrote — `sync-pr-body.yml` only
+touches a PR whose head is `dev`. Its **Manual deploy steps** section *is* now checked, though
+([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)): the gate runs on
+every PR a person wrote the body of, into `dev` or `prod`. The one exemption is this repo's own
+`dev` → `prod` sync — base `prod`, head `dev`, *and* same repository, since a fork's own branch can
+be called `dev` too. It is the last step in the `check` job and runs even when an earlier step
+failed, so a missing section never hides the lint, type, build or test result.
+
+**Under time pressure the gate warns; it does not block.** This is a deliberate choice, not an
+oversight. The check reds the PR, so a missing step is visible to everyone who looks at it, but `prod`
+requires no status checks, so a red `Check` stops nothing mechanically. Anyone with merge rights can
+merge a hotfix over it, and an administrator can merge without the approving review as well
+(`enforce_admins` is off). The red check and the merge both stay in the PR's history.
+
+The reasoning: a hard block on a prod hotfix at 2am is its own incident, and the omission this check
+exists to prevent is *not writing the step down*, which costs seconds. A hotfix author may legitimately
+ship before performing the step — write it with a `- [ ] prod` box and a ticket, merge, then do it. You
+own the step until that box is ticked.
 
 ## Secrets
 
