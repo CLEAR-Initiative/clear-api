@@ -67,10 +67,12 @@ export async function approveUserById(
   // is unreachable, so the user gets access immediately. `member` is the
   // default approved human role (formerly `viewer`). Conditional on
   // `pending` so that of two overlapping approvals only one wins the flip
-  // and goes on to email the user.
+  // and goes on to email the user. `approvedAt` lands in the same UPDATE:
+  // it is the durable marker the CRM sync relies on, unlike the
+  // best-effort activity-log row below.
   const flipped = await prisma.user.updateMany({
     where: { id: user.id, role: "pending" },
-    data: { role: "member" },
+    data: { role: "member", approvedAt: new Date() },
   });
   if (flipped.count === 0) {
     throw new GraphQLError("User is not pending (already approved)", {

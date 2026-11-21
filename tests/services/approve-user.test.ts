@@ -62,7 +62,7 @@ const pendingUser = {
 function fakePrisma(user: typeof pendingUser | null = pendingUser) {
   const row = user ? { ...user } : null;
   const updateMany = vi.fn(
-    async ({ where, data }: { where: { id: string; role: string }; data: { role: string } }) => {
+    async ({ where, data }: { where: { id: string; role: string }; data: { role: string; approvedAt: Date } }) => {
       if (!row || row.id !== where.id || row.role !== where.role) return { count: 0 };
       row.role = data.role;
       return { count: 1 };
@@ -113,7 +113,7 @@ describe("approveUserById", () => {
 
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "u1", role: "pending" },
-      data: { role: "member" },
+      data: { role: "member", approvedAt: expect.any(Date) },
     });
     expect(sendMock).toHaveBeenCalledTimes(1);
     const mail = sendMock.mock.calls[0][0];

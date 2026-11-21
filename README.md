@@ -184,6 +184,23 @@ Copy `.env.example` to `.env`; it documents every variable. Validation lives in
 `.env.example` also covers the Exponential CRM sign-up hooks, the WhatsApp hotline webhook
 (`HOTLINE_*`), Buttondown, and the CLEAR Agent budget.
 
+## CRM sync
+
+The Exponential CRM is an optional mirror of Developer self-signups; nothing in CLEAR depends
+on it. Signup and approval push contacts one at a time, best-effort. The CRM sync repairs it
+from the users table: pending self-signups into the prospects collection, approved ones into
+the approved collection. Invited staff and service accounts are never synced. It is
+idempotent, so a second run reports nothing changed.
+
+```bash
+docker exec app-clear-api-1 bun dist/cli/sync-crm.js           # dry run: lists who would be synced
+docker exec app-clear-api-1 bun dist/cli/sync-crm.js --apply   # sync
+```
+
+Locally, `bun src/cli/sync-crm.ts [--apply]` uses your `.env`. Set `CRM_SYNC_INTERVAL_HOURS`
+to also run it on a schedule. Before using `--apply` or the schedule, turn off the email
+steps of Exponential's automations on both collections, or every synced user gets emailed.
+
 ## Service users
 
 Machines authenticate with API keys bound to least-privilege service users. Each script creates

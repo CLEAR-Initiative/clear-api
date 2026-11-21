@@ -35,6 +35,7 @@ import { healthRouter } from "./routes/health.js";
 import { briefsUnsubscribeRouter } from "./routes/briefs-unsubscribe.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 import { startActivityLogTrimWorker } from "./services/activity-log/trim-worker.js";
+import { startCrmSyncWorker } from "./services/crm-sync.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -145,6 +146,11 @@ httpServer.listen(env.PORT, () => {
   startWebhookRetryWorker(prisma);
   // Clear ip / user agent on activity_logs rows older than 90 days.
   startActivityLogTrimWorker(prisma);
+  // Repair the Exponential CRM mirror from the users table. Opt-in via
+  // CRM_SYNC_INTERVAL_HOURS; off by default.
+  if (startCrmSyncWorker(prisma, env.CRM_SYNC_INTERVAL_HOURS)) {
+    console.log(`[crm-sync] scheduled every ${env.CRM_SYNC_INTERVAL_HOURS}h`);
+  }
 });
 
 const shutdown = async () => {

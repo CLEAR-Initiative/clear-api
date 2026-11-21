@@ -5,9 +5,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { sendMock, pushToProspectsMock, envOverrides } = vi.hoisted(() => ({
+const { sendMock, pushToProspectsMock, logActivityMock, envOverrides } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   pushToProspectsMock: vi.fn(),
+  logActivityMock: vi.fn(),
   envOverrides: { SIGNUP_NOTIFY_EMAILS: [] as string[] },
 }));
 
@@ -38,12 +39,17 @@ vi.mock("../../src/services/exponential.js", () => ({
   pushToProspects: pushToProspectsMock,
 }));
 
+vi.mock("../../src/utils/activity-log.js", () => ({
+  logActivity: logActivityMock,
+}));
+
 import { onDeveloperSignedUp, splitName } from "../../src/services/signup.js";
 import { notifyMaintainersOfProfile } from "../../src/services/signup-notify.js";
 
 beforeEach(() => {
   sendMock.mockReset().mockResolvedValue(true);
-  pushToProspectsMock.mockReset().mockResolvedValue({ ok: true, value: { contactId: "c1" } });
+  pushToProspectsMock.mockReset().mockResolvedValue({ ok: true, value: { contactId: "c1", changed: true } });
+  logActivityMock.mockReset().mockResolvedValue(undefined);
   envOverrides.SIGNUP_NOTIFY_EMAILS = ["maint@clear.test", "ops@clear.test"];
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -53,7 +59,7 @@ const subjects = () => sendMock.mock.calls.map((c) => c[0].subject as string);
 
 describe("onDeveloperSignedUp", () => {
   it("acks the registrant and tells every maintainer", async () => {
-    await onDeveloperSignedUp({ name: "Ada Lovelace", email: "ada@example.org" });
+    await onDeveloperSignedUp({ id: "u1", name: "Ada Lovelace", email: "ada@example.org" });
 
     const notify = sendMock.mock.calls
       .map((c) => c[0])
@@ -75,7 +81,7 @@ describe("onDeveloperSignedUp", () => {
   it("still succeeds when every email send throws", async () => {
     sendMock.mockRejectedValue(new Error("smtp down"));
     await expect(
-      onDeveloperSignedUp({ name: "Ada", email: "ada@example.org" }),
+      onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" }),
     ).resolves.toBeUndefined();
     expect(sendMock).toHaveBeenCalledTimes(3); // ack + two maintainers
   });
@@ -83,19 +89,52 @@ describe("onDeveloperSignedUp", () => {
   it("still succeeds when the CRM call throws", async () => {
     pushToProspectsMock.mockRejectedValue(new Error("network"));
     await expect(
-      onDeveloperSignedUp({ name: "Ada", email: "ada@example.org" }),
+      onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" }),
     ).resolves.toBeUndefined();
+  });
+
+  it("records a CRM failure in the activity log", async () => {
+    pushToProspectsMock.mockResolvedValue({ ok: false, reason: "unauthorized:nope" });
+
+    await onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" });
+
+    expect(logActivityMock).toHaveBeenCalledWith(expect.anything(), {
+      userId: "u1",
+      action: "user.crm_sync_failed",
+      resourceType: "user",
+      resourceId: "u1",
+      metadata: { email: "ada@example.org", stage: "signup", reason: "unauthorized:nope" },
+    });
+  });
+
+  it("records a CRM call that throws", async () => {
+    pushToProspectsMock.mockRejectedValue(new Error("network"));
+
+    await onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" });
+
+    expect(logActivityMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ metadata: expect.objectContaining({ reason: "threw:network" }) }),
+    );
+  });
+
+  it("logs nothing when the CRM sync works or isn't configured", async () => {
+    await onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" });
+    pushToProspectsMock.mockResolvedValue({ ok: false, reason: "not_configured" });
+    await onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" });
+
+    expect(logActivityMock).not.toHaveBeenCalled();
   });
 
   it("sends no maintainer email when SIGNUP_NOTIFY_EMAILS is empty", async () => {
     envOverrides.SIGNUP_NOTIFY_EMAILS = [];
-    await onDeveloperSignedUp({ name: "Ada", email: "ada@example.org" });
+    await onDeveloperSignedUp({ id: "u1", name: "Ada", email: "ada@example.org" });
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(sendMock.mock.calls[0][0].to).toBe("ada@example.org");
   });
 
   it("keeps a CR/LF in the name out of the subject line", async () => {
-    await onDeveloperSignedUp({ name: "Ada\r\nBcc: evil@x.test", email: "ada@example.org" });
+    await onDeveloperSignedUp({ id: "u1", name: "Ada\r\nBcc: evil@x.test", email: "ada@example.org" });
     expect(subjects().some((s) => /[\r\n]/.test(s))).toBe(false);
   });
 });
