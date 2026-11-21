@@ -230,8 +230,72 @@ To add a variable:
 4. If it's one people need to know about, add it to the Configuration table in the README.
 
 Values for the deployed environments are set by the team in a private infrastructure repo. If your
-PR adds a variable, say so in the PR description so it gets added for dev and prod. Never put a real
-value in the PR.
+PR adds a variable, list it under **Manual deploy steps** in the PR description so it gets added for
+dev and prod. Never put a real value in the PR.
+
+### Manual deploy steps
+
+Every PR description has a **Manual deploy steps** section (from `.github/pull_request_template.md`).
+Write "None", or list each step the code needs but no code performs: the exact command, a `- [ ] dev`
+and a `- [ ] prod` checkbox, and a link to the ticket that tracks the prod step. CI fails the PR while
+the section is blank. You own each step until prod is ticked. Prefer code to a manual step: a row
+that code looks up by name ships as a migration, not only in `prisma/seed.ts`.
+
+### Shipping to prod
+
+A `dev -> prod` sync PR is the release. Open it and leave the description alone:
+[`sync-pr-body.yml`](.github/workflows/sync-pr-body.yml) fills it in with every PR the sync ships and
+the **Manual deploy steps** those PRs declared, as a checklist. Anything you write outside the
+generated block is kept.
+
+Work down the checklist against prod, ticking each box as you go. While any `prod` box is unticked
+the PR carries a **`prod-steps-outstanding`** label and a *changes requested* review listing what is
+left; both clear themselves on the next run once every box is ticked, and re-running keeps the ticks
+you have already earned. PRs merged before the section was required have their **Merge Danger** notes
+reproduced instead; read those by hand.
+
+**The review really does block the merge.** `prod` is a protected branch requiring one approving
+review, so a sync PR sits at `BLOCKED` while the bot's *changes requested* review stands — verified on
+#358, which went from `CLEAN` to `BLOCKED` the moment protection was applied
+([clear #1556](https://www.exponential.im/w/clear/products/clear/tickets/1556)). Ticking the last box
+dismisses the review, and the PR then needs a human approval like any other.
+
+Administrators can still merge without an approval: `enforce_admins` is deliberately off so an
+emergency prod hotfix is never wedged behind an absent reviewer. The gate is loud, not absolute, and
+an override is visible in the PR timeline.
+
+The signal is a label and a review rather than a failing check on purpose. A sync PR's head branch is
+`dev`, so its head SHA *is* dev's tip, and GitHub attaches check runs to commits — a failing check
+showed up against whatever had just been merged into `dev` and read as that PR having broken
+something ([clear #1562](https://www.exponential.im/w/clear/products/clear/tickets/1562)). So nothing
+here will ever make `dev` look red.
+
+To see what the next sync would say, or what is still outstanding on an open one:
+
+```bash
+GITHUB_REPOSITORY=CLEAR-Initiative/clear-api node .github/scripts/build-sync-pr-body.mjs render
+
+gh pr view <sync-pr> --json body --jq .body | PR_BODY="$(cat)" node .github/scripts/build-sync-pr-body.mjs check
+```
+
+A hotfix merged straight into `prod` keeps the body its author wrote — `sync-pr-body.yml` only
+touches a PR whose head is `dev`. Its **Manual deploy steps** section *is* now checked, though
+([clear #1550](https://www.exponential.im/w/clear/products/clear/tickets/1550)): the gate runs on
+every PR a person wrote the body of, into `dev` or `prod`. The one exemption is this repo's own
+`dev` → `prod` sync — base `prod`, head `dev`, *and* same repository, since a fork's own branch can
+be called `dev` too. It is the last step in the `check` job and runs even when an earlier step
+failed, so a missing section never hides the lint, type, build or test result.
+
+**Under time pressure the gate warns; it does not block.** This is a deliberate choice, not an
+oversight. The check reds the PR, so a missing step is visible to everyone who looks at it, but `prod`
+requires no status checks, so a red `Check` stops nothing mechanically. Anyone with merge rights can
+merge a hotfix over it, and an administrator can merge without the approving review as well
+(`enforce_admins` is off). The red check and the merge both stay in the PR's history.
+
+The reasoning: a hard block on a prod hotfix at 2am is its own incident, and the omission this check
+exists to prevent is *not writing the step down*, which costs seconds. A hotfix author may legitimately
+ship before performing the step — write it with a `- [ ] prod` box and a ticket, merge, then do it. You
+own the step until that box is ticked.
 
 ## Secrets
 

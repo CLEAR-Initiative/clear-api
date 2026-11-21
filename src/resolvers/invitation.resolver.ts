@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { isPlatformAdmin, requireNonWorker } from "../utils/auth-guard.js";
+import {
+  isPlatformAdmin,
+  requireNonWorker,
+  TEAM_ADMIN_ROLES,
+} from "../utils/auth-guard.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import {
   organisationInvite,
@@ -70,6 +74,57 @@ async function requireOrgAdmin(context: Context, organisationId: string) {
   }
 
   return user;
+}
+
+/**
+ * Gate for `inviteUser`. Org admins and platform admins may invite with any
+ * org role into any team of the org. A team admin may invite too, but only
+ * with the plain `member` org role and only into teams they are team admin
+ * of. The invitee therefore joins the org with no admin rights, and joins
+ * only teams the inviter already manages through `addTeamMember`. Whether
+ * the teams belong to the org is checked by the caller afterwards.
+ */
+async function requireInviter(
+  context: Context,
+  organisationId: string,
+  orgRole: string,
+  teamIds: string[],
+) {
+  const user = requireNonWorker(context);
+  if (isPlatformAdmin(user)) return user;
+
+  const membership = await context.prisma.organisationUsers.findUnique({
+    where: {
+      userId_organisationId: { userId: user.id, organisationId },
+    },
+  });
+  if (membership?.role === "org_admin") return user;
+
+  const uniqueTeamIds = Array.from(new Set(teamIds));
+  if (uniqueTeamIds.length > 0) {
+    const led = await context.prisma.teamMembers.findMany({
+      where: {
+        userId: user.id,
+        teamId: { in: uniqueTeamIds },
+        role: { in: [...TEAM_ADMIN_ROLES] },
+      },
+      select: { teamId: true },
+    });
+    if (led.length === uniqueTeamIds.length) {
+      if (orgRole !== "member") {
+        throw new GraphQLError(
+          "Team admins can only invite people with the member organisation role",
+          { extensions: { code: "FORBIDDEN" } },
+        );
+      }
+      return user;
+    }
+  }
+
+  throw new GraphQLError(
+    "Requires organisation admin role, or team admin of every requested team",
+    { extensions: { code: "FORBIDDEN" } },
+  );
 }
 
 // ─── Resolver ────────────────────────────────────────────────────────────────
@@ -147,8 +202,13 @@ export const invitationResolvers = {
       args: { input: InviteUserInput },
       context: Context,
     ) => {
-      const inviter = await requireOrgAdmin(context, args.input.organisationId);
       const { email, organisationId, role = "member", teams } = args.input;
+      const inviter = await requireInviter(
+        context,
+        organisationId,
+        role,
+        (teams ?? []).map((t) => t.teamId),
+      );
 
       // Authenticated org admin → trust the supplied frontend base as-is
       // (falls back to FRONTEND_URL). `senderEmail`/`senderName` brand the

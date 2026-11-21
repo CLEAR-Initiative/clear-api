@@ -524,7 +524,10 @@ export const mutationTypeDef = gql`
     setDefaultTeam(teamId: String!): Team!
 
     # ─── Invitations ──────────────────────────────────────────────────────────
-    """Invite a user to an organisation (and optionally a team). Sends invite email."""
+    """Invite a user to an organisation and one or more of its teams. Sends an
+    invite email; an existing org member is added to the teams at once. Org
+    admins may invite with any org role. A team admin may invite with the
+    member org role into teams they are team admin of."""
     inviteUser(input: InviteUserInput!): Invitation!
 
     """Accept an invitation. Creates user account if new, adds to org and team."""
@@ -721,6 +724,13 @@ export const mutationTypeDef = gql`
     frame in the same transaction. History rows are preserved. Frame arrays are
     canonicalised (sorted + de-duplicated) server-side. Admin / pipeline only."""
     upsertAnalysis(input: UpsertAnalysisInput!): UpsertAnalysisResult!
+
+    """Pipeline: upsert the per-node results of an on-demand node deep-dive — one
+    bitemporal row per (frame × taxonomy node × schemaVersion), each superseding
+    its own previous current row in one transaction. The frame-scoped sibling of
+    \`upsertAnalysis\` at node granularity (analysis-node-deepdive). Admin /
+    pipeline only."""
+    upsertNodeAnalyses(input: UpsertNodeAnalysesInput!): UpsertNodeAnalysesResult!
 
     """Pipeline: bump the current analysis row's \`lastSyncedAt\` for a frame
     WITHOUT regenerating (ADR-0008) — used when the drain's gate decides to skip
@@ -1055,6 +1065,10 @@ export const mutationTypeDef = gql`
   }
 
   input CreateSignalInput {
+    """Signal id minted by the gx pipeline: a lowercase UUIDv5 of the prefixed
+    externalId. Requires externalId and a non-manual rawData; any other shape
+    is refused with BAD_USER_INPUT. Omit it to get a server-minted id."""
+    id: String
     sourceId: String!
     """Stable upstream identifier for idempotent ingestion. If a signal with
     the same (sourceId, externalId) already exists, createSignal returns the

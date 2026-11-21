@@ -4,6 +4,7 @@
  * column defaults). Rows hang off a per-run data source / event, deleted in afterAll.
  */
 
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { GraphQLError } from "graphql";
 import { prisma } from "../../src/lib/prisma.js";
@@ -145,7 +146,8 @@ describeIfDb("signal retraction / recompute (real Postgres)", () => {
 
   it("API-I-01 backfill defaults: a row inserted without the new columns reads retracted=false, revision=0, status NEW", async () => {
     // Raw INSERT naming neither `retracted` nor `revision`: the column defaults must apply.
-    const id = `${RUN}-legacy`;
+    // Cuid-shaped, as the signals_id_format CHECK requires.
+    const id = `c${randomUUID().replace(/-/g, "").slice(0, 24)}`;
     await prisma.$executeRaw`
       INSERT INTO signals (id, source_id, external_id, raw_data, published_at, collected_at)
       VALUES (${id}, ${sourceId}, ${`${RUN}-legacy-ext`}, '{}'::jsonb, ${ANCIENT}, now())`;
