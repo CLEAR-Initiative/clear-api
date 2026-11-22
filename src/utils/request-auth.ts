@@ -1,4 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
+import * as Sentry from "@sentry/node";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth, type Session, type User } from "../lib/auth.js";
 import { prisma } from "../lib/prisma.js";
@@ -22,6 +23,37 @@ export interface ResolvedAuth {
    * about who the end user is; that is still `user`, from the session.
    */
   viaAgent: boolean;
+}
+
+/** Which identity lookup failed. */
+type AuthLookup = "session" | "api-key" | "agent-key";
+
+const LOOKUP_REPORT_INTERVAL_MS = 60_000;
+const lastLookupReport = new Map<AuthLookup, number>();
+
+/**
+ * Report a failed identity lookup: the database is down, or the auth library
+ * threw.
+ *
+ * The lookups below treat a failure as "not logged in", so the caller gets
+ * the standard `UNAUTHENTICATED` error. That is an expected client error and
+ * is not sent to GlitchTip (`sentry.ts`). The real failure must be reported
+ * here, or an auth outage looks like nothing happened.
+ *
+ * At most one report a minute per lookup: in an outage every request fails
+ * the same way.
+ */
+export function reportAuthLookupFailure(err: unknown, lookup: AuthLookup): void {
+  const now = Date.now();
+  const last = lastLookupReport.get(lookup);
+  if (last !== undefined && now - last < LOOKUP_REPORT_INTERVAL_MS) return;
+  lastLookupReport.set(lookup, now);
+  Sentry.captureException(err, { tags: { stage: "auth-lookup", lookup } });
+}
+
+/** Test hook: forget when each lookup was last reported. */
+export function resetAuthLookupReports(): void {
+  lastLookupReport.clear();
 }
 
 type ApiKeyRow = NonNullable<Awaited<ReturnType<typeof findLiveApiKey>>>;
@@ -56,7 +88,8 @@ async function isAgentRequest(headers: IncomingHttpHeaders): Promise<boolean> {
     }
     touchLastUsed(apiKey);
     return true;
-  } catch {
+  } catch (err) {
+    reportAuthLookupFailure(err, "agent-key");
     return false;
   }
 }
@@ -83,8 +116,9 @@ export async function resolveRequestAuth(
       session = result.session;
       authMethod = "session";
     }
-  } catch {
+  } catch (err) {
     // Treat as unauthenticated — fall through to the API key check.
+    reportAuthLookupFailure(err, "session");
   }
 
   // 2. Bearer token (API key).
@@ -99,8 +133,9 @@ export async function resolveRequestAuth(
           authMethod = "api-key";
           touchLastUsed(apiKey);
         }
-      } catch {
+      } catch (err) {
         // Treat as unauthenticated.
+        reportAuthLookupFailure(err, "api-key");
       }
     }
   }
