@@ -6,7 +6,10 @@
  * errors reach it the way they do in production.
  *
  * Covered:
- *  - a parse or validation failure is logged, not reported
+ *  - an expected client error is logged with its code, not reported: a parse
+ *    or validation failure (introspection while disabled included), a request
+ *    with no query, and an auth guard's refusal
+ *  - an error with no code, or a code that is not a client's, is reported
  *  - the operation name comes from the document when the body omits it
  *  - a resolver error is reported with the caller's id, role, auth method,
  *    agent flag and User-Agent, and never the email
@@ -28,16 +31,20 @@ vi.mock("../../src/utils/logger.js", () => ({ createLogger: () => ({ warn }) }))
 
 import {
   describeCaller,
-  isClientDocumentError,
+  expectedClientErrorCode,
   operationNameOf,
   sentryApolloPlugin,
 } from "../../src/utils/sentry.js";
+import { requireAuth, requireContentReader } from "../../src/utils/auth-guard.js";
 import type { Context } from "../../src/context.js";
 
 const typeDefs = /* GraphQL */ `
   type Query {
     ok: Boolean
     boom: Boolean
+    dbDown: Boolean
+    me: Boolean
+    events: Boolean
   }
 `;
 const resolvers = {
@@ -46,6 +53,12 @@ const resolvers = {
     boom: () => {
       throw new Error("resolver blew up");
     },
+    dbDown: () => {
+      throw new GraphQLError("timeout exceeded when trying to connect");
+    },
+    // The real guards, so the codes they throw are the ones filtered.
+    me: (_: unknown, __: unknown, context: Context) => Boolean(requireAuth(context)),
+    events: (_: unknown, __: unknown, context: Context) => Boolean(requireContentReader(context)),
   },
 };
 
@@ -56,6 +69,8 @@ const apiKeyUser = {
   authMethod: "api-key",
   viaAgent: false,
 } as unknown as Caller;
+
+const anonymous = { user: null, authMethod: null, viaAgent: false } as Caller;
 
 let server: ApolloServer<Context>;
 
@@ -97,8 +112,9 @@ describe("sentryApolloPlugin", () => {
     expect(captureException).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     const [fields, message] = warn.mock.calls[0]!;
-    expect(message).toMatch(/client document error/);
+    expect(message).toMatch(/expected client error/);
     expect(fields).toMatchObject({
+      code: "GRAPHQL_VALIDATION_FAILED",
       operation: "EventsDailyCounts",
       userId: "user_123",
       auth_method: "api-key",
@@ -111,6 +127,79 @@ describe("sentryApolloPlugin", () => {
 
     expect(captureException).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ code: "GRAPHQL_PARSE_FAILED" });
+  });
+
+  it("logs an introspection query instead of reporting it when introspection is disabled", async () => {
+    const closed = new ApolloServer<Context>({
+      typeDefs,
+      resolvers,
+      introspection: false,
+      plugins: [sentryApolloPlugin],
+    });
+    await closed.start();
+    try {
+      await closed.executeOperation(
+        { query: "{ __schema { types { name } } }" },
+        { contextValue: apiKeyUser as Context },
+      );
+    } finally {
+      await closed.stop();
+    }
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(warn.mock.calls[0]![0]).toMatchObject({ code: "GRAPHQL_VALIDATION_FAILED" });
+  });
+
+  it("logs a request with no query instead of reporting it", async () => {
+    await run("", apiKeyUser);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = warn.mock.calls[0]!;
+    expect(fields).toMatchObject({ code: "BAD_REQUEST", userId: "user_123" });
+    expect(message).toMatch(/non-empty `query`/);
+  });
+
+  it("logs an unauthenticated request instead of reporting it", async () => {
+    await run("query Me { me }", anonymous);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = warn.mock.calls[0]!;
+    expect(fields).toMatchObject({ code: "UNAUTHENTICATED", operation: "Me", auth_method: "none" });
+    expect(message).toMatch(/You must be logged in/);
+  });
+
+  it("logs a pending account's refusal instead of reporting it", async () => {
+    await run("query Events { events }", {
+      ...apiKeyUser,
+      user: { id: "user_456", email: "new@example.org", role: "pending" },
+    } as unknown as Caller);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = warn.mock.calls[0]!;
+    expect(fields).toMatchObject({ code: "FORBIDDEN", operation: "Events", userId: "user_456" });
+    expect(message).toMatch(/awaiting admin approval/);
+  });
+
+  it("reports only the unexpected error when a request has both kinds", async () => {
+    await run("{ me boom }", anonymous);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(captureException.mock.calls[0]![0].message).toBe("resolver blew up");
+  });
+
+  it("reports a GraphQLError that has no code, with the query text", async () => {
+    await run("query Db { dbDown }", apiKeyUser);
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [err, hint] = captureException.mock.calls[0]!;
+    expect(err.message).toBe("timeout exceeded when trying to connect");
+    expect(hint.extra).toEqual({ query: "query Db { dbDown }" });
   });
 
   it("reports a resolver error with who called, and no email", async () => {
@@ -134,7 +223,7 @@ describe("sentryApolloPlugin", () => {
   });
 
   it("reports an anonymous caller without a user", async () => {
-    await run("{ boom }", { user: null, authMethod: null, viaAgent: false } as Caller);
+    await run("{ boom }", anonymous);
 
     const [, hint] = captureException.mock.calls[0]!;
     expect(hint.user).toBeUndefined();
@@ -158,13 +247,41 @@ describe("operationNameOf", () => {
   });
 });
 
-describe("isClientDocumentError", () => {
-  it("matches parse and validation codes only", () => {
-    const withCode = (code: string) => new GraphQLError("x", { extensions: { code } });
-    expect(isClientDocumentError(withCode("GRAPHQL_VALIDATION_FAILED"))).toBe(true);
-    expect(isClientDocumentError(withCode("GRAPHQL_PARSE_FAILED"))).toBe(true);
-    expect(isClientDocumentError(withCode("FORBIDDEN"))).toBe(false);
-    expect(isClientDocumentError(new Error("plain"))).toBe(false);
+describe("expectedClientErrorCode", () => {
+  const withCode = (code: string) => new GraphQLError("x", { extensions: { code } });
+
+  it.each([
+    "UNAUTHENTICATED",
+    "FORBIDDEN",
+    "BAD_REQUEST",
+    "GRAPHQL_PARSE_FAILED",
+    "GRAPHQL_VALIDATION_FAILED",
+    "OPERATION_RESOLUTION_FAILURE",
+    "BAD_USER_INPUT",
+    "PERSISTED_QUERY_NOT_FOUND",
+    "PERSISTED_QUERY_NOT_SUPPORTED",
+  ])("returns %s: the caller's error", (code) => {
+    expect(expectedClientErrorCode(withCode(code))).toBe(code);
+  });
+
+  it.each(["INTERNAL_SERVER_ERROR", "NOT_FOUND", "CONFLICT", "RATE_LIMITED"])(
+    "returns undefined for %s, so it is reported",
+    (code) => {
+      expect(expectedClientErrorCode(withCode(code))).toBeUndefined();
+    },
+  );
+
+  it("returns undefined for an error with no code", () => {
+    expect(expectedClientErrorCode(new GraphQLError("timeout exceeded when trying to connect"))).toBeUndefined();
+    expect(expectedClientErrorCode(new Error("plain"))).toBeUndefined();
+    expect(expectedClientErrorCode(null)).toBeUndefined();
+  });
+
+  it("reads the code, not the message", () => {
+    expect(expectedClientErrorCode(new GraphQLError("Insufficient permissions"))).toBeUndefined();
+    expect(
+      expectedClientErrorCode(new GraphQLError("x", { extensions: { code: 403 } })),
+    ).toBeUndefined();
   });
 });
 
