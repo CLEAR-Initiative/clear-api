@@ -90,18 +90,37 @@ export function scrubEvent<E extends SentryEvent>(event: E): E {
 }
 
 /**
- * Error codes for a request document the server could not accept: it does not
- * parse, or asks for fields and types the schema doesn't have. These are the
- * caller's mistakes (a client built ahead of the API, a schema scanner), not
- * faults in clear-api, so they are logged rather than reported.
+ * Error codes for failures that are the caller's, not clear-api's. They are
+ * logged rather than reported, so real faults are not buried in GlitchTip.
+ *
+ * The decision reads `extensions.code` only, never the message. An error with
+ * no code, or any code not listed here (INTERNAL_SERVER_ERROR, a database or
+ * connection failure), is still reported.
  */
-const CLIENT_DOCUMENT_ERROR_CODES = new Set(["GRAPHQL_PARSE_FAILED", "GRAPHQL_VALIDATION_FAILED"]);
+const EXPECTED_CLIENT_ERROR_CODES = new Set([
+  // Who the caller is and what they may do: not logged in, awaiting approval,
+  // not on the team, missing a role. Thrown by the guards in `auth-guard.ts`.
+  "UNAUTHENTICATED",
+  "FORBIDDEN",
+  // A request the server could not accept: no query, a document that does not
+  // parse or asks for fields the schema doesn't have (introspection while it
+  // is disabled included), an unknown operation name, a bad variable or
+  // argument value, an unknown persisted query.
+  "BAD_REQUEST",
+  "GRAPHQL_PARSE_FAILED",
+  "GRAPHQL_VALIDATION_FAILED",
+  "OPERATION_RESOLUTION_FAILURE",
+  "BAD_USER_INPUT",
+  "PERSISTED_QUERY_NOT_FOUND",
+  "PERSISTED_QUERY_NOT_SUPPORTED",
+]);
 
-export function isClientDocumentError(err: unknown): boolean {
+/** The error's `extensions.code` when it is an expected client error, else undefined. */
+export function expectedClientErrorCode(err: unknown): string | undefined {
   // Read the code structurally, not with `instanceof GraphQLError`: graphql 16
   // ships CJS and ESM builds, and Apollo's copy can differ from ours.
   const code = (err as { extensions?: { code?: unknown } } | null)?.extensions?.code;
-  return typeof code === "string" && CLIENT_DOCUMENT_ERROR_CODES.has(code);
+  return typeof code === "string" && EXPECTED_CLIENT_ERROR_CODES.has(code) ? code : undefined;
 }
 
 /**
@@ -146,8 +165,9 @@ const log = createLogger("graphql");
  * the resolver chain (auth middleware, etc.).
  *
  * Each report names its caller (user id, role, auth method, User-Agent) so a
- * failing client can be traced. Parse and validation failures are written to
- * the log with the same fields instead of being reported.
+ * failing client can be traced. Expected client errors (see
+ * `EXPECTED_CLIENT_ERROR_CODES`) are written to the log with the same fields
+ * and their code instead of being reported.
  */
 export const sentryApolloPlugin: ApolloServerPlugin<Context> = {
   async requestDidStart() {
@@ -159,10 +179,11 @@ export const sentryApolloPlugin: ApolloServerPlugin<Context> = {
           ctx.request.http?.headers.get("user-agent") ?? undefined,
         );
         for (const err of ctx.errors) {
-          if (isClientDocumentError(err)) {
+          const expectedCode = expectedClientErrorCode(err);
+          if (expectedCode) {
             log.warn(
-              { operation, userId: caller.user?.id, ...caller.tags },
-              `client document error: ${err.message}`,
+              { code: expectedCode, operation, userId: caller.user?.id, ...caller.tags },
+              `expected client error: ${err.message}`,
             );
             continue;
           }
