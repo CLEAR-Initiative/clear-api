@@ -10,7 +10,7 @@ vi.mock("../../src/utils/env.js", () => ({
   },
 }));
 
-const { createContact, syncApprovedContact } = await import("../../src/services/exponential.js");
+const { createContact, pushToProspects, syncApprovedContact } = await import("../../src/services/exponential.js");
 
 /** tRPC error envelope: `code` is the numeric JSON-RPC code, the string lives in `data.code`. */
 function trpcError(status: number, numericCode: number, stringCode: string, message: string) {
@@ -81,7 +81,7 @@ describe("exponential trpc client", () => {
 
     const result = await syncApprovedContact({ email: "a@b.org", firstName: "A" });
 
-    expect(result).toEqual({ ok: true, value: { contactId: "c1", warnings: [] } });
+    expect(result).toEqual({ ok: true, value: { contactId: "c1", warnings: [], changed: true } });
     const calls = fetchMock.mock.calls.map(([url, init]) => ({
       procedure: String(url).split("/api/trpc/")[1],
       body: JSON.parse(init.body).json,
@@ -127,5 +127,55 @@ describe("exponential trpc client", () => {
     expect(timeoutSpy).toHaveBeenCalledWith(10_000);
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toMatch(/^network_error:/);
+  });
+
+  it("pushToProspects reports no change for an existing contact already in prospects", async () => {
+    const ok = (json: unknown) => ({ ok: true, status: 200, json: async () => ({ result: { data: { json } } }) });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(ok({ id: "c1", email: "a@b.org", firstName: null, lastName: null, wasExisting: true }))
+        .mockResolvedValueOnce(ok({ added: 0 })),
+    );
+
+    expect(await pushToProspects({ email: "a@b.org" })).toEqual({
+      ok: true,
+      value: { contactId: "c1", changed: false },
+    });
+  });
+
+  it("pushToProspects reports a change for a new contact", async () => {
+    const ok = (json: unknown) => ({ ok: true, status: 200, json: async () => ({ result: { data: { json } } }) });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(ok({ id: "c1", email: "a@b.org", firstName: null, lastName: null, wasExisting: false }))
+        .mockResolvedValueOnce(ok({ added: 1 })),
+    );
+
+    expect(await pushToProspects({ email: "a@b.org" })).toEqual({
+      ok: true,
+      value: { contactId: "c1", changed: true },
+    });
+  });
+
+  it("syncApprovedContact reports no change when the contact is already approved", async () => {
+    const ok = (json: unknown) => ({ ok: true, status: 200, json: async () => ({ result: { data: { json } } }) });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(ok({ id: "c1", email: "a@b.org", firstName: null, lastName: null, wasExisting: true }))
+        .mockResolvedValueOnce(ok({ added: 0 }))
+        .mockResolvedValueOnce(ok({ id: "c1" }))
+        .mockResolvedValueOnce(ok({ removed: 0 })),
+    );
+
+    expect(await syncApprovedContact({ email: "a@b.org" })).toEqual({
+      ok: true,
+      value: { contactId: "c1", warnings: [], changed: false },
+    });
   });
 });
