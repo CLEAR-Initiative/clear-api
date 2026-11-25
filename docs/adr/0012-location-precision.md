@@ -59,6 +59,8 @@ instant it was located**.
   `noLocation` is only measured globally.
 - **Corrections**: Location challenges filed in range, by status (`open` is
   the stored `consideration`), under the same source and location filters.
+  `correctionsByOrigin` splits the same count by who filed: a person, or the
+  pipeline (Exponential #1653).
   They are a correctness proxy: the metric measures how fine a location is,
   not whether it is right. Correctness needs an analyst-checked sample, which
   does not exist yet.

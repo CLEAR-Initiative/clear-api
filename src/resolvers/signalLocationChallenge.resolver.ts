@@ -6,6 +6,7 @@ import {
   isPlatformAdmin,
   requireContentReader,
   requireNonWorkerContentReader,
+  requireRole,
 } from "../utils/auth-guard.js";
 import { buildLocationFilterForTeam, getTeamScopeLocationIds } from "../utils/location-scope.js";
 import {
@@ -48,6 +49,14 @@ interface SubmitInput {
   proposedLng?: number | null;
   proposedLat?: number | null;
   proposedName?: string | null;
+}
+
+interface PipelineFileInput {
+  signalId: string;
+  proposedLat: number;
+  proposedLng: number;
+  proposedName?: string | null;
+  note?: string | null;
 }
 
 interface PointInput {
@@ -128,6 +137,39 @@ function signalInArea(inArea: (locationId: string) => boolean, signal: SignalLoc
 /** The location a Signal shows: general, else origin, else destination. */
 function shownLocation(signal: SignalLocations): string | null {
   return signal.locationId ?? signal.originId ?? signal.destinationId ?? null;
+}
+
+/** The team a pipeline-filed challenge goes to: the one whose scope holds
+ *  `locationId` (a scope location is the place itself or one of its
+ *  ancestors). The most specific scope wins (a district team before a state
+ *  team); between teams scoped at one level, the team created first. Null
+ *  when none holds it: a team with no scope is global monitoring, not the
+ *  owner of every place, so a platform admin decides. */
+async function teamHolding(
+  db: Pick<Context["prisma"], "locations" | "teamLocations">,
+  locationId: string | null,
+): Promise<string | null> {
+  if (!locationId) return null;
+  const place = await db.locations.findUnique({
+    where: { id: locationId },
+    select: { id: true, ancestorIds: true },
+  });
+  if (!place) return null;
+  const scopes = await db.teamLocations.findMany({
+    where: { locationId: { in: [place.id, ...place.ancestorIds] } },
+    select: {
+      teamId: true,
+      location: { select: { level: true } },
+      team: { select: { createdAt: true } },
+    },
+  });
+  scopes.sort(
+    (a, b) =>
+      b.location.level - a.location.level ||
+      a.team.createdAt.getTime() - b.team.createdAt.getTime() ||
+      a.teamId.localeCompare(b.teamId),
+  );
+  return scopes[0]?.teamId ?? null;
 }
 
 function signalNotFound(signalId: string): GraphQLError {
@@ -386,6 +428,101 @@ export const signalLocationChallengeResolvers = {
         resourceType: "signal",
         resourceId: signal.id,
         metadata: { challengeId: challenge.id, teamId: input.teamId, proposedLat, proposedLng },
+      });
+      return challenge;
+    },
+
+    // The pipeline files one after it places a Signal by its text in another
+    // state than the point its source sent (Exponential #1653). A mutation of
+    // its own: `submitSignalLocationChallenge` stays a person's, for a team.
+    fileSignalLocationChallengeFromPipeline: async (
+      _parent: unknown,
+      { input }: { input: PipelineFileInput },
+      context: Context,
+    ) => {
+      const user = requireRole(context, ["admin", "pipeline"]);
+      assertPoint(input.proposedLat, input.proposedLng, "The proposed point's");
+      const note = trimText(input.note, NOTE_MAX, "note");
+      const proposedName = trimText(input.proposedName, NAME_MAX, "proposedName");
+
+      const signal = await context.prisma.signals.findUnique({
+        where: { id: input.signalId },
+        select: { id: true },
+      });
+      if (!signal) throw signalNotFound(input.signalId);
+      // As for a person's: a point outside every loaded admin area could not
+      // be accepted.
+      const placement = await resolveContainingAdminArea(
+        context.prisma,
+        input.proposedLat,
+        input.proposedLng,
+      );
+      if (!placement) throw placeOutsideCoverage();
+
+      // One open challenge per Signal. The pipeline never supersedes: the open
+      // one (a person's, or its own from an earlier run) stays as it is and
+      // is returned, so a re-run or a replay files nothing new.
+      const openOne = (db: Pick<Context["prisma"], "signalLocationChallenges">) =>
+        db.signalLocationChallenges.findFirst({
+          where: { signalId: signal.id, status: OPEN_CHALLENGE_STATUS },
+        });
+      let challenge;
+      try {
+        challenge = await context.prisma.$transaction(async (tx) => {
+          // Lock the Signal first, as filing by a person and deciding do.
+          await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
+          if (await openOne(tx)) return null;
+          // Read where the Signal is under the lock, so a move that lands
+          // just before this cannot send the challenge to the team of the
+          // place it left. The pipeline has already moved the Signal: where
+          // it is now is the new place, and the team that holds it decides.
+          const current = await tx.signals.findUnique({
+            where: { id: signal.id },
+            select: { originId: true, destinationId: true, locationId: true },
+          });
+          if (!current) throw signalNotFound(signal.id);
+          const teamId = await teamHolding(tx, shownLocation(current));
+          return tx.signalLocationChallenges.create({
+            data: {
+              signalId: signal.id,
+              status: OPEN_CHALLENGE_STATUS,
+              origin: "PIPELINE",
+              teamId,
+              createdBy: user.id,
+              note,
+              proposedLat: input.proposedLat,
+              proposedLng: input.proposedLng,
+              proposedName,
+              previousLocationId: shownLocation(current),
+            },
+          });
+        });
+      } catch (err) {
+        // The partial unique index caught one filed at the same moment.
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
+        challenge = null;
+      }
+      if (!challenge) {
+        const open = await openOne(context.prisma);
+        if (open) return open;
+        // It was open a moment ago and has been decided since.
+        throw new GraphQLError("Another challenge on this signal was just filed and decided; try again", {
+          extensions: { code: "CONFLICT" },
+        });
+      }
+
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "signal.location_challenge.file",
+        resourceType: "signal",
+        resourceId: signal.id,
+        metadata: {
+          challengeId: challenge.id,
+          origin: "PIPELINE",
+          teamId: challenge.teamId,
+          proposedLat: input.proposedLat,
+          proposedLng: input.proposedLng,
+        },
       });
       return challenge;
     },

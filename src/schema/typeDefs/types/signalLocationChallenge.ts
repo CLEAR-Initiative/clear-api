@@ -9,14 +9,16 @@ export const signalLocationChallengeTypeDef = gql`
   Signal's general location (its origin and destination are cleared and its
   countries follow), and later source revisions keep it. Which Event the
   Signal belongs to does not change. A Signal has at most one open challenge:
-  filing a new one supersedes it."""
+  a person who files a new one supersedes it; the pipeline leaves it open and
+  files nothing."""
   type SignalLocationChallenge {
     id: ID!
     signalId: String!
     """The challenged Signal."""
     signal: Signal!
     """The team it was filed for. Null on challenges filed before teams were
-    recorded; a platform admin decides those."""
+    recorded, and on a pipeline challenge when no team's area holds the
+    Signal's location; a platform admin decides those."""
     teamId: String
     """The team it was filed for, as an object: only for its members and
     platform admins, null for anyone else."""
@@ -41,7 +43,10 @@ export const signalLocationChallengeTypeDef = gql`
     previousLocation: Location
     """The point written onto the Signal, set when accepted or corrected."""
     appliedLocation: Location
-    """Auth user id of whoever filed the challenge."""
+    """Who filed it: a person, or the pipeline."""
+    origin: SignalLocationChallengeOrigin!
+    """Auth user id of whoever filed the challenge: the pipeline's service
+    user when the origin is PIPELINE."""
     createdBy: String!
     """Display name of whoever filed it."""
     createdByName: String
@@ -68,6 +73,29 @@ export const signalLocationChallengeTypeDef = gql`
     proposedLng: Float
     proposedLat: Float
     proposedName: String
+  }
+
+  """Who filed a Location challenge."""
+  enum SignalLocationChallengeOrigin {
+    """A person filed it in the app."""
+    PERSON
+    """The pipeline filed it: the place the Signal's text names is in another
+    state than the point its source sent."""
+    PIPELINE
+  }
+
+  """A Location challenge the pipeline files after it places a Signal by its
+  text in another state than the point its source sent."""
+  input FileSignalLocationChallengeFromPipelineInput {
+    signalId: String!
+    """The point the source sent, as the proposed point (finite, in range,
+    inside the areas CLEAR covers)."""
+    proposedLat: Float!
+    proposedLng: Float!
+    """Optional label for the proposed point, at most 500 characters."""
+    proposedName: String
+    """Optional note, at most 2000 characters."""
+    note: String
   }
 
   """How an admin decides a Location challenge."""
