@@ -41,7 +41,10 @@ export const signalLocationChallengeTypeDef = gql`
     previousLocation: Location
     """The point written onto the Signal, set when accepted or corrected."""
     appliedLocation: Location
-    """Auth user id of whoever filed the challenge."""
+    """Who filed it: a person, or the pipeline."""
+    origin: SignalLocationChallengeOrigin!
+    """Auth user id of whoever filed the challenge: the pipeline's service
+    user when the origin is PIPELINE."""
     createdBy: String!
     """Display name of whoever filed it."""
     createdByName: String
@@ -68,6 +71,29 @@ export const signalLocationChallengeTypeDef = gql`
     proposedLng: Float
     proposedLat: Float
     proposedName: String
+  }
+
+  """Who filed a Location challenge."""
+  enum SignalLocationChallengeOrigin {
+    """A person filed it in the app."""
+    PERSON
+    """The pipeline filed it: the place the Signal's text names is in another
+    state than the point its source sent."""
+    PIPELINE
+  }
+
+  """A Location challenge the pipeline files after it places a Signal by its
+  text in another state than the point its source sent."""
+  input FileSignalLocationChallengeFromPipelineInput {
+    signalId: String!
+    """The point the source sent, as the proposed point (finite, in range,
+    inside the areas CLEAR covers)."""
+    proposedLat: Float!
+    proposedLng: Float!
+    """Optional label for the proposed point, at most 500 characters."""
+    proposedName: String
+    """Optional note, at most 2000 characters."""
+    note: String
   }
 
   """How an admin decides a Location challenge."""

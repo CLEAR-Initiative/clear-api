@@ -19,6 +19,14 @@ enum AlertStatus {
   @@map("alert_status")
 }
 
+/// Who filed a Location challenge.
+enum SignalLocationChallengeOrigin {
+  PERSON
+  PIPELINE
+
+  @@map("signal_location_challenge_origin")
+}
+
 enum DetectionStatus {
   raw
   processed
@@ -944,7 +952,12 @@ model signalLocationChallenges {
   teamId String? @map("team_id")
   team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
-  /// Auth user id of whoever filed the challenge.
+  /// Who filed it: a person in the app, or the pipeline when the place a
+  /// Signal's text names is in another state than the point its source sent.
+  origin SignalLocationChallengeOrigin @default(PERSON)
+
+  /// Auth user id of whoever filed the challenge: the pipeline's service
+  /// user when the origin is PIPELINE.
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

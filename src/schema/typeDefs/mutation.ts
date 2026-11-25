@@ -259,6 +259,13 @@ export const mutationTypeDef = gql`
     challenge, if any. Never changes the Signal: a decision does."""
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
 
+    """File a Location challenge from the pipeline, with origin PIPELINE and
+    the point the source sent as the proposed point. Never changes the
+    Signal: a decision does. Auth: admin or pipeline."""
+    fileSignalLocationChallengeFromPipeline(
+      input: FileSignalLocationChallengeFromPipelineInput!
+    ): SignalLocationChallenge!
+
     """Decide an open Location challenge. Auth: the team_admin of the team it
     was filed for, or a platform admin, including whoever filed it. ACCEPT
     writes the proposed point onto the Signal; CORRECT writes \`point\`

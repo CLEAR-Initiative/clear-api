@@ -6,6 +6,7 @@ import {
   isPlatformAdmin,
   requireContentReader,
   requireNonWorkerContentReader,
+  requireRole,
 } from "../utils/auth-guard.js";
 import { buildLocationFilterForTeam, getTeamScopeLocationIds } from "../utils/location-scope.js";
 import {
@@ -48,6 +49,14 @@ interface SubmitInput {
   proposedLng?: number | null;
   proposedLat?: number | null;
   proposedName?: string | null;
+}
+
+interface PipelineFileInput {
+  signalId: string;
+  proposedLat: number;
+  proposedLng: number;
+  proposedName?: string | null;
+  note?: string | null;
 }
 
 interface PointInput {
@@ -386,6 +395,68 @@ export const signalLocationChallengeResolvers = {
         resourceType: "signal",
         resourceId: signal.id,
         metadata: { challengeId: challenge.id, teamId: input.teamId, proposedLat, proposedLng },
+      });
+      return challenge;
+    },
+
+    // The pipeline files one after it places a Signal by its text in another
+    // state than the point its source sent (Exponential #1653). A mutation of
+    // its own: `submitSignalLocationChallenge` stays a person's, for a team.
+    fileSignalLocationChallengeFromPipeline: async (
+      _parent: unknown,
+      { input }: { input: PipelineFileInput },
+      context: Context,
+    ) => {
+      const user = requireRole(context, ["admin", "pipeline"]);
+      assertPoint(input.proposedLat, input.proposedLng, "The proposed point's");
+      const note = trimText(input.note, NOTE_MAX, "note");
+      const proposedName = trimText(input.proposedName, NAME_MAX, "proposedName");
+
+      const signal = await context.prisma.signals.findUnique({
+        where: { id: input.signalId },
+        select: { id: true, originId: true, destinationId: true, locationId: true },
+      });
+      if (!signal) throw signalNotFound(input.signalId);
+      // As for a person's: a point outside every loaded admin area could not
+      // be accepted.
+      const placement = await resolveContainingAdminArea(
+        context.prisma,
+        input.proposedLat,
+        input.proposedLng,
+      );
+      if (!placement) throw placeOutsideCoverage();
+
+      const challenge = await context.prisma.$transaction(async (tx) => {
+        // Lock the Signal first, as filing by a person and deciding do.
+        await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
+        return tx.signalLocationChallenges.create({
+          data: {
+            signalId: signal.id,
+            status: OPEN_CHALLENGE_STATUS,
+            origin: "PIPELINE",
+            teamId: null,
+            createdBy: user.id,
+            note,
+            proposedLat: input.proposedLat,
+            proposedLng: input.proposedLng,
+            proposedName,
+            previousLocationId: shownLocation(signal),
+          },
+        });
+      });
+
+      void logActivity(context.prisma, {
+        userId: user.id,
+        action: "signal.location_challenge.file",
+        resourceType: "signal",
+        resourceId: signal.id,
+        metadata: {
+          challengeId: challenge.id,
+          origin: "PIPELINE",
+          teamId: challenge.teamId,
+          proposedLat: input.proposedLat,
+          proposedLng: input.proposedLng,
+        },
       });
       return challenge;
     },
