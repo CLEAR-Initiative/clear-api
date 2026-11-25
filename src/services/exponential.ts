@@ -52,6 +52,16 @@ function isConfigured(): boolean {
   );
 }
 
+/** True when the CRM mirror can run end to end: credentials plus both
+ *  collection ids. The sync reports "not configured" otherwise. */
+export function isCrmMirrorConfigured(): boolean {
+  return Boolean(
+    isConfigured() &&
+      env.EXPONENTIAL_PROSPECTS_COLLECTION_ID &&
+      env.EXPONENTIAL_APPROVED_COLLECTION_ID,
+  );
+}
+
 /** Shared header set for every Exponential call. */
 function authHeaders(): Record<string, string> {
   return {
@@ -212,6 +222,8 @@ export async function removeFromCollection(
  * Composite helper: create-or-fetch a contact by email, set the given
  * profileType, and add it to the prospects collection. Returns the
  * contact id on success so the approve action can later move it.
+ * `changed` is false when the contact already existed and was already a
+ * member, which lets the CRM sync report a no-op run.
  *
  * Best-effort: any partial failure logs and the caller proceeds.
  */
@@ -219,7 +231,7 @@ export async function pushToProspects(input: {
   email: string;
   firstName?: string;
   lastName?: string;
-}): Promise<Result<{ contactId: string }>> {
+}): Promise<Result<{ contactId: string; changed: boolean }>> {
   if (!isConfigured() || !env.EXPONENTIAL_PROSPECTS_COLLECTION_ID) {
     return { ok: false, reason: "not_configured" };
   }
@@ -243,7 +255,8 @@ export async function pushToProspects(input: {
       reason: `${added.reason}:contact_id=${created.value.id}`,
     };
   }
-  return { ok: true, value: { contactId: created.value.id } };
+  const changed = !created.value.wasExisting || added.value.added > 0;
+  return { ok: true, value: { contactId: created.value.id, changed } };
 }
 
 /**
@@ -259,10 +272,14 @@ export async function pushToProspects(input: {
  * A failure at any step logs and returns; subsequent steps run anyway
  * unless the first step (add) failed, in which case we bail rather
  * than removing the contact from prospects with nowhere to go.
+ *
+ * `changed` is true when either list membership actually changed. The
+ * profileType write is not counted: it is idempotent and Exponential
+ * doesn't say whether it changed anything.
  */
 export async function moveProspectToApproved(
   contactId: string,
-): Promise<Result<{ contactId: string; warnings: string[] }>> {
+): Promise<Result<{ contactId: string; warnings: string[]; changed: boolean }>> {
   if (
     !isConfigured() ||
     !env.EXPONENTIAL_PROSPECTS_COLLECTION_ID ||
@@ -294,7 +311,8 @@ export async function moveProspectToApproved(
     warnings.push(`remove_from_prospects_failed:${removed.reason}`);
   }
 
-  return { ok: true, value: { contactId, warnings } };
+  const changed = added.value.added > 0 || (removed.ok && removed.value.removed > 0);
+  return { ok: true, value: { contactId, warnings, changed } };
 }
 
 /**
@@ -309,15 +327,14 @@ export async function syncApprovedContact(input: {
   email: string;
   firstName?: string;
   lastName?: string;
-}): Promise<Result<{ contactId: string; warnings: string[] }>> {
-  if (
-    !isConfigured() ||
-    !env.EXPONENTIAL_PROSPECTS_COLLECTION_ID ||
-    !env.EXPONENTIAL_APPROVED_COLLECTION_ID
-  ) {
-    return { ok: false, reason: "not_configured" };
-  }
+}): Promise<Result<{ contactId: string; warnings: string[]; changed: boolean }>> {
+  if (!isCrmMirrorConfigured()) return { ok: false, reason: "not_configured" };
   const contact = await createContact({ ...input, profileType: "clear_approved" });
   if (!contact.ok) return { ok: false, reason: `contact_upsert_failed:${contact.reason}` };
-  return moveProspectToApproved(contact.value.id);
+  const moved = await moveProspectToApproved(contact.value.id);
+  if (!moved.ok) return moved;
+  return {
+    ok: true,
+    value: { ...moved.value, changed: moved.value.changed || !contact.value.wasExisting },
+  };
 }

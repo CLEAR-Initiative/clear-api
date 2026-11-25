@@ -10,9 +10,13 @@
  *
  * All three are best-effort: if any of them fails, signup still succeeds.
  * Each helper swallows its own errors; `allSettled` is the backstop in
- * case one throws anyway.
+ * case one throws anyway. A CRM failure is also written to the activity
+ * log (`user.crm_sync_failed`) so it can be seen and repaired by the CRM
+ * sync (services/crm-sync.ts) instead of vanishing into stderr.
  */
 
+import { prisma } from "../lib/prisma.js";
+import { logActivity } from "../utils/activity-log.js";
 import { pushToProspects } from "./exponential.js";
 import { sendSignupAcknowledgement } from "./signup-ack.js";
 import { notifyMaintainersOfSignup } from "./signup-notify.js";
@@ -38,6 +42,7 @@ export function splitName(name: string | null | undefined): {
 }
 
 export async function onDeveloperSignedUp(user: {
+  id: string;
   name: string | null | undefined;
   email: string;
 }): Promise<void> {
@@ -48,12 +53,22 @@ export async function onDeveloperSignedUp(user: {
     notifyMaintainersOfSignup({ name: user.name, email: user.email }),
   ]);
 
-  if (crm.status === "rejected") {
-    console.error(`[auth.signup] CRM prospects sync threw for ${user.email}:`, crm.reason);
-  } else if (!crm.value.ok) {
-    console.error(
-      `[auth.signup] CRM prospects sync failed for ${user.email}: ${crm.value.reason}`,
-    );
+  // An unconfigured CRM is a valid setup, not a failure.
+  const crmFailure =
+    crm.status === "rejected"
+      ? `threw:${crm.reason instanceof Error ? crm.reason.message : String(crm.reason)}`
+      : !crm.value.ok && crm.value.reason !== "not_configured"
+        ? crm.value.reason
+        : null;
+  if (crmFailure) {
+    console.error(`[auth.signup] CRM prospects sync failed for ${user.email}: ${crmFailure}`);
+    await logActivity(prisma, {
+      userId: user.id,
+      action: "user.crm_sync_failed",
+      resourceType: "user",
+      resourceId: user.id,
+      metadata: { email: user.email, stage: "signup", reason: crmFailure },
+    });
   }
   if (ack.status === "rejected") {
     console.error(`[auth.signup] acknowledgement threw for ${user.email}:`, ack.reason);

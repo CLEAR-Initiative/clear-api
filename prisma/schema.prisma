@@ -94,6 +94,11 @@ model user {
   role          String  @default("member")
   isActive      Boolean @default(true) @map("is_active")
   language      String  @default("en")
+  /// When an admin approved this Portal self-signup (approveUserById sets it
+  /// in the same UPDATE as the pending → member flip). Null for invited,
+  /// provisioned and service users. The durable marker the CRM sync uses to
+  /// tell an approved self-signup apart from any other member.
+  approvedAt    DateTime? @map("approved_at")
 
   inAppNotification Boolean @default(false) @map("in_app_notification")
   emailNotification Boolean @default(false) @map("email_notification")
@@ -2364,6 +2369,14 @@ model analysisRequest {
   windowStart DateTime  @map("window_start")
   windowEnd   DateTime? @map("window_end")
 
+  /// On-demand node deep-dive selection (analysis-node-deepdive): the taxonomy
+  /// node keys the requester drilled into — the leaf FRONTIER computed by
+  /// clear-pipeline `taxonomy.resolve_selection` (a parent with a selected child
+  /// is path-only). Empty = the default L1 situation fan-out (unchanged). Part
+  /// of the PENDING dedupe key (migration 20261116000000) so two different node
+  /// selections for the same frame are distinct requests, not deduped onto one.
+  taxonomyNodeKeys String[] @map("taxonomy_node_keys")
+
   status AnalysisRequestStatus @default(PENDING)
 
   requestedByUserId String? @map("requested_by_user_id")
@@ -2388,6 +2401,64 @@ model analysisRequest {
   /// express partial indexes).
   @@index([status, createdAt])
   @@map("analysis_requests")
+}
+
+/// Per-node on-demand deep-dive result (analysis-node-deepdive, decision A).
+/// The frame-scoped sibling of `analysis`, but at taxonomy-NODE granularity: one
+/// CURRENT row per (frame, taxonomy node, schema_version), so a UI can read
+/// exactly the L2/L3 leaves a user drilled into, independent of any frame-level
+/// situation snapshot. Written by clear-pipeline `upsertNodeAnalyses`.
+model nodeAnalysis {
+  id String @id @default(cuid())
+
+  /// ── FRAME (arrays canonicalised on write, identical rule to `analysis`) ──
+  locationIds String[]  @map("location_ids")
+  eventTypes  String[]  @map("event_types")
+  needSectors String[]  @map("need_sectors")
+  windowStart DateTime  @map("window_start")
+  windowEnd   DateTime? @map("window_end")
+
+  /// Taxonomy node this row answers. `nodeKey` is the stable slug path
+  /// (task/l1[/l2[/l3]]); name/task/level denormalised for display + ordering.
+  nodeKey  String @map("node_key")
+  nodeName String @map("node_name")
+  task     String
+  level    Int
+
+  /// The node's descriptive finding (clear-pipeline `NodeDescriptive` dump).
+  /// Opaque + versioned via `schemaVersion`.
+  data Json
+
+  /// Per-node generation status (e.g. `ok` / `best_effort`).
+  status String
+
+  sourceReportIds String[] @map("source_report_ids")
+
+  generatedByModel       String   @map("generated_by_model")
+  generationCostUsd      Float?   @map("generation_cost_usd")
+  generationInputTokens  Int?     @map("generation_input_tokens")
+  generationOutputTokens Int?     @map("generation_output_tokens")
+  generatedAt            DateTime @default(now()) @map("generated_at")
+
+  /// Bitemporal validity — same pattern as `analysis`: a regeneration stamps
+  /// `validTo` on the previous current row and inserts a fresh one.
+  validFrom DateTime  @default(now()) @map("valid_from")
+  validTo   DateTime? @map("valid_to")
+
+  schemaVersion String @map("schema_version")
+
+  /// Partial unique index lives in the migration SQL (Prisma can't express
+  /// partial / NULLS-NOT-DISTINCT indexes):
+  ///   UNIQUE (location_ids, event_types, need_sectors, window_start,
+  ///           window_end, node_key, schema_version) WHERE valid_to IS NULL
+  ///           NULLS NOT DISTINCT
+  @@index([validTo])
+  @@index([schemaVersion])
+  @@index([nodeKey])
+  @@index([locationIds], type: Gin)
+  @@index([eventTypes], type: Gin)
+  @@index([needSectors], type: Gin)
+  @@map("node_analyses")
 }
 
 /// GeoNames gazetteer places, one row per geonameid, seeded per-country

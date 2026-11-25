@@ -66,6 +66,27 @@ interface UpsertAnalysisInput extends FrameInput {
   force?: boolean | null;
 }
 
+/** One node's result in an `upsertNodeAnalyses` call (analysis-node-deepdive). */
+interface NodeAnalysisInput {
+  nodeKey: string;
+  nodeName: string;
+  task: string;
+  level: number;
+  data: Prisma.InputJsonValue;
+  status: string;
+  sourceReportIds?: string[] | null;
+  generatedByModel: string;
+  generationCostUsd?: number | null;
+  generationInputTokens?: number | null;
+  generationOutputTokens?: number | null;
+}
+
+interface UpsertNodeAnalysesInput {
+  frame: FrameInput;
+  schemaVersion: string;
+  nodes: NodeAnalysisInput[];
+}
+
 /** A frame → KnowledgebaseFilters, matching the pipeline's `build_rag_filters`:
  *  a single-location frame scopes by SUBTREE (`countryLocationId`) since KB
  *  chunks are tagged at leaf admin ids; a multi-location frame matches its ids
@@ -343,6 +364,26 @@ export const analysisResolvers = {
       });
     },
 
+    // Read the current per-node deep-dive results for a frame
+    // (analysis-node-deepdive) — the L2/L3 leaves generated on demand, one row
+    // per taxonomy node. Any authenticated content reader (same as the
+    // frame-level `analysis` read).
+    nodeAnalyses: async (
+      _parent: unknown,
+      args: { frame: FrameInput; schemaVersion: string },
+      context: Context,
+    ) => {
+      requireContentReader(context);
+      return context.prisma.nodeAnalysis.findMany({
+        where: {
+          ...frameWhere(args.frame),
+          schemaVersion: args.schemaVersion,
+          validTo: null,
+        },
+        orderBy: [{ level: "asc" }, { nodeKey: "asc" }],
+      });
+    },
+
     // Scheduler drain (ADR-0007 §5): enabled automations that are DUE — never
     // run (nextRunAt null) or nextRunAt in the past. The pipeline groups these
     // by frame and regenerates each frame at the minimum cadence across its
@@ -532,6 +573,92 @@ export const analysisResolvers = {
       });
     },
 
+    // Pipeline (analysis-node-deepdive): upsert the per-node deep-dive results —
+    // one bitemporal row per (frame, node, schemaVersion). Each node supersedes
+    // its own previous current row, then inserts, in one transaction — the
+    // frame-scoped `upsertAnalysis` pattern at taxonomy-node granularity.
+    upsertNodeAnalyses: async (
+      _parent: unknown,
+      args: { input: UpsertNodeAnalysesInput },
+      context: Context,
+    ): Promise<{ upserted: number }> => {
+      requireRole(context, ["admin", "pipeline"]);
+      const { input } = args;
+      if (!input.schemaVersion) {
+        throw new GraphQLError("upsertNodeAnalyses: schemaVersion is required", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+      const nodes = input.nodes ?? [];
+      if (nodes.length === 0) return { upserted: 0 };
+
+      const now = new Date();
+      const locationIds = canonicalizeArray(input.frame.locationIds);
+      const eventTypes = canonicalizeArray(input.frame.eventTypes);
+      const needSectors = canonicalizeArray(input.frame.needSectors);
+      const windowStart = input.frame.windowStart;
+      const windowEnd = input.frame.windowEnd ?? null;
+      // Serialize concurrent writers for the SAME frame. Two deep-dives whose
+      // selections overlap on a node would otherwise race on the per-node
+      // current-row unique index: both stamp the old row's validTo, then the
+      // second insert violates the index and rolls back its WHOLE batch (losing
+      // its non-overlapping nodes too). A frame-scoped advisory lock makes
+      // same-frame upserts serial while different frames stay parallel; it is
+      // released automatically at transaction end.
+      const frameLockKey = JSON.stringify([
+        locationIds,
+        eventTypes,
+        needSectors,
+        windowStart instanceof Date ? windowStart.toISOString() : windowStart,
+        windowEnd instanceof Date ? windowEnd.toISOString() : windowEnd,
+        input.schemaVersion,
+      ]);
+
+      return context.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${frameLockKey}, 0))`;
+        let upserted = 0;
+        for (const node of nodes) {
+          const match = {
+            locationIds: { equals: locationIds },
+            eventTypes: { equals: eventTypes },
+            needSectors: { equals: needSectors },
+            windowStart,
+            windowEnd,
+            nodeKey: node.nodeKey,
+            schemaVersion: input.schemaVersion,
+            validTo: null,
+          };
+          // Stamp validTo on the previous current row FIRST so the partial-unique
+          // index (WHERE valid_to IS NULL) doesn't reject the fresh insert.
+          await tx.nodeAnalysis.updateMany({ where: match, data: { validTo: now } });
+          await tx.nodeAnalysis.create({
+            data: {
+              locationIds,
+              eventTypes,
+              needSectors,
+              windowStart,
+              windowEnd,
+              nodeKey: node.nodeKey,
+              nodeName: node.nodeName,
+              task: node.task,
+              level: node.level,
+              data: node.data,
+              status: node.status,
+              sourceReportIds: node.sourceReportIds ?? [],
+              generatedByModel: node.generatedByModel,
+              generationCostUsd: node.generationCostUsd ?? null,
+              generationInputTokens: node.generationInputTokens ?? null,
+              generationOutputTokens: node.generationOutputTokens ?? null,
+              schemaVersion: input.schemaVersion,
+              validFrom: now,
+            },
+          });
+          upserted++;
+        }
+        return { upserted };
+      });
+    },
+
     // Pipeline (ADR-0008): bump the current analysis row's lastSyncedAt for a
     // frame WITHOUT regenerating — used when the drain's gate decides to skip
     // (within 24h, or no new evidence). Returns false when no current row
@@ -634,11 +761,21 @@ export const analysisResolvers = {
     // doesn't queue the same generation twice.
     requestAnalysis: async (
       _parent: unknown,
-      args: { input: FrameInput & { teamId?: string | null; force?: boolean | null } },
+      args: {
+        input: FrameInput & {
+          teamId?: string | null;
+          force?: boolean | null;
+          taxonomyNodeKeys?: string[] | null;
+        };
+      },
       context: Context,
     ) => {
       const user = requireNonWorker(context);
       const { input } = args;
+      // On-demand node deep-dive selection (analysis-node-deepdive): part of the
+      // PENDING dedupe identity, so a different node selection for the same frame
+      // is a distinct request. Empty = the default L1 situation fan-out.
+      const taxonomyNodeKeys = canonicalizeArray(input.taxonomyNodeKeys);
       // Manual triggers always regenerate: a human asking for an analysis
       // bypasses BOTH the 24h regeneration floor AND the new-evidence freshness
       // gate (ADR-0008). The gate still governs the scheduled automation path
@@ -666,7 +803,7 @@ export const analysisResolvers = {
           ? row
           : { ...row, teamId: null, requestedByUserId: null, lastError: null };
       const existing = await context.prisma.analysisRequest.findFirst({
-        where: { ...frameWhere(input), status: "PENDING" },
+        where: { ...frameWhere(input), taxonomyNodeKeys: { equals: taxonomyNodeKeys }, status: "PENDING" },
       });
       if (existing) {
         // Upgrade an existing non-forced PENDING to forced when an admin forces
@@ -689,6 +826,7 @@ export const analysisResolvers = {
             needSectors: canonicalizeArray(input.needSectors),
             windowStart: input.windowStart,
             windowEnd: input.windowEnd ?? null,
+            taxonomyNodeKeys,
             teamId: input.teamId ?? null,
             requestedByUserId: context.user?.id ?? null,
             force,
@@ -700,7 +838,7 @@ export const analysisResolvers = {
         // return the winner instead of double-generating.
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
           const winner = await context.prisma.analysisRequest.findFirst({
-            where: { ...frameWhere(input), status: "PENDING" },
+            where: { ...frameWhere(input), taxonomyNodeKeys: { equals: taxonomyNodeKeys }, status: "PENDING" },
           });
           if (winner) return ownView(winner);
         }

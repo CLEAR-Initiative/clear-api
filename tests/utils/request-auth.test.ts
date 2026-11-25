@@ -35,11 +35,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { IncomingHttpHeaders } from "node:http";
 
 // Hoisted so the vi.mock factories can close over them.
-const { getSessionMock, findUniqueMock, updateMock } = vi.hoisted(() => ({
+const { getSessionMock, findUniqueMock, updateMock, captureExceptionMock } = vi.hoisted(() => ({
   getSessionMock: vi.fn(),
   findUniqueMock: vi.fn(),
   updateMock: vi.fn(),
+  captureExceptionMock: vi.fn(),
 }));
+
+vi.mock("@sentry/node", () => ({ captureException: captureExceptionMock }));
 
 vi.mock("../../src/lib/auth.js", () => ({
   auth: { api: { getSession: getSessionMock } },
@@ -54,7 +57,7 @@ vi.mock("../../src/lib/prisma.js", () => ({
   },
 }));
 
-import { resolveRequestAuth } from "../../src/utils/request-auth.js";
+import { resetAuthLookupReports, resolveRequestAuth } from "../../src/utils/request-auth.js";
 import { generateApiKey, hashKey } from "../../src/utils/api-key.js";
 
 /** A Better Auth session result shape (user + session). */
@@ -82,6 +85,8 @@ beforeEach(() => {
   getSessionMock.mockReset();
   findUniqueMock.mockReset();
   updateMock.mockReset();
+  captureExceptionMock.mockReset();
+  resetAuthLookupReports();
   // Defaults: no session, no key row, update resolves.
   getSessionMock.mockResolvedValue(null);
   findUniqueMock.mockResolvedValue(null);
@@ -458,5 +463,47 @@ describe("resolveRequestAuth — CLEAR Agent key (X-Clear-Agent-Key)", () => {
     } as IncomingHttpHeaders);
 
     expect(result).toMatchObject({ authMethod: "api-key", viaAgent: true });
+  });
+});
+
+describe("resolveRequestAuth — a lookup that fails is reported", () => {
+  // The caller then gets UNAUTHENTICATED, which is not sent to GlitchTip, so
+  // the lookup failure itself has to be.
+  it("reports a session lookup failure and treats the caller as logged out", async () => {
+    const outage = new Error("timeout exceeded when trying to connect");
+    getSessionMock.mockRejectedValue(outage);
+
+    const result = await resolveRequestAuth({ cookie: "better-auth.session_token=abc" } as IncomingHttpHeaders);
+
+    expect(result.user).toBeNull();
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionMock).toHaveBeenCalledWith(outage, {
+      tags: { stage: "auth-lookup", lookup: "session" },
+    });
+  });
+
+  it("reports an API key lookup failure", async () => {
+    const outage = new Error("connection refused");
+    findUniqueMock.mockRejectedValue(outage);
+
+    const result = await resolveRequestAuth({
+      authorization: `Bearer ${generateApiKey().plaintextKey}`,
+    } as IncomingHttpHeaders);
+
+    expect(result.user).toBeNull();
+    expect(captureExceptionMock).toHaveBeenCalledWith(outage, {
+      tags: { stage: "auth-lookup", lookup: "api-key" },
+    });
+  });
+
+  it("reports each lookup once a minute, not once per request", async () => {
+    getSessionMock.mockRejectedValue(new Error("db down"));
+    for (let i = 0; i < 5; i++) await resolveRequestAuth({} as IncomingHttpHeaders);
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing when the lookups succeed", async () => {
+    await resolveRequestAuth({} as IncomingHttpHeaders);
+    expect(captureExceptionMock).not.toHaveBeenCalled();
   });
 });

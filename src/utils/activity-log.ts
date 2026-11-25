@@ -37,6 +37,9 @@ export type ActivityAction =
   | "api_signal_source.grant"
   | "api_signal_source.revoke"
   | "user.approved"
+  // A self-signup's CRM prospects push failed (services/signup.ts). The
+  // actor and resource are the new user; the CRM sync repairs it.
+  | "user.crm_sync_failed"
   | "user.role_updated"
   // A platform admin read another user's Conversation (or listed them).
   // The first logged *read*: Conversations are an audit record of what the
