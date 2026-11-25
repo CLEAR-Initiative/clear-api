@@ -8214,6 +8214,14 @@ Pass current: false to include the full history.<div class="field-args"><span cl
     <td><code>superseded</code></td>
     <td><code>Int!</code></td>
     <td>Replaced by a newer challenge on the same Signal.</td>
+  </tr></tbody></table><h3 id="type-locationcorrectionsbyorigin"><code>LocationCorrectionsByOrigin</code> <span class="type-badge">object</span></h3><p>Location challenges filed in range, by who filed them. The two add up to `corrections`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>person</code></td>
+    <td><code>LocationCorrectionCounts!</code></td>
+    <td>Filed by a person in the app.</td>
+  </tr><tr>
+    <td><code>pipeline</code></td>
+    <td><code>LocationCorrectionCounts!</code></td>
+    <td>Filed by the pipeline: the place a Signal's text names is in another state than the point its source sent.</td>
   </tr></tbody></table><h3 id="type-locationmetadata"><code>LocationMetadata</code> <span class="type-badge">object</span></h3><p>Arbitrary per-location metadata keyed by type. History is preserved:
 writes close the current row (set validTo = now()) and insert a new one.
 The CURRENT value for a (location, type) is the row where validTo is null.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
@@ -8326,6 +8334,10 @@ pipeline (not submitted or filed by hand), not retracted, not dummy.</p><table c
     <td><code>corrections</code></td>
     <td><code>LocationCorrectionCounts!</code></td>
     <td>Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists.</td>
+  </tr><tr>
+    <td><code>correctionsByOrigin</code></td>
+    <td><code>LocationCorrectionsByOrigin!</code></td>
+    <td>The challenges in `corrections`, by who filed them.</td>
   </tr><tr>
     <td><code>granularity</code></td>
     <td><code>MetricGranularity!</code></td>

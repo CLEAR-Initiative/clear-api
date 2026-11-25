@@ -103,10 +103,12 @@ describe("summarise", () => {
     const m = summarise(
       [{ source: "x", day: day("2026-10-27"), level: 2, count: 0 }],
       [
-        { status: "consideration", count: 2 },
-        { status: "accepted", count: 1 },
-        { status: "declined", count: 3 },
-        { status: "weird", count: 9 },
+        { status: "consideration", origin: "PERSON", count: 2 },
+        { status: "accepted", origin: "PERSON", count: 1 },
+        { status: "declined", origin: "PERSON", count: 1 },
+        { status: "declined", origin: "PIPELINE", count: 2 },
+        { status: "weird", origin: "PERSON", count: 9 },
+        { status: "accepted", origin: "ROBOT", count: 9 },
       ],
       r,
     );
@@ -114,6 +116,10 @@ describe("summarise", () => {
     expect(m.bySource).toEqual([]);
     expect(m.weekly).toEqual([]);
     expect(m.corrections).toEqual({ open: 2, accepted: 1, corrected: 0, declined: 3, superseded: 0 });
+    expect(m.correctionsByOrigin).toEqual({
+      person: { open: 2, accepted: 1, corrected: 0, declined: 1, superseded: 0 },
+      pipeline: { open: 0, accepted: 0, corrected: 0, declined: 2, superseded: 0 },
+    });
   });
 });
 

@@ -25,6 +25,10 @@ const LOCATION_PRECISION_METRICS = `
       granularity
       series { start label source total noLocation country state district point isPartial }
       corrections { open accepted corrected declined superseded }
+      correctionsByOrigin {
+        person { open accepted corrected declined superseded }
+        pipeline { open accepted corrected declined superseded }
+      }
     }
   }
 `;
@@ -39,8 +43,9 @@ const ROWS = [
   { source: "dataminr", day: day("2026-10-26"), level: 4, count: 5 },
 ];
 const CORRECTIONS = [
-  { status: "consideration", count: 2 },
-  { status: "declined", count: 1 },
+  { status: "consideration", origin: "PERSON", count: 1 },
+  { status: "consideration", origin: "PIPELINE", count: 1 },
+  { status: "declined", origin: "PERSON", count: 1 },
 ];
 
 async function run(user: { id: string; role: string } | null, variables: Record<string, unknown>) {
@@ -132,6 +137,10 @@ describe("locationPrecisionMetrics schema contract", () => {
         },
       ],
       corrections: { open: 2, accepted: 0, corrected: 0, declined: 1, superseded: 0 },
+      correctionsByOrigin: {
+        person: { open: 1, accepted: 0, corrected: 0, declined: 1, superseded: 0 },
+        pipeline: { open: 1, accepted: 0, corrected: 0, declined: 0, superseded: 0 },
+      },
     });
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
   });

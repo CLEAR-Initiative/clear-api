@@ -48,6 +48,8 @@ export const locationPrecisionMetricsTypeDef = gql`
     weekly: [LocationPrecisionWeek!]!
     """Location challenges filed in range, by status: a correctness proxy until an analyst-checked sample exists."""
     corrections: LocationCorrectionCounts!
+    """The challenges in \`corrections\`, by who filed them."""
+    correctionsByOrigin: LocationCorrectionsByOrigin!
     """The bucket size \`series\` was read in."""
     granularity: MetricGranularity!
     """Each source in \`bySource\` per bucket of \`granularity\` (ADR-0014): zero-filled over every bucket the range touches, in \`bySource\` order then ascending. With \`WEEK\` it equals \`weekly\` row for row."""
@@ -106,6 +108,14 @@ export const locationPrecisionMetricsTypeDef = gql`
     point: Int!
     """True when the range covers only part of the week, e.g. the current week."""
     isPartial: Boolean!
+  }
+
+  """Location challenges filed in range, by who filed them. The two add up to \`corrections\`."""
+  type LocationCorrectionsByOrigin {
+    """Filed by a person in the app."""
+    person: LocationCorrectionCounts!
+    """Filed by the pipeline: the place a Signal's text names is in another state than the point its source sent."""
+    pipeline: LocationCorrectionCounts!
   }
 
   """Location challenges filed in range, by status."""

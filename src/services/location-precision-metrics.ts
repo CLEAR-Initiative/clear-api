@@ -21,7 +21,9 @@
  * `submittedById`, not `rawData.manual`), not retracted, not dummy. Signals a
  * person placed by hand would measure the person, not the pipeline.
  *
- * `corrections` counts Location challenges filed in the range by status, a
+ * `corrections` counts Location challenges filed in the range by status, and
+ * `correctionsByOrigin` splits the same count by who filed (person or
+ * pipeline): a
  * correctness proxy until an analyst-checked sample exists. The API returns
  * counts only; clear-mvp turns them into shares.
  */
@@ -49,6 +51,10 @@ export type Level = (typeof LEVELS)[number];
 export const CORRECTION_STATUSES = ["open", "accepted", "corrected", "declined", "superseded"] as const;
 export type CorrectionStatus = (typeof CORRECTION_STATUSES)[number];
 
+/** Who filed a Location challenge, as the metric names it. */
+export const CORRECTION_ORIGINS = ["person", "pipeline"] as const;
+export type CorrectionOrigin = (typeof CORRECTION_ORIGINS)[number];
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One (source, UTC day, level) cell, as the query aggregates Signals. */
@@ -62,9 +68,11 @@ export interface LocationPrecisionRow {
   count: number;
 }
 
-/** One (challenge status, count) cell. */
+/** One (challenge status, origin, count) cell. */
 export interface LocationCorrectionRow {
   status: string;
+  /** `signal_location_challenges.origin`: PERSON or PIPELINE. */
+  origin: string;
   count: number;
 }
 
@@ -86,6 +94,8 @@ export interface LocationPrecisionMetrics {
   /** Source by ISO week, zero-filled over every week the range touches, in `bySource` order then ascending weeks. */
   weekly: Array<{ isoWeek: string; weekStart: Date; source: string; isPartial: boolean } & LevelCounts>;
   corrections: Record<CorrectionStatus, number>;
+  /** The same challenges by who filed them; the two add up to `corrections`. */
+  correctionsByOrigin: Record<CorrectionOrigin, Record<CorrectionStatus, number>>;
   /** The bucket size `series` was read in. */
   granularity: Granularity;
   /** Source by bucket of `granularity` (ADR-0014), zero-filled, in `bySource` order then ascending; equal to `weekly` for WEEK. */
@@ -135,6 +145,17 @@ export function levelBucket(level: number | null | undefined): Level {
 export function correctionBucket(status: string): CorrectionStatus | null {
   if (status === "consideration") return "open";
   return (CORRECTION_STATUSES as readonly string[]).includes(status) ? (status as CorrectionStatus) : null;
+}
+
+/** The origin a Location challenge counts under; null for one the metric does not know. */
+export function correctionOrigin(origin: string): CorrectionOrigin | null {
+  if (origin === "PERSON") return "person";
+  if (origin === "PIPELINE") return "pipeline";
+  return null;
+}
+
+function emptyCorrections(): Record<CorrectionStatus, number> {
+  return Object.fromEntries(CORRECTION_STATUSES.map((s) => [s, 0])) as Record<CorrectionStatus, number>;
 }
 
 function emptyCounts(): LevelCounts {
@@ -217,13 +238,28 @@ export function summarise(
     });
   }
 
-  const correctionCounts = Object.fromEntries(CORRECTION_STATUSES.map((s) => [s, 0])) as Record<CorrectionStatus, number>;
+  const correctionCounts = emptyCorrections();
+  const correctionsByOrigin = { person: emptyCorrections(), pipeline: emptyCorrections() };
   for (const row of corrections) {
     const bucket = correctionBucket(row.status);
-    if (bucket) correctionCounts[bucket] += Number(row.count) || 0;
+    const origin = correctionOrigin(row.origin);
+    if (!bucket || !origin) continue;
+    const count = Number(row.count) || 0;
+    correctionCounts[bucket] += count;
+    correctionsByOrigin[origin][bucket] += count;
   }
 
-  return { from: range.from, to: range.to, signalsInRange, bySource, weekly, corrections: correctionCounts, granularity, series };
+  return {
+    from: range.from,
+    to: range.to,
+    signalsInRange,
+    bySource,
+    weekly,
+    corrections: correctionCounts,
+    correctionsByOrigin,
+    granularity,
+    series,
+  };
 }
 
 /** The location the pipeline gave the Signal `s`; the correction counts filter on it. */
@@ -377,7 +413,7 @@ export async function listLocationReplayRuns(
   return fetchLocationReplayRuns(prisma, range, input.locationId || null, normaliseSourceNames(input.sourceNames));
 }
 
-/** Location challenges filed in range, by status, under the same source and location filters. */
+/** Location challenges filed in range, by status and origin, under the same source and location filters. */
 export async function fetchLocationCorrectionRows(
   prisma: PrismaClient,
   range: { from: Date; to: Date },
@@ -386,7 +422,7 @@ export async function fetchLocationCorrectionRows(
 ): Promise<LocationCorrectionRow[]> {
   const { inSources, inLocation } = filters(locationId, sourceNames);
   return prisma.$queryRaw<LocationCorrectionRow[]>`
-    SELECT c."status" AS "status", COUNT(*)::int AS "count"
+    SELECT c."status" AS "status", c."origin"::text AS "origin", COUNT(*)::int AS "count"
     FROM "signal_location_challenges" c
     JOIN "signals" s ON s."id" = c."signal_id"
     JOIN "data_sources" ds ON ds."id" = s."source_id"
@@ -395,7 +431,7 @@ export async function fetchLocationCorrectionRows(
       AND c."created_at" <= ${range.to}
       ${inSources}
       ${inLocation}
-    GROUP BY 1
+    GROUP BY 1, 2
   `;
 }
 

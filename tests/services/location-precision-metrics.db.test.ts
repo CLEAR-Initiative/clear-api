@@ -130,11 +130,12 @@ describeIfDb("location precision against the real schema", () => {
     await signal({ source: DM, processedAt: null, collectedAt: "2026-10-26T00:00:00Z", locationId: POINT });
     await signal({ source: DM, processedAt: null, collectedAt: "2026-11-08T23:59:59.000Z", locationId: POINT });
     await signal({ source: DM, processedAt: null, collectedAt: "2026-11-09T00:00:00Z", locationId: POINT }); // after the range
-    // Corrections: two in range (one open, one declined), one before it.
+    // Corrections: two in range (one open, one the pipeline filed and an
+    // admin declined), one before it.
     await prisma.signalLocationChallenges.createMany({
       data: [
         { signalId: district, createdBy: USER, status: "consideration", createdAt: at("2026-10-29T10:00:00Z"), previousLocationId: DISTRICT },
-        { signalId: district, createdBy: USER, status: "declined", createdAt: at("2026-11-05T10:00:00Z"), previousLocationId: DISTRICT },
+        { signalId: district, createdBy: USER, origin: "PIPELINE", status: "declined", createdAt: at("2026-11-05T10:00:00Z"), previousLocationId: DISTRICT },
         { signalId: district, createdBy: USER, status: "accepted", createdAt: at("2026-10-20T10:00:00Z"), previousLocationId: DISTRICT },
       ],
     });
@@ -153,6 +154,10 @@ describeIfDb("location precision against the real schema", () => {
       [DM, "2026-W45", 1, 1],
     ]);
     expect(all.corrections).toEqual({ open: 1, accepted: 0, corrected: 0, declined: 1, superseded: 0 });
+    expect(all.correctionsByOrigin).toEqual({
+      person: { open: 1, accepted: 0, corrected: 0, declined: 0, superseded: 0 },
+      pipeline: { open: 0, accepted: 0, corrected: 0, declined: 1, superseded: 0 },
+    });
 
     // Inside Testland: the Signal abroad and the one with no location drop out.
     const inCountry = await computeLocationPrecisionMetrics(prisma, { ...range, sourceNames: [X, DM], locationId: COUNTRY });
