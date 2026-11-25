@@ -95,12 +95,19 @@ describe("postInboxDigest across replicas", () => {
     const b = okFetch();
     await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: a, now });
     await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: b, now: new Date("2026-11-25T07:09:00Z") });
-    expect(sent(a).url).toMatch(/\/send\/m\.room\.message\/inbox-digest-2026-11-25$/);
+    expect(sent(a).url).toMatch(/\/send\/m\.room\.message\/inbox-digest-app\.example-2026-11-25$/);
     expect(sent(b).url).toBe(sent(a).url);
 
     const next = okFetch();
     await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: next, now: new Date("2026-11-26T07:00:00Z") });
-    expect(sent(next).url).toMatch(/inbox-digest-2026-11-26$/);
+    expect(sent(next).url).toMatch(/inbox-digest-app\.example-2026-11-26$/);
+  });
+
+  it("keeps two environments that share a room apart", async () => {
+    const now = new Date("2026-11-25T07:05:00Z");
+    const dev = okFetch();
+    await postInboxDigest(fakePrisma().prisma, config, "https://dev.example", { fetch: dev, now });
+    expect(sent(dev).url).toMatch(/inbox-digest-dev\.example-2026-11-25$/);
   });
 });
 
@@ -125,7 +132,7 @@ describe("startInboxDigestWorker / stop", () => {
   it("posts once in the digest hour of each day, and never outside it", async () => {
     vi.useFakeTimers({ now: new Date("2026-11-25T05:00:00Z") });
     const fetch = okFetch();
-    startInboxDigestWorker(fakePrisma().prisma, config, APP, { fetch, sleep });
+    expect(startInboxDigestWorker(fakePrisma().prisma, config, APP, { fetch, sleep })).toBe(true);
 
     await vi.advanceTimersByTimeAsync(1.5 * HOUR); // 06:30
     expect(fetch).not.toHaveBeenCalled();
@@ -135,6 +142,15 @@ describe("startInboxDigestWorker / stop", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(4 * HOUR); // 08:30 next day
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing when Matrix is not configured", async () => {
+    vi.useFakeTimers({ now: new Date("2026-11-25T06:55:00Z") });
+    const { prisma, groupBy } = fakePrisma();
+    expect(startInboxDigestWorker(prisma, null, APP, { fetch: okFetch(), sleep })).toBe(false);
+    await vi.advanceTimersByTimeAsync(HOUR);
+    expect(groupBy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("posts nothing when it starts after the digest hour", async () => {

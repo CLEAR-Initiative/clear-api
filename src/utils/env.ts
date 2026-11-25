@@ -225,7 +225,8 @@ const envSchema = z.object({
    *  admin hasn't provisioned a token yet. Keep this ≥ 32 hex chars
    *  when set (`openssl rand -hex 32`). */
   GLITCHTIP_WEBHOOK_TOKEN: z.string().default(""),
-  /** Matrix room for GlitchTip alerts. All three must be set to post;
+  /** Matrix room for GlitchTip alerts and the daily Inbox digest
+   *  (services/inbox-digest). All three must be set to post;
    *  otherwise posting is off. The room must be unencrypted and the bot
    *  joined. Room id is the internal `!id:server`, not an alias. */
   MATRIX_HOMESERVER_URL: z.string().default(""),

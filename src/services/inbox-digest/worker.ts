@@ -13,7 +13,7 @@
  * none that day.
  *
  * Several replicas post one digest: each sends the transaction id
- * `inbox-digest-<UTC date>`, and the homeserver takes one message per id. A
+ * `inbox-digest-<app host>-<UTC date>`, and the homeserver takes one message per id. A
  * homeserver forgets old ids (Synapse: after about 30 minutes), so the id
  * covers replicas that tick together and a restart inside the hour, not a
  * whole day; the digest hour covers the rest.
@@ -109,8 +109,21 @@ export async function postInboxDigest(
   // homeserver keeps one message for it.
   return postMatrixMessage(config, formatInboxDigest(counts, frontendUrl), {
     ...deps,
-    txnId: `inbox-digest-${utcDate(deps.now ?? new Date())}`,
+    txnId: digestTxnId(frontendUrl, deps.now ?? new Date()),
   });
+}
+
+/** `inbox-digest-<app host>-<UTC date>`. The host keeps dev and prod apart
+ *  when both post to one room with one bot token: without it the homeserver
+ *  would keep only the first of the two digests. */
+export function digestTxnId(frontendUrl: string, now: Date): string {
+  let host = "app";
+  try {
+    host = new URL(frontendUrl).host.replace(/[^a-z0-9.-]/gi, "-");
+  } catch {
+    // Not a URL: one environment's digests still share an id.
+  }
+  return `inbox-digest-${host}-${utcDate(now)}`;
 }
 
 /** The UTC date of `now`, as YYYY-MM-DD. */
@@ -143,14 +156,17 @@ async function tick(
   }
 }
 
-/** Start the digest schedule. Idempotent: calling twice is a no-op. */
+/** Start the digest schedule. Does nothing and returns false when Matrix is
+ *  not configured (`config` is null), as the GlitchTip path does. Idempotent:
+ *  calling twice is a no-op. */
 export function startInboxDigestWorker(
   prisma: PrismaClient,
-  config: MatrixConfig,
+  config: MatrixConfig | null,
   frontendUrl: string,
   deps: InboxDigestDeps = {},
-): void {
-  if (timer !== null) return;
+): boolean {
+  if (config === null) return false;
+  if (timer !== null) return true;
   const run = () => void tick(prisma, config, frontendUrl, deps);
   firstRun = setTimeout(() => {
     firstRun = null;
@@ -159,6 +175,7 @@ export function startInboxDigestWorker(
   firstRun.unref?.();
   timer = setInterval(run, TICK_MS);
   timer.unref?.();
+  return true;
 }
 
 /** Stop the schedule (tests / graceful shutdown). */
