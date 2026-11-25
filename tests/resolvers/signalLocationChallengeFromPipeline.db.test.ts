@@ -180,6 +180,29 @@ describeIfDb("Location challenges the pipeline files", () => {
     expect(decided).toMatchObject({ status: "declined", decidedBy: MEMBER_ID, origin: "PIPELINE" });
   });
 
+  it("a point in another state than the team's area is for a platform admin to accept", async () => {
+    // The text placed the Signal in A1; Dataminr's point is in state B. The
+    // district team's admin may keep the new place (DECLINE) but not write a
+    // point outside the team's area: platform admins decide these for now.
+    const signalId = await signalAt(DISTRICT_A1_ID);
+    const filed = await fileSignalLocationChallengeFromPipeline(
+      null,
+      { input: { signalId, ...DATAMINR_POINT } },
+      pipeline,
+    );
+    expect(filed.teamId).toBe(DISTRICT_TEAM_ID);
+    await expect(
+      decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, member),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+    const accepted = await decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, platform);
+    expect(accepted).toMatchObject({ status: "accepted", decidedBy: PLATFORM_ID });
+    const signal = await prisma.signals.findUniqueOrThrow({
+      where: { id: signalId },
+      include: { generalLocation: { select: { ancestorIds: true } } },
+    });
+    expect(signal.generalLocation?.ancestorIds).toContain(DISTRICT_B1_ID);
+  });
+
   it("returns the open challenge instead of filing a second one", async () => {
     const signalId = await signalAt(DISTRICT_B1_ID);
     const input = { signalId, ...DATAMINR_POINT };

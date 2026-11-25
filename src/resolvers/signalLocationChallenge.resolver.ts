@@ -145,14 +145,17 @@ function shownLocation(signal: SignalLocations): string | null {
  *  team); between teams scoped at one level, the team created first. Null
  *  when none holds it: a team with no scope is global monitoring, not the
  *  owner of every place, so a platform admin decides. */
-async function teamHolding(context: Context, locationId: string | null): Promise<string | null> {
+async function teamHolding(
+  db: Pick<Context["prisma"], "locations" | "teamLocations">,
+  locationId: string | null,
+): Promise<string | null> {
   if (!locationId) return null;
-  const place = await context.prisma.locations.findUnique({
+  const place = await db.locations.findUnique({
     where: { id: locationId },
     select: { id: true, ancestorIds: true },
   });
   if (!place) return null;
-  const scopes = await context.prisma.teamLocations.findMany({
+  const scopes = await db.teamLocations.findMany({
     where: { locationId: { in: [place.id, ...place.ancestorIds] } },
     select: {
       teamId: true,
@@ -444,7 +447,7 @@ export const signalLocationChallengeResolvers = {
 
       const signal = await context.prisma.signals.findUnique({
         where: { id: input.signalId },
-        select: { id: true, originId: true, destinationId: true, locationId: true },
+        select: { id: true },
       });
       if (!signal) throw signalNotFound(input.signalId);
       // As for a person's: a point outside every loaded admin area could not
@@ -455,9 +458,6 @@ export const signalLocationChallengeResolvers = {
         input.proposedLng,
       );
       if (!placement) throw placeOutsideCoverage();
-      // The pipeline has already moved the Signal, so where it is now is the
-      // new place, and the team that holds it decides.
-      const teamId = await teamHolding(context, shownLocation(signal));
 
       // One open challenge per Signal. The pipeline never supersedes: the open
       // one (a person's, or its own from an earlier run) stays as it is and
@@ -472,6 +472,16 @@ export const signalLocationChallengeResolvers = {
           // Lock the Signal first, as filing by a person and deciding do.
           await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
           if (await openOne(tx)) return null;
+          // Read where the Signal is under the lock, so a move that lands
+          // just before this cannot send the challenge to the team of the
+          // place it left. The pipeline has already moved the Signal: where
+          // it is now is the new place, and the team that holds it decides.
+          const current = await tx.signals.findUnique({
+            where: { id: signal.id },
+            select: { originId: true, destinationId: true, locationId: true },
+          });
+          if (!current) throw signalNotFound(signal.id);
+          const teamId = await teamHolding(tx, shownLocation(current));
           return tx.signalLocationChallenges.create({
             data: {
               signalId: signal.id,
@@ -483,7 +493,7 @@ export const signalLocationChallengeResolvers = {
               proposedLat: input.proposedLat,
               proposedLng: input.proposedLng,
               proposedName,
-              previousLocationId: shownLocation(signal),
+              previousLocationId: shownLocation(current),
             },
           });
         });
