@@ -11,6 +11,12 @@
  * today. Outside that hour a tick does nothing, so a deploy later in the day
  * posts no second digest; a process that is down for the whole hour posts
  * none that day.
+ *
+ * Several replicas post one digest: each sends the transaction id
+ * `inbox-digest-<UTC date>`, and the homeserver takes one message per id. A
+ * homeserver forgets old ids (Synapse: after about 30 minutes), so the id
+ * covers replicas that tick together and a restart inside the hour, not a
+ * whole day; the digest hour covers the rest.
  */
 
 import type { PrismaClient } from "../../generated/prisma/client.js";
@@ -87,6 +93,8 @@ export function formatInboxDigest(counts: InboxCounts, frontendUrl: string): Mat
 export interface InboxDigestDeps {
   fetch?: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  /** The instant the digest is for. Default: now. */
+  now?: Date;
 }
 
 /** Count and post one digest. Returns true when the homeserver took it. */
@@ -97,7 +105,12 @@ export async function postInboxDigest(
   deps: InboxDigestDeps = {},
 ): Promise<boolean> {
   const counts = await countWaitingInboxItems(prisma);
-  return postMatrixMessage(config, formatInboxDigest(counts, frontendUrl), deps);
+  // One transaction id per UTC day: every replica sends the same id, and the
+  // homeserver keeps one message for it.
+  return postMatrixMessage(config, formatInboxDigest(counts, frontendUrl), {
+    ...deps,
+    txnId: `inbox-digest-${utcDate(deps.now ?? new Date())}`,
+  });
 }
 
 /** The UTC date of `now`, as YYYY-MM-DD. */
@@ -124,7 +137,7 @@ async function tick(
   if (!digestDue(now, lastPostedDate)) return;
   try {
     // A failed post leaves the day open: the next tick in the hour tries again.
-    if (await postInboxDigest(prisma, config, frontendUrl, deps)) lastPostedDate = utcDate(now);
+    if (await postInboxDigest(prisma, config, frontendUrl, { ...deps, now })) lastPostedDate = utcDate(now);
   } catch (err) {
     console.error("[inbox-digest] run failed:", err);
   }

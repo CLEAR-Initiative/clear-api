@@ -88,6 +88,22 @@ describe("postInboxDigest", () => {
   });
 });
 
+describe("postInboxDigest across replicas", () => {
+  it("sends the UTC date as the transaction id, so two replicas post one message", async () => {
+    const now = new Date("2026-11-25T07:05:00Z");
+    const a = okFetch();
+    const b = okFetch();
+    await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: a, now });
+    await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: b, now: new Date("2026-11-25T07:09:00Z") });
+    expect(sent(a).url).toMatch(/\/send\/m\.room\.message\/inbox-digest-2026-11-25$/);
+    expect(sent(b).url).toBe(sent(a).url);
+
+    const next = okFetch();
+    await postInboxDigest(fakePrisma().prisma, config, APP, { fetch: next, now: new Date("2026-11-26T07:00:00Z") });
+    expect(sent(next).url).toMatch(/inbox-digest-2026-11-26$/);
+  });
+});
+
 describe("digestDue", () => {
   it("is due in the digest hour, once a UTC day", () => {
     expect(digestDue(new Date("2026-11-25T06:59:00Z"), null)).toBe(false);
