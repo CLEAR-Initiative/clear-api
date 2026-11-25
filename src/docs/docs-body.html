@@ -1325,8 +1325,10 @@ challenge, if any. Never changes the Signal: a decision does.<div class="field-a
     <td><code>fileSignalLocationChallengeFromPipeline</code></td>
     <td><code>SignalLocationChallenge!</code></td>
     <td>File a Location challenge from the pipeline, with origin PIPELINE and
-the point the source sent as the proposed point. Never changes the
-Signal: a decision does. Auth: admin or pipeline.<div class="field-args"><span class="arg"><code>input: FileSignalLocationChallengeFromPipelineInput!</code></span></div></td>
+the point the source sent as the proposed point. It goes to the team
+whose area holds the Signal's location (the most specific area wins), or
+to no team when none does: a platform admin decides those. Never changes
+the Signal: a decision does. Auth: admin or pipeline.<div class="field-args"><span class="arg"><code>input: FileSignalLocationChallengeFromPipelineInput!</code></span></div></td>
   </tr><tr id="mutation-decidesignallocationchallenge">
     <td><code>decideSignalLocationChallenge</code></td>
     <td><code>SignalLocationChallenge!</code></td>
@@ -9628,7 +9630,8 @@ filing a new one supersedes it.</p><table class="ref-table"><thead><tr><th>Field
     <td><code>teamId</code></td>
     <td><code>String</code></td>
     <td>The team it was filed for. Null on challenges filed before teams were
-recorded; a platform admin decides those.</td>
+recorded, and on a pipeline challenge when no team's area holds the
+Signal's location; a platform admin decides those.</td>
   </tr><tr>
     <td><code>team</code></td>
     <td><code>Team</code></td>

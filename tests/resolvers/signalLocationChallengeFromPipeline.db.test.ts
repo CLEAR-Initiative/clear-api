@@ -14,7 +14,7 @@ import { signalLocationChallengeResolvers } from "../../src/resolvers/signalLoca
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { fileSignalLocationChallengeFromPipeline, submitSignalLocationChallenge } =
+const { fileSignalLocationChallengeFromPipeline, submitSignalLocationChallenge, decideSignalLocationChallenge } =
   signalLocationChallengeResolvers.Mutation;
 
 const RUN = `slc-pipe-${Date.now()}`;
@@ -148,6 +148,36 @@ describeIfDb("Location challenges the pipeline files", () => {
     await expect(
       fileSignalLocationChallengeFromPipeline(null, { input: { signalId: `${RUN}-nope`, ...DATAMINR_POINT } }, pipeline),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
+  });
+
+  it("goes to the team whose area holds the Signal's new place, the most specific first", async () => {
+    const teamOf = async (locationId: string) => {
+      const signalId = await signalAt(locationId);
+      const filed = await fileSignalLocationChallengeFromPipeline(
+        null,
+        { input: { signalId, ...DATAMINR_POINT } },
+        pipeline,
+      );
+      return filed.teamId;
+    };
+    // A1 is in the district team's scope and in the state team's.
+    expect(await teamOf(DISTRICT_A1_ID)).toBe(DISTRICT_TEAM_ID);
+    // A2 is only in the state team's.
+    expect(await teamOf(DISTRICT_A2_ID)).toBe(STATE_TEAM_ID);
+    // No team's scope holds B1: the team with no scope does not own it.
+    expect(await teamOf(DISTRICT_B1_ID)).toBeNull();
+  });
+
+  it("a team's admin decides the pipeline challenge filed for their team", async () => {
+    await prisma.teamMembers.create({ data: { teamId: DISTRICT_TEAM_ID, userId: MEMBER_ID, role: "team_admin" } });
+    const signalId = await signalAt(DISTRICT_A1_ID);
+    const filed = await fileSignalLocationChallengeFromPipeline(
+      null,
+      { input: { signalId, ...DATAMINR_POINT } },
+      pipeline,
+    );
+    const decided = await decideSignalLocationChallenge(null, { id: filed.id, decision: "DECLINE" }, member);
+    expect(decided).toMatchObject({ status: "declined", decidedBy: MEMBER_ID, origin: "PIPELINE" });
   });
 
   it("keeps origin PERSON on a challenge a person files", async () => {

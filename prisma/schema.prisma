@@ -947,8 +947,9 @@ model signalLocationChallenges {
   signal   signals @relation(fields: [signalId], references: [id], onDelete: Cascade)
 
   /// The team it was filed for: only that team's admin, or a platform admin,
-  /// decides it. Null on challenges filed before teams were recorded, which
-  /// only a platform admin decides.
+  /// decides it. Null on challenges filed before teams were recorded, and on
+  /// a pipeline challenge when no team's area holds the Signal's location,
+  /// which only a platform admin decides.
   teamId String? @map("team_id")
   team   teams?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
 

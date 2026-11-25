@@ -139,6 +139,36 @@ function shownLocation(signal: SignalLocations): string | null {
   return signal.locationId ?? signal.originId ?? signal.destinationId ?? null;
 }
 
+/** The team a pipeline-filed challenge goes to: the one whose scope holds
+ *  `locationId` (a scope location is the place itself or one of its
+ *  ancestors). The most specific scope wins (a district team before a state
+ *  team); between teams scoped at one level, the team created first. Null
+ *  when none holds it: a team with no scope is global monitoring, not the
+ *  owner of every place, so a platform admin decides. */
+async function teamHolding(context: Context, locationId: string | null): Promise<string | null> {
+  if (!locationId) return null;
+  const place = await context.prisma.locations.findUnique({
+    where: { id: locationId },
+    select: { id: true, ancestorIds: true },
+  });
+  if (!place) return null;
+  const scopes = await context.prisma.teamLocations.findMany({
+    where: { locationId: { in: [place.id, ...place.ancestorIds] } },
+    select: {
+      teamId: true,
+      location: { select: { level: true } },
+      team: { select: { createdAt: true } },
+    },
+  });
+  scopes.sort(
+    (a, b) =>
+      b.location.level - a.location.level ||
+      a.team.createdAt.getTime() - b.team.createdAt.getTime() ||
+      a.teamId.localeCompare(b.teamId),
+  );
+  return scopes[0]?.teamId ?? null;
+}
+
 function signalNotFound(signalId: string): GraphQLError {
   return new GraphQLError(`Signal ${signalId} not found.`, { extensions: { code: "NOT_FOUND" } });
 }
@@ -425,6 +455,9 @@ export const signalLocationChallengeResolvers = {
         input.proposedLng,
       );
       if (!placement) throw placeOutsideCoverage();
+      // The pipeline has already moved the Signal, so where it is now is the
+      // new place, and the team that holds it decides.
+      const teamId = await teamHolding(context, shownLocation(signal));
 
       const challenge = await context.prisma.$transaction(async (tx) => {
         // Lock the Signal first, as filing by a person and deciding do.
@@ -434,7 +467,7 @@ export const signalLocationChallengeResolvers = {
             signalId: signal.id,
             status: OPEN_CHALLENGE_STATUS,
             origin: "PIPELINE",
-            teamId: null,
+            teamId,
             createdBy: user.id,
             note,
             proposedLat: input.proposedLat,

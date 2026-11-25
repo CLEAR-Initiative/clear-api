@@ -260,8 +260,10 @@ export const mutationTypeDef = gql`
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
 
     """File a Location challenge from the pipeline, with origin PIPELINE and
-    the point the source sent as the proposed point. Never changes the
-    Signal: a decision does. Auth: admin or pipeline."""
+    the point the source sent as the proposed point. It goes to the team
+    whose area holds the Signal's location (the most specific area wins), or
+    to no team when none does: a platform admin decides those. Never changes
+    the Signal: a decision does. Auth: admin or pipeline."""
     fileSignalLocationChallengeFromPipeline(
       input: FileSignalLocationChallengeFromPipelineInput!
     ): SignalLocationChallenge!

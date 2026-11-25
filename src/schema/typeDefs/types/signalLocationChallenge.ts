@@ -16,7 +16,8 @@ export const signalLocationChallengeTypeDef = gql`
     """The challenged Signal."""
     signal: Signal!
     """The team it was filed for. Null on challenges filed before teams were
-    recorded; a platform admin decides those."""
+    recorded, and on a pipeline challenge when no team's area holds the
+    Signal's location; a platform admin decides those."""
     teamId: String
     """The team it was filed for, as an object: only for its members and
     platform admins, null for anyone else."""
