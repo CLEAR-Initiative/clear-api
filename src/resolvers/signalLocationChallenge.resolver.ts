@@ -459,24 +459,47 @@ export const signalLocationChallengeResolvers = {
       // new place, and the team that holds it decides.
       const teamId = await teamHolding(context, shownLocation(signal));
 
-      const challenge = await context.prisma.$transaction(async (tx) => {
-        // Lock the Signal first, as filing by a person and deciding do.
-        await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
-        return tx.signalLocationChallenges.create({
-          data: {
-            signalId: signal.id,
-            status: OPEN_CHALLENGE_STATUS,
-            origin: "PIPELINE",
-            teamId,
-            createdBy: user.id,
-            note,
-            proposedLat: input.proposedLat,
-            proposedLng: input.proposedLng,
-            proposedName,
-            previousLocationId: shownLocation(signal),
-          },
+      // One open challenge per Signal. The pipeline never supersedes: the open
+      // one (a person's, or its own from an earlier run) stays as it is and
+      // is returned, so a re-run or a replay files nothing new.
+      const openOne = (db: Pick<Context["prisma"], "signalLocationChallenges">) =>
+        db.signalLocationChallenges.findFirst({
+          where: { signalId: signal.id, status: OPEN_CHALLENGE_STATUS },
         });
-      });
+      let challenge;
+      try {
+        challenge = await context.prisma.$transaction(async (tx) => {
+          // Lock the Signal first, as filing by a person and deciding do.
+          await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
+          if (await openOne(tx)) return null;
+          return tx.signalLocationChallenges.create({
+            data: {
+              signalId: signal.id,
+              status: OPEN_CHALLENGE_STATUS,
+              origin: "PIPELINE",
+              teamId,
+              createdBy: user.id,
+              note,
+              proposedLat: input.proposedLat,
+              proposedLng: input.proposedLng,
+              proposedName,
+              previousLocationId: shownLocation(signal),
+            },
+          });
+        });
+      } catch (err) {
+        // The partial unique index caught one filed at the same moment.
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
+        challenge = null;
+      }
+      if (!challenge) {
+        const open = await openOne(context.prisma);
+        if (open) return open;
+        // It was open a moment ago and has been decided since.
+        throw new GraphQLError("Another challenge on this signal was just filed and decided; try again", {
+          extensions: { code: "CONFLICT" },
+        });
+      }
 
       void logActivity(context.prisma, {
         userId: user.id,

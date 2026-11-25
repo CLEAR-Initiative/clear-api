@@ -9,7 +9,8 @@ export const signalLocationChallengeTypeDef = gql`
   Signal's general location (its origin and destination are cleared and its
   countries follow), and later source revisions keep it. Which Event the
   Signal belongs to does not change. A Signal has at most one open challenge:
-  filing a new one supersedes it."""
+  a person who files a new one supersedes it; the pipeline leaves it open and
+  files nothing."""
   type SignalLocationChallenge {
     id: ID!
     signalId: String!

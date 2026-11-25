@@ -180,6 +180,57 @@ describeIfDb("Location challenges the pipeline files", () => {
     expect(decided).toMatchObject({ status: "declined", decidedBy: MEMBER_ID, origin: "PIPELINE" });
   });
 
+  it("returns the open challenge instead of filing a second one", async () => {
+    const signalId = await signalAt(DISTRICT_B1_ID);
+    const input = { signalId, ...DATAMINR_POINT };
+    const first = await fileSignalLocationChallengeFromPipeline(null, { input }, pipeline);
+    const again = await fileSignalLocationChallengeFromPipeline(
+      null,
+      { input: { ...input, proposedLat: 51.6, note: "A later run" } },
+      pipeline,
+    );
+    expect(again.id).toBe(first.id);
+    expect(await prisma.signalLocationChallenges.findMany({ where: { signalId } })).toMatchObject([
+      { id: first.id, status: "consideration", proposedLat: 51.5, note: null },
+    ]);
+  });
+
+  it("leaves a person's open challenge as it is and returns it", async () => {
+    const signalId = await signalAt(DISTRICT_A2_ID);
+    const persons = await submitSignalLocationChallenge(
+      null,
+      { input: { signalId, teamId: STATE_TEAM_ID, note: "Looks wrong" } },
+      member,
+    );
+    const returned = await fileSignalLocationChallengeFromPipeline(
+      null,
+      { input: { signalId, ...DATAMINR_POINT } },
+      pipeline,
+    );
+    expect(returned).toMatchObject({ id: persons.id, origin: "PERSON", status: "consideration" });
+    expect(await prisma.signalLocationChallenges.count({ where: { signalId } })).toBe(1);
+  });
+
+  it("files one challenge when two runs file at the same moment", async () => {
+    const signalId = await signalAt(DISTRICT_B1_ID);
+    const input = { signalId, ...DATAMINR_POINT };
+    const [a, b] = await Promise.all([
+      fileSignalLocationChallengeFromPipeline(null, { input }, pipeline),
+      fileSignalLocationChallengeFromPipeline(null, { input }, pipeline),
+    ]);
+    expect(a.id).toBe(b.id);
+    expect(await prisma.signalLocationChallenges.count({ where: { signalId } })).toBe(1);
+  });
+
+  it("files a new one once the earlier challenge is decided", async () => {
+    const signalId = await signalAt(DISTRICT_B1_ID);
+    const input = { signalId, ...DATAMINR_POINT };
+    const first = await fileSignalLocationChallengeFromPipeline(null, { input }, pipeline);
+    await decideSignalLocationChallenge(null, { id: first.id, decision: "DECLINE" }, platform);
+    const second = await fileSignalLocationChallengeFromPipeline(null, { input }, pipeline);
+    expect(second.id).not.toBe(first.id);
+  });
+
   it("keeps origin PERSON on a challenge a person files", async () => {
     const signalId = await signalAt(DISTRICT_A2_ID);
     const filed = await submitSignalLocationChallenge(
