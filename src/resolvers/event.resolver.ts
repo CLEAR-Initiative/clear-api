@@ -698,26 +698,7 @@ export const eventResolvers = {
           select: { signalId: true },
         });
         const linkedSet = new Set(alreadyLinked.map((r) => r.signalId));
-        const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
-        newlyLinked = toLink;
-        if (toLink.length > 0) {
-          // The new Links and their grouping log rows are one transaction
-          // (ADR-0021). A Link that a person makes (a session, not an API
-          // key) writes no row.
-          const linkedAt = new Date();
-          const uniqueToLink = [...new Set(toLink)];
-          await context.prisma.$transaction(async (tx) => {
-            await tx.signalEvents.createMany({
-              data: uniqueToLink.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
-            });
-            if (byPipeline) {
-              await writeGroupingLinks(tx, id, uniqueToLink, input);
-              // An Event with a Link in the grouping log always has a row in
-              // the Event facts log: the history readers join the two.
-              await writeEventFacts(tx, id, input, {});
-            }
-          });
-        }
+        newlyLinked = [...new Set(input.signalIds.filter((sid) => !linkedSet.has(sid)))];
       }
 
       // The signal-time bounds only ever widen. Signals arrive out of order
@@ -730,6 +711,22 @@ export const eventResolvers = {
       // returns carries the result, and in one transaction with it so a
       // failed update (bad locationId, say) leaves the bounds untouched.
       const updated = await context.prisma.$transaction(async (tx) => {
+        // The new Links, their grouping log rows (ADR-0021) and, for a person,
+        // the decision (ADR-0024) commit with the update: a failed update or
+        // record leaves no Link behind. A Link a person makes writes no
+        // grouping row.
+        if (newlyLinked.length > 0) {
+          const linkedAt = new Date();
+          await tx.signalEvents.createMany({
+            data: newlyLinked.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
+          });
+          if (byPipeline) {
+            await writeGroupingLinks(tx, id, newlyLinked, input);
+            // An Event with a Link in the grouping log always has a row in
+            // the Event facts log: the history readers join the two.
+            await writeEventFacts(tx, id, input, {});
+          }
+        }
         if (input.lastSignalCreatedAt) {
           const last = new Date(input.lastSignalCreatedAt);
           await tx.events.updateMany({
@@ -801,14 +798,25 @@ export const eventResolvers = {
           subjectType: "event",
           subjectId: id,
           payload: {
-            fields: Object.keys(input).filter((k) => (input as Record<string, unknown>)[k] !== undefined && k !== "signalIds"),
-            linkedSignalIds: [...new Set(newlyLinked)],
-            previous: { severity: existing.severity, types: existing.types, locationId: existing.locationId },
+            // What the person chose, field by field, and what it replaced.
+            changes: Object.fromEntries(
+              Object.entries(input).filter(([k, v]) => v !== undefined && k !== "signalIds"),
+            ) as InputJsonValue,
+            linkedSignalIds: newlyLinked,
+            previous: {
+              title: existing.title,
+              description: existing.description,
+              severity: existing.severity,
+              types: existing.types,
+              locationId: existing.locationId,
+              originId: existing.originId,
+              destinationId: existing.destinationId,
+            },
           },
         });
         return row;
       });
-      logEventChange("updated", updated, [...new Set(newlyLinked)]);
+      logEventChange("updated", updated, newlyLinked);
       return updated;
     },
 
