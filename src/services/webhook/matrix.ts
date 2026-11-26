@@ -106,19 +106,56 @@ function safeUrl(v: unknown): string | null {
   }
 }
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const DAGSTER_TITLE = new RegExp(`^(\\S+) - ${UUID} - (.+)$`, "i");
+
+/** A Dagster op name: snake_case, as in `raw_darfur24` or `idmc_silver`. */
+const DAGSTER_STEP = /^[a-z][a-z0-9_]*$/;
+const DAGSTER_EVENT_KINDS = new Set(["STEP_FAILURE", "RUN_FAILURE"]);
+
+/**
+ * Shorten a Dagster log title for the room. The pipeline titles each error
+ * `<job> - <run id> - [<pid> - ][<step> - ][<EVENT> - ]<message>`; the run
+ * id, pid and step are on the GlitchTip issue and only push the message off
+ * the line. Result: `<job>: <message>`. Any other title is returned as is.
+ *
+ * Only those named fields are removed, one of each and in that order, so a
+ * message that itself starts `TimeoutError - …` keeps its first word. The
+ * last part always stays.
+ */
+export function shortenDagsterTitle(title: string): string {
+  const m = DAGSTER_TITLE.exec(title);
+  if (!m) return title;
+  const job = m[1] as string;
+  const parts = (m[2] as string).split(" - ");
+  const dropIf = (matches: (part: string) => boolean) => {
+    if (parts.length > 1 && matches(parts[0] as string)) parts.shift();
+  };
+  dropIf((p) => /^\d+$/.test(p));
+  dropIf((p) => DAGSTER_STEP.test(p));
+  dropIf((p) => DAGSTER_EVENT_KINDS.has(p));
+  return `${job}: ${parts.join(" - ")}`;
+}
+
 /**
  * Turn a GlitchTip generic-webhook body into a Matrix message. Tolerant of
  * missing pieces: GlitchTip versions differ, and the synthetic test payload
  * from the developer portal is minimal.
  */
-export function formatGlitchtipAlert(payload: unknown): MatrixMessage {
+export function formatGlitchtipAlert(
+  payload: unknown,
+  options: { ticket?: { number: number; url: string } | null } = {},
+): MatrixMessage {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const first: unknown = Array.isArray(p.attachments) ? p.attachments[0] : undefined;
   const attachment = (first && typeof first === "object" ? first : {}) as SlackAttachment;
 
   const alias = str(p.alias);
   const heading = (alias && HEADINGS[alias]) ?? "GlitchTip alert";
-  const title = truncate(str(attachment.title) ?? str(p.text) ?? "Untitled issue", MAX_TITLE);
+  const title = truncate(
+    shortenDagsterTitle(str(attachment.title) ?? str(p.text) ?? "Untitled issue"),
+    MAX_TITLE,
+  );
   const link = safeUrl(attachment.title_link);
   const detail = str(attachment.text);
 
@@ -146,6 +183,9 @@ export function formatGlitchtipAlert(payload: unknown): MatrixMessage {
   if (meta) textLines.push(meta);
   if (detail) textLines.push(truncate(detail, MAX_TEXT));
   if (link) textLines.push(link);
+  const ticketUrl = options.ticket ? safeUrl(options.ticket.url) : null;
+  const ticketLabel = options.ticket ? `Ticket #${options.ticket.number}` : null;
+  if (ticketUrl && ticketLabel) textLines.push(`${ticketLabel}: ${ticketUrl}`);
 
   const titleHtml = link
     ? `<a href="${escapeHtml(link)}">${escapeHtml(title)}</a>`
@@ -153,6 +193,9 @@ export function formatGlitchtipAlert(payload: unknown): MatrixMessage {
   const htmlParts = [`🚨 <strong>${escapeHtml(heading)}:</strong> ${titleHtml}`];
   if (metaHtml) htmlParts.push(metaHtml);
   if (detail) htmlParts.push(`<em>${escapeHtml(truncate(detail, MAX_TEXT))}</em>`);
+  if (ticketUrl && ticketLabel) {
+    htmlParts.push(`<a href="${escapeHtml(ticketUrl)}">${escapeHtml(ticketLabel)}</a>`);
+  }
 
   return { body: textLines.join("\n"), formattedBody: htmlParts.join("<br/>") };
 }

@@ -4,6 +4,7 @@ import {
   matrixConfigFromEnv,
   postMatrixMessage,
   rateLimitWaitMs,
+  shortenDagsterTitle,
 } from "../../src/services/webhook/matrix.js";
 
 const glitchtipPayload = {
@@ -74,6 +75,81 @@ describe("formatGlitchtipAlert", () => {
     expect(formatGlitchtipAlert({ text: "hi", project: "clear-mvp" }).body).toContain(
       "Project: clear-mvp",
     );
+  });
+});
+
+describe("shortenDagsterTitle", () => {
+  const run = "c0af0538-185f-4c93-8106-1b2a5e62f27f";
+  it("keeps the job and the message, and drops the run id, pid, step and event kind", () => {
+    expect(
+      shortenDagsterTitle(`darfur24_ingest - ${run} - raw_darfur24 - [DARFUR24] feed request fai…`),
+    ).toBe("darfur24_ingest: [DARFUR24] feed request fai…");
+    expect(
+      shortenDagsterTitle(
+        `idmc_gx - ${run} - 2393189 - idmc_silver - STEP_FAILURE - Execution of step "idmc_silver" failed.`,
+      ),
+    ).toBe('idmc_gx: Execution of step "idmc_silver" failed.');
+    expect(
+      shortenDagsterTitle(
+        `idmc_gx - ${run} - 2393189 - RUN_FAILURE - Execution of run for "idmc_gx" failed.`,
+      ),
+    ).toBe('idmc_gx: Execution of run for "idmc_gx" failed.');
+  });
+
+  it("keeps a message that has its own dashes, and a one-word message", () => {
+    expect(shortenDagsterTitle(`job - ${run} - step - retry 2 - gave up`)).toBe(
+      "job: retry 2 - gave up",
+    );
+    expect(shortenDagsterTitle(`job - ${run} - step - Timeout`)).toBe("job: Timeout");
+    expect(shortenDagsterTitle(`job - ${run} - step - TimeoutError - request failed`)).toBe(
+      "job: TimeoutError - request failed",
+    );
+    expect(shortenDagsterTitle(`job - ${run} - TimeoutError - request failed`)).toBe(
+      "job: TimeoutError - request failed",
+    );
+  });
+
+  it("leaves every other title alone", () => {
+    const title = "TypeError: Cannot read properties of null (reading 'id')";
+    expect(shortenDagsterTitle(title)).toBe(title);
+    expect(shortenDagsterTitle("Dagster run failed: idmc_gx — Execution failed")).toBe(
+      "Dagster run failed: idmc_gx — Execution failed",
+    );
+  });
+});
+
+describe("formatGlitchtipAlert ticket link", () => {
+  const ticket = {
+    number: 1702,
+    url: "https://www.exponential.im/w/clear/products/clear/tickets/1702",
+  };
+  it("adds the ticket as its own linked line", () => {
+    const m = formatGlitchtipAlert(glitchtipPayload, { ticket });
+    expect(m.body).toContain(`Ticket #1702: ${ticket.url}`);
+    expect(m.formattedBody).toContain(`<a href="${ticket.url}">Ticket #1702</a>`);
+  });
+
+  it("posts without a ticket line when there is no ticket or its link is not http(s)", () => {
+    expect(formatGlitchtipAlert(glitchtipPayload, { ticket: null }).body).not.toContain("Ticket");
+    const m = formatGlitchtipAlert(glitchtipPayload, {
+      ticket: { number: 1, url: "javascript:alert(1)" },
+    });
+    expect(m.body).not.toContain("Ticket");
+    expect(m.formattedBody).not.toContain("javascript:");
+  });
+
+  it("shortens a Dagster title in the message", () => {
+    const m = formatGlitchtipAlert({
+      alias: "issue.new",
+      attachments: [
+        {
+          title:
+            "darfur24_ingest - c0af0538-185f-4c93-8106-1b2a5e62f27f - raw_darfur24 - [DARFUR24] feed",
+        },
+      ],
+    });
+    expect(m.body).toContain("🚨 New error: darfur24_ingest: [DARFUR24] feed");
+    expect(m.body).not.toContain("c0af0538");
   });
 });
 

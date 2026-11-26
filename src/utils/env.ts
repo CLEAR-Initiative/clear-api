@@ -10,10 +10,7 @@ import { isRetiredKind } from "./task-kinds.js";
  * crashes clear-api on boot.
  */
 const optionalUrl = () =>
-  z.preprocess(
-    (v) => (v === "" ? undefined : v),
-    z.string().url().optional(),
-  );
+  z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional());
 
 /**
  * Reduce a server base URL to a bare origin.
@@ -96,13 +93,15 @@ const envSchema = z.object({
     .default("")
     .transform((s) => {
       const origins = new Set<string>();
-      for (const raw of s.split(",").map((e) => e.trim()).filter(Boolean)) {
+      for (const raw of s
+        .split(",")
+        .map((e) => e.trim())
+        .filter(Boolean)) {
         try {
           origins.add(new URL(raw).origin);
         } catch {
           console.warn(
-            `[ENV] ALLOWED_FRONTEND_ORIGINS entry "${raw}" is not a valid ` +
-              `URL; ignoring it.`,
+            `[ENV] ALLOWED_FRONTEND_ORIGINS entry "${raw}" is not a valid ` + `URL; ignoring it.`,
           );
         }
       }
@@ -192,7 +191,14 @@ const envSchema = z.object({
   SIGNUP_NOTIFY_EMAILS: z
     .string()
     .default("")
-    .transform((s) => [...new Set(s.split(",").map((e) => e.trim()).filter(Boolean))]),
+    .transform((s) => [
+      ...new Set(
+        s
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean),
+      ),
+    ]),
 
   // Buttondown newsletter — optional; powers the subscriber count on
   // `/portal/admin`. Absent in dev → dashboard shows "not configured".
@@ -231,6 +237,12 @@ const envSchema = z.object({
   MATRIX_HOMESERVER_URL: z.string().default(""),
   MATRIX_ACCESS_TOKEN: z.string().default(""),
   MATRIX_GLITCHTIP_ROOM_ID: z.string().default(""),
+  /** Exponential Sentry integration that files each GlitchTip alert as a
+   *  bug ticket; the Matrix alert then links the ticket. Both must be set,
+   *  otherwise no ticket is filed. URL is the integration's webhook URL
+   *  (`…/api/webhooks/sentry/<webhookId>`), token is its webhook secret. */
+  EXPONENTIAL_BUG_WEBHOOK_URL: z.string().default(""),
+  EXPONENTIAL_BUG_WEBHOOK_TOKEN: z.string().default(""),
 
   // ─── CLEAR Agent ─────────────────────────────────────────────────
   /** Daily Agent budget per user, in USD. Once a user's turns since UTC
@@ -280,15 +292,21 @@ const envSchema = z.object({
    *  dropped with a warning rather than failing boot, since an env file may
    *  still name them. */
   TASK_IMPACT_PRIOR_KINDS: z
-    .preprocess(
-      (v) => (v === "" ? undefined : v),
-      z.string().default("event.impact_prior.web"),
-    )
+    .preprocess((v) => (v === "" ? undefined : v), z.string().default("event.impact_prior.web"))
     .transform((s) => {
-      const kinds = [...new Set(s.split(",").map((k) => k.trim()).filter(Boolean))];
+      const kinds = [
+        ...new Set(
+          s
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean),
+        ),
+      ];
       const retired = kinds.filter(isRetiredKind);
       if (retired.length > 0) {
-        console.warn(`[env] TASK_IMPACT_PRIOR_KINDS: ignoring retired kind(s) ${retired.join(", ")}`);
+        console.warn(
+          `[env] TASK_IMPACT_PRIOR_KINDS: ignoring retired kind(s) ${retired.join(", ")}`,
+        );
       }
       return kinds.filter((k) => !isRetiredKind(k));
     })
