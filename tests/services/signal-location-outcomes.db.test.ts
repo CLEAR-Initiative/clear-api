@@ -226,10 +226,14 @@ describeIfDb("the location Outcome log", () => {
     });
     expect(await series()).toEqual(before);
 
-    // A person corrected the Signal earlier. The Outcome still holds what the replay wrote.
+    // A person corrected the Signal since. The replay's move is refused
+    // (ADR-0024): the Signal keeps the person's location and no Outcome is
+    // written for a move that did not happen.
     await prisma.signals.update({ where: { id }, data: { locationCorrectedAt: new Date(), pipelineLocationId: STATE } });
+    const countBefore = (await outcomes(id)).length;
     await updateSignalLocation({}, { id, locationId: COUNTRY, runKind: "REPLAY" }, ctx);
-    expect((await outcomes(id)).at(-1)).toMatchObject({ locationId: COUNTRY, level: 0, runKind: "REPLAY" });
+    expect((await prisma.signals.findUniqueOrThrow({ where: { id } })).locationId).toBe(DISTRICT);
+    expect(await outcomes(id)).toHaveLength(countBefore);
     await prisma.signals.deleteMany({ where: { id } });
   });
 

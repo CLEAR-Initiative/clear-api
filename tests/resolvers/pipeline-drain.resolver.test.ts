@@ -531,15 +531,19 @@ describe("markTranslated", () => {
 
 describe("updateSignalLocation", () => {
   function prismaFor(signalExists = true, locationExists = true) {
-    return {
+    const prisma = {
       signals: {
-        findUnique: vi.fn(async () => (signalExists ? { id: "s1" } : null)),
+        findUnique: vi.fn(async () => (signalExists ? { id: "s1", locationId: null, locationCorrectedAt: null } : null)),
+        findUniqueOrThrow: vi.fn(async () => ({ id: "s1", locationId: "loc-1" })),
         update: vi.fn(async ({ data }: { data: { locationId: string } }) => ({ id: "s1", ...data })),
       },
       locations: {
         findUnique: vi.fn(async () => (locationExists ? { id: "loc-1" } : null)),
       },
+      $queryRaw: vi.fn(async () => []),
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
+    return prisma;
   }
 
   it("accepts a pipeline-role user (the drain locates push-feed signals)", async () => {

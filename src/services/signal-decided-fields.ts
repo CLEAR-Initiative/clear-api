@@ -79,3 +79,27 @@ export async function writeSignalSeverity(
   });
   return { refused: false, value: input.severity };
 }
+
+/**
+ * A Signal's general location from the pipeline or a backfill script. A
+ * person's location goes through a Location challenge decision, which writes
+ * origin, destination and countries too, so it has no `person` kind here.
+ */
+export async function writeSignalLocation(
+  tx: Tx,
+  input: { signalId: string; locationId: string; caller: { kind: "pipeline" }; via?: string },
+): Promise<DecidedFieldResult<string | null>> {
+  await lockSignal(tx, input.signalId);
+  const current = await tx.signals.findUnique({
+    where: { id: input.signalId },
+    select: { locationId: true, locationCorrectedAt: true },
+  });
+  if (!current) throw new SignalNotFoundError(input.signalId);
+
+  if (current.locationCorrectedAt != null) {
+    logRefusedWrite("location", input.signalId, input.via ?? "writeSignalLocation");
+    return { refused: true, kept: current.locationId };
+  }
+  await tx.signals.update({ where: { id: input.signalId }, data: { locationId: input.locationId } });
+  return { refused: false, value: input.locationId };
+}

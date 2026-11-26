@@ -9,7 +9,7 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
-import { logRefusedWrite, writeSignalSeverity } from "../services/signal-decided-fields.js";
+import { logRefusedWrite, writeSignalLocation, writeSignalSeverity } from "../services/signal-decided-fields.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
@@ -848,22 +848,27 @@ export const signalResolvers = {
         });
       }
 
-      const update = context.prisma.signals.update({
-        where: { id: args.id },
-        data: { locationId: args.locationId },
-      });
+      // A person's corrected location is kept (ADR-0024): the write is
+      // refused without failing, the returned Signal carries the kept
+      // location and locationCorrectedAt, and a REPLAY writes no Outcome.
+      //
       // The drain marks the Signal after this call, and the mark writes the
       // Outcome (ADR-0020). A replay job that moves Signals without the drain
       // says so, and its Outcome is written here with the move.
-      if (args.runKind !== "REPLAY") return update;
-      const [moved] = await context.prisma.$transaction([
-        update,
-        writeRelocatedOutcome(context.prisma, args.id, args.locationId, new Date(), {
+      await context.prisma.$transaction(async (tx) => {
+        const result = await writeSignalLocation(tx, {
+          signalId: args.id,
+          locationId: args.locationId,
+          caller: { kind: "pipeline" },
+          via: "updateSignalLocation",
+        });
+        if (result.refused || args.runKind !== "REPLAY") return;
+        await writeRelocatedOutcome(tx, args.id, args.locationId, new Date(), {
           pipelineVersion: args.pipelineVersion,
           runId: args.runId,
-        }),
-      ]);
-      return moved;
+        });
+      });
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
     updateSignalContent: async (

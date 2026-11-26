@@ -19,7 +19,7 @@ import { describeIfDb } from "../helpers/db.js";
 
 const { submitSignalLocationChallenge, decideSignalLocationChallenge } =
   signalLocationChallengeResolvers.Mutation;
-const { updateSignalContent } = signalResolvers.Mutation;
+const { updateSignalContent, updateSignalLocation } = signalResolvers.Mutation;
 
 const RUN = `slc-db-${Date.now()}`;
 const ANALYST_ID = `${RUN}-analyst`;
@@ -41,6 +41,8 @@ const asUser = (id: string, role: string): Context =>
 const analyst = asUser(ANALYST_ID, "member");
 const teamAdmin = asUser(ADMIN_ID, "member");
 const platform = asUser(PLATFORM_ID, "admin");
+/** The drain: an admin API key. */
+const pipelineKey = { ...asUser(PLATFORM_ID, "admin"), authMethod: "api-key" } as Context;
 
 let sourceId: string | undefined;
 let signalId: string;
@@ -94,6 +96,8 @@ describeIfDb("Location challenges against the real schema", () => {
   });
 
   afterAll(async () => {
+    // Test cleanup only: no application path deletes a record.
+    if (signalId) await prisma.decisionRecords.deleteMany({ where: { subjectId: signalId } });
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ADMIN_ID, PLATFORM_ID] } } });
     // Challenges cascade with their Signal.
     if (sourceId) await prisma.signals.deleteMany({ where: { sourceId } });
@@ -128,6 +132,22 @@ describeIfDb("Location challenges against the real schema", () => {
     const decided = await decideSignalLocationChallenge(null, { id: second.id, decision: "ACCEPT" }, teamAdmin);
     expect(decided).toMatchObject({ status: "accepted", decidedBy: ADMIN_ID });
 
+    const records = await prisma.decisionRecords.findMany({ where: { subjectId: signalId } });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      decisionType: "SIGNAL_LOCATION_DECIDED",
+      subjectType: "signal",
+      decidedById: ADMIN_ID,
+      payload: {
+        challengeId: second.id,
+        decision: "ACCEPT",
+        appliedLocationId: decided!.appliedLocationId,
+        point: { lat: 52.5, lng: 52.5, name: "Test market" },
+        previous: { locationId: SOURCE_POINT_ID, originId: null, destinationId: null, countryIds: [COUNTRY_ID] },
+      },
+    });
+    expect(records[0]!.decidedAt.getTime()).toBe(decided!.decidedAt!.getTime());
+
     const signal = await prisma.signals.findUniqueOrThrow({
       where: { id: signalId },
       include: { generalLocation: true, countries: { select: { id: true } } },
@@ -153,6 +173,11 @@ describeIfDb("Location challenges against the real schema", () => {
     }
     const declined = await prisma.signalLocationChallenges.count({ where: { signalId, status: "declined" } });
     expect(declined).toBe(2);
+    const declines = await prisma.decisionRecords.findMany({
+      where: { subjectId: signalId, payload: { path: ["decision"], equals: "DECLINE" } },
+    });
+    expect(declines).toHaveLength(2);
+    expect(declines.every((r) => r.decidedById === ADMIN_ID)).toBe(true);
   });
 
   it("allows only one open challenge per signal in the database", async () => {
@@ -214,5 +239,20 @@ describeIfDb("Location challenges against the real schema", () => {
     expect(signal.locationId).not.toBe(BORDER_POINT_ID);
     expect(signal.generalLocation).toMatchObject({ name: "Border market", parentId: COUNTRY_B_ID });
     expect(signal.countries).toEqual([{ id: COUNTRY_B_ID }]);
+  });
+
+  it("a pipeline relocation keeps the corrected location, and a REPLAY writes no Outcome", async () => {
+    const before = await prisma.signals.findUniqueOrThrow({ where: { id: signalId } });
+    expect(before.locationCorrectedAt).not.toBeNull();
+    const outcomesBefore = await prisma.signalLocationOutcomes.count({ where: { signalId } });
+
+    const out = await updateSignalLocation(
+      null,
+      { id: signalId, locationId: SOURCE_POINT_ID, runKind: "REPLAY", runId: "replay-1" },
+      pipelineKey,
+    );
+    expect(out.locationId).toBe(before.locationId);
+    expect(out.locationCorrectedAt).not.toBeNull();
+    expect(await prisma.signalLocationOutcomes.count({ where: { signalId } })).toBe(outcomesBefore);
   });
 });
