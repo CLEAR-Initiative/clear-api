@@ -1691,7 +1691,10 @@ this once narrative/scenarios/needs-analysis are current. Idempotent. Admin/pipe
   </tr><tr id="mutation-addeventtocrisis">
     <td><code>addEventToCrisis</code></td>
     <td><code>EventCrisis!</code></td>
-    <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
+    <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.
+`rationale` is required (at most 4000 characters): an Event joins a Crisis
+only with a recorded decision and its reason. The decision log keeps it with
+who decided and when. A repeat call on an existing link records nothing.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>rationale: String</code></span></div></td>
   </tr><tr id="mutation-removeeventfromcrisis">
     <td><code>removeEventFromCrisis</code></td>
     <td><code>Crisis</code></td>

@@ -394,7 +394,7 @@ export const crisisResolvers = {
      */
     addEventToCrisis: async (
       _parent: unknown,
-      args: { crisisId: string; eventId: string },
+      args: { crisisId: string; eventId: string; rationale?: string | null },
       context: Context,
     ) => {
       const { crisisId, eventId } = args;
@@ -439,29 +439,46 @@ export const crisisResolvers = {
       });
       if (existing) return existing;
 
-      const link = await context.prisma.eventCrises.create({
-        data: {
-          crisisId,
-          eventId,
-          collectedAt: new Date(),
-        },
-      });
+      requirePersonsDecision(context);
+      const rationale = requireRationale("CRISIS_EVENT_ADDED", args.rationale);
 
-      // Recompute populations for the whole crisis
-      const allLinks = await context.prisma.eventCrises.findMany({
-        where: { crisisId },
-        select: { eventId: true },
-      });
-      const allEventIds = allLinks.map((l) => l.eventId);
+      // The link, the recomputed population and the decision with its reason
+      // commit together: no record, no link.
+      const link = await context.prisma.$transaction(async (tx) => {
+        const created = await tx.eventCrises.create({
+          data: {
+            crisisId,
+            eventId,
+            collectedAt: new Date(),
+          },
+        });
 
-      const populationAffected = await sumEventPopulationAffected(
-        context.prisma,
-        allEventIds,
-      );
-      await context.prisma.crises.update({
-        where: { id: crisisId },
-        // Event set changed → enrichment is stale; flag it for the drain.
-        data: { populationAffected, enrichmentStatus: "PENDING" },
+        // Recompute populations for the whole crisis
+        const allLinks = await tx.eventCrises.findMany({
+          where: { crisisId },
+          select: { eventId: true },
+        });
+        const allEventIds = allLinks.map((l) => l.eventId);
+
+        const populationAffected = await sumEventPopulationAffected(
+          tx as Context["prisma"],
+          allEventIds,
+        );
+        await tx.crises.update({
+          where: { id: crisisId },
+          // Event set changed → enrichment is stale; flag it for the drain.
+          data: { populationAffected, enrichmentStatus: "PENDING" },
+        });
+
+        await recordDecision(tx, {
+          decider: { kind: "context", context },
+          decisionType: "CRISIS_EVENT_ADDED",
+          subjectType: "crisis",
+          subjectId: crisisId,
+          rationale,
+          payload: { eventId },
+        });
+        return created;
       });
 
       // Event set changed → enrichment is stale. The PENDING flag above re-queues

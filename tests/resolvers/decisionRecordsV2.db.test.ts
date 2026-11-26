@@ -14,7 +14,7 @@ import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { createCrisisFromEvents } = crisisResolvers.Mutation;
+const { createCrisisFromEvents, addEventToCrisis } = crisisResolvers.Mutation;
 
 const RUN = `dr2-db-${Date.now()}`;
 const ADMIN_ID = `${RUN}-admin`;
@@ -100,5 +100,33 @@ describeIfDb("Decision records V2 against the real schema", () => {
     const ghost = ctx(`${RUN}-no-such-user`, "admin");
     await expect(createCrisisFromEvents(null, crisisInput([e], { rationale: "Because" }), ghost)).rejects.toThrow();
     expect(await prisma.eventCrises.count({ where: { eventId: e } })).toBe(0);
+  });
+
+  it("adds an Event to a Crisis only with a rationale, and records it once", async () => {
+    const [a, b] = [await newEvent(), await newEvent()];
+    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
+    crisisIds.push(crisis.id);
+
+    await expect(addEventToCrisis(null, { crisisId: crisis.id, eventId: b }, admin)).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT", field: "rationale" },
+    });
+    expect(await prisma.eventCrises.count({ where: { crisisId: crisis.id, eventId: b } })).toBe(0);
+
+    await addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Same river basin" }, admin);
+    // A repeat call on the existing link changes nothing and records nothing.
+    await addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Again" }, admin);
+
+    const added = (await recordsFor("crisis", crisis.id)).filter((r) => r.decisionType === "CRISIS_EVENT_ADDED");
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ decidedById: ADMIN_ID, rationale: "Same river basin", payload: { eventId: b } });
+  });
+
+  it("adds no Event when the record cannot be written", async () => {
+    const [a, b] = [await newEvent(), await newEvent()];
+    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
+    crisisIds.push(crisis.id);
+    const ghost = ctx(`${RUN}-no-such-user`, "admin");
+    await expect(addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Why" }, ghost)).rejects.toThrow();
+    expect(await prisma.eventCrises.count({ where: { crisisId: crisis.id, eventId: b } })).toBe(0);
   });
 });

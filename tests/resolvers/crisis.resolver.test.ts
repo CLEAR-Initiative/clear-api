@@ -347,6 +347,17 @@ describe("Mutation.createCrisisFromEvents", () => {
 // Mutation.addEventToCrisis
 // ---------------------------------------------------------------------------
 describe("Mutation.addEventToCrisis", () => {
+  /** The link, the population and the record run in one transaction on the
+   *  same fake client; the record write is captured. */
+  function withTx(prisma: Record<string, unknown>) {
+    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
+    Object.assign(prisma, {
+      decisionRecords: { create: decisionCreate },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    });
+    return { prisma, decisionCreate };
+  }
+
   it("rejects a global member with no team-analyst scope (FORBIDDEN)", async () => {
     // The location-scoped gate runs AFTER the crisis/event existence checks, so
     // both must resolve before we reach the guard. With no analyst membership
@@ -360,7 +371,7 @@ describe("Mutation.addEventToCrisis", () => {
       teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -369,7 +380,7 @@ describe("Mutation.addEventToCrisis", () => {
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
     (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["L1"]);
-    const ctx = buildContext(MEMBER, {
+    const ctx = buildContext(MEMBER, withTx({
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update },
       events: {
         findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
@@ -392,8 +403,8 @@ describe("Mutation.addEventToCrisis", () => {
           ),
         ),
       },
-    });
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
+    }).prisma);
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
   });
 
@@ -423,7 +434,7 @@ describe("Mutation.addEventToCrisis", () => {
       },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(create).not.toHaveBeenCalled();
   });
@@ -440,7 +451,7 @@ describe("Mutation.addEventToCrisis", () => {
       teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "OTHER" }]) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -450,7 +461,7 @@ describe("Mutation.addEventToCrisis", () => {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 
@@ -460,7 +471,7 @@ describe("Mutation.addEventToCrisis", () => {
       events: { findUnique: vi.fn().mockResolvedValue(null) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
     ).rejects.toThrow(/Event not found/);
   });
 
@@ -477,7 +488,7 @@ describe("Mutation.addEventToCrisis", () => {
         create,
       },
     });
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(existing);
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(existing);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -485,7 +496,7 @@ describe("Mutation.addEventToCrisis", () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(ADMIN, {
+    const ctx = buildContext(ADMIN, withTx({
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update },
       events: {
         findUnique: vi.fn().mockResolvedValue({ id: "e1" }),
@@ -501,8 +512,8 @@ describe("Mutation.addEventToCrisis", () => {
           Promise.resolve(select?.event ? [] : [{ eventId: "e1" }]),
         ),
       },
-    });
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
+    }).prisma);
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
     // Event-set change re-queues the crisis for the Dagster drain via PENDING.
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
