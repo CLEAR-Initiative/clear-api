@@ -50,6 +50,7 @@ import {
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
+import { recordDecisionIfPerson } from "../services/decision-records.js";
 
 type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
 
@@ -819,12 +820,27 @@ export const eventResolvers = {
         where: { eventId: args.eventId, status: "published" },
       });
 
+      // The escalation is a person's decision (ADR-0024). When it raises the
+      // Alert, the record commits with the Alert; when it joins one, with the
+      // escalation row below. The decider is the session's user, never args.userId.
+      let recorded = false;
+
       // Create alert if none exists, and fan out notifications
       if (!existingAlert) {
         // A person raises this Alert: it holds the onset it was raised on
         // (ADR-0021) and no run kind.
-        const alert = await context.prisma.alerts.create({
-          data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
+        const alert = await context.prisma.$transaction(async (tx) => {
+          const created = await tx.alerts.create({
+            data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
+          });
+          recorded =
+            (await recordDecisionIfPerson(tx, context, {
+              decisionType: "EVENT_ESCALATED",
+              subjectType: "event",
+              subjectId: args.eventId,
+              payload: { alertId: created.id, raisedAlert: true },
+            })) != null;
+          return created;
         });
 
         // Fan out notifications to subscribers
@@ -1032,17 +1048,30 @@ export const eventResolvers = {
       }
 
       // Record user escalation (upsert to handle idempotency)
-      const escalation = await context.prisma.eventEscaladedByUsers.upsert({
-        where: {
-          userId_eventId: { userId: args.userId, eventId: args.eventId },
-        },
-        create: {
-          userId: args.userId,
-          eventId: args.eventId,
-          validFrom: new Date(),
-          validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-        },
-        update: {},
+      const escalation = await context.prisma.$transaction(async (tx) => {
+        const key = { userId_eventId: { userId: args.userId, eventId: args.eventId } };
+        const before = await tx.eventEscaladedByUsers.findUnique({ where: key, select: { userId: true } });
+        const row = await tx.eventEscaladedByUsers.upsert({
+          where: key,
+          create: {
+            userId: args.userId,
+            eventId: args.eventId,
+            validFrom: new Date(),
+            validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+          },
+          update: {},
+        });
+        // Joining an existing Alert: one record for a new escalation, none for
+        // a repeat.
+        if (!recorded && !before) {
+          await recordDecisionIfPerson(tx, context, {
+            decisionType: "EVENT_ESCALATED",
+            subjectType: "event",
+            subjectId: args.eventId,
+            payload: { alertId: existingAlert?.id ?? null, raisedAlert: false },
+          });
+        }
+        return row;
       });
 
       return escalation;

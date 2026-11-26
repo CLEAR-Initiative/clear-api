@@ -11,10 +11,14 @@
 import { it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
+import { alertResolvers } from "../../src/resolvers/alert.resolver.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
 const { createCrisisFromEvents, addEventToCrisis } = crisisResolvers.Mutation;
+const { createAlert, updateAlert, deleteAlert } = alertResolvers.Mutation;
+const { escalateEvent } = eventResolvers.Mutation;
 
 const RUN = `dr2-db-${Date.now()}`;
 const ADMIN_ID = `${RUN}-admin`;
@@ -28,10 +32,12 @@ const pipeline = ctx(ADMIN_ID, "admin", { authMethod: "api-key" });
 const eventIds: string[] = [];
 const crisisIds: string[] = [];
 
+/** An Event with no classified types: the NRC-relevance gate on Alerts does
+ *  not apply, so the empty scratch database needs no disaster types. */
 async function newEvent() {
   const now = new Date();
   const row = await prisma.events.create({
-    data: { types: ["FL"], validTo: now, firstSignalCreatedAt: now, lastSignalCreatedAt: now, rank: 0 },
+    data: { types: [], validTo: now, firstSignalCreatedAt: now, lastSignalCreatedAt: now, rank: 0 },
   });
   eventIds.push(row.id);
   return row.id;
@@ -55,6 +61,8 @@ describeIfDb("Decision records V2 against the real schema", () => {
     await prisma.activityLogs.deleteMany({ where: { userId: ADMIN_ID } });
     await prisma.userFeedbacks.deleteMany({ where: { userId: ADMIN_ID } });
     await prisma.crises.deleteMany({ where: { id: { in: crisisIds } } });
+    await prisma.eventEscaladedByUsers.deleteMany({ where: { eventId: { in: eventIds } } });
+    await prisma.alerts.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.user.deleteMany({ where: { id: ADMIN_ID } });
   });
@@ -128,5 +136,38 @@ describeIfDb("Decision records V2 against the real schema", () => {
     const ghost = ctx(`${RUN}-no-such-user`, "admin");
     await expect(addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Why" }, ghost)).rejects.toThrow();
     expect(await prisma.eventCrises.count({ where: { crisisId: crisis.id, eventId: b } })).toBe(0);
+  });
+
+  it("records a person raising, changing and deleting an Alert; the pipeline's Alert has no record", async () => {
+    const e = await newEvent();
+    const raised = await createAlert(null, { input: { eventId: e, status: "draft" } }, admin);
+    // An idempotent repeat with the same status changes nothing.
+    await createAlert(null, { input: { eventId: e, status: "draft" } }, admin);
+    await createAlert(null, { input: { eventId: e, status: "archived" } }, admin);
+    await updateAlert(null, { id: raised!.id, input: { status: "draft" } }, admin);
+    await deleteAlert(null, { id: raised!.id }, admin);
+
+    const records = await recordsFor("alert", raised!.id);
+    expect(records.map((r) => [r.decisionType, (r.payload as { status: string }).status])).toEqual([
+      ["ALERT_RAISED", "draft"],
+      ["ALERT_UPDATED", "archived"],
+      ["ALERT_UPDATED", "draft"],
+      ["ALERT_DELETED", "draft"],
+    ]);
+    expect(records.every((r) => r.decidedById === ADMIN_ID)).toBe(true);
+
+    const machine = await newEvent();
+    const byPipeline = await createAlert(null, { input: { eventId: machine, status: "draft" } }, pipeline);
+    expect(await recordsFor("alert", byPipeline!.id)).toHaveLength(0);
+  });
+
+  it("records an escalation once: with the Alert it raises, or with a new escalation of an existing one", async () => {
+    const e = await newEvent();
+    // The decider is the session's user, whatever userId the client sends.
+    await escalateEvent(null, { eventId: e, userId: ADMIN_ID }, admin);
+    await escalateEvent(null, { eventId: e, userId: ADMIN_ID }, admin);
+    const records = await recordsFor("event", e);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ decisionType: "EVENT_ESCALATED", decidedById: ADMIN_ID, payload: { raisedAlert: true } });
   });
 });

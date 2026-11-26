@@ -112,6 +112,8 @@ function buildContext(
   const prismaWithTx = {
     $transaction: (fn: (tx: unknown) => unknown) => fn(prismaWithTx),
     disasterTypes: { count: vi.fn().mockResolvedValue(1) },
+    // A person's decision is recorded with the write (ADR-0024).
+    decisionRecords: { create: vi.fn().mockResolvedValue({ id: "dr1" }) },
     ...prisma,
   };
   return {
@@ -715,7 +717,7 @@ describe("Mutation.escalateEvent", () => {
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: ["flood"], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue({ id: "a1" }), create: alertsCreate },
-      eventEscaladedByUsers: { upsert },
+      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
     });
     const result = await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);
     expect(alertsCreate).not.toHaveBeenCalled();
@@ -733,7 +735,7 @@ describe("Mutation.escalateEvent", () => {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: ["flood"], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
       locations: { findMany: locationsFindMany },
-      eventEscaladedByUsers: { upsert },
+      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
     });
     await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);
     expect(alertsCreate).toHaveBeenCalledWith({ data: { eventId: "e1", status: "published" } });
@@ -761,7 +763,7 @@ describe("Mutation.escalateEvent", () => {
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: [], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
-      eventEscaladedByUsers: { upsert },
+      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
       disasterTypes: { count },
     });
     await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);

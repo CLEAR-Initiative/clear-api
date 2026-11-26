@@ -73,8 +73,11 @@ type User = { id: string; role: string } | null;
  * fields the guards read. Cast as the sibling tests do.
  */
 function buildContext(user: User, prisma: Record<string, unknown> = {}): Context {
-  return {
-    prisma: {
+  // Interactive transactions run their callback against the same stubs, and a
+  // person's decision is recorded with the write (ADR-0024).
+  const client: Record<string, unknown> = {
+    $transaction: (fn: (tx: unknown) => unknown) => fn(client),
+    decisionRecords: { create: vi.fn().mockResolvedValue({ id: "dr1" }) },
       // Default: every glide code counts as NRC-relevant, so the NRC alert
       // gate is a no-op for tests that aren't about it. A test overrides this
       // to exercise the gate (count → 0 means all-irrelevant).
@@ -83,7 +86,9 @@ function buildContext(user: User, prisma: Record<string, unknown> = {}): Context
       // no-op for tests that aren't about it (avoids a caught/logged error).
       webhookSubscription: { findMany: vi.fn().mockResolvedValue([]) },
       ...prisma,
-    } as Context["prisma"],
+  };
+  return {
+    prisma: client as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
