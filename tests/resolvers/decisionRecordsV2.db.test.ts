@@ -220,7 +220,7 @@ describeIfDb("Decision records V2 against the real schema", () => {
       "EVENT_DELETED",
     ]);
     const updated = (await recordsFor("event", mine.id))[1]!;
-    expect(updated.payload).toMatchObject({ fields: ["severity"], previous: { severity: 3 } });
+    expect(updated.payload).toMatchObject({ changes: { severity: 4 }, previous: { severity: 3, title: "Floods" } });
 
     const machine = await createEvent(null, { input: { ...base, title: "Pipeline" } }, pipeline);
     eventIds.push(machine.id);
@@ -275,5 +275,40 @@ describeIfDb("Decision records V2 against the real schema", () => {
       decisionType: "CRISIS_EVENT_REMOVED",
       payload: { eventId: a, crisisDeleted: true },
     });
+  });
+
+  it("an Event edit whose record fails leaves no new Signal link", async () => {
+    const e = await newEvent();
+    const source = await prisma.dataSources.findFirstOrThrow({ where: { name: "field_officer" } });
+    const signal = await prisma.signals.create({ data: { sourceId: source.id, rawData: {}, publishedAt: new Date() } });
+    signalIds.push(signal.id);
+    const ghost = ctx(`${RUN}-no-such-user`, "admin");
+    await expect(updateEvent(null, { id: e, input: { signalIds: [signal.id], severity: 5 } }, ghost)).rejects.toThrow();
+    expect(await prisma.signalEvents.count({ where: { eventId: e } })).toBe(0);
+
+    await updateEvent(null, { id: e, input: { signalIds: [signal.id] } }, admin);
+    expect(await prisma.signalEvents.count({ where: { eventId: e } })).toBe(1);
+    expect((await recordsFor("event", e)).at(-1)!.payload).toMatchObject({ linkedSignalIds: [signal.id] });
+    await prisma.signalEvents.deleteMany({ where: { eventId: e } });
+  });
+
+  it("two Events added to a Crisis at once both count in its population", async () => {
+    const now = new Date();
+    const withPop = async (n: bigint) => {
+      const row = await prisma.events.create({
+        data: { types: [], validTo: now, firstSignalCreatedAt: now, lastSignalCreatedAt: now, rank: 0, populationAffected: n },
+      });
+      eventIds.push(row.id);
+      return row.id;
+    };
+    const [a, b, c] = [await withPop(100n), await withPop(20n), await withPop(3n)];
+    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
+    crisisIds.push(crisis.id);
+    await Promise.all([
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Same basin" }, admin),
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: c, rationale: "Same basin" }, admin),
+    ]);
+    const after = await prisma.crises.findUniqueOrThrow({ where: { id: crisis.id } });
+    expect(after.populationAffected).toBe(123n);
   });
 });

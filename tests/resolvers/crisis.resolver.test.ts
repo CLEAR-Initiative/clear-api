@@ -89,6 +89,8 @@ function buildContext(
   // recorded with them (ADR-0024). A test's own stubs win.
   const client: Record<string, unknown> = {
     decisionRecords: { create: vi.fn().mockResolvedValue({ id: "dr1" }) },
+    // Row locks (SELECT … FOR UPDATE) return nothing the resolver reads.
+    $queryRaw: vi.fn().mockResolvedValue([]),
     ...prisma,
   };
   if (!("$transaction" in prisma)) {
@@ -364,6 +366,7 @@ describe("Mutation.addEventToCrisis", () => {
     const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
     Object.assign(prisma, {
       decisionRecords: { create: decisionCreate },
+      $queryRaw: vi.fn().mockResolvedValue([]),
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     });
     return { prisma, decisionCreate };

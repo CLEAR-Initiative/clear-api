@@ -77,6 +77,11 @@ function recordCrisisEdit(
   });
 }
 
+/** Lock one Crisis row until the transaction ends. */
+async function lockCrisis(tx: Prisma.TransactionClient, crisisId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM "crises" WHERE id = ${crisisId} FOR UPDATE`;
+}
+
 const MAX_RATIONALE_LENGTH = 4000;
 
 interface CreateCrisisFromEventsInput {
@@ -461,6 +466,9 @@ export const crisisResolvers = {
       // The link, the recomputed population and the decision with its reason
       // commit together: no record, no link.
       const link = await context.prisma.$transaction(async (tx) => {
+        // Serialise changes to this Crisis's Events, so two adds at once each
+        // count the other's link in the population.
+        await lockCrisis(tx, crisisId);
         const created = await tx.eventCrises.create({
           data: {
             crisisId,
@@ -545,10 +553,6 @@ export const crisisResolvers = {
         });
       }
 
-      const linkCount = await context.prisma.eventCrises.count({
-        where: { crisisId },
-      });
-
       // A person's removal is their decision (ADR-0024), recorded with the
       // change. Removing the last Event deletes the Crisis; the record says so.
       const removal = (tx: Prisma.TransactionClient, crisisDeleted: boolean) =>
@@ -559,18 +563,21 @@ export const crisisResolvers = {
           payload: { eventId, crisisDeleted },
         });
 
-      // Last event — auto-delete the crisis rather than leave it in a
-      // degenerate empty state. Cascades handle eventCrises / userFeedbacks
-      // / userComments. Return null to signal the crisis no longer exists.
-      if (linkCount <= 1) {
-        await context.prisma.$transaction(async (tx) => {
+      const updated = await context.prisma.$transaction(async (tx) => {
+        // Serialise changes to this Crisis's Events, and count its links under
+        // the lock, so the last-Event check and the population see every link.
+        await lockCrisis(tx, crisisId);
+        const linkCount = await tx.eventCrises.count({ where: { crisisId } });
+
+        // Last event — auto-delete the crisis rather than leave it in a
+        // degenerate empty state. Cascades handle eventCrises / userFeedbacks
+        // / userComments. Return null to signal the crisis no longer exists.
+        if (linkCount <= 1) {
           await tx.crises.delete({ where: { id: crisisId } });
           await removal(tx, true);
-        });
-        return null;
-      }
+          return null;
+        }
 
-      const updated = await context.prisma.$transaction(async (tx) => {
         await tx.eventCrises.deleteMany({
           where: { crisisId, eventId },
         });
