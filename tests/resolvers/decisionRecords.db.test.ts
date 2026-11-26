@@ -14,7 +14,7 @@ import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { updateSignalSeverity } = signalResolvers.Mutation;
+const { updateSignalSeverity, updateSignalContent } = signalResolvers.Mutation;
 
 const RUN = `dr-db-${Date.now()}`;
 const ANALYST_ID = `${RUN}-analyst`;
@@ -101,5 +101,29 @@ describeIfDb("Decision records against the real schema", () => {
       severityCorrectedAt: null,
     });
     expect(await recordsFor(signalId)).toHaveLength(0);
+  });
+
+  it("keeps a decided severity through a source revision, and revises the rest", async () => {
+    const signalId = await newSignal({ title: "Old title" });
+    await updateSignalSeverity(null, { id: signalId, severity: 5 }, analyst);
+
+    const revised = await updateSignalContent(
+      null,
+      { input: { id: signalId, contentHash: "revised", rawData: {}, title: "New title", severity: 1 } },
+      pipeline,
+    );
+    expect(revised).toMatchObject({ title: "New title", severity: 5 });
+    expect(revised!.severityCorrectedAt).not.toBeNull();
+    expect(await recordsFor(signalId)).toHaveLength(1);
+  });
+
+  it("still lets a source revision set an undecided severity", async () => {
+    const signalId = await newSignal();
+    const revised = await updateSignalContent(
+      null,
+      { input: { id: signalId, contentHash: "revised", rawData: {}, severity: 4 } },
+      pipeline,
+    );
+    expect(revised).toMatchObject({ severity: 4, severityCorrectedAt: null });
   });
 });

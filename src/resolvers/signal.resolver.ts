@@ -9,7 +9,7 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
-import { writeSignalSeverity } from "../services/signal-decided-fields.js";
+import { logRefusedWrite, writeSignalSeverity } from "../services/signal-decided-fields.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
@@ -903,6 +903,10 @@ export const signalResolvers = {
         // A person corrected this signal's location (a decided Location
         // challenge), so the source's location and countries no longer apply.
         const corrected = existing.locationCorrectedAt != null;
+        // A person set this signal's severity (ADR-0024): a source revision
+        // keeps it. The call does not fail; the returned Signal carries the
+        // kept severity and severityCorrectedAt.
+        const severityDecided = existing.severityCorrectedAt != null;
         const data: Record<string, unknown> = {};
         if (contentChanged) {
           if (!corrected && !locationResolved) {
@@ -919,7 +923,7 @@ export const signalResolvers = {
             url: input.url,
             title: input.title,
             description: input.description,
-            severity: input.severity,
+            ...(severityDecided ? {} : { severity: input.severity }),
             casualties: input.casualties,
             // Preserve explicit null (clear) vs absent (leave) for each field.
             startDate: dateOrKeep(input.startDate),
@@ -976,11 +980,18 @@ export const signalResolvers = {
         // update, a retraction-only or key-only one too.
         const countryIds = corrected ? undefined : input.countryIds;
         const writesLocation = !corrected && (contentChanged || countryIds != null);
+        // Likewise a severity decided after the read fails the compare-and-set,
+        // and the retry keeps it.
+        const writesSeverity = contentChanged && !severityDecided && input.severity !== undefined;
+        if (contentChanged && severityDecided && input.severity !== undefined && input.severity !== existing.severity) {
+          logRefusedWrite("severity", existing.id, "updateSignalContent");
+        }
         const casWhere = {
           id: existing.id,
           revision: existing.revision,
           status: existing.status,
           ...(writesLocation ? { locationCorrectedAt: null } : {}),
+          ...(writesSeverity ? { severityCorrectedAt: null } : {}),
         };
         const result =
           countryIds != null
