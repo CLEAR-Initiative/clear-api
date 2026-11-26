@@ -9,6 +9,7 @@
 import { it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { decisionResolvers } from "../../src/resolvers/decision.resolver.js";
+import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
@@ -21,6 +22,7 @@ const ctx = (role: string, authMethod = "api-key"): Context =>
   ({ prisma, user: { id: `${RUN}-${role}`, role }, session: null, authMethod, locale: "en" }) as unknown as Context;
 
 const ids: string[] = [];
+const eventIds: string[] = [];
 
 /** A record written straight to the table: this suite tests the reader. */
 async function record(subjectId: string, decisionType: "SIGNAL_SEVERITY_SET" | "SIGNAL_LOCATION_DECIDED" = "SIGNAL_SEVERITY_SET") {
@@ -44,6 +46,7 @@ describeIfDb("the decisions feed against the real schema", () => {
   });
 
   afterAll(async () => {
+    await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     // Test cleanup only: no application path deletes a record.
     await prisma.decisionRecords.deleteMany({ where: { id: { in: ids } } });
     await prisma.user.deleteMany({ where: { id: PERSON_ID } });
@@ -120,6 +123,32 @@ describeIfDb("the decisions feed against the real schema", () => {
     const huge = await decisions(null, { sinceSequence: 0, first: 1_000_000 }, ctx("pipeline"));
     expect(huge.items.length).toBeLessThanOrEqual(1000);
     await expect(decisions(null, { sinceSequence: 0, first: 0 }, ctx("pipeline"))).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  });
+
+  it("pages events(lastSignalSince) by id with first and after", async () => {
+    const recent = new Date(Date.now() + 365 * 24 * 3600_000); // later than any other row
+    for (let n = 0; n < 3; n++) {
+      const row = await prisma.events.create({
+        data: { types: [], validTo: recent, firstSignalCreatedAt: recent, lastSignalCreatedAt: recent, rank: 0 },
+      });
+      eventIds.push(row.id);
+    }
+    const sorted = [...eventIds].sort();
+    const since = recent.toISOString();
+    // The pipeline reads events with its admin key until #430 lets the pipeline role read content.
+    const reader = ctx("admin");
+
+    const one = await eventResolvers.Query.events(null, { lastSignalSince: since, first: 2 }, reader);
+    expect(one.map((e: { id: string }) => e.id)).toEqual(sorted.slice(0, 2));
+    const two = await eventResolvers.Query.events(null, { lastSignalSince: since, first: 2, after: one.at(-1)!.id }, reader);
+    expect(two.map((e: { id: string }) => e.id)).toEqual(sorted.slice(2));
+
+    // limit is ignored in paged mode.
+    const withLimit = await eventResolvers.Query.events(null, { lastSignalSince: since, first: 2, limit: 1 }, reader);
+    expect(withLimit).toHaveLength(2);
+    await expect(eventResolvers.Query.events(null, { first: 0 }, reader)).rejects.toMatchObject({
       extensions: { code: "BAD_USER_INPUT" },
     });
   });

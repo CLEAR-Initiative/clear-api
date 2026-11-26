@@ -136,8 +136,14 @@ export const queryTypeDef = gql`
     value is cut to 1000). Admin and pipeline only."""
     decisions(sinceSequence: Int!, types: [DecisionType!], first: Int = 500): DecisionPage!
 
-    """List events. Requires authentication. includeDummy defaults to false."""
-    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
+    """List events. Requires authentication. includeDummy defaults to false.
+    Paged mode (the pipeline): pass \`first\` (at most 1000; a larger value is
+    cut to 1000), and \`after\` with the last id of the previous page. Rows
+    come in id order, and the next page starts after \`after\`; a page shorter
+    than \`first\` is the last. \`limit\` (newest by lastSignalCreatedAt, at
+    most 5000) applies only outside paged mode; with \`first\` or \`after\` it
+    is ignored."""
+    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int, first: Int, after: String): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event

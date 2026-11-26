@@ -339,7 +339,13 @@ value is cut to 1000). Admin and pipeline only.<div class="field-args"><span cla
   </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
-    <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span><span class="arg"><code>lastSignalSince: DateTime</code></span><span class="arg"><code>limit: Int</code></span></div></td>
+    <td>List events. Requires authentication. includeDummy defaults to false.
+Paged mode (the pipeline): pass `first` (at most 1000; a larger value is
+cut to 1000), and `after` with the last id of the previous page. Rows
+come in id order, and the next page starts after `after`; a page shorter
+than `first` is the last. `limit` (newest by lastSignalCreatedAt, at
+most 5000) applies only outside paged mode; with `first` or `after` it
+is ignored.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span><span class="arg"><code>lastSignalSince: DateTime</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>first: Int</code></span><span class="arg"><code>after: String</code></span></div></td>
   </tr><tr>
     <td><code>event</code></td>
     <td><code>Event</code></td>
