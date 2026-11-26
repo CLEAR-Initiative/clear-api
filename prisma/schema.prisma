@@ -28,15 +28,17 @@ enum DecisionType {
   SIGNAL_LOCATION_DECIDED
   /// A person set a Signal's severity.
   SIGNAL_SEVERITY_SET
-  /// A person created a Crisis from Events. Needs a rationale.
+  /// Unused: Crisis decisions are not recorded until the ontology owner settles
+  /// how a Crisis is created. Kept because removing a Postgres enum value is a
+  /// destructive migration.
   CRISIS_CREATED
-  /// A person added an Event to a Crisis. Needs a rationale.
+  /// Unused (see CRISIS_CREATED).
   CRISIS_EVENT_ADDED
-  /// A person removed an Event from a Crisis.
+  /// Unused (see CRISIS_CREATED).
   CRISIS_EVENT_REMOVED
-  /// A person edited a Crisis: title, description or attachments.
+  /// Unused (see CRISIS_CREATED).
   CRISIS_EDITED
-  /// A person deleted a Crisis.
+  /// Unused (see CRISIS_CREATED).
   CRISIS_DELETED
   /// A person raised an Alert on an Event.
   ALERT_RAISED

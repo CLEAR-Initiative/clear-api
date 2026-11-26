@@ -1709,10 +1709,7 @@ this once narrative/scenarios/needs-analysis are current. Idempotent. Admin/pipe
   </tr><tr id="mutation-addeventtocrisis">
     <td><code>addEventToCrisis</code></td>
     <td><code>EventCrisis!</code></td>
-    <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.
-`rationale` is required (at most 4000 characters): an Event joins a Crisis
-only with a recorded decision and its reason. The decision log keeps it with
-who decided and when. A repeat call on an existing link records nothing.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>rationale: String</code></span></div></td>
+    <td>Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.<div class="field-args"><span class="arg"><code>crisisId: String!</code></span><span class="arg"><code>eventId: String!</code></span></div></td>
   </tr><tr id="mutation-removeeventfromcrisis">
     <td><code>removeEventFromCrisis</code></td>
     <td><code>Crisis</code></td>
@@ -2753,12 +2750,6 @@ any team member on that team instead of a global admin. Purely an
 authorisation hint — the crisis itself has no team column; team affiliation
 is derived from location scope.
 Ignored for platform-level callers.</td>
-  </tr><tr>
-    <td><code>rationale</code></td>
-    <td><code>String</code></td>
-    <td>Why these Events are a Crisis. Required (at most 4000 characters): a
-Crisis cannot exist without a recorded decision and its reason. Kept in
-the decision log with who decided and when.</td>
   </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>
