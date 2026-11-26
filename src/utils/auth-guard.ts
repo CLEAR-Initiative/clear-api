@@ -3,6 +3,14 @@ import type { Context } from "../context.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { getTeamScopeLocationIds } from "./location-scope.js";
 
+/** clear-pipeline's service role (#430). See APPROVED_ROLES below. */
+export const PIPELINE_ROLE = "pipeline";
+
+/** True when the caller is clear-pipeline's service user. */
+export function isPipelineRole(user: { role?: string | null } | null | undefined): boolean {
+  return user?.role === PIPELINE_ROLE;
+}
+
 export function requireAuth(context: Context) {
   if (!context.user) {
     throw new GraphQLError("You must be logged in", {
@@ -210,8 +218,14 @@ export function requireRole(context: Context, roles: string[]) {
  * it reads content like any approved user so it can research its Task,
  * and its only writes are the Task mutations on Tasks it holds. This gate
  * admits it, so a mutation must never rely on it alone — use
- * `requireNonWorkerContentReader` for writes. `pipeline` and `agent` are
- * deliberately not here.
+ * `requireNonWorkerContentReader` for writes.
+ *
+ * `pipeline` is clear-pipeline's service role (#430). It reads all content,
+ * because it already writes it: the drain re-reads signals, events and alerts,
+ * and the gx path reads the decisions feed. Its writes are the mutations that
+ * name it in their own guard (`requireRole([..., "pipeline"])` or an explicit
+ * `isPipelineRole` branch); `requireNonWorkerContentReader` refuses it, so a
+ * person-only write stays person-only. `agent` is deliberately not here.
  *
  * Use this on every content-read resolver (signals, events, alerts,
  * crises and their by-location / by-id variants). Pending users still
@@ -226,6 +240,7 @@ const APPROVED_ROLES: ReadonlySet<string> = new Set([
   "admin",
   "member",
   "worker",
+  PIPELINE_ROLE,
 ]);
 
 export function requireContentReader(context: Context) {
@@ -264,9 +279,19 @@ export function requireNonWorker(context: Context) {
   return rejectWorker(requireAuth(context));
 }
 
-/** `requireContentReader` for writes: approved tier, minus the worker role. */
+/**
+ * `requireContentReader` for writes: approved tier, minus the worker and the
+ * pipeline. A person's write stays a person's; a mutation the pipeline calls
+ * admits it explicitly.
+ */
 export function requireNonWorkerContentReader(context: Context) {
-  return rejectWorker(requireContentReader(context));
+  const user = rejectWorker(requireContentReader(context));
+  if (isPipelineRole(user)) {
+    throw new GraphQLError("The pipeline role may not make this change", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+  return user;
 }
 
 /**

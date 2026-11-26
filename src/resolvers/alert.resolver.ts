@@ -6,6 +6,8 @@ import {
   requireContentReader,
   requireRole,
   requireAdminOrTeamAnalystForLocations,
+  PIPELINE_ROLE,
+  isPipelineRole,
 } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
@@ -114,7 +116,8 @@ export const alertResolvers = {
       // Elevated gate, scoped to the alert's event locations: a global admin
       // (the pipeline authenticates as one via API key) passes, else the caller
       // must be a team analyst whose location scope covers the event.
-      await requireAdminOrTeamAnalystForLocations(context, [
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireAdminOrTeamAnalystForLocations(context, [
         event.originId,
         event.destinationId,
         event.locationId,
@@ -528,7 +531,7 @@ export const alertResolvers = {
       args: { olderThanDays?: number },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
 
       const days = args.olderThanDays ?? 14;
       if (!Number.isFinite(days) || days < 1) {

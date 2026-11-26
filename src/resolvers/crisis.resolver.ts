@@ -9,6 +9,7 @@ import {
   requireRole,
   requireTeamContentWriter,
   requireAdminOrTeamAnalystForLocations,
+  PIPELINE_ROLE,
 } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
@@ -567,7 +568,7 @@ export const crisisResolvers = {
       },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { id, generalSummary, sector } = args;
 
       const existing = await context.prisma.crises.findUnique({
@@ -768,7 +769,7 @@ export const crisisResolvers = {
       args: { id: string; input: UpdateCrisisPopulationInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { id, input } = args;
 
       const existing = await context.prisma.crises.findUnique({ where: { id } });

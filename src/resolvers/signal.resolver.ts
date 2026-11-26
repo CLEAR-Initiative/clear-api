@@ -1,7 +1,7 @@
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations, PIPELINE_ROLE, isPipelineRole } from "../utils/auth-guard.js";
 import { logActivity } from "../utils/activity-log.js";
 import { isUniqueViolation } from "../utils/prisma-errors.js";
 import { createPointLocation, getLocationIdsWithDescendants } from "../utils/geo-resolve.js";
@@ -420,7 +420,8 @@ export const signalResolvers = {
       // team analyst whose location scope covers the signal's input locations.
       // (lat/lng-only signals carry no input location id — those remain
       // admin/pipeline-only via the empty-scope path.)
-      await requireAdminOrTeamAnalystForLocations(context, [
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireAdminOrTeamAnalystForLocations(context, [
         input.originId,
         input.destinationId,
         input.locationId,
@@ -755,7 +756,8 @@ export const signalResolvers = {
 
       // Elevated gate, scoped to the signal's locations: admin passes, else
       // the caller must be a team analyst whose scope covers the signal.
-      await requireAdminOrTeamAnalystForLocations(context, [
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireAdminOrTeamAnalystForLocations(context, [
         existing.originId,
         existing.destinationId,
         existing.locationId,
@@ -809,7 +811,7 @@ export const signalResolvers = {
     ) => {
       // Admin/pipeline only — invoked by the manual-signal processing task
       // after running the geoparser on the freshly created signal.
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
 
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.id },

@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { NotificationStatus, PrismaClient } from "../generated/prisma/client.js";
-import { requireAuth, requireNonWorker, requireRole } from "../utils/auth-guard.js";
+import { requireAuth, requireNonWorker, requireRole, PIPELINE_ROLE } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { matchDigestRecipients, type DigestFrequency } from "../services/alert-digest.js";
@@ -149,7 +149,7 @@ export const notificationResolvers = {
       args: { input: AlertNotifyInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
 
       const alert = await context.prisma.alerts.findUnique({
         where: { id: args.input.alertId },
@@ -329,7 +329,7 @@ export const notificationResolvers = {
       args: { input: AlertDigestInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { alertIds, frequency } = args.input;
 
       if (!["daily", "weekly", "monthly"].includes(frequency)) {

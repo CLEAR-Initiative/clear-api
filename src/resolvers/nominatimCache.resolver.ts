@@ -9,7 +9,7 @@
 
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireRole, PIPELINE_ROLE } from "../utils/auth-guard.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
 
 interface UpsertNominatimCacheInput {
@@ -30,7 +30,7 @@ export const nominatimCacheResolvers = {
       args: { queryHash: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
 
       // Filter out expired rows at read time. The pipeline doesn't need to
       // distinguish "missing" from "expired" — both mean cache miss.
@@ -50,7 +50,7 @@ export const nominatimCacheResolvers = {
       args: { input: UpsertNominatimCacheInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { input } = args;
 
       if (!ALLOWED_STATUSES.has(input.status)) {
