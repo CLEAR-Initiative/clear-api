@@ -168,6 +168,18 @@ describeIfDb("Decision records V2 against the real schema", () => {
     expect(await recordsFor("alert", byPipeline!.id)).toHaveLength(0);
   });
 
+  it("records one escalation when two overlap on an existing Alert", async () => {
+    const e = await newEvent();
+    await prisma.alerts.create({ data: { eventId: e, status: "published" } });
+    await Promise.all([
+      escalateEvent(null, { eventId: e, userId: ADMIN_ID }, admin),
+      escalateEvent(null, { eventId: e, userId: ADMIN_ID }, admin),
+    ]);
+    const records = await recordsFor("event", e);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ decisionType: "EVENT_ESCALATED", payload: { raisedAlert: false } });
+  });
+
   it("records an escalation once: with the Alert it raises, or with a new escalation of an existing one", async () => {
     const e = await newEvent();
     // The decider is the session's user, whatever userId the client sends.
@@ -248,6 +260,8 @@ describeIfDb("Decision records V2 against the real schema", () => {
       ["CRISIS_EVENT_REMOVED", null],
     ]);
     expect(records.at(-1)!.payload).toMatchObject({ eventId: b, crisisDeleted: false });
+    // The description record keeps the text the person chose.
+    expect(records[2]!.payload).toEqual({ field: "description", value: "Rising water" });
 
     await deleteCrisis(null, { id: crisis.id }, admin);
     expect((await recordsFor("crisis", crisis.id)).at(-1)).toMatchObject({ decisionType: "CRISIS_DELETED", decidedById: ADMIN_ID });

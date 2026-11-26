@@ -839,7 +839,7 @@ export const crisisResolvers = {
           where: { id },
           data: { summary: JSON.stringify(nextSummary) },
         });
-        await recordCrisisEdit(tx, context, id, { field: "description" });
+        await recordCrisisEdit(tx, context, id, { field: "description", value: description });
         return row;
       });
     },
