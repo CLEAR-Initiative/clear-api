@@ -104,5 +104,10 @@ export const signalTypeDef = gql`
     person corrected it); null when the location is the source's. Source
     revisions keep a corrected location."""
     locationCorrectedAt: DateTime
+    """When a person last set this signal's severity (updateSignalSeverity
+    from a signed-in user); null while the severity is the source's or the
+    pipeline's. A pipeline write keeps a decided severity: a refused write
+    returns the signal with the kept severity and this field set."""
+    severityCorrectedAt: DateTime
   }
 `;

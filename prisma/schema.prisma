@@ -19,6 +19,19 @@ enum AlertStatus {
   @@map("alert_status")
 }
 
+/// What kind of human judgement a DecisionRecord holds (ADR-0024). Adding a
+/// value is a migration.
+enum DecisionType {
+  /// A person accepted or rejected a case proposal.
+  CASE_PROPOSAL_DECIDED
+  /// A person accepted, corrected or declined a Location challenge.
+  SIGNAL_LOCATION_DECIDED
+  /// A person set a Signal's severity.
+  SIGNAL_SEVERITY_SET
+
+  @@map("decision_type")
+}
+
 /// Who filed a Location challenge.
 enum SignalLocationChallengeOrigin {
   PERSON
@@ -143,6 +156,7 @@ model user {
   developerProfile       developerProfile?
   signalSourceGrants     apiSignalSourceGrant[]  @relation("GrantHolder")
   signalSourceGrantsMade apiSignalSourceGrant[]  @relation("GrantIssuer")
+  decisionRecords        decisionRecords[]       @relation("DecisionRecordDecidedBy")
 }
 
 /// Append-only audit / analytics log. Every meaningful user-initiated
@@ -761,6 +775,12 @@ model signals {
   /// person corrected it). From then on a source revision
   /// (updateSignalContent) keeps the corrected location and countries.
   locationCorrectedAt DateTime? @map("location_corrected_at")
+
+  /// When a person last set this Signal's severity (a DecisionRecord of type
+  /// SIGNAL_SEVERITY_SET). From then on a pipeline write keeps the person's
+  /// severity (ADR-0024). Null while the severity is the source's or the
+  /// pipeline's.
+  severityCorrectedAt DateTime? @map("severity_corrected_at")
 
   /// The location the pipeline gave this Signal (general location, else
   /// origin, else destination), kept when the first accepted Location
@@ -3449,4 +3469,50 @@ model apiSignalSourceGrant {
   @@unique([userId, dataSourceId])
   @@index([userId])
   @@map("api_signal_source_grants")
+}
+
+/// The decision log (ADR-0024): one row per human judgement, written in the
+/// same transaction as the change it records. Append-only: no code path
+/// updates or deletes a row; a later decision points at the one it
+/// supersedes. A pipeline write never creates a row. Not the Activity log:
+/// that is best-effort product analytics, this is the record the pipeline
+/// must honour.
+model decisionRecords {
+  id String @id @default(cuid())
+
+  /// Only increases; the pipeline's cursor. A rolled-back transaction
+  /// consumes a number, so gaps are normal.
+  sequence BigInt @unique @default(autoincrement())
+
+  decisionType DecisionType @map("decision_type")
+
+  /// "signal" | "case_proposal"; later "event", "alert", "crisis".
+  subjectType String @map("subject_type")
+  subjectId   String @map("subject_id")
+
+  /// The person who decided. Null only after that user was deleted: the
+  /// record stays.
+  decidedById String?  @map("decided_by")
+  decidedBy   user?    @relation("DecisionRecordDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt   DateTime @default(now()) @map("decided_at")
+
+  /// The person acted through the CLEAR Agent.
+  viaAgent Boolean @default(false) @map("via_agent")
+
+  /// Why. Required per type in recordDecision, not here.
+  rationale     String?
+  evidenceCited Json?   @map("evidence_cited")
+  /// Per type: old value, new value, ids.
+  payload       Json
+
+  supersedesId String?           @map("supersedes_id")
+  supersedes   decisionRecords?  @relation("DecisionRecordSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy decisionRecords[] @relation("DecisionRecordSupersedes")
+
+  correlationId     String? @map("correlation_id")
+  clientRequestId   String? @map("client_request_id")
+  definitionVersion String  @map("definition_version")
+
+  @@index([subjectType, subjectId, sequence])
+  @@map("decision_records")
 }

@@ -9,6 +9,8 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
+import { writeSignalSeverity } from "../services/signal-decided-fields.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
 /** The only `data_sources` names `createManualSignal` accepts. Exported so the
@@ -742,10 +744,19 @@ export const signalResolvers = {
         existing.locationId,
       ]);
 
-      return context.prisma.signals.update({
-        where: { id: args.id },
-        data: { severity: args.severity },
-      });
+      // A person's severity is a decision (ADR-0024): recorded with the
+      // change, and kept against later pipeline writes. A pipeline write over
+      // it is refused without failing; the returned Signal carries the kept
+      // severity and a non-null severityCorrectedAt.
+      await context.prisma.$transaction((tx) =>
+        writeSignalSeverity(tx, {
+          signalId: args.id,
+          severity: args.severity,
+          caller: isPipelineCaller(context) ? { kind: "pipeline" } : { kind: "person", context },
+          via: "updateSignalSeverity",
+        }),
+      );
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
     setSignalGlideCode: async (
