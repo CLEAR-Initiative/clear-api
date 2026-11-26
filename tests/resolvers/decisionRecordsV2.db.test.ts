@@ -13,12 +13,14 @@ import { prisma } from "../../src/lib/prisma.js";
 import { crisisResolvers } from "../../src/resolvers/crisis.resolver.js";
 import { alertResolvers } from "../../src/resolvers/alert.resolver.js";
 import { eventResolvers } from "../../src/resolvers/event.resolver.js";
+import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
 const { createCrisisFromEvents, addEventToCrisis } = crisisResolvers.Mutation;
 const { createAlert, updateAlert, deleteAlert } = alertResolvers.Mutation;
 const { escalateEvent } = eventResolvers.Mutation;
+const { createManualSignal } = signalResolvers.Mutation;
 
 const RUN = `dr2-db-${Date.now()}`;
 const ADMIN_ID = `${RUN}-admin`;
@@ -30,6 +32,7 @@ const admin = ctx(ADMIN_ID, "admin");
 const pipeline = ctx(ADMIN_ID, "admin", { authMethod: "api-key" });
 
 const eventIds: string[] = [];
+const signalIds: string[] = [];
 const crisisIds: string[] = [];
 
 /** An Event with no classified types: the NRC-relevance gate on Alerts does
@@ -64,6 +67,7 @@ describeIfDb("Decision records V2 against the real schema", () => {
     await prisma.eventEscaladedByUsers.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.alerts.deleteMany({ where: { eventId: { in: eventIds } } });
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
+    await prisma.signals.deleteMany({ where: { id: { in: signalIds } } });
     await prisma.user.deleteMany({ where: { id: ADMIN_ID } });
   });
 
@@ -169,5 +173,22 @@ describeIfDb("Decision records V2 against the real schema", () => {
     const records = await recordsFor("event", e);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ decisionType: "EVENT_ESCALATED", decidedById: ADMIN_ID, payload: { raisedAlert: true } });
+  });
+
+  it("records a person filing a manual Signal, in the creating transaction", async () => {
+    const source = await prisma.dataSources.findFirstOrThrow({ where: { name: "field_officer" } });
+    const signal = await createManualSignal(
+      null,
+      { input: { sourceId: source.id, title: "Clashes near the market", severity: 4 } },
+      admin,
+    );
+    signalIds.push(signal.id);
+    const records = await recordsFor("signal", signal.id);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      decisionType: "SIGNAL_CREATED",
+      decidedById: ADMIN_ID,
+      payload: { sourceId: source.id, severity: 4 },
+    });
   });
 });

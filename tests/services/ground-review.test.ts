@@ -125,7 +125,10 @@ function buildContext(
   teamRole: string | null = null,
 ) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
-  const prisma = {
+  const prisma: Record<string, unknown> = {
+    // The review and its DecisionRecord run in one transaction (ADR-0024).
+    $transaction: async (fn: (tx: unknown) => unknown) => fn(prisma),
+    decisionRecords: { create: async (args: { data: Record<string, unknown> }) => ({ id: "dr1", ...args.data }) },
     locations: {
       findUnique: async (args: { where: { id: string } }) =>
         knownLocationIds.includes(args.where.id) ? { id: args.where.id } : null,

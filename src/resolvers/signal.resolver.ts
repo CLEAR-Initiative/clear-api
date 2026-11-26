@@ -10,6 +10,7 @@ import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/s
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
 import { logRefusedWrite, writeSignalLocation, writeSignalSeverity } from "../services/signal-decided-fields.js";
+import { recordDecisionIfPerson } from "../services/decision-records.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
@@ -679,28 +680,44 @@ export const signalResolvers = {
         }
       }
 
-      // Create the signal
-      const signal = await context.prisma.signals.create({
-        data: {
-          sourceId: input.sourceId,
-          rawData: {
-            manual: true,
-            createdBy: user.id,
+      // Create the signal, and the person's decision to file it (ADR-0024),
+      // in one transaction.
+      const signal = await context.prisma.$transaction(async (tx) => {
+        const created = await tx.signals.create({
+          data: {
+            sourceId: input.sourceId,
+            rawData: {
+              manual: true,
+              createdBy: user.id,
+              title: input.title,
+              description: input.description,
+              ...(input.metadata && { metadata: input.metadata }),
+            } as InputJsonValue,
+            publishedAt: new Date(),
+            collectedAt: new Date(),
+            url: input.url,
             title: input.title,
             description: input.description,
-            ...(input.metadata && { metadata: input.metadata }),
-          } as InputJsonValue,
-          publishedAt: new Date(),
-          collectedAt: new Date(),
-          url: input.url,
-          title: input.title,
-          description: input.description,
-          severity: input.severity,
-          media,
-          originId: input.originId,
-          destinationId: input.destinationId,
-          locationId,
-        },
+            severity: input.severity,
+            media,
+            originId: input.originId,
+            destinationId: input.destinationId,
+            locationId,
+          },
+        });
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "SIGNAL_CREATED",
+          subjectType: "signal",
+          subjectId: created.id,
+          payload: {
+            sourceId: input.sourceId,
+            severity: input.severity ?? null,
+            locationId: locationId ?? null,
+            originId: input.originId ?? null,
+            destinationId: input.destinationId ?? null,
+          },
+        });
+        return created;
       });
 
       // No enqueue: the signal is created with status NEW, and the
