@@ -1,5 +1,5 @@
 import type { Context } from "../context.js";
-import { requireAuth } from "../utils/auth-guard.js";
+import { requireContentReader } from "../utils/auth-guard.js";
 
 /**
  * The countries the CLEAR pipeline publishes a Situation Analysis for, with the
@@ -68,7 +68,8 @@ export function pipelineCountryNameByPcode(pcode: string | null | undefined): st
 export const pipelineCountryResolvers = {
   Query: {
     pipelineCountries: (_parent: unknown, _args: unknown, context: Context) => {
-      requireAuth(context);
+      // Any approved role, the pipeline's included (#430); not a pending signup.
+      requireContentReader(context);
       // Return copies so a resolver consumer can't mutate the shared config.
       return PIPELINE_COUNTRIES.map((c) => ({
         name: c.name,

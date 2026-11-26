@@ -52,10 +52,10 @@ describe("Query.dataSources", () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
-  it("returns all sources for any authenticated user (viewer)", () => {
+  it("returns all sources for any approved user (member)", () => {
     const rows = [{ id: "ds1" }, { id: "ds2" }];
     const findMany = vi.fn().mockReturnValue(rows);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { findMany });
+    const ctx = buildContext({ id: "u1", role: "member" }, { findMany });
     expect(dataSourcesQuery(null, {}, ctx)).toBe(rows);
     expect(findMany).toHaveBeenCalledWith();
   });
@@ -78,10 +78,10 @@ describe("Query.dataSource", () => {
     expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it("returns the source by id for any authenticated user", () => {
+  it("returns the source by id for any approved user", () => {
     const row = { id: "ds1" };
     const findUnique = vi.fn().mockReturnValue(row);
-    const ctx = buildContext({ id: "u1", role: "viewer" }, { findUnique });
+    const ctx = buildContext({ id: "u1", role: "member" }, { findUnique });
     expect(dataSourceQuery(null, { id: "ds1" }, ctx)).toBe(row);
     expect(findUnique).toHaveBeenCalledWith({ where: { id: "ds1" } });
   });
