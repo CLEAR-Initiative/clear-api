@@ -109,21 +109,31 @@ function safeUrl(v: unknown): string | null {
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const DAGSTER_TITLE = new RegExp(`^(\\S+) - ${UUID} - (.+)$`, "i");
 
+/** A Dagster op name: snake_case, as in `raw_darfur24` or `idmc_silver`. */
+const DAGSTER_STEP = /^[a-z][a-z0-9_]*$/;
+const DAGSTER_EVENT_KINDS = new Set(["STEP_FAILURE", "RUN_FAILURE"]);
+
 /**
  * Shorten a Dagster log title for the room. The pipeline titles each error
  * `<job> - <run id> - [<pid> - ][<step> - ][<EVENT> - ]<message>`; the run
  * id, pid and step are on the GlitchTip issue and only push the message off
  * the line. Result: `<job>: <message>`. Any other title is returned as is.
+ *
+ * Only those named fields are removed, one of each and in that order, so a
+ * message that itself starts `TimeoutError - …` keeps its first word. The
+ * last part always stays.
  */
 export function shortenDagsterTitle(title: string): string {
   const m = DAGSTER_TITLE.exec(title);
   if (!m) return title;
   const job = m[1] as string;
   const parts = (m[2] as string).split(" - ");
-  if (parts.length > 1 && /^\d+$/.test(parts[0] as string)) parts.shift();
-  // A step name or event kind (STEP_FAILURE, RUN_FAILURE) is one word; the
-  // message is not. The last part always stays, so a one-word message survives.
-  while (parts.length > 1 && /^\S+$/.test(parts[0] as string)) parts.shift();
+  const dropIf = (matches: (part: string) => boolean) => {
+    if (parts.length > 1 && matches(parts[0] as string)) parts.shift();
+  };
+  dropIf((p) => /^\d+$/.test(p));
+  dropIf((p) => DAGSTER_STEP.test(p));
+  dropIf((p) => DAGSTER_EVENT_KINDS.has(p));
   return `${job}: ${parts.join(" - ")}`;
 }
 

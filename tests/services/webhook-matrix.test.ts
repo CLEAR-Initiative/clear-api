@@ -101,6 +101,12 @@ describe("shortenDagsterTitle", () => {
       "job: retry 2 - gave up",
     );
     expect(shortenDagsterTitle(`job - ${run} - step - Timeout`)).toBe("job: Timeout");
+    expect(shortenDagsterTitle(`job - ${run} - step - TimeoutError - request failed`)).toBe(
+      "job: TimeoutError - request failed",
+    );
+    expect(shortenDagsterTitle(`job - ${run} - TimeoutError - request failed`)).toBe(
+      "job: TimeoutError - request failed",
+    );
   });
 
   it("leaves every other title alone", () => {
