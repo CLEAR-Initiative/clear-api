@@ -25,7 +25,7 @@
  *
  * A Signal's general location goes through the shared guarded write
  * (ADR-0024) as the pipeline: a location a person decided is kept, and the
- * legacy row it points at then stays (the delete below reports it).
+ * legacy row it points at is then not deleted.
  * Origin and destination are written directly: a correction clears both, so
  * a corrected Signal never points at a legacy row through them.
  *
@@ -258,6 +258,10 @@ async function processLegacy(row: LegacyRow): Promise<PerLegacyStats> {
     return stats;
   }
 
+  // A Signal whose location a person decided keeps pointing at this row, so
+  // the row must stay: deleting it would null that location (ON DELETE SET
+  // NULL) and undo the decision.
+  let kept = false;
   for (const signal of signals) {
     // Choose a target per location field. We resolve once per field so a
     // signal whose origin and destination both pointed at the legacy row
@@ -292,7 +296,10 @@ async function processLegacy(row: LegacyRow): Promise<PerLegacyStats> {
           caller: { kind: "pipeline" },
           via: "backfill-legacy-l4",
         });
-        if (r.refused) console.warn(`  [kept] ${signal.id}: a person decided its location; not rebound.`);
+        if (r.refused) {
+          kept = true;
+          console.warn(`  [kept] ${signal.id}: a person decided its location; not rebound.`);
+        }
       }
       if (Object.keys(data).length > 0) await tx.signals.update({ where: { id: signal.id }, data });
     });
@@ -318,6 +325,11 @@ async function processLegacy(row: LegacyRow): Promise<PerLegacyStats> {
       where: { id: crisis.id },
       data: { locationId: row.parent_id },
     });
+  }
+
+  if (kept) {
+    console.warn(`  [keep-row] ${row.id}: still the decided location of a Signal; not deleted.`);
+    return stats;
   }
 
   // Now safe to delete — nothing should reference this row. We still
