@@ -1,15 +1,20 @@
 import type { Context } from "../context.js";
+import { isPipelineRole } from "./auth-guard.js";
 
 /**
  * Person or pipeline (ADR-0024): the one answer every call site uses.
  *
- * A session is a person; an API key is the pipeline. A request the CLEAR
- * Agent makes for a user carries the user's session, so it is the user's.
+ * The pipeline is clear-pipeline's service user, role `pipeline` (#430). A
+ * request the CLEAR Agent makes for a user carries the user's session, so it
+ * is the user's.
  *
- * V1 decides by credential. The drain calls some mutations with an `admin`
- * API key, so the `pipeline` role is not a reliable test yet; #430 gives the
- * pipeline its own identity and changes only this body.
+ * Until dev and prod both run the pipeline on that user's key, an API key is
+ * also treated as the pipeline: the drain still calls with an `admin` key, and
+ * without this fallback its writes would count as a person's decisions.
+ * Remove the fallback once the admin keys are revoked (#430, Phase D).
  */
-export function isPipelineCaller(context: Pick<Context, "authMethod">): boolean {
-  return context.authMethod === "api-key";
+export function isPipelineCaller(
+  context: Pick<Context, "authMethod"> & { user?: Context["user"] | null },
+): boolean {
+  return isPipelineRole(context.user) || context.authMethod === "api-key";
 }
