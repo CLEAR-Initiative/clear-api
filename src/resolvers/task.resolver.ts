@@ -40,6 +40,7 @@ import {
 } from "../utils/auth-guard.js";
 import { env } from "../utils/env.js";
 import { logActivity } from "../utils/activity-log.js";
+import { recordDecision } from "../services/decision-records.js";
 import { notifyTaskOutcome } from "../services/task-notifications.js";
 import { acceptCase } from "../services/case-acceptance.js";
 import { resolveEventCountryId } from "../utils/event-country.js";
@@ -871,12 +872,34 @@ export const taskResolvers = {
       const now = new Date();
       const decision = { state: args.decision, decidedById: user.id, decidedAt: now, decisionRationale: rationale };
       let createdEvent = false;
-      if (args.decision === "rejected") {
-        const { count } = await context.prisma.caseProposal.updateMany({
-          where: { id: existing.id, state: "proposed" },
-          data: decision,
+      // The decision is recorded in the same transaction as the change
+      // (ADR-0024): no record, no decision.
+      const record = (tx: Prisma.TransactionClient, result: { signalId: string; eventId: string } | null) =>
+        recordDecision(tx, {
+          decider: { kind: "context", context },
+          decisionType: "CASE_PROPOSAL_DECIDED",
+          subjectType: "case_proposal",
+          subjectId: existing.id,
+          decidedAt: now,
+          rationale,
+          payload: {
+            decision: args.decision,
+            eventId: existing.eventId,
+            taskId: existing.taskId,
+            sourceUrl: existing.sourceUrl,
+            resultSignalId: result?.signalId ?? null,
+            resultEventId: result?.eventId ?? null,
+          },
         });
-        if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+      if (args.decision === "rejected") {
+        await context.prisma.$transaction(async (tx) => {
+          const { count } = await tx.caseProposal.updateMany({
+            where: { id: existing.id, state: "proposed" },
+            data: decision,
+          });
+          if (count === 0) throw conflict("CaseProposal was decided meanwhile");
+          await record(tx, null);
+        });
       } else {
         // The requesting Event's country: where a historical Event without a
         // resolved place sits, and the context a reused Signal's Event must share.
@@ -898,6 +921,7 @@ export const taskResolvers = {
             where: { id: existing.id },
             data: { resultSignalId: result.signalId, resultEventId: result.eventId },
           });
+          await record(tx, result);
           return result.createdEvent;
         });
       }
