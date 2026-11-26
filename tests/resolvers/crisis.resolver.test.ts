@@ -85,8 +85,20 @@ function buildContext(
   prisma: Record<string, unknown> = {},
   extra: Partial<Context> = {},
 ): Context {
+  // Event changes on a Crisis run in a transaction on the same stubs, under a
+  // row lock (SELECT … FOR UPDATE) that returns nothing the resolver reads.
+  // A test's own stubs win.
+  const client: Record<string, unknown> = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    ...prisma,
+  };
+  if (!("$transaction" in prisma)) {
+    client.$transaction = vi.fn(async (arg: unknown) =>
+      typeof arg === "function" ? (arg as (tx: unknown) => unknown)(client) : Promise.all(arg as unknown[]),
+    );
+  }
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: client as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,

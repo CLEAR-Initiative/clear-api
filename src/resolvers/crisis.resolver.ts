@@ -28,6 +28,11 @@ function crisisTranslationsInclude(locale: Locale):
   return { translations: { where: { locale } } };
 }
 
+/** Lock one Crisis row until the transaction ends. */
+async function lockCrisis(tx: Prisma.TransactionClient, crisisId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM "crises" WHERE id = ${crisisId} FOR UPDATE`;
+}
+
 interface CreateCrisisFromEventsInput {
   title?: string;
   summary?: string;
@@ -383,29 +388,33 @@ export const crisisResolvers = {
       });
       if (existing) return existing;
 
-      const link = await context.prisma.eventCrises.create({
-        data: {
-          crisisId,
-          eventId,
-          collectedAt: new Date(),
-        },
-      });
+      const link = await context.prisma.$transaction(async (tx) => {
+        // Serialise changes to this Crisis's Events, so two adds at once each
+        // count the other's link in the population.
+        await lockCrisis(tx, crisisId);
+        const created = await tx.eventCrises.create({
+          data: {
+            crisisId,
+            eventId,
+            collectedAt: new Date(),
+          },
+        });
 
-      // Recompute populations for the whole crisis
-      const allLinks = await context.prisma.eventCrises.findMany({
-        where: { crisisId },
-        select: { eventId: true },
-      });
-      const allEventIds = allLinks.map((l) => l.eventId);
-
-      const populationAffected = await sumEventPopulationAffected(
-        context.prisma,
-        allEventIds,
-      );
-      await context.prisma.crises.update({
-        where: { id: crisisId },
-        // Event set changed → enrichment is stale; flag it for the drain.
-        data: { populationAffected, enrichmentStatus: "PENDING" },
+        // Recompute populations for the whole crisis
+        const allLinks = await tx.eventCrises.findMany({
+          where: { crisisId },
+          select: { eventId: true },
+        });
+        const populationAffected = await sumEventPopulationAffected(
+          tx as Context["prisma"],
+          allLinks.map((l) => l.eventId),
+        );
+        await tx.crises.update({
+          where: { id: crisisId },
+          // Event set changed → enrichment is stale; flag it for the drain.
+          data: { populationAffected, enrichmentStatus: "PENDING" },
+        });
+        return created;
       });
 
       // Event set changed → enrichment is stale. The PENDING flag above re-queues
@@ -456,37 +465,45 @@ export const crisisResolvers = {
         });
       }
 
-      const linkCount = await context.prisma.eventCrises.count({
-        where: { crisisId },
-      });
+      const updated = await context.prisma.$transaction(async (tx) => {
+        // Serialise changes to this Crisis's Events. Recheck the link and count
+        // under the lock: an overlapping removal may have committed since the
+        // check above, and counting without it would delete the whole Crisis.
+        await lockCrisis(tx, crisisId);
+        const stillLinked = await tx.eventCrises.count({ where: { crisisId, eventId } });
+        if (stillLinked === 0) {
+          throw new GraphQLError("Event is not linked to this crisis", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        const linkCount = await tx.eventCrises.count({ where: { crisisId } });
 
-      // Last event — auto-delete the crisis rather than leave it in a
-      // degenerate empty state. Cascades handle eventCrises / userFeedbacks
-      // / userComments. Return null to signal the crisis no longer exists.
-      if (linkCount <= 1) {
-        await context.prisma.crises.delete({ where: { id: crisisId } });
-        return null;
-      }
+        // Last event — auto-delete the crisis rather than leave it in a
+        // degenerate empty state. Cascades handle eventCrises / userFeedbacks
+        // / userComments. Return null to signal the crisis no longer exists.
+        if (linkCount <= 1) {
+          await tx.crises.delete({ where: { id: crisisId } });
+          return null;
+        }
 
-      await context.prisma.eventCrises.deleteMany({
-        where: { crisisId, eventId },
-      });
+        await tx.eventCrises.deleteMany({
+          where: { crisisId, eventId },
+        });
 
-      // Recompute populationAffected over the remaining events
-      const remainingLinks = await context.prisma.eventCrises.findMany({
-        where: { crisisId },
-        select: { eventId: true },
-      });
-      const remainingEventIds = remainingLinks.map((l) => l.eventId);
-
-      const populationAffected = await sumEventPopulationAffected(
-        context.prisma,
-        remainingEventIds,
-      );
-      const updated = await context.prisma.crises.update({
-        where: { id: crisisId },
-        // Event set changed → enrichment is stale; flag it for the drain.
-        data: { populationAffected, enrichmentStatus: "PENDING" },
+        // Recompute populationAffected over the remaining events
+        const remainingLinks = await tx.eventCrises.findMany({
+          where: { crisisId },
+          select: { eventId: true },
+        });
+        const populationAffected = await sumEventPopulationAffected(
+          tx as Context["prisma"],
+          remainingLinks.map((l) => l.eventId),
+        );
+        return tx.crises.update({
+          where: { id: crisisId },
+          // Event set changed → enrichment is stale; flag it for the drain.
+          data: { populationAffected, enrichmentStatus: "PENDING" },
+        });
       });
 
       // Event set changed → enrichment is stale. The PENDING flag above re-queues

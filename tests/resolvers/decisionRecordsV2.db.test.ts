@@ -17,7 +17,7 @@ import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { createCrisisFromEvents } = crisisResolvers.Mutation;
+const { createCrisisFromEvents, addEventToCrisis, removeEventFromCrisis } = crisisResolvers.Mutation;
 const { createAlert, updateAlert, deleteAlert } = alertResolvers.Mutation;
 const { escalateEvent, createEvent, updateEvent, deleteEvent } = eventResolvers.Mutation;
 const { createManualSignal, deleteSignal } = signalResolvers.Mutation;
@@ -180,5 +180,38 @@ describeIfDb("Decision records V2 against the real schema", () => {
     const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [e] } }, admin);
     crisisIds.push(crisis.id);
     expect(await recordsFor("crisis", crisis.id)).toHaveLength(0);
+  });
+
+  it("two Events added to a Crisis at once both count in its population", async () => {
+    const now = new Date();
+    const withPop = async (n: bigint) => {
+      const row = await prisma.events.create({
+        data: { types: [], validTo: now, firstSignalCreatedAt: now, lastSignalCreatedAt: now, rank: 0, populationAffected: n },
+      });
+      eventIds.push(row.id);
+      return row.id;
+    };
+    const [a, b, c] = [await withPop(100n), await withPop(20n), await withPop(3n)];
+    const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [a] } }, admin);
+    crisisIds.push(crisis.id);
+    await Promise.all([
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: b }, admin),
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: c }, admin),
+    ]);
+    expect((await prisma.crises.findUniqueOrThrow({ where: { id: crisis.id } })).populationAffected).toBe(123n);
+  });
+
+  it("two overlapping removals of the same Event remove it once and keep the Crisis", async () => {
+    const [a, b] = [await newEvent(), await newEvent()];
+    const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [a, b] } }, admin);
+    crisisIds.push(crisis.id);
+    const results = await Promise.allSettled([
+      removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin),
+      removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { extensions: { code: "NOT_FOUND" } } });
+    expect(await prisma.crises.findUnique({ where: { id: crisis.id } })).not.toBeNull();
+    expect(await prisma.eventCrises.findMany({ where: { crisisId: crisis.id }, select: { eventId: true } })).toEqual([{ eventId: b }]);
   });
 });
