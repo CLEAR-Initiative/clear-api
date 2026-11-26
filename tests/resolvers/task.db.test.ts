@@ -159,6 +159,8 @@ describeIfDb("Tasks against the real schema", () => {
   });
 
   afterAll(async () => {
+    // Test cleanup only: no application path deletes a record.
+    await prisma.decisionRecords.deleteMany({ where: { decidedById: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
     await prisma.activityLogs.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID] } } });
     await prisma.notifications.deleteMany({ where: { userId: { in: [ANALYST_ID, ANALYST_B_ID, VIEWER_ID, ADMIN_ID] } } });
     await prisma.caseProposal.deleteMany({ where: { eventId: { in: eventIds } } });
@@ -591,6 +593,15 @@ describeIfDb("Tasks against the real schema", () => {
     // but keeps its newest-Signal time (a backdated Signal never makes it look stale).
     const a = await decideCaseProposal(null, { id: matched.id, decision: "accepted" }, analyst);
     expect(a).toMatchObject({ state: "accepted", decidedById: ANALYST_ID, resultEventId: pastId, decisionRationale: null });
+    // One DecisionRecord, from the session's user, with what the accept wrote (ADR-0024).
+    const acceptRecords = await prisma.decisionRecords.findMany({ where: { subjectType: "case_proposal", subjectId: matched.id } });
+    expect(acceptRecords).toHaveLength(1);
+    expect(acceptRecords[0]).toMatchObject({
+      decisionType: "CASE_PROPOSAL_DECIDED",
+      decidedById: ANALYST_ID,
+      rationale: null,
+      payload: { decision: "accepted", eventId: id, resultSignalId: a.resultSignalId, resultEventId: pastId },
+    });
     const signal = await prisma.signals.findUniqueOrThrow({ where: { id: a.resultSignalId! }, include: { source: true, signalEvents: true } });
     expect(signal).toMatchObject({ url: "https://example.test/accept-matched", status: "PROCESSED", submittedById: ANALYST_ID, publishedAt: longAgo });
     expect(signal.source.name).toBe("web_enrichment");
@@ -647,8 +658,13 @@ describeIfDb("Tasks against the real schema", () => {
     // Reject keeps the reason; a second decision is CONFLICT.
     const r = await decideCaseProposal(null, { id: rejectMe.id, decision: "rejected", rationale: "Not a flood." }, analyst);
     expect(r).toMatchObject({ state: "rejected", decisionRationale: "Not a flood.", resultSignalId: null });
+    const rejectRecords = await prisma.decisionRecords.findMany({ where: { subjectType: "case_proposal", subjectId: rejectMe.id } });
+    expect(rejectRecords).toHaveLength(1);
+    expect(rejectRecords[0]).toMatchObject({ decidedById: ANALYST_ID, rationale: "Not a flood.", payload: { decision: "rejected", resultSignalId: null } });
     await expect(decideCaseProposal(null, { id: rejectMe.id, decision: "accepted" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
     await expect(decideCaseProposal(null, { id: matched.id, decision: "rejected", rationale: "x" }, admin)).rejects.toMatchObject({ extensions: { code: "CONFLICT" } });
+    // A refused second decision writes no record.
+    expect(await prisma.decisionRecords.count({ where: { subjectId: { in: [matched.id, rejectMe.id] } } })).toBe(2);
   });
 
   it("accepting is safe under concurrency and only borrows an Event that is the same incident (V4)", async () => {
@@ -681,6 +697,16 @@ describeIfDb("Tasks against the real schema", () => {
     expect(dx.resultEventId).toBe(dy.resultEventId);
     expect(await prisma.signals.count({ where: { url: "https://example.test/race" } })).toBe(1);
     eventIds.push(dx.resultEventId!, dy.resultEventId!);
+
+    // If the DecisionRecord cannot be written, nothing is decided: a decider
+    // with no user row fails the record's foreign key, in the same
+    // transaction as the reject and the accept.
+    const ghost = asUser(`${RUN}-no-such-user`, "admin");
+    const g = await proposedCase("https://example.test/ghost");
+    await expect(decideCaseProposal(null, { id: g.id, decision: "rejected", rationale: "No." }, ghost)).rejects.toThrow();
+    await expect(decideCaseProposal(null, { id: g.id, decision: "accepted" }, ghost)).rejects.toThrow();
+    expect(await prisma.caseProposal.findUniqueOrThrow({ where: { id: g.id } })).toMatchObject({ state: "proposed", resultSignalId: null });
+    expect(await prisma.signals.count({ where: { url: "https://example.test/ghost" } })).toBe(0);
 
     // A pipeline Signal the drain has not processed yet is not borrowed.
     const pipelineSource = await prisma.dataSources.create({ data: { name: `${RUN}-pipe`, type: "test" } });

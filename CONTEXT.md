@@ -257,6 +257,26 @@ Shown beside a Brief so a person can compare what they picked with what the auto
 would have picked.
 _Avoid_: digest (on its own, that is the **Alert Digest** itself)
 
+### Decisions
+
+**DecisionRecord**:
+One row in `decision_records`: one human judgement on a Signal or case, with who decided, when,
+why (where required), the subject and a payload of old and new values. Written by
+`recordDecision` in the same transaction as the change: no record, no change. Append-only; a later
+decision supersedes an earlier one. Never written for a pipeline write. Not the **Activity log**:
+that is best-effort analytics; a DecisionRecord is the record the pipeline must honour (ADR-0024).
+_Avoid_: audit log, activity (for a decision)
+
+**Decided field**:
+A Signal field a person set — `severity` (stamp `severityCorrectedAt`) or the location (stamp
+`locationCorrectedAt`). A pipeline write over it is refused: clear-api keeps the person's value and
+returns it with the stamp. The call does not fail.
+_Avoid_: locked field, manual override
+
+**Pipeline caller**:
+A request `isPipelineCaller(context)` treats as the pipeline. In V1, a request authenticated by an
+API key. A session is a person; a CLEAR Agent request carries the user's session, so it is the user's.
+
 ### Product analytics
 
 **Activity log**:

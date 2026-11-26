@@ -10,6 +10,11 @@
  *   - Multiple signal points → creates level-4 convex hull region
  *   - No signal points → text-matches event title/description
  *
+ * Signal locations go through the shared guarded write (ADR-0024) as the
+ * pipeline: a location a person decided is kept. This script only picks
+ * Signals with no location, so it cannot meet one today; the shared path
+ * keeps it that way.
+ *
  * Usage:
  *   bunx tsx scripts/backfill-locations.ts
  *   bunx tsx scripts/backfill-locations.ts --dry-run   # Preview without writing
@@ -18,6 +23,7 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma.js";
 import { createPointLocation, createRegionFromPoints } from "../src/utils/geo-resolve.js";
+import { writeSignalLocation } from "../src/services/signal-decided-fields.js";
 
 const dryRun = process.argv.includes("--dry-run");
 
@@ -67,10 +73,9 @@ async function backfillSignals() {
 
       if (!dryRun) {
         const pointLoc = await createPointLocation(prisma, lat, lng, locName);
-        await prisma.signals.update({
-          where: { id: signal.id },
-          data: { locationId: pointLoc.id },
-        });
+        await prisma.$transaction((tx) =>
+          writeSignalLocation(tx, { signalId: signal.id, locationId: pointLoc.id, caller: { kind: "pipeline" }, via: "backfill-locations" }),
+        );
         resolved++;
         console.log(`  ${signal.title ?? signal.id} → ${pointLoc.name} (level 4, point) [${lat}, ${lng}]`);
       } else {
@@ -83,10 +88,9 @@ async function backfillSignals() {
       const matchedLoc = await findLocationByTextMatch(textToSearch);
       if (matchedLoc) {
         if (!dryRun) {
-          await prisma.signals.update({
-            where: { id: signal.id },
-            data: { locationId: matchedLoc.id },
-          });
+          await prisma.$transaction((tx) =>
+            writeSignalLocation(tx, { signalId: signal.id, locationId: matchedLoc.id, caller: { kind: "pipeline" }, via: "backfill-locations" }),
+          );
         }
         resolved++;
         console.log(`  ${dryRun ? "[DRY] " : ""}${signal.title ?? signal.id} → ${matchedLoc.name} (level ${matchedLoc.level}) [text match]`);

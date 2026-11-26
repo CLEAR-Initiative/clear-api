@@ -9,6 +9,8 @@ import { buildLocationFilterForTeam } from "../utils/location-scope.js";
 import { assertSignalReadable, canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { OPEN_CHALLENGE_STATUS } from "./signalLocationChallenge.resolver.js";
 import { uploadFileToS3 } from "../services/s3.js";
+import { logRefusedWrite, writeSignalLocation, writeSignalSeverity } from "../services/signal-decided-fields.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
 /** The only `data_sources` names `createManualSignal` accepts. Exported so the
@@ -742,10 +744,19 @@ export const signalResolvers = {
         existing.locationId,
       ]);
 
-      return context.prisma.signals.update({
-        where: { id: args.id },
-        data: { severity: args.severity },
-      });
+      // A person's severity is a decision (ADR-0024): recorded with the
+      // change, and kept against later pipeline writes. A pipeline write over
+      // it is refused without failing; the returned Signal carries the kept
+      // severity and a non-null severityCorrectedAt.
+      await context.prisma.$transaction((tx) =>
+        writeSignalSeverity(tx, {
+          signalId: args.id,
+          severity: args.severity,
+          caller: isPipelineCaller(context) ? { kind: "pipeline" } : { kind: "person", context },
+          via: "updateSignalSeverity",
+        }),
+      );
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
     setSignalGlideCode: async (
@@ -837,22 +848,27 @@ export const signalResolvers = {
         });
       }
 
-      const update = context.prisma.signals.update({
-        where: { id: args.id },
-        data: { locationId: args.locationId },
-      });
+      // A person's corrected location is kept (ADR-0024): the write is
+      // refused without failing, the returned Signal carries the kept
+      // location and locationCorrectedAt, and a REPLAY writes no Outcome.
+      //
       // The drain marks the Signal after this call, and the mark writes the
       // Outcome (ADR-0020). A replay job that moves Signals without the drain
       // says so, and its Outcome is written here with the move.
-      if (args.runKind !== "REPLAY") return update;
-      const [moved] = await context.prisma.$transaction([
-        update,
-        writeRelocatedOutcome(context.prisma, args.id, args.locationId, new Date(), {
+      await context.prisma.$transaction(async (tx) => {
+        const result = await writeSignalLocation(tx, {
+          signalId: args.id,
+          locationId: args.locationId,
+          caller: { kind: "pipeline" },
+          via: "updateSignalLocation",
+        });
+        if (result.refused || args.runKind !== "REPLAY") return;
+        await writeRelocatedOutcome(tx, args.id, args.locationId, new Date(), {
           pipelineVersion: args.pipelineVersion,
           runId: args.runId,
-        }),
-      ]);
-      return moved;
+        });
+      });
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
     updateSignalContent: async (
@@ -892,6 +908,10 @@ export const signalResolvers = {
         // A person corrected this signal's location (a decided Location
         // challenge), so the source's location and countries no longer apply.
         const corrected = existing.locationCorrectedAt != null;
+        // A person set this signal's severity (ADR-0024): a source revision
+        // keeps it. The call does not fail; the returned Signal carries the
+        // kept severity and severityCorrectedAt.
+        const severityDecided = existing.severityCorrectedAt != null;
         const data: Record<string, unknown> = {};
         if (contentChanged) {
           if (!corrected && !locationResolved) {
@@ -908,7 +928,7 @@ export const signalResolvers = {
             url: input.url,
             title: input.title,
             description: input.description,
-            severity: input.severity,
+            ...(severityDecided ? {} : { severity: input.severity }),
             casualties: input.casualties,
             // Preserve explicit null (clear) vs absent (leave) for each field.
             startDate: dateOrKeep(input.startDate),
@@ -965,11 +985,18 @@ export const signalResolvers = {
         // update, a retraction-only or key-only one too.
         const countryIds = corrected ? undefined : input.countryIds;
         const writesLocation = !corrected && (contentChanged || countryIds != null);
+        // Likewise a severity decided after the read fails the compare-and-set,
+        // and the retry keeps it.
+        const writesSeverity = contentChanged && !severityDecided && input.severity !== undefined;
+        if (contentChanged && severityDecided && input.severity !== undefined && input.severity !== existing.severity) {
+          logRefusedWrite("severity", existing.id, "updateSignalContent");
+        }
         const casWhere = {
           id: existing.id,
           revision: existing.revision,
           status: existing.status,
           ...(writesLocation ? { locationCorrectedAt: null } : {}),
+          ...(writesSeverity ? { severityCorrectedAt: null } : {}),
         };
         const result =
           countryIds != null

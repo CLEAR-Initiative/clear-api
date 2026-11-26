@@ -1169,9 +1169,12 @@ describe("decideCaseProposal — who may decide", () => {
       }),
       findUniqueOrThrow: vi.fn(async () => proposal),
     };
-    const prisma = makePrisma({ caseProposal });
+    const decisionRecords = { create: vi.fn(async ({ data }: { data: Row }) => ({ id: "dr-1", ...data })) };
+    const prisma = makePrisma({ caseProposal, decisionRecords });
+    // The reject and its DecisionRecord run in one transaction.
+    (prisma as unknown as Row).$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
     prisma.task.store.set("t-team", makeTask({ id: "t-team", teamId }));
-    return { prisma, caseProposal };
+    return { prisma, caseProposal, decisionRecords };
   }
   const reject = { id: "cp-1", decision: "rejected" as const, rationale: "Not a flood." };
 
@@ -1180,10 +1183,13 @@ describe("decideCaseProposal — who may decide", () => {
     ["a team_admin", teamAdmin],
     ["a platform admin", admin],
   ])("lets %s decide a proposal on team-a's Task", async (_n, user) => {
-    const { prisma, caseProposal } = decidable("team-a");
+    const { prisma, caseProposal, decisionRecords } = decidable("team-a");
     const decided = await decideCaseProposal(null, reject, ctx(user, prisma));
     expect(decided).toMatchObject({ state: "rejected", decidedById: user.id });
     expect(caseProposal.updateMany).toHaveBeenCalledOnce();
+    expect(decisionRecords.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ decisionType: "CASE_PROPOSAL_DECIDED", subjectId: "cp-1", decidedById: user.id, rationale: "Not a flood." }),
+    });
   });
 
   it.each([

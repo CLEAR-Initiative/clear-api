@@ -303,6 +303,7 @@ function decideCtx(
   const txUpdateMany = vi.fn().mockResolvedValue({ count });
   const signalsUpdate = vi.fn().mockResolvedValue({});
   const lock = vi.fn().mockResolvedValue([]);
+  const decisionCreate = vi.fn().mockResolvedValue({});
   const tx = {
     $queryRaw: lock,
     signals: {
@@ -312,6 +313,7 @@ function decideCtx(
       update: signalsUpdate,
     },
     signalLocationChallenges: { updateMany: txUpdateMany },
+    decisionRecords: { create: decisionCreate, findMany: vi.fn().mockResolvedValue([]) },
   };
   const prisma = {
     teamMembers: { findUnique: teamMembersFindUnique() },
@@ -326,7 +328,7 @@ function decideCtx(
     },
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
   };
-  return { ctx: buildContext(user, prisma), lock, txUpdateMany, outsideUpdateMany, signalsUpdate };
+  return { ctx: buildContext(user, prisma), lock, txUpdateMany, outsideUpdateMany, signalsUpdate, decisionCreate };
 }
 
 describe("Mutation.decideSignalLocationChallenge: who decides", () => {
@@ -409,9 +411,13 @@ describe("Mutation.decideSignalLocationChallenge: input", () => {
 
 describe("Mutation.decideSignalLocationChallenge: DECLINE", () => {
   it("closes the challenge and leaves the signal as it is", async () => {
-    const { ctx, outsideUpdateMany, signalsUpdate } = decideCtx(TEAM_ADMIN);
+    const { ctx, txUpdateMany, signalsUpdate, decisionCreate } = decideCtx(TEAM_ADMIN);
     await decideSignalLocationChallenge(null, { id: "C1", decision: "DECLINE" }, ctx);
-    expect(outsideUpdateMany).toHaveBeenCalledWith({
+    // The decline and its DecisionRecord are one transaction.
+    expect(decisionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ decisionType: "SIGNAL_LOCATION_DECIDED", subjectId: "S1", decidedById: "u-admin" }),
+    });
+    expect(txUpdateMany).toHaveBeenCalledWith({
       where: { id: "C1", status: "consideration" },
       data: { status: "declined", decidedBy: "u-admin", decidedAt: expect.any(Date) },
     });

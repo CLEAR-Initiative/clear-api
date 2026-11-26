@@ -15,6 +15,7 @@ import {
   resolveContainingAdminArea,
 } from "../utils/geo-resolve.js";
 import { logActivity } from "../utils/activity-log.js";
+import { recordDecision, supersededDecisionId } from "../services/decision-records.js";
 
 // ─── Signal Location challenges (Exponential #836) ───────────────────────────
 // An analyst challenges a Signal's location for their team, optionally with a
@@ -561,12 +562,24 @@ export const signalLocationChallengeResolvers = {
       const decided = { decidedBy: user.id, decidedAt: new Date() };
 
       if (args.decision === "DECLINE") {
-        // Conditional on still open, so a concurrent decision wins once.
-        const { count } = await context.prisma.signalLocationChallenges.updateMany({
-          where: { id: challenge.id, status: OPEN_CHALLENGE_STATUS },
-          data: { status: "declined", ...decided },
+        // A decline is a judgement too: recorded with the status change, and
+        // the Signal is left as it is.
+        await context.prisma.$transaction(async (tx) => {
+          // Conditional on still open, so a concurrent decision wins once.
+          const { count } = await tx.signalLocationChallenges.updateMany({
+            where: { id: challenge.id, status: OPEN_CHALLENGE_STATUS },
+            data: { status: "declined", ...decided },
+          });
+          if (count === 0) throw decidedMeanwhile();
+          await recordDecision(tx, {
+            decider: { kind: "context", context },
+            decisionType: "SIGNAL_LOCATION_DECIDED",
+            subjectType: "signal",
+            subjectId: challenge.signalId,
+            decidedAt: decided.decidedAt,
+            payload: { challengeId: challenge.id, decision: "DECLINE" },
+          });
         });
-        if (count === 0) throw decidedMeanwhile();
         void logActivity(context.prisma, {
           userId: user.id,
           action: "signal.location_challenge.decline",
@@ -646,12 +659,30 @@ export const signalLocationChallengeResolvers = {
           },
         });
         // What the correction overwrote, so it can be undone by hand.
-        return {
+        const overwritten = {
           locationId: current.locationId,
           originId: current.originId,
           destinationId: current.destinationId,
           countryIds: current.countries.map((c) => c.id),
         };
+        // The decision, in the same transaction: no record, no change. It
+        // replaces the last decision that placed this Signal.
+        await recordDecision(tx, {
+          supersedesId: await supersededDecisionId(tx, "signal", challenge.signalId, "SIGNAL_LOCATION_DECIDED"),
+          decider: { kind: "context", context },
+          decisionType: "SIGNAL_LOCATION_DECIDED",
+          subjectType: "signal",
+          subjectId: challenge.signalId,
+          decidedAt: decided.decidedAt,
+          payload: {
+            challengeId: challenge.id,
+            decision: args.decision,
+            appliedLocationId: pointId,
+            point: { lat: place.lat, lng: place.lng, name: place.name },
+            previous: overwritten,
+          },
+        });
+        return overwritten;
       });
 
       void logActivity(context.prisma, {

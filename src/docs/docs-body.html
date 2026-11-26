@@ -9620,6 +9620,13 @@ grouped before it was recorded, or never grouped.</td>
     <td>When a decided Location challenge last wrote this signal's location (a
 person corrected it); null when the location is the source's. Source
 revisions keep a corrected location.</td>
+  </tr><tr>
+    <td><code>severityCorrectedAt</code></td>
+    <td><code>DateTime</code></td>
+    <td>When a person last set this signal's severity (updateSignalSeverity
+from a signed-in user); null while the severity is the source's or the
+pipeline's. A pipeline write keeps a decided severity: a refused write
+returns the signal with the kept severity and this field set.</td>
   </tr></tbody></table><h3 id="type-signallocationchallenge"><code>SignalLocationChallenge</code> <span class="type-badge">object</span></h3><p>An analyst's Location challenge on a Signal: why its location looks wrong,
 optionally with a corrected point, filed for one team. That team's admin or a
 platform admin decides it, even when they filed it. Accepting writes the proposed
