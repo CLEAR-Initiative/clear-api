@@ -567,6 +567,15 @@ export const crisisResolvers = {
         // Serialise changes to this Crisis's Events, and count its links under
         // the lock, so the last-Event check and the population see every link.
         await lockCrisis(tx, crisisId);
+        // Recheck under the lock: an overlapping removal of the same Event may
+        // have committed since the check above, and counting without the link
+        // would delete the whole Crisis.
+        const stillLinked = await tx.eventCrises.count({ where: { crisisId, eventId } });
+        if (stillLinked === 0) {
+          throw new GraphQLError("Event is not linked to this crisis", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
         const linkCount = await tx.eventCrises.count({ where: { crisisId } });
 
         // Last event — auto-delete the crisis rather than leave it in a

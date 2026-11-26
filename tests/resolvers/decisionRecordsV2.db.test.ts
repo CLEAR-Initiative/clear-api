@@ -311,4 +311,18 @@ describeIfDb("Decision records V2 against the real schema", () => {
     const after = await prisma.crises.findUniqueOrThrow({ where: { id: crisis.id } });
     expect(after.populationAffected).toBe(123n);
   });
+
+  it("two overlapping removals of the same Event remove it once and keep the Crisis", async () => {
+    const [a, b] = [await newEvent(), await newEvent()];
+    const crisis = await createCrisisFromEvents(null, crisisInput([a, b], { rationale: "Floods" }), admin);
+    crisisIds.push(crisis.id);
+    const results = await Promise.allSettled([
+      removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin),
+      removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { extensions: { code: "NOT_FOUND" } } });
+    expect(await prisma.crises.findUnique({ where: { id: crisis.id } })).not.toBeNull();
+    expect(await prisma.eventCrises.findMany({ where: { crisisId: crisis.id }, select: { eventId: true } })).toEqual([{ eventId: b }]);
+  });
 });
