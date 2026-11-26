@@ -713,29 +713,31 @@ describe("Mutation.escalateEvent", () => {
 
   it("skips alert creation when a published alert already exists, but still upserts the escalation", async () => {
     const alertsCreate = vi.fn();
-    const upsert = vi.fn().mockResolvedValue({ id: "esc1" });
+    // The escalation is insert-or-keep (createMany skipDuplicates), then read back.
+    const upsert = vi.fn().mockResolvedValue({ count: 1 });
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: ["flood"], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue({ id: "a1" }), create: alertsCreate },
-      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
+      eventEscaladedByUsers: { createMany: upsert, findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "esc1" }) },
     });
     const result = await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);
     expect(alertsCreate).not.toHaveBeenCalled();
     expect(upsert).toHaveBeenCalledOnce();
-    expect(upsert.mock.calls[0][0].where).toEqual({ userId_eventId: { userId: "u9", eventId: "e1" } });
+    expect(upsert.mock.calls[0][0]).toMatchObject({ data: [{ userId: "u9", eventId: "e1" }], skipDuplicates: true });
     expect(result).toEqual({ id: "esc1" });
   });
 
   it("creates an alert when none exists, then skips fan-out when the event has no locations", async () => {
     const alertsCreate = vi.fn().mockResolvedValue({ id: "a-new" });
-    const upsert = vi.fn().mockResolvedValue({ id: "esc1" });
+    // The escalation is insert-or-keep (createMany skipDuplicates), then read back.
+    const upsert = vi.fn().mockResolvedValue({ count: 1 });
     const locationsFindMany = vi.fn();
     const ctx = buildContext(ADMIN, {
       // No location ids → fan-out branch is skipped entirely.
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: ["flood"], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
       locations: { findMany: locationsFindMany },
-      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
+      eventEscaladedByUsers: { createMany: upsert, findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "esc1" }) },
     });
     await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);
     expect(alertsCreate).toHaveBeenCalledWith({ data: { eventId: "e1", status: "published" } });
@@ -758,12 +760,13 @@ describe("Mutation.escalateEvent", () => {
 
   it("escalates an event with no classified types (no NRC signal to block on)", async () => {
     const alertsCreate = vi.fn().mockResolvedValue({ id: "a-new" });
-    const upsert = vi.fn().mockResolvedValue({ id: "esc1" });
+    // The escalation is insert-or-keep (createMany skipDuplicates), then read back.
+    const upsert = vi.fn().mockResolvedValue({ count: 1 });
     const count = vi.fn().mockResolvedValue(0);
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1", types: [], originId: null, destinationId: null, locationId: null }) },
       alerts: { findFirst: vi.fn().mockResolvedValue(null), create: alertsCreate },
-      eventEscaladedByUsers: { upsert, findUnique: vi.fn().mockResolvedValue(null) },
+      eventEscaladedByUsers: { createMany: upsert, findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "esc1" }) },
       disasterTypes: { count },
     });
     await escalateEvent(null, { eventId: "e1", userId: "u9" }, ctx);

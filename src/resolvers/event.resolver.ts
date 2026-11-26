@@ -1082,21 +1082,25 @@ export const eventResolvers = {
 
       // Record user escalation (upsert to handle idempotency)
       const escalation = await context.prisma.$transaction(async (tx) => {
-        const key = { userId_eventId: { userId: args.userId, eventId: args.eventId } };
-        const before = await tx.eventEscaladedByUsers.findUnique({ where: key, select: { userId: true } });
-        const row = await tx.eventEscaladedByUsers.upsert({
-          where: key,
-          create: {
-            userId: args.userId,
-            eventId: args.eventId,
-            validFrom: new Date(),
-            validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-          },
-          update: {},
+        // Insert-or-keep, and learn from the insert itself whether this call
+        // made the escalation: two overlapping calls cannot both count it.
+        const { count: inserted } = await tx.eventEscaladedByUsers.createMany({
+          data: [
+            {
+              userId: args.userId,
+              eventId: args.eventId,
+              validFrom: new Date(),
+              validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+            },
+          ],
+          skipDuplicates: true,
+        });
+        const row = await tx.eventEscaladedByUsers.findUniqueOrThrow({
+          where: { userId_eventId: { userId: args.userId, eventId: args.eventId } },
         });
         // Joining an existing Alert: one record for a new escalation, none for
         // a repeat.
-        if (!recorded && !before) {
+        if (!recorded && inserted === 1) {
           await recordDecisionIfPerson(tx, context, {
             decisionType: "EVENT_ESCALATED",
             subjectType: "event",
