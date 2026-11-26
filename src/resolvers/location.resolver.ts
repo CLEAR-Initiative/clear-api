@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { GraphQLError } from "graphql";
 import type { Context } from "../context.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
-import { requireRole } from "../utils/auth-guard.js";
+import { requireRole, PIPELINE_ROLE } from "../utils/auth-guard.js";
 import { computeAncestorIds, findOrCreateLandmarkL4 } from "../utils/geo-resolve.js";
 import { DEFAULT_LOCALE } from "../utils/locales.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
@@ -126,7 +126,7 @@ export const locationResolvers = {
       args: { input: CreateLocationInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { input } = args;
       const id = randomUUID();
       const geoId = input.geoId ?? null;
@@ -192,7 +192,7 @@ export const locationResolvers = {
       args: { id: string; input: UpdateLocationInput },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { id, input } = args;
 
       const existing = await context.prisma.locations.findUnique({ where: { id } });
@@ -262,7 +262,7 @@ export const locationResolvers = {
       args: { id: string; geometry: unknown },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const geojson = JSON.stringify(args.geometry);
 
       // Invalidate the geometry cache for this location
@@ -283,7 +283,7 @@ export const locationResolvers = {
       args: { id: string; population: string },
       context: Context,
     ) => {
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       return context.prisma.locations.update({
         where: { id: args.id },
         data: { population: BigInt(args.population) },
@@ -305,7 +305,7 @@ export const locationResolvers = {
       context: Context,
     ) => {
       // Admin/pipeline only — this is internal infrastructure, not user-facing.
-      requireRole(context, ["admin"]);
+      requireRole(context, ["admin", PIPELINE_ROLE]);
       const { input } = args;
 
       if (input.kind !== "landmark" && input.kind !== "admin") {

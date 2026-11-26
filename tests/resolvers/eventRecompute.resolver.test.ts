@@ -78,7 +78,9 @@ function eventPrisma(existing: unknown = { id: "e1" }, live = LIVE) {
     create: vi.fn(), createMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(),
     delete: vi.fn(), deleteMany: vi.fn(), upsert: vi.fn(),
   };
-  const tx = { $queryRaw, events: { update }, signals: { findMany }, signalEvents };
+  // A pipeline caller's aggregates also go to the Event facts log (ADR-0021).
+  const eventFacts = { findFirst: vi.fn(async () => null), create: vi.fn(async () => ({})) };
+  const tx = { $queryRaw, $executeRaw: vi.fn(async () => 1), events: { update }, signals: { findMany }, signalEvents, eventFacts };
   const $transaction = vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx));
   return { $transaction, $queryRaw, events: { update }, signals: { findMany }, signalEvents };
 }

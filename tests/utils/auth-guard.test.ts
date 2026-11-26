@@ -97,7 +97,12 @@ describe("requireContentReader", () => {
     expect(requireContentReader(buildContext(user))).toBe(user);
   });
 
-  it.each(["pending", "pipeline", "agent", null])(
+  it("admits the pipeline role: it reads the content it writes (#430)", () => {
+    const user = { id: "u1", role: "pipeline" };
+    expect(requireContentReader(buildContext(user))).toBe(user);
+  });
+
+  it.each(["pending", "agent", null])(
     "rejects role %s with FORBIDDEN / PENDING_APPROVAL",
     (role) => {
       const ctx = buildContext({ id: "u1", role });
@@ -216,8 +221,8 @@ describe("requireNonWorkerContentReader", () => {
     expect(requireNonWorkerContentReader(buildContext(user))).toBe(user);
   });
 
-  it("rejects the worker role, which requireContentReader admits", () => {
-    expect(codeOf(() => requireNonWorkerContentReader(buildContext({ id: "u1", role: "worker" })))).toBe("FORBIDDEN");
+  it.each(["worker", "pipeline"])("rejects the service role %s, which requireContentReader admits", (role) => {
+    expect(codeOf(() => requireNonWorkerContentReader(buildContext({ id: "u1", role })))).toBe("FORBIDDEN");
   });
 
   it("still rejects pending users as PENDING_APPROVAL", () => {

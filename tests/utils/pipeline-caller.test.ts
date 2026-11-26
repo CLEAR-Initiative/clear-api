@@ -8,3 +8,14 @@ describe("isPipelineCaller", () => {
     expect(isPipelineCaller({ authMethod: null })).toBe(false);
   });
 });
+
+describe("isPipelineCaller with the pipeline identity (#430)", () => {
+  it("is true for the pipeline role, whatever the credential", () => {
+    expect(isPipelineCaller({ authMethod: "session", user: { role: "pipeline" } as never })).toBe(true);
+    expect(isPipelineCaller({ authMethod: "api-key", user: { role: "pipeline" } as never })).toBe(true);
+  });
+
+  it("is false for a person's session", () => {
+    expect(isPipelineCaller({ authMethod: "session", user: { role: "admin" } as never })).toBe(false);
+  });
+});

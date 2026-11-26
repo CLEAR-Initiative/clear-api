@@ -170,6 +170,9 @@ describe("signal recompute schema contract", () => {
       $queryRaw: vi.fn(async () => [{ id: "e1" }]),
       signals: { findMany: vi.fn(async () => [{ id: "s1", revision: 2 }]) },
       events: { update },
+      // A pipeline caller's aggregates go to the Event facts log (ADR-0021).
+      eventFacts: { findFirst: vi.fn(async () => null), create: vi.fn(async () => ({})) },
+      $executeRaw: vi.fn(async () => 1),
     };
     const ok = await exec(
       `mutation($id: String!, $input: EventAggregatesInput!, $members: [SignalRevisionInput!]!) {

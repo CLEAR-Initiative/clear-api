@@ -2,7 +2,7 @@ import { GraphQLError } from "graphql";
 import { eventLink } from "../utils/event-link.js";
 import type { Context } from "../context.js";
 import type { InputJsonValue } from "../generated/prisma/internal/prismaNamespace.js";
-import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations } from "../utils/auth-guard.js";
+import { isPlatformAdmin, requireContentReader, requireRole, requireTeamContentWriter, requireAdminOrTeamAnalystForLocations, isPipelineRole } from "../utils/auth-guard.js";
 import { canReadSignal, withSignalScope } from "../utils/signal-access.js";
 import { logActivity } from "../utils/activity-log.js";
 import { logEventChange } from "../utils/event-log.js";
@@ -393,7 +393,8 @@ export const eventResolvers = {
       // create when they supply the teamId they're acting on behalf of.
       // See `requireTeamContentWriter`.
       const { input } = args;
-      await requireTeamContentWriter(context, input.teamId);
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireTeamContentWriter(context, input.teamId);
       await assertCountryLocations(context.prisma, input.countryIds);
       // Validated before any write (point location, event row).
       const populationAffected = optionalBigInt(input.populationAffected, "populationAffected");
@@ -676,7 +677,8 @@ export const eventResolvers = {
 
       // Elevated gate, scoped to the event's locations: admin passes, else the
       // caller must be a team analyst whose location scope covers the event.
-      await requireAdminOrTeamAnalystForLocations(context, [
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireAdminOrTeamAnalystForLocations(context, [
         existing.originId,
         existing.destinationId,
         existing.locationId,
@@ -857,7 +859,8 @@ export const eventResolvers = {
       // Global admin may escalate any event; any team member may escalate
       // when they pass the teamId they're acting on behalf of. The worker
       // role and non-members are rejected. See `requireTeamContentWriter`.
-      await requireTeamContentWriter(context, args.teamId);
+      // clear-pipeline's service role writes this too (#430).
+      if (!isPipelineRole(context.user)) await requireTeamContentWriter(context, args.teamId);
 
       const event = await context.prisma.events.findUnique({
         where: { id: args.eventId },
