@@ -126,4 +126,32 @@ describeIfDb("Decision records against the real schema", () => {
     );
     expect(revised).toMatchObject({ severity: 4, severityCorrectedAt: null });
   });
+
+  it("marks a decision the CLEAR Agent made for a user as the user's, through the Agent", async () => {
+    const signalId = await newSignal();
+    await updateSignalSeverity(null, { id: signalId, severity: 3 }, ctx(ANALYST_ID, "admin", { viaAgent: true }));
+    const [record] = await recordsFor(signalId);
+    expect(record).toMatchObject({ decidedById: ANALYST_ID, viaAgent: true });
+  });
+
+  it("keeps a deleted user's records and clears the decider", async () => {
+    const goneId = `${RUN}-leaver`;
+    await prisma.user.create({ data: { id: goneId, name: goneId, email: `${goneId}@example.test`, role: "admin" } });
+    const signalId = await newSignal();
+    await updateSignalSeverity(null, { id: signalId, severity: 4 }, ctx(goneId, "admin"));
+
+    await prisma.user.delete({ where: { id: goneId } });
+
+    const records = await recordsFor(signalId);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ decidedById: null, decisionType: "SIGNAL_SEVERITY_SET", payload: { severity: 4 } });
+  });
+
+  it("gives each record a larger sequence than the one before", async () => {
+    const signalId = await newSignal();
+    await updateSignalSeverity(null, { id: signalId, severity: 3 }, analyst);
+    await updateSignalSeverity(null, { id: signalId, severity: 4 }, analyst);
+    const [first, second] = await recordsFor(signalId);
+    expect(second!.sequence > first!.sequence).toBe(true);
+  });
 });
