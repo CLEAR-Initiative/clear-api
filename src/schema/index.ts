@@ -46,6 +46,7 @@ import { groundTypeDef } from "./typeDefs/types/ground.js";
 import { conversationTypeDef } from "./typeDefs/types/conversation.js";
 import { taskTypeDef } from "./typeDefs/types/task.js";
 import { briefTypeDef } from "./typeDefs/types/brief.js";
+import { decisionTypeDef } from "./typeDefs/types/decision.js";
 
 export const typeDefs = [
   scalarTypeDef,
@@ -96,4 +97,5 @@ export const typeDefs = [
   conversationTypeDef,
   taskTypeDef,
   briefTypeDef,
+  decisionTypeDef,
 ];
