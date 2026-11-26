@@ -238,6 +238,13 @@ describeIfDb("Location challenges against the real schema", () => {
     });
     expect(signal.locationId).not.toBe(BORDER_POINT_ID);
     expect(signal.generalLocation).toMatchObject({ name: "Border market", parentId: COUNTRY_B_ID });
+    // The correction replaces the earlier accept, not the declines between them.
+    const placing = await prisma.decisionRecords.findMany({
+      where: { subjectId: signalId, NOT: { payload: { path: ["decision"], equals: "DECLINE" } } },
+      orderBy: { sequence: "asc" },
+    });
+    expect(placing.map((r) => (r.payload as { decision: string }).decision)).toEqual(["ACCEPT", "CORRECT"]);
+    expect(placing[1]!.supersedesId).toBe(placing[0]!.id);
     expect(signal.countries).toEqual([{ id: COUNTRY_B_ID }]);
   });
 

@@ -89,15 +89,25 @@ export async function recordDecision(tx: Tx, input: RecordDecisionInput) {
   });
 }
 
-/** The latest record for a subject and type: what an override supersedes. */
-export async function latestDecision(
+/**
+ * The id of the latest record that set a field: what a new decision on the
+ * same field supersedes. A declined Location challenge set nothing, so it is
+ * never the one superseded.
+ */
+export async function supersededDecisionId(
   tx: Tx,
   subjectType: DecisionSubjectType,
   subjectId: string,
   decisionType: DecisionType,
-) {
-  return tx.decisionRecords.findFirst({
+): Promise<string | null> {
+  // Filtered here, not in SQL: a JSON-path NOT is NULL for a payload with no
+  // `decision` key and would drop it. A subject holds a handful of records.
+  const records = await tx.decisionRecords.findMany({
     where: { subjectType, subjectId, decisionType },
     orderBy: { sequence: "desc" },
+    select: { id: true, payload: true },
   });
+  const isDecline = (payload: unknown) =>
+    typeof payload === "object" && payload !== null && (payload as { decision?: unknown }).decision === "DECLINE";
+  return records.find((r) => !isDecline(r.payload))?.id ?? null;
 }

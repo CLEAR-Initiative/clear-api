@@ -313,7 +313,7 @@ function decideCtx(
       update: signalsUpdate,
     },
     signalLocationChallenges: { updateMany: txUpdateMany },
-    decisionRecords: { create: decisionCreate },
+    decisionRecords: { create: decisionCreate, findMany: vi.fn().mockResolvedValue([]) },
   };
   const prisma = {
     teamMembers: { findUnique: teamMembersFindUnique() },

@@ -154,6 +154,9 @@ describeIfDb("Decision records against the real schema", () => {
     await updateSignalSeverity(null, { id: signalId, severity: 4 }, analyst);
     const [first, second] = await recordsFor(signalId);
     expect(second!.sequence > first!.sequence).toBe(true);
+    // The second decision on the same field replaces the first.
+    expect(first!.supersedesId).toBeNull();
+    expect(second!.supersedesId).toBe(first!.id);
   });
 
   it("an offline override needs a named person and a rationale, and supersedes the earlier record", async () => {

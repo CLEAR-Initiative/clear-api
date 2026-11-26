@@ -4,7 +4,8 @@
  * guard is in one place.
  *
  * - A person writes the value, stamps `*_corrected_at`, and records a
- *   DecisionRecord holding the old and new value.
+ *   DecisionRecord holding the old and new value. It supersedes the latest
+ *   record that set the same field.
  * - The pipeline writes the value unless a person decided it. Then it writes
  *   nothing and gets `{ refused: true }` with the kept value; the call does
  *   not fail, because the drain retries a failed mutation and would loop.
@@ -18,7 +19,7 @@
  */
 import type { Prisma } from "../generated/prisma/client.js";
 import type { Context } from "../context.js";
-import { latestDecision, recordDecision } from "./decision-records.js";
+import { recordDecision, supersededDecisionId } from "./decision-records.js";
 import { createLogger } from "../utils/logger.js";
 
 type Tx = Prisma.TransactionClient;
@@ -88,12 +89,9 @@ export async function writeSignalSeverity(
   });
   await recordDecision(tx, {
     ...(caller.kind === "override"
-      ? {
-          decider: { kind: "named", userId: caller.decidedBy },
-          rationale: caller.rationale,
-          supersedesId: (await latestDecision(tx, "signal", input.signalId, "SIGNAL_SEVERITY_SET"))?.id ?? null,
-        }
+      ? { decider: { kind: "named", userId: caller.decidedBy }, rationale: caller.rationale }
       : { decider: { kind: "context", context: caller.context } }),
+    supersedesId: await supersededDecisionId(tx, "signal", input.signalId, "SIGNAL_SEVERITY_SET"),
     decisionType: "SIGNAL_SEVERITY_SET",
     subjectType: "signal",
     subjectId: input.signalId,
@@ -139,7 +137,7 @@ export async function writeSignalLocation(
     await recordDecision(tx, {
       decider: { kind: "named", userId: caller.decidedBy },
       rationale: caller.rationale,
-      supersedesId: (await latestDecision(tx, "signal", input.signalId, "SIGNAL_LOCATION_DECIDED"))?.id ?? null,
+      supersedesId: await supersededDecisionId(tx, "signal", input.signalId, "SIGNAL_LOCATION_DECIDED"),
       decisionType: "SIGNAL_LOCATION_DECIDED",
       subjectType: "signal",
       subjectId: input.signalId,

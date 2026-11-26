@@ -15,7 +15,7 @@ import {
   resolveContainingAdminArea,
 } from "../utils/geo-resolve.js";
 import { logActivity } from "../utils/activity-log.js";
-import { recordDecision } from "../services/decision-records.js";
+import { recordDecision, supersededDecisionId } from "../services/decision-records.js";
 
 // ─── Signal Location challenges (Exponential #836) ───────────────────────────
 // An analyst challenges a Signal's location for their team, optionally with a
@@ -665,8 +665,10 @@ export const signalLocationChallengeResolvers = {
           destinationId: current.destinationId,
           countryIds: current.countries.map((c) => c.id),
         };
-        // The decision, in the same transaction: no record, no change.
+        // The decision, in the same transaction: no record, no change. It
+        // replaces the last decision that placed this Signal.
         await recordDecision(tx, {
+          supersedesId: await supersededDecisionId(tx, "signal", challenge.signalId, "SIGNAL_LOCATION_DECIDED"),
           decider: { kind: "context", context },
           decisionType: "SIGNAL_LOCATION_DECIDED",
           subjectType: "signal",
