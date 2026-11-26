@@ -162,6 +162,17 @@ function buildContext(
 
 const reviewGroundThread = groundResolvers.Mutation.reviewGroundThread;
 
+describe("reviewGroundThread: a person's decision", () => {
+  it("refuses an API-key caller before it writes anything", async () => {
+    const { context, updates } = buildContext({ id: "admin-key", role: "admin" }, { id: "t1", reviewState: "unverified", source: { reviewerRoles: ["admin"] } });
+    (context as unknown as { authMethod: string }).authMethod = "api-key";
+    await expect(reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(updates).toHaveLength(0);
+  });
+});
+
 describe("reviewExtras", () => {
   it("accepts every known reject reason with reject, and nulls it otherwise", () => {
     for (const reason of REJECT_REASONS) {
