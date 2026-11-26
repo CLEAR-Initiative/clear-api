@@ -23,6 +23,12 @@
  *
  *   3. Delete the legacy L4 row.
  *
+ * A Signal's general location goes through the shared guarded write
+ * (ADR-0024) as the pipeline: a location a person decided is kept, and the
+ * legacy row it points at then stays (the delete below reports it).
+ * Origin and destination are written directly: a correction clears both, so
+ * a corrected Signal never points at a legacy row through them.
+ *
  * What this script does NOT do
  *   - Does not call Nominatim. The signals that ended up on legacy
  *     headline L4s are exactly the ones where the geoparser missed at
@@ -44,6 +50,7 @@ import {
   createPointLocation,
   findOrCreateLandmarkL4,
 } from "../src/utils/geo-resolve.js";
+import { writeSignalLocation } from "../src/services/signal-decided-fields.js";
 
 const argv = process.argv.slice(2);
 const apply = argv.includes("--apply");
@@ -258,13 +265,13 @@ async function processLegacy(row: LegacyRow): Promise<PerLegacyStats> {
     // practice they always do (legacy rows hold a single point), and the
     // landmark/point dedup paths collapse them back to one row anyway.
     const data: {
-      locationId?: string;
       originId?: string;
       destinationId?: string;
     } = {};
+    let locationId: string | undefined;
     if (signal.locationId === row.id) {
       const t = await resolveRebindTarget(signal, row.lat, row.lng);
-      data.locationId = t.id;
+      locationId = t.id;
       stats[t.via === "landmark" ? "rebindsViaLandmark" : "rebindsViaPoint"]++;
     }
     if (signal.originId === row.id) {
@@ -277,7 +284,18 @@ async function processLegacy(row: LegacyRow): Promise<PerLegacyStats> {
       data.destinationId = t.id;
       stats[t.via === "landmark" ? "rebindsViaLandmark" : "rebindsViaPoint"]++;
     }
-    await prisma.signals.update({ where: { id: signal.id }, data });
+    await prisma.$transaction(async (tx) => {
+      if (locationId) {
+        const r = await writeSignalLocation(tx, {
+          signalId: signal.id,
+          locationId,
+          caller: { kind: "pipeline" },
+          via: "backfill-legacy-l4",
+        });
+        if (r.refused) console.warn(`  [kept] ${signal.id}: a person decided its location; not rebound.`);
+      }
+      if (Object.keys(data).length > 0) await tx.signals.update({ where: { id: signal.id }, data });
+    });
   }
 
   // Events / crises: rebind to the legacy L4's parent (smallest A2/A1/A0

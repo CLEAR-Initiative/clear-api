@@ -13,6 +13,7 @@ import { prisma } from "../../src/lib/prisma.js";
 import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
+import { writeSignalLocation, writeSignalSeverity } from "../../src/services/signal-decided-fields.js";
 
 const { updateSignalSeverity, updateSignalContent } = signalResolvers.Mutation;
 
@@ -153,5 +154,81 @@ describeIfDb("Decision records against the real schema", () => {
     await updateSignalSeverity(null, { id: signalId, severity: 4 }, analyst);
     const [first, second] = await recordsFor(signalId);
     expect(second!.sequence > first!.sequence).toBe(true);
+  });
+
+  it("an offline override needs a named person and a rationale, and supersedes the earlier record", async () => {
+    const signalId = await newSignal();
+    await updateSignalSeverity(null, { id: signalId, severity: 5 }, analyst);
+    const [earlier] = await recordsFor(signalId);
+
+    await expect(
+      prisma.$transaction((tx) =>
+        writeSignalSeverity(tx, { signalId, severity: 1, caller: { kind: "override", decidedBy: ANALYST_ID, rationale: " " } }),
+      ),
+    ).rejects.toThrow(/rationale/);
+    await expect(
+      prisma.$transaction((tx) =>
+        writeSignalSeverity(tx, { signalId, severity: 1, caller: { kind: "override", decidedBy: "", rationale: "Source retracted" } }),
+      ),
+    ).rejects.toThrow(/name the person/);
+    expect((await prisma.signals.findUniqueOrThrow({ where: { id: signalId } })).severity).toBe(5);
+
+    await prisma.$transaction((tx) =>
+      writeSignalSeverity(tx, {
+        signalId,
+        severity: 1,
+        caller: { kind: "override", decidedBy: ANALYST_ID, rationale: "Source retracted the casualty count" },
+      }),
+    );
+    expect((await prisma.signals.findUniqueOrThrow({ where: { id: signalId } })).severity).toBe(1);
+    const records = await recordsFor(signalId);
+    expect(records).toHaveLength(2);
+    expect(records[1]).toMatchObject({
+      decidedById: ANALYST_ID,
+      rationale: "Source retracted the casualty count",
+      supersedesId: earlier!.id,
+      payload: { previousSeverity: 5, severity: 1 },
+    });
+  });
+
+  it("the shared location write refuses the pipeline on a corrected Signal, and a named override writes and supersedes", async () => {
+    const a = { id: `${RUN}-loc-a` };
+    const b = { id: `${RUN}-loc-b` };
+    for (const id of [a.id, b.id]) {
+      await prisma.$executeRaw`INSERT INTO "locations" ("id", "name", "level", "ancestor_ids", "geometry")
+        VALUES (${id}, ${id}, 4, ARRAY[]::text[], ST_GeomFromText('POINT(10 10)', 4326))`;
+    }
+    try {
+      const signalId = await newSignal({ locationId: a.id, locationCorrectedAt: new Date() });
+
+      const refused = await prisma.$transaction((tx) =>
+        writeSignalLocation(tx, { signalId, locationId: b.id, caller: { kind: "pipeline" } }),
+      );
+      expect(refused).toEqual({ refused: true, kept: a.id });
+      expect((await prisma.signals.findUniqueOrThrow({ where: { id: signalId } })).locationId).toBe(a.id);
+
+      await prisma.$transaction((tx) =>
+        writeSignalLocation(tx, {
+          signalId,
+          locationId: b.id,
+          caller: { kind: "override", decidedBy: ANALYST_ID, rationale: "Legacy point removed" },
+        }),
+      );
+      const after = await prisma.signals.findUniqueOrThrow({ where: { id: signalId } });
+      expect(after.locationId).toBe(b.id);
+      expect(after.locationCorrectedAt).not.toBeNull();
+      const records = await recordsFor(signalId);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        decisionType: "SIGNAL_LOCATION_DECIDED",
+        decidedById: ANALYST_ID,
+        rationale: "Legacy point removed",
+        supersedesId: null,
+        payload: { decision: "OVERRIDE", previousLocationId: a.id, appliedLocationId: b.id },
+      });
+    } finally {
+      await prisma.signals.updateMany({ where: { sourceId: sourceId! }, data: { locationId: null } });
+      await prisma.locations.deleteMany({ where: { id: { in: [a.id, b.id] } } });
+    }
   });
 });
