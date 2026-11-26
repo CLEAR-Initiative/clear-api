@@ -326,6 +326,15 @@ them from event totals is the work. Oldest-first; `first` caps the batch
     <td>An event's live (non-retracted) member signals, newest first. Uncapped
 unless `first` is given. Admin/pipeline only.<div class="field-args"><span class="arg"><code>eventId: String!</code></span><span class="arg"><code>first: Int</code></span></div></td>
   </tr><tr>
+    <td><code>decisions</code></td>
+    <td><code>DecisionPage!</code></td>
+    <td>The decisions feed (ADR-0024): DecisionRecords with a sequence greater
+than `sinceSequence`, in sequence order, one page at a time. Start at 0;
+pass each page's `lastSequence` back as `sinceSequence`. Ordered by
+`sequence` only, never by `decidedAt`. A rolled-back transaction uses a
+sequence number, so gaps are normal: keep reading after the last row
+returned. Admin and pipeline only.<div class="field-args"><span class="arg"><code>sinceSequence: Int!</code></span></div></td>
+  </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>
     <td>List events. Requires authentication. includeDummy defaults to false.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span><span class="arg"><code>lastSignalSince: DateTime</code></span><span class="arg"><code>limit: Int</code></span></div></td>
@@ -2257,7 +2266,8 @@ proposed again for the same Event.</p><table class="ref-table"><thead><tr><th>Va
 (re)enrichment (set on crisis create / event add / event remove);
 ENRICHED = narrative/scenarios/needs-analysis current.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>PENDING</code></td><td>—</td></tr><tr><td><code>ENRICHED</code></td><td>—</td></tr></tbody></table><h3 id="type-dateaccuracy"><code>DateAccuracy</code> <span class="type-badge">enum</span></h3><p>Precision of an extracted start/end date — how finely the pipeline's LLM
 could pin the real-world onset/close. DAY = exact; coarser values mean the
-date is only known to that week/month/year.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr><tr><td><code>YEAR</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
+date is only known to that week/month/year.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>DAY</code></td><td>—</td></tr><tr><td><code>WEEK</code></td><td>—</td></tr><tr><td><code>MONTH</code></td><td>—</td></tr><tr><td><code>YEAR</code></td><td>—</td></tr></tbody></table><h3 id="type-decisiontype"><code>DecisionType</code> <span class="type-badge">enum</span></h3><p>What kind of human judgement a DecisionRecord holds (clear-api ADR-0024).
+New values arrive with a migration; a reader skips a value it does not know.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>CASE_PROPOSAL_DECIDED</code></td><td>—</td></tr><tr><td><code>SIGNAL_LOCATION_DECIDED</code></td><td>—</td></tr><tr><td><code>SIGNAL_SEVERITY_SET</code></td><td>—</td></tr></tbody></table><h3 id="type-detectionexclusionreason"><code>DetectionExclusionReason</code> <span class="type-badge">enum</span></h3><p>Why an Event in range is left out of time to detection. Each excluded
 Event has exactly one reason, the first that applies in this order.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>NO_INGESTED_SIGNAL</code></td><td>No Signal a pipeline ingested: only history (accepted web cases) or Signals a person filed by hand.</td></tr><tr><td><code>NO_ONSET</code></td><td>The Event has no onset date to measure from.</td></tr><tr><td><code>COARSE_ONSET</code></td><td>The onset is only known to a week/month/year (coarse startedAtAccuracy), so a whole-day delay would be spuriously precise.</td></tr><tr><td><code>DATE_ONLY_FIRST_SIGNAL</code></td><td>The first ingested Signal has a date but no time of day (published at exactly UTC midnight).</td></tr><tr><td><code>BEFORE_ONSET</code></td><td>The first ingested Signal is dated before the onset day: a data error.</td></tr></tbody></table><h3 id="type-detectionstatus"><code>DetectionStatus</code> <span class="type-badge">enum</span></h3><p>Processing status of a detection (retained for potential future use).</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>raw</code></td><td>—</td></tr><tr><td><code>processed</code></td><td>—</td></tr><tr><td><code>ignored</code></td><td>—</td></tr></tbody></table><h3 id="type-entitykind"><code>EntityKind</code> <span class="type-badge">enum</span></h3><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>signal</code></td><td>—</td></tr><tr><td><code>event</code></td><td>—</td></tr><tr><td><code>alert</code></td><td>—</td></tr></tbody></table><h3 id="type-estimateattribution"><code>EstimateAttribution</code> <span class="type-badge">enum</span></h3><p>Whether a figure counts need caused by the Event, need that existed
 beforehand, or both.</p><table class="ref-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody><tr><td><code>event_caused</code></td><td>—</td></tr><tr><td><code>pre_existing</code></td><td>—</td></tr><tr><td><code>combined</code></td><td>—</td></tr></tbody></table><h3 id="type-estimatemethod"><code>EstimateMethod</code> <span class="type-badge">enum</span></h3><p>How a figure was arrived at (the Domain Ontology's Estimate methods).
 `not_documented` when the method is unknown, e.g. figures backfilled from
@@ -6709,6 +6719,70 @@ Null = ungraded; the data-quality formula treats null as 1. See clear-pipeline A
     <td><code>uniqueUsers</code></td>
     <td><code>Int!</code></td>
     <td>Number of distinct users who logged in on this date.</td>
+  </tr></tbody></table><h3 id="type-decisionpage"><code>DecisionPage</code> <span class="type-badge">object</span></h3><p>One page of the decisions feed, in sequence order.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>items</code></td>
+    <td><code>[DecisionRecord!]!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>lastSequence</code></td>
+    <td><code>Int!</code></td>
+    <td>The sequence of the last row on this page; the next call's
+`sinceSequence`. Equal to the request's `sinceSequence` on an empty page.</td>
+  </tr></tbody></table><h3 id="type-decisionrecord"><code>DecisionRecord</code> <span class="type-badge">object</span></h3><p>One human judgement, recorded in the same transaction as the change it
+made (ADR-0024). Append-only: a later decision supersedes an earlier one
+and never edits it. The pipeline never writes one.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
+    <td><code>id</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>sequence</code></td>
+    <td><code>Int!</code></td>
+    <td>Only increases. The reader's cursor: pass the last one it has as
+`sinceSequence`. Gaps are normal: a rolled-back transaction uses a number.</td>
+  </tr><tr>
+    <td><code>decisionType</code></td>
+    <td><code>DecisionType!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>subjectType</code></td>
+    <td><code>String!</code></td>
+    <td>&quot;signal&quot;, &quot;case_proposal&quot;, &quot;crisis&quot;, &quot;alert&quot;, &quot;event&quot; or &quot;ground_thread&quot;.</td>
+  </tr><tr>
+    <td><code>subjectId</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>decidedById</code></td>
+    <td><code>String</code></td>
+    <td>The person who decided. Null only after that user was deleted.</td>
+  </tr><tr>
+    <td><code>decidedAt</code></td>
+    <td><code>DateTime!</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>viaAgent</code></td>
+    <td><code>Boolean!</code></td>
+    <td>The person acted through the CLEAR Agent.</td>
+  </tr><tr>
+    <td><code>rationale</code></td>
+    <td><code>String</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>evidenceCited</code></td>
+    <td><code>JSON</code></td>
+    <td>—</td>
+  </tr><tr>
+    <td><code>payload</code></td>
+    <td><code>JSON!</code></td>
+    <td>Per type: the old and new value and the ids involved.</td>
+  </tr><tr>
+    <td><code>supersedesId</code></td>
+    <td><code>String</code></td>
+    <td>The earlier record this one replaces, if any.</td>
+  </tr><tr>
+    <td><code>definitionVersion</code></td>
+    <td><code>String!</code></td>
+    <td>—</td>
   </tr></tbody></table><h3 id="type-detectionbucket"><code>DetectionBucket</code> <span class="type-badge">object</span></h3><p>Counted Events whose first ingested Signal falls in one bucket of the requested granularity.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>start</code></td>
     <td><code>DateTime!</code></td>

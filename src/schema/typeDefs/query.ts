@@ -126,6 +126,14 @@ export const queryTypeDef = gql`
     unless \`first\` is given. Admin/pipeline only."""
     eventMembers(eventId: String!, first: Int): [Signal!]!
 
+    """The decisions feed (ADR-0024): DecisionRecords with a sequence greater
+    than \`sinceSequence\`, in sequence order, one page at a time. Start at 0;
+    pass each page's \`lastSequence\` back as \`sinceSequence\`. Ordered by
+    \`sequence\` only, never by \`decidedAt\`. A rolled-back transaction uses a
+    sequence number, so gaps are normal: keep reading after the last row
+    returned. Admin and pipeline only."""
+    decisions(sinceSequence: Int!): DecisionPage!
+
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
 
