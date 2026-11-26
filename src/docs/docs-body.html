@@ -333,7 +333,8 @@ than `sinceSequence`, in sequence order, one page at a time. Start at 0;
 pass each page's `lastSequence` back as `sinceSequence`. Ordered by
 `sequence` only, never by `decidedAt`. A rolled-back transaction uses a
 sequence number, so gaps are normal: keep reading after the last row
-returned. `types` keeps only those decision types (all when omitted or
+returned. Records commit in sequence order, so the feed never passes a
+record whose transaction is still open. `types` keeps only those decision types (all when omitted or
 empty). `first` is the page size: 500 by default, at most 1000 (a larger
 value is cut to 1000). Admin and pipeline only.<div class="field-args"><span class="arg"><code>sinceSequence: Int!</code></span><span class="arg"><code>types: [DecisionType!]</code></span><span class="arg"><code>first: Int</code></span></div></td>
   </tr><tr>
@@ -342,8 +343,8 @@ value is cut to 1000). Admin and pipeline only.<div class="field-args"><span cla
     <td>List events. Requires authentication. includeDummy defaults to false.
 Paged mode (the pipeline): pass `first` (at most 1000; a larger value is
 cut to 1000), and `after` with the last id of the previous page. Rows
-come in id order, and the next page starts after `after`; a page shorter
-than `first` is the last. `limit` (newest by lastSignalCreatedAt, at
+come in id order, and the next page starts after `after`. Keep reading
+until a page comes back empty. `limit` (newest by lastSignalCreatedAt, at
 most 5000) applies only outside paged mode; with `first` or `after` it
 is ignored.<div class="field-args"><span class="arg"><code>teamId: String</code></span><span class="arg"><code>includeDummy: Boolean</code></span><span class="arg"><code>lastSignalSince: DateTime</code></span><span class="arg"><code>limit: Int</code></span><span class="arg"><code>first: Int</code></span><span class="arg"><code>after: String</code></span></div></td>
   </tr><tr>
