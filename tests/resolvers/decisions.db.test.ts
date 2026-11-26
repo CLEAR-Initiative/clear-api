@@ -152,4 +152,47 @@ describeIfDb("the decisions feed against the real schema", () => {
       extensions: { code: "BAD_USER_INPUT" },
     });
   });
+
+  it("never passes a record whose transaction is still open: records commit in sequence order", async () => {
+    const start = await record(`${RUN}-order-start`);
+    const since = Number(start.sequence);
+    const data = (subjectId: string) => ({
+      decisionType: "SIGNAL_SEVERITY_SET" as const,
+      subjectType: "signal",
+      subjectId,
+      decidedById: PERSON_ID,
+      payload: {},
+      definitionVersion: "decision-records-v1",
+    });
+
+    // Transaction A inserts and stays open until released.
+    let releaseA!: () => void;
+    const holdA = new Promise<void>((r) => (releaseA = r));
+    let aInserted!: () => void;
+    const aHasInserted = new Promise<void>((r) => (aInserted = r));
+    const a = prisma.$transaction(async (tx) => {
+      const row = await tx.decisionRecords.create({ data: data(`${RUN}-order-a`) });
+      aInserted();
+      await holdA;
+      return row;
+    }, { timeout: 20_000 });
+    await aHasInserted;
+
+    // Transaction B starts after A has its row, and must wait for A.
+    let bDone = false;
+    const b = prisma.$transaction((tx) => tx.decisionRecords.create({ data: data(`${RUN}-order-b`) }), { timeout: 20_000 })
+      .then((row) => { bDone = true; return row; });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(bDone).toBe(false);
+    // While A is open, the feed shows neither.
+    const during = await decisions(null, { sinceSequence: since }, ctx("pipeline"));
+    expect(during.items.filter((r) => r.subjectId.startsWith(`${RUN}-order-`))).toEqual([]);
+
+    releaseA();
+    const [rowA, rowB] = await Promise.all([a, b]);
+    ids.push(rowA.id, rowB.id);
+    expect(rowB.sequence > rowA.sequence).toBe(true);
+    const after = await decisions(null, { sinceSequence: since }, ctx("pipeline"));
+    expect(after.items.filter((r) => r.subjectId.startsWith(`${RUN}-order-`)).map((r) => r.id)).toEqual([rowA.id, rowB.id]);
+  });
 });
