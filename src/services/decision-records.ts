@@ -24,10 +24,18 @@ type Tx = Prisma.TransactionClient;
 /** Bumped when the meaning of a payload shape changes. */
 export const DECISION_DEFINITION_VERSION = "decision-records-v1";
 
-/** Types whose record must carry a rationale. Empty in V1 (#1289 fills it). */
-export const RATIONALE_REQUIRED_TYPES: ReadonlySet<DecisionType> = new Set<DecisionType>();
+/**
+ * Types whose record must carry a rationale: the ones the Domain Ontology
+ * names. A Crisis cannot exist, or gain an Event, without a reason. Escalate,
+ * merge and reject join when the ontology owner settles what "escalate" means
+ * and the Event lifecycle mutations exist (#1280). Corrections stay optional.
+ */
+export const RATIONALE_REQUIRED_TYPES: ReadonlySet<DecisionType> = new Set<DecisionType>([
+  "CRISIS_CREATED",
+  "CRISIS_EVENT_ADDED",
+]);
 
-export type DecisionSubjectType = "signal" | "case_proposal";
+export type DecisionSubjectType = "signal" | "case_proposal" | "crisis" | "alert" | "event" | "ground_thread";
 
 /** Who decided: a person from a request, or a named person behind an offline
  *  script's override. */
@@ -51,6 +59,11 @@ export interface RecordDecisionInput {
 
 export class DecisionRecordError extends Error {}
 
+/** True when the type needs a rationale and none (or only whitespace) is given. */
+export function missingRationale(decisionType: DecisionType, rationale: string | null | undefined): boolean {
+  return RATIONALE_REQUIRED_TYPES.has(decisionType) && !rationale?.trim();
+}
+
 function resolveDecider(decider: Decider): { decidedById: string; viaAgent: boolean } {
   if (decider.kind === "named") {
     if (!decider.userId) throw new DecisionRecordError("An override must name the person who decided");
@@ -67,7 +80,7 @@ function resolveDecider(decider: Decider): { decidedById: string; viaAgent: bool
 export async function recordDecision(tx: Tx, input: RecordDecisionInput) {
   const { decidedById, viaAgent } = resolveDecider(input.decider);
   const rationale = input.rationale?.trim() || null;
-  if (RATIONALE_REQUIRED_TYPES.has(input.decisionType) && !rationale) {
+  if (missingRationale(input.decisionType, rationale)) {
     throw new DecisionRecordError(`A ${input.decisionType} decision needs a rationale`);
   }
   return tx.decisionRecords.create({
@@ -87,6 +100,20 @@ export async function recordDecision(tx: Tx, input: RecordDecisionInput) {
       definitionVersion: DECISION_DEFINITION_VERSION,
     },
   });
+}
+
+/**
+ * For a mutation both people and the pipeline call (createEvent, createAlert,
+ * …): record the decision when the caller is a person, and nothing when it is
+ * the pipeline. The pipeline's writes are reproducible; a person's are not.
+ */
+export async function recordDecisionIfPerson(
+  tx: Tx,
+  context: Pick<Context, "user" | "authMethod" | "viaAgent">,
+  input: Omit<RecordDecisionInput, "decider">,
+) {
+  if (isPipelineCaller(context) || !context.user) return null;
+  return recordDecision(tx, { ...input, decider: { kind: "context", context } });
 }
 
 /**

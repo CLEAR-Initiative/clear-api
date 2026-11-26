@@ -12,6 +12,8 @@ import {
 } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
+import { missingRationale, recordDecision } from "../services/decision-records.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
 
@@ -28,6 +30,39 @@ function crisisTranslationsInclude(locale: Locale):
   return { translations: { where: { locale } } };
 }
 
+/**
+ * A Crisis, and an Event joining one, is a person's decision (ADR-0024): the
+ * pipeline never makes one.
+ */
+function requirePersonsDecision(context: Context): void {
+  if (isPipelineCaller(context) || !context.user) {
+    throw new GraphQLError("Only a person can decide on a Crisis", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
+}
+
+/** The trimmed rationale, or BAD_USER_INPUT when the type needs one. */
+function requireRationale(
+  decisionType: "CRISIS_CREATED" | "CRISIS_EVENT_ADDED",
+  rationale: string | null | undefined,
+): string | null {
+  if (missingRationale(decisionType, rationale)) {
+    throw new GraphQLError("A rationale is required: say why this belongs in a Crisis", {
+      extensions: { code: "BAD_USER_INPUT", field: "rationale" },
+    });
+  }
+  const trimmed = rationale?.trim() || null;
+  if (trimmed && trimmed.length > MAX_RATIONALE_LENGTH) {
+    throw new GraphQLError(`rationale must be at most ${MAX_RATIONALE_LENGTH} characters`, {
+      extensions: { code: "BAD_USER_INPUT", field: "rationale" },
+    });
+  }
+  return trimmed;
+}
+
+const MAX_RATIONALE_LENGTH = 4000;
+
 interface CreateCrisisFromEventsInput {
   title?: string;
   summary?: string;
@@ -42,6 +77,9 @@ interface CreateCrisisFromEventsInput {
    * callers; the crisis itself has no team column.
    */
   teamId?: string;
+  /** Why this is a Crisis. Required: a Crisis cannot exist without a
+   *  recorded decision and its reason (ADR-0024). */
+  rationale?: string | null;
 }
 
 interface UpdateCrisisPopulationInput {
@@ -237,6 +275,8 @@ export const crisisResolvers = {
       // See `requireTeamContentWriter`.
       const { input } = args;
       await requireTeamContentWriter(context, input.teamId);
+      requirePersonsDecision(context);
+      const rationale = requireRationale("CRISIS_CREATED", input.rationale);
 
       if (input.eventIds.length === 0) {
         throw new GraphQLError("At least one event ID is required", {
@@ -284,6 +324,22 @@ export const crisisResolvers = {
             eventId,
             collectedAt,
           })),
+        });
+
+        // The decision that this is a Crisis, with its reason, in the same
+        // transaction: no record, no Crisis.
+        await recordDecision(tx, {
+          decider: { kind: "context", context },
+          decisionType: "CRISIS_CREATED",
+          subjectType: "crisis",
+          subjectId: created.id,
+          rationale,
+          payload: {
+            eventIds: input.eventIds,
+            title: input.title ?? null,
+            severity: input.severity,
+            locationId: input.locationId ?? null,
+          },
         });
 
         // Preserve a caller-supplied create-time title: write the same

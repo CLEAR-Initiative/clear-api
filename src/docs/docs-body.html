@@ -2731,6 +2731,12 @@ any team member on that team instead of a global admin. Purely an
 authorisation hint — the crisis itself has no team column; team affiliation
 is derived from location scope.
 Ignored for platform-level callers.</td>
+  </tr><tr>
+    <td><code>rationale</code></td>
+    <td><code>String</code></td>
+    <td>Why these Events are a Crisis. Required (at most 4000 characters): a
+Crisis cannot exist without a recorded decision and its reason. Kept in
+the decision log with who decided and when.</td>
   </tr></tbody></table><h3 id="type-createdatasourceinput"><code>CreateDataSourceInput</code> <span class="type-badge">input</span></h3><table class="ref-table"><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody><tr>
     <td><code>name</code></td>
     <td><code>String!</code></td>

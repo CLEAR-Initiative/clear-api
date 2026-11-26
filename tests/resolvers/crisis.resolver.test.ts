@@ -194,6 +194,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     const createMany = vi.fn().mockResolvedValue({ count: events.length });
     const create = vi.fn().mockResolvedValue(created);
     const feedbackCreate = vi.fn().mockResolvedValue({ id: "fb1" });
+    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
     const teamFindUnique = vi.fn().mockResolvedValue(opts.membership ?? null);
     const prisma = {
       events: {
@@ -207,22 +208,43 @@ describe("Mutation.createCrisisFromEvents", () => {
       locations: { findMany: vi.fn().mockResolvedValue([]) },
       teamMembers: { findUnique: teamFindUnique },
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({ crises: { create }, eventCrises: { createMany }, userFeedbacks: { create: feedbackCreate } }),
+        fn({
+          crises: { create },
+          eventCrises: { createMany },
+          userFeedbacks: { create: feedbackCreate },
+          decisionRecords: { create: decisionCreate },
+        }),
       ),
     };
-    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate, teamFindUnique };
+    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate, teamFindUnique, decisionCreate };
   }
 
   it("rejects a global member with no team membership (requireTeamContentWriter, no teamId)", async () => {
     const { ctx } = makeCtx(MEMBER);
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("refuses a call with no rationale before writing anything", async () => {
+    const { ctx, create } = makeCtx(ADMIN);
+    await expect(
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx),
+    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT", field: "rationale" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("records the decision with its rationale in the creating transaction", async () => {
+    const { ctx, decisionCreate } = makeCtx(ADMIN);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
+    expect(decisionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ decisionType: "CRISIS_CREATED", subjectId: "c-new", decidedById: "admin1", rationale: "Why" }),
+    });
   });
 
   it("allows a global admin unconditionally", async () => {
     const { ctx, create } = makeCtx(ADMIN);
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
     expect(create).toHaveBeenCalledOnce();
   });
 
@@ -234,7 +256,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     });
     await createCrisisFromEvents(
       null,
-      { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
+      { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"], teamId: "t1" } },
       ctx,
     );
     expect(create).toHaveBeenCalledOnce();
@@ -249,7 +271,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     await expect(
       createCrisisFromEvents(
         null,
-        { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
+        { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"], teamId: "t1" } },
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
@@ -258,7 +280,7 @@ describe("Mutation.createCrisisFromEvents", () => {
   it("rejects an empty eventIds list with BAD_USER_INPUT", async () => {
     const { ctx, create } = makeCtx(ADMIN);
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: [] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: [] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     expect(create).not.toHaveBeenCalled();
   });
@@ -266,10 +288,10 @@ describe("Mutation.createCrisisFromEvents", () => {
   it("throws NOT_FOUND listing the missing event ids", async () => {
     const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] }); // only e1 exists
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1", "e2"] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1", "e2"] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1", "e2"] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1", "e2"] } }, ctx),
     ).rejects.toThrow(/e2/);
   });
 
@@ -279,7 +301,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     const { ctx, create } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
-      { input: { title: "T", summary: "S", severity: 2, needs: {}, eventIds: ["e1"] } },
+      { input: { title: "T", summary: "S", severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } },
       ctx,
     );
     expect(create).toHaveBeenCalledOnce();
@@ -291,7 +313,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
-      { input: { title: "Analyst title", severity: 2, needs: {}, eventIds: ["e1"] } },
+      { input: { title: "Analyst title", severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } },
       ctx,
     );
     expect(feedbackCreate).toHaveBeenCalledWith(
@@ -307,13 +329,13 @@ describe("Mutation.createCrisisFromEvents", () => {
 
   it("writes no title lock when the caller supplies no title", async () => {
     const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
     expect(feedbackCreate).not.toHaveBeenCalled();
   });
 
   it("logs the crisis.create activity for the actor", async () => {
     const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
     expect(logActivity).toHaveBeenCalledWith(
       ctx.prisma,
       expect.objectContaining({ userId: "admin1", action: "crisis.create", resourceId: "c-new" }),
