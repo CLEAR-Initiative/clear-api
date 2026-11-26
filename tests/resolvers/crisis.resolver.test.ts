@@ -85,8 +85,19 @@ function buildContext(
   prisma: Record<string, unknown> = {},
   extra: Partial<Context> = {},
 ): Context {
+  // Writes run in a transaction on the same stubs, and a person's decision is
+  // recorded with them (ADR-0024). A test's own stubs win.
+  const client: Record<string, unknown> = {
+    decisionRecords: { create: vi.fn().mockResolvedValue({ id: "dr1" }) },
+    ...prisma,
+  };
+  if (!("$transaction" in prisma)) {
+    client.$transaction = vi.fn(async (arg: unknown) =>
+      typeof arg === "function" ? (arg as (tx: unknown) => unknown)(client) : Promise.all(arg as unknown[]),
+    );
+  }
   return {
-    prisma: prisma as Context["prisma"],
+    prisma: client as Context["prisma"],
     user: user as Context["user"],
     session: null,
     authMethod: user ? "session" : null,
@@ -692,9 +703,15 @@ describe("Mutation.removeCrisisAttachment", () => {
     await removeCrisisAttachment(null, { id: "c1", key: "a" }, ctx);
     expect(update.mock.calls[0][0].data.attachments).toEqual(["b"]);
 
+    // A key that is not there changes nothing: no write, no decision.
     update.mockClear();
-    await removeCrisisAttachment(null, { id: "c1", key: "zzz" }, ctx);
-    expect(update.mock.calls[0][0].data.attachments).toEqual(["a", "b"]);
+    const findUniqueOrThrow = vi.fn().mockResolvedValue({ id: "c1", attachments: ["a", "b"] });
+    const unchanged = buildContext(MEMBER, {
+      crises: { findUnique: vi.fn().mockResolvedValue({ attachments: ["a", "b"] }), update, findUniqueOrThrow },
+    });
+    await removeCrisisAttachment(null, { id: "c1", key: "zzz" }, unchanged);
+    expect(update).not.toHaveBeenCalled();
+    expect(findUniqueOrThrow).toHaveBeenCalledOnce();
   });
 });
 
@@ -717,30 +734,34 @@ describe("Mutation.updateCrisisTitle", () => {
 
   it("updates the title and writes an audit feedback row with the old→new diff", async () => {
     const updated = { id: "c1", title: "New" };
-    const updateCall = { kind: "update" };
-    const createCall = { kind: "create" };
-    const update = vi.fn().mockReturnValue(updateCall);
-    const create = vi.fn().mockReturnValue(createCall);
-    const $transaction = vi.fn().mockResolvedValue([updated, { id: "fb1" }]);
+    const update = vi.fn().mockResolvedValue(updated);
+    const create = vi.fn().mockResolvedValue({ id: "fb1" });
+    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
     const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: "Old" }), update },
       userFeedbacks: { create },
-      $transaction,
+      decisionRecords: { create: decisionCreate },
     });
     expect(await updateCrisisTitle(null, { id: "c1", title: "New" }, ctx)).toBe(updated);
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { title: "New" } });
     const fbData = create.mock.calls[0][0].data;
     expect(fbData).toMatchObject({ userId: "v1", crisisId: "c1", rating: 0 });
     expect(fbData.text).toBe("[title-edit] Old → New");
-    expect($transaction).toHaveBeenCalledWith([updateCall, createCall]);
+    // The edit is also a decision, recorded in the same transaction.
+    expect(decisionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        decisionType: "CRISIS_EDITED",
+        subjectId: "c1",
+        payload: { field: "title", previous: "Old", value: "New" },
+      }),
+    });
   });
 
   it("renders (empty) sentinels for null old title / blank new title", async () => {
     const create = vi.fn().mockReturnValue({});
     const ctx = buildContext(MEMBER, {
-      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: null }), update: vi.fn().mockReturnValue({}) },
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: null }), update: vi.fn().mockResolvedValue({ id: "c1" }) },
       userFeedbacks: { create },
-      $transaction: vi.fn().mockResolvedValue([{ id: "c1" }, {}]),
     });
     await updateCrisisTitle(null, { id: "c1", title: "" }, ctx);
     expect(create.mock.calls[0][0].data.text).toBe("[title-edit] (empty) → (empty)");

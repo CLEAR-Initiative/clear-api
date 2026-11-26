@@ -12,7 +12,7 @@ import {
 } from "../utils/auth-guard.js";
 import { buildCrisisLocationFilterForUser } from "../utils/location-scope.js";
 import { logActivity } from "../utils/activity-log.js";
-import { missingRationale, recordDecision } from "../services/decision-records.js";
+import { missingRationale, recordDecision, recordDecisionIfPerson } from "../services/decision-records.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { enqueueTranslationDurable } from "../services/translation-queue.js";
 import { DEFAULT_LOCALE, type Locale } from "../utils/locales.js";
@@ -59,6 +59,22 @@ function requireRationale(
     });
   }
   return trimmed;
+}
+
+/** A person's edit of a Crisis (title, description, attachments) is their
+ *  decision (ADR-0024), recorded in the edit's transaction. */
+function recordCrisisEdit(
+  tx: Prisma.TransactionClient,
+  context: Context,
+  crisisId: string,
+  payload: Prisma.InputJsonObject,
+) {
+  return recordDecisionIfPerson(tx, context, {
+    decisionType: "CRISIS_EDITED",
+    subjectType: "crisis",
+    subjectId: crisisId,
+    payload,
+  });
 }
 
 const MAX_RATIONALE_LENGTH = 4000;
@@ -533,33 +549,50 @@ export const crisisResolvers = {
         where: { crisisId },
       });
 
+      // A person's removal is their decision (ADR-0024), recorded with the
+      // change. Removing the last Event deletes the Crisis; the record says so.
+      const removal = (tx: Prisma.TransactionClient, crisisDeleted: boolean) =>
+        recordDecisionIfPerson(tx, context, {
+          decisionType: "CRISIS_EVENT_REMOVED",
+          subjectType: "crisis",
+          subjectId: crisisId,
+          payload: { eventId, crisisDeleted },
+        });
+
       // Last event — auto-delete the crisis rather than leave it in a
       // degenerate empty state. Cascades handle eventCrises / userFeedbacks
       // / userComments. Return null to signal the crisis no longer exists.
       if (linkCount <= 1) {
-        await context.prisma.crises.delete({ where: { id: crisisId } });
+        await context.prisma.$transaction(async (tx) => {
+          await tx.crises.delete({ where: { id: crisisId } });
+          await removal(tx, true);
+        });
         return null;
       }
 
-      await context.prisma.eventCrises.deleteMany({
-        where: { crisisId, eventId },
-      });
+      const updated = await context.prisma.$transaction(async (tx) => {
+        await tx.eventCrises.deleteMany({
+          where: { crisisId, eventId },
+        });
 
-      // Recompute populationAffected over the remaining events
-      const remainingLinks = await context.prisma.eventCrises.findMany({
-        where: { crisisId },
-        select: { eventId: true },
-      });
-      const remainingEventIds = remainingLinks.map((l) => l.eventId);
+        // Recompute populationAffected over the remaining events
+        const remainingLinks = await tx.eventCrises.findMany({
+          where: { crisisId },
+          select: { eventId: true },
+        });
+        const remainingEventIds = remainingLinks.map((l) => l.eventId);
 
-      const populationAffected = await sumEventPopulationAffected(
-        context.prisma,
-        remainingEventIds,
-      );
-      const updated = await context.prisma.crises.update({
-        where: { id: crisisId },
-        // Event set changed → enrichment is stale; flag it for the drain.
-        data: { populationAffected, enrichmentStatus: "PENDING" },
+        const populationAffected = await sumEventPopulationAffected(
+          tx as Context["prisma"],
+          remainingEventIds,
+        );
+        const row = await tx.crises.update({
+          where: { id: crisisId },
+          // Event set changed → enrichment is stale; flag it for the drain.
+          data: { populationAffected, enrichmentStatus: "PENDING" },
+        });
+        await removal(tx, false);
+        return row;
       });
 
       // Event set changed → enrichment is stale. The PENDING flag above re-queues
@@ -602,9 +635,17 @@ export const crisisResolvers = {
         next.push(k);
       }
 
-      return context.prisma.crises.update({
-        where: { id: args.id },
-        data: { attachments: next },
+      const added = next.slice(current.length);
+      if (added.length === 0) {
+        return context.prisma.crises.findUniqueOrThrow({ where: { id: args.id } });
+      }
+      return context.prisma.$transaction(async (tx) => {
+        const row = await tx.crises.update({
+          where: { id: args.id },
+          data: { attachments: next },
+        });
+        await recordCrisisEdit(tx, context, args.id, { field: "attachments", added });
+        return row;
       });
     },
 
@@ -686,9 +727,16 @@ export const crisisResolvers = {
       const current: string[] = existing.attachments ?? [];
       const next = current.filter((k: string) => k !== args.key);
 
-      return context.prisma.crises.update({
-        where: { id: args.id },
-        data: { attachments: next },
+      if (next.length === current.length) {
+        return context.prisma.crises.findUniqueOrThrow({ where: { id: args.id } });
+      }
+      return context.prisma.$transaction(async (tx) => {
+        const row = await tx.crises.update({
+          where: { id: args.id },
+          data: { attachments: next },
+        });
+        await recordCrisisEdit(tx, context, args.id, { field: "attachments", removed: [args.key] });
+        return row;
       });
     },
 
@@ -725,22 +773,24 @@ export const crisisResolvers = {
       const auditText =
         `[title-edit] ${existing.title ?? "(empty)"} → ${title || "(empty)"}`;
 
-      const [updated] = await context.prisma.$transaction([
-        context.prisma.crises.update({
+      return context.prisma.$transaction(async (tx) => {
+        const updated = await tx.crises.update({
           where: { id },
           data: { title },
-        }),
-        context.prisma.userFeedbacks.create({
+        });
+        // Still the title lock the enrichment drain reads; the decision
+        // record below is the audit entry (ADR-0024).
+        await tx.userFeedbacks.create({
           data: {
             userId: user.id,
             crisisId: id,
             rating: 0, // sentinel: system audit entry, not actual user feedback
             text: auditText,
           },
-        }),
-      ]);
-
-      return updated;
+        });
+        await recordCrisisEdit(tx, context, id, { field: "title", previous: existing.title, value: title });
+        return updated;
+      });
     },
 
     /**
@@ -784,9 +834,13 @@ export const crisisResolvers = {
         }
       }
 
-      return context.prisma.crises.update({
-        where: { id },
-        data: { summary: JSON.stringify(nextSummary) },
+      return context.prisma.$transaction(async (tx) => {
+        const row = await tx.crises.update({
+          where: { id },
+          data: { summary: JSON.stringify(nextSummary) },
+        });
+        await recordCrisisEdit(tx, context, id, { field: "description" });
+        return row;
       });
     },
 
@@ -815,7 +869,16 @@ export const crisisResolvers = {
         });
       }
 
-      await context.prisma.crises.delete({ where: { id: args.id } });
+      await context.prisma.$transaction(async (tx) => {
+        await tx.crises.delete({ where: { id: args.id } });
+        // The record outlives the Crisis: the only trace of who removed it.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "CRISIS_DELETED",
+          subjectType: "crisis",
+          subjectId: args.id,
+          payload: { title: existing.title, severity: existing.severity },
+        });
+      });
       return true;
     },
 

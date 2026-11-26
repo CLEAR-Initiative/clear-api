@@ -17,10 +17,13 @@ import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const { createCrisisFromEvents, addEventToCrisis } = crisisResolvers.Mutation;
+const {
+  createCrisisFromEvents, addEventToCrisis, removeEventFromCrisis, updateCrisisTitle, updateCrisisDescription,
+  addCrisisAttachments, removeCrisisAttachment, deleteCrisis,
+} = crisisResolvers.Mutation;
 const { createAlert, updateAlert, deleteAlert } = alertResolvers.Mutation;
-const { escalateEvent } = eventResolvers.Mutation;
-const { createManualSignal } = signalResolvers.Mutation;
+const { escalateEvent, createEvent, updateEvent, deleteEvent } = eventResolvers.Mutation;
+const { createManualSignal, deleteSignal } = signalResolvers.Mutation;
 
 const RUN = `dr2-db-${Date.now()}`;
 const ADMIN_ID = `${RUN}-admin`;
@@ -189,6 +192,74 @@ describeIfDb("Decision records V2 against the real schema", () => {
       decisionType: "SIGNAL_CREATED",
       decidedById: ADMIN_ID,
       payload: { sourceId: source.id, severity: 4 },
+    });
+  });
+
+  it("records a person creating, editing and deleting an Event; the pipeline's Event has no record", async () => {
+    const now = new Date().toISOString();
+    const base = { signalIds: [], validFrom: now, firstSignalCreatedAt: now, lastSignalCreatedAt: now, types: [], rank: 0 };
+    const mine = await createEvent(null, { input: { ...base, title: "Floods", severity: 3 } }, admin);
+    eventIds.push(mine.id);
+    await updateEvent(null, { id: mine.id, input: { severity: 4 } }, admin);
+    await deleteEvent(null, { id: mine.id }, admin);
+    expect((await recordsFor("event", mine.id)).map((r) => r.decisionType)).toEqual([
+      "EVENT_CREATED",
+      "EVENT_UPDATED",
+      "EVENT_DELETED",
+    ]);
+    const updated = (await recordsFor("event", mine.id))[1]!;
+    expect(updated.payload).toMatchObject({ fields: ["severity"], previous: { severity: 3 } });
+
+    const machine = await createEvent(null, { input: { ...base, title: "Pipeline" } }, pipeline);
+    eventIds.push(machine.id);
+    await updateEvent(null, { id: machine.id, input: { severity: 2 } }, pipeline);
+    expect(await recordsFor("event", machine.id)).toHaveLength(0);
+  });
+
+  it("records a person deleting a Signal; the record outlives it", async () => {
+    const source = await prisma.dataSources.findFirstOrThrow({ where: { name: "field_officer" } });
+    const signal = await prisma.signals.create({ data: { sourceId: source.id, rawData: {}, publishedAt: new Date(), title: "Gone" } });
+    await deleteSignal(null, { id: signal.id }, admin);
+    const records = await recordsFor("signal", signal.id);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ decisionType: "SIGNAL_DELETED", decidedById: ADMIN_ID, payload: { title: "Gone" } });
+  });
+
+  it("records each edit of a Crisis, the removal of its Events and its deletion", async () => {
+    const [a, b] = [await newEvent(), await newEvent()];
+    const crisis = await createCrisisFromEvents(null, crisisInput([a, b], { rationale: "Floods" }), admin);
+    crisisIds.push(crisis.id);
+
+    await updateCrisisTitle(null, { id: crisis.id, title: "Nile floods" }, admin);
+    await updateCrisisDescription(null, { id: crisis.id, description: "Rising water" }, admin);
+    await addCrisisAttachments(null, { id: crisis.id, keys: ["k1", "k2"] }, admin);
+    await addCrisisAttachments(null, { id: crisis.id, keys: ["k1"] }, admin); // nothing new: no record
+    await removeCrisisAttachment(null, { id: crisis.id, key: "k2" }, admin);
+    await removeCrisisAttachment(null, { id: crisis.id, key: "absent" }, admin); // nothing removed: no record
+    await removeEventFromCrisis(null, { crisisId: crisis.id, eventId: b }, admin);
+
+    const records = await recordsFor("crisis", crisis.id);
+    expect(records.map((r) => [r.decisionType, (r.payload as { field?: string }).field ?? null])).toEqual([
+      ["CRISIS_CREATED", null],
+      ["CRISIS_EDITED", "title"],
+      ["CRISIS_EDITED", "description"],
+      ["CRISIS_EDITED", "attachments"],
+      ["CRISIS_EDITED", "attachments"],
+      ["CRISIS_EVENT_REMOVED", null],
+    ]);
+    expect(records.at(-1)!.payload).toMatchObject({ eventId: b, crisisDeleted: false });
+
+    await deleteCrisis(null, { id: crisis.id }, admin);
+    expect((await recordsFor("crisis", crisis.id)).at(-1)).toMatchObject({ decisionType: "CRISIS_DELETED", decidedById: ADMIN_ID });
+  });
+
+  it("removing a Crisis's last Event deletes it and records that", async () => {
+    const a = await newEvent();
+    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
+    expect(await removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin)).toBeNull();
+    expect((await recordsFor("crisis", crisis.id)).at(-1)).toMatchObject({
+      decisionType: "CRISIS_EVENT_REMOVED",
+      payload: { eventId: a, crisisDeleted: true },
     });
   });
 });

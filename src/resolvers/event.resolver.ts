@@ -505,6 +505,18 @@ export const eventResolvers = {
           if (byPipeline) await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
         }
         if (byPipeline) await writeEventFacts(tx, event.id, input);
+        // A person's Event is their decision (ADR-0024); the pipeline's is not.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_CREATED",
+          subjectType: "event",
+          subjectId: event.id,
+          payload: {
+            signalIds: uniqueSignalIds,
+            types: input.types,
+            severity: input.severity ?? null,
+            locationId: locationId ?? null,
+          },
+        });
         return event;
       });
 
@@ -756,6 +768,18 @@ export const eventResolvers = {
             destinationId: input.destinationId !== undefined,
           });
         }
+        // A person's edit is their decision (ADR-0024): which fields they sent
+        // and which Signals they linked.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_UPDATED",
+          subjectType: "event",
+          subjectId: id,
+          payload: {
+            fields: Object.keys(input).filter((k) => (input as Record<string, unknown>)[k] !== undefined && k !== "signalIds"),
+            linkedSignalIds: [...new Set(newlyLinked)],
+            previous: { severity: existing.severity, types: existing.types, locationId: existing.locationId },
+          },
+        });
         return row;
       });
       logEventChange("updated", updated, [...new Set(newlyLinked)]);
@@ -778,7 +802,16 @@ export const eventResolvers = {
         });
       }
 
-      await context.prisma.events.delete({ where: { id: args.id } });
+      await context.prisma.$transaction(async (tx) => {
+        await tx.events.delete({ where: { id: args.id } });
+        // The record outlives the Event: the only trace of who removed it.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_DELETED",
+          subjectType: "event",
+          subjectId: args.id,
+          payload: { title: existing.title, types: existing.types, severity: existing.severity },
+        });
+      });
       return true;
     },
 

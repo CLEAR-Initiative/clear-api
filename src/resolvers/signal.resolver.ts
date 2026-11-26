@@ -1061,7 +1061,16 @@ export const signalResolvers = {
         });
       }
 
-      await context.prisma.signals.delete({ where: { id: args.id } });
+      await context.prisma.$transaction(async (tx) => {
+        await tx.signals.delete({ where: { id: args.id } });
+        // The record outlives the Signal: the only trace of who removed it.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "SIGNAL_DELETED",
+          subjectType: "signal",
+          subjectId: args.id,
+          payload: { sourceId: existing.sourceId, externalId: existing.externalId, title: existing.title },
+        });
+      });
       return true;
     },
   },
