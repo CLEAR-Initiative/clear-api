@@ -2,7 +2,8 @@
  * POST /webhooks/glitchtip
  *
  * GlitchTip's Alert Rules push here when an issue matches. We validate a
- * shared-secret query token, load matching subscriptions, persist a
+ * shared-secret query token, file an Exponential bug ticket and post the
+ * alert to Matrix (both optional), load matching subscriptions, persist a
  * WebhookDelivery row per subscription, and fire the first attempts in
  * the background. Response is 202 Accepted — delivery is asynchronous
  * from GlitchTip's perspective.
@@ -42,6 +43,7 @@ import {
   matrixConfigFromEnv,
   postMatrixMessage,
 } from "../services/webhook/matrix.js";
+import { exponentialBugConfigFromEnv, fileBugTicket } from "../services/webhook/exponential.js";
 
 const router = Router();
 
@@ -107,16 +109,23 @@ router.post("/glitchtip", async (req: Request, res: Response) => {
   const eventType = extractEventType(payload);
   const eventId = extractEventId(payload);
 
-  // Post to the Matrix alerts room, if configured. Fire-and-forget:
-  // independent of subscriptions, never blocks or fails the 202.
+  // File the alert as an Exponential bug ticket, then post it to the Matrix
+  // alerts room with the ticket link. Each half is optional and configured on
+  // its own. Fire-and-forget: independent of subscriptions, never blocks or
+  // fails the 202.
   const matrix = matrixConfigFromEnv(env);
-  if (matrix) {
-    // Format inside the task: a malformed payload must not throw here and
-    // skip the subscription fan-out below.
+  const exponential = exponentialBugConfigFromEnv(env);
+  if (matrix || exponential) {
+    // Inside the task: a malformed payload must not throw here and skip the
+    // subscription fan-out below. `fileBugTicket` never throws, and a failed
+    // call still posts the alert, without the link.
     void Promise.resolve()
-      .then(() => postMatrixMessage(matrix, formatGlitchtipAlert(payload)))
+      .then(async () => {
+        const ticket = exponential ? await fileBugTicket(exponential, payload) : null;
+        if (matrix) await postMatrixMessage(matrix, formatGlitchtipAlert(payload, { ticket }));
+      })
       .catch((e) => {
-        console.error("[webhook-receive] matrix post threw:", e);
+        console.error("[webhook-receive] ticket or matrix post threw:", e);
       });
   }
 
