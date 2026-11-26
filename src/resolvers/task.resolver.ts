@@ -51,6 +51,7 @@ import {
   type CaseProposalInput,
   type ValidCase,
 } from "../utils/case-proposals.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 
 export { IMPACT_PRIOR_KIND };
 const EVENT_SUBJECT = "event";
@@ -777,7 +778,7 @@ export const taskResolvers = {
           requestId,
           // A signed-in person is `user`; an API-key caller is `api`.
           // Nothing writes `rule` yet.
-          origin: context.authMethod === "api-key" ? "api" : "user",
+          origin: isPipelineCaller(context) ? "api" : "user",
           requesterId: user.id,
           teamId: args.teamId ?? null,
           maxAttempts: env.TASK_MAX_ATTEMPTS,

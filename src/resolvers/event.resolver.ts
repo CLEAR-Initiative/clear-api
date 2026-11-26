@@ -49,6 +49,7 @@ import {
   localizeLocationNames,
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 
 type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
 
@@ -457,7 +458,7 @@ export const eventResolvers = {
       const uniqueSignalIds = [...new Set(input.signalIds)];
       // The pipeline calls with an API key; a person has a session. Only the
       // pipeline's writes go to the logs.
-      const byPipeline = context.authMethod === "api-key";
+      const byPipeline = isPipelineCaller(context);
       const event = await context.prisma.$transaction(async (tx) => {
         const event = await tx.events.create({
           data: {
@@ -603,7 +604,7 @@ export const eventResolvers = {
         const row = await tx.events.update({ where: { id }, data });
         // The facts this run gave the Event (ADR-0021). Of the logged facts,
         // a recompute sets the onset accuracy only.
-        if (context.authMethod === "api-key") {
+        if (isPipelineCaller(context)) {
           await writeEventFacts(
             tx,
             id,
@@ -647,7 +648,7 @@ export const eventResolvers = {
       // signalIds appends them to the event; already-linked signals are
       // skipped. Callers that want to fully replace links should delete
       // them explicitly (no current use case).
-      const byPipeline = context.authMethod === "api-key";
+      const byPipeline = isPipelineCaller(context);
       let newlyLinked: string[] = [];
       if (input.signalIds !== undefined && input.signalIds.length > 0) {
         const alreadyLinked = await context.prisma.signalEvents.findMany({

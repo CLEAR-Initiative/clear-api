@@ -29,6 +29,7 @@ import {
   localizeLocationNames,
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -159,7 +160,7 @@ export const alertResolvers = {
               // raises it (ADR-0021). Set once: a retry returns the Alert
               // that exists and changes neither.
               ...onsetAtRaise(event),
-              raisedByRunKind: context.authMethod === "api-key" ? runKindOf(input) : null,
+              raisedByRunKind: isPipelineCaller(context) ? runKindOf(input) : null,
             },
           });
 
