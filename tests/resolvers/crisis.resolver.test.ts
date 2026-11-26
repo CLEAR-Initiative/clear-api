@@ -85,11 +85,10 @@ function buildContext(
   prisma: Record<string, unknown> = {},
   extra: Partial<Context> = {},
 ): Context {
-  // Writes run in a transaction on the same stubs, and a person's decision is
-  // recorded with them (ADR-0024). A test's own stubs win.
+  // Event changes on a Crisis run in a transaction on the same stubs, under a
+  // row lock (SELECT … FOR UPDATE) that returns nothing the resolver reads.
+  // A test's own stubs win.
   const client: Record<string, unknown> = {
-    decisionRecords: { create: vi.fn().mockResolvedValue({ id: "dr1" }) },
-    // Row locks (SELECT … FOR UPDATE) return nothing the resolver reads.
     $queryRaw: vi.fn().mockResolvedValue([]),
     ...prisma,
   };
@@ -207,7 +206,6 @@ describe("Mutation.createCrisisFromEvents", () => {
     const createMany = vi.fn().mockResolvedValue({ count: events.length });
     const create = vi.fn().mockResolvedValue(created);
     const feedbackCreate = vi.fn().mockResolvedValue({ id: "fb1" });
-    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
     const teamFindUnique = vi.fn().mockResolvedValue(opts.membership ?? null);
     const prisma = {
       events: {
@@ -221,43 +219,22 @@ describe("Mutation.createCrisisFromEvents", () => {
       locations: { findMany: vi.fn().mockResolvedValue([]) },
       teamMembers: { findUnique: teamFindUnique },
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({
-          crises: { create },
-          eventCrises: { createMany },
-          userFeedbacks: { create: feedbackCreate },
-          decisionRecords: { create: decisionCreate },
-        }),
+        fn({ crises: { create }, eventCrises: { createMany }, userFeedbacks: { create: feedbackCreate } }),
       ),
     };
-    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate, teamFindUnique, decisionCreate };
+    return { ctx: buildContext(user, prisma), create, createMany, feedbackCreate, teamFindUnique };
   }
 
   it("rejects a global member with no team membership (requireTeamContentWriter, no teamId)", async () => {
     const { ctx } = makeCtx(MEMBER);
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-  });
-
-  it("refuses a call with no rationale before writing anything", async () => {
-    const { ctx, create } = makeCtx(ADMIN);
-    await expect(
       createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx),
-    ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT", field: "rationale" } });
-    expect(create).not.toHaveBeenCalled();
-  });
-
-  it("records the decision with its rationale in the creating transaction", async () => {
-    const { ctx, decisionCreate } = makeCtx(ADMIN);
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
-    expect(decisionCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ decisionType: "CRISIS_CREATED", subjectId: "c-new", decidedById: "admin1", rationale: "Why" }),
-    });
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
   it("allows a global admin unconditionally", async () => {
     const { ctx, create } = makeCtx(ADMIN);
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
     expect(create).toHaveBeenCalledOnce();
   });
 
@@ -269,7 +246,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     });
     await createCrisisFromEvents(
       null,
-      { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"], teamId: "t1" } },
+      { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
       ctx,
     );
     expect(create).toHaveBeenCalledOnce();
@@ -284,7 +261,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     await expect(
       createCrisisFromEvents(
         null,
-        { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"], teamId: "t1" } },
+        { input: { severity: 2, needs: {}, eventIds: ["e1"], teamId: "t1" } },
         ctx,
       ),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
@@ -293,7 +270,7 @@ describe("Mutation.createCrisisFromEvents", () => {
   it("rejects an empty eventIds list with BAD_USER_INPUT", async () => {
     const { ctx, create } = makeCtx(ADMIN);
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: [] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: [] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "BAD_USER_INPUT" } });
     expect(create).not.toHaveBeenCalled();
   });
@@ -301,10 +278,10 @@ describe("Mutation.createCrisisFromEvents", () => {
   it("throws NOT_FOUND listing the missing event ids", async () => {
     const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] }); // only e1 exists
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1", "e2"] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1", "e2"] } }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
     await expect(
-      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1", "e2"] } }, ctx),
+      createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1", "e2"] } }, ctx),
     ).rejects.toThrow(/e2/);
   });
 
@@ -314,7 +291,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     const { ctx, create } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
-      { input: { title: "T", summary: "S", severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } },
+      { input: { title: "T", summary: "S", severity: 2, needs: {}, eventIds: ["e1"] } },
       ctx,
     );
     expect(create).toHaveBeenCalledOnce();
@@ -326,7 +303,7 @@ describe("Mutation.createCrisisFromEvents", () => {
     const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
     await createCrisisFromEvents(
       null,
-      { input: { title: "Analyst title", severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } },
+      { input: { title: "Analyst title", severity: 2, needs: {}, eventIds: ["e1"] } },
       ctx,
     );
     expect(feedbackCreate).toHaveBeenCalledWith(
@@ -342,13 +319,13 @@ describe("Mutation.createCrisisFromEvents", () => {
 
   it("writes no title lock when the caller supplies no title", async () => {
     const { ctx, feedbackCreate } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
     expect(feedbackCreate).not.toHaveBeenCalled();
   });
 
   it("logs the crisis.create activity for the actor", async () => {
     const { ctx } = makeCtx(ADMIN, { events: [{ id: "e1" }] });
-    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, rationale: "Why", eventIds: ["e1"] } }, ctx);
+    await createCrisisFromEvents(null, { input: { severity: 2, needs: {}, eventIds: ["e1"] } }, ctx);
     expect(logActivity).toHaveBeenCalledWith(
       ctx.prisma,
       expect.objectContaining({ userId: "admin1", action: "crisis.create", resourceId: "c-new" }),
@@ -360,18 +337,6 @@ describe("Mutation.createCrisisFromEvents", () => {
 // Mutation.addEventToCrisis
 // ---------------------------------------------------------------------------
 describe("Mutation.addEventToCrisis", () => {
-  /** The link, the population and the record run in one transaction on the
-   *  same fake client; the record write is captured. */
-  function withTx(prisma: Record<string, unknown>) {
-    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
-    Object.assign(prisma, {
-      decisionRecords: { create: decisionCreate },
-      $queryRaw: vi.fn().mockResolvedValue([]),
-      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
-    });
-    return { prisma, decisionCreate };
-  }
-
   it("rejects a global member with no team-analyst scope (FORBIDDEN)", async () => {
     // The location-scoped gate runs AFTER the crisis/event existence checks, so
     // both must resolve before we reach the guard. With no analyst membership
@@ -385,7 +350,7 @@ describe("Mutation.addEventToCrisis", () => {
       teamMembers: { findMany: vi.fn().mockResolvedValue([]) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -394,7 +359,7 @@ describe("Mutation.addEventToCrisis", () => {
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
     (getLocationIdsWithDescendants as ReturnType<typeof vi.fn>).mockResolvedValue(["L1"]);
-    const ctx = buildContext(MEMBER, withTx({
+    const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update },
       events: {
         findUnique: vi.fn().mockResolvedValue({ id: "e1", originId: "L1", destinationId: null, locationId: null }),
@@ -417,8 +382,8 @@ describe("Mutation.addEventToCrisis", () => {
           ),
         ),
       },
-    }).prisma);
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(link);
+    });
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
   });
 
@@ -448,7 +413,7 @@ describe("Mutation.addEventToCrisis", () => {
       },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     expect(create).not.toHaveBeenCalled();
   });
@@ -465,7 +430,7 @@ describe("Mutation.addEventToCrisis", () => {
       teamLocations: { findMany: vi.fn().mockResolvedValue([{ locationId: "OTHER" }]) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
@@ -475,7 +440,7 @@ describe("Mutation.addEventToCrisis", () => {
       events: { findUnique: vi.fn().mockResolvedValue({ id: "e1" }) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 
@@ -485,7 +450,7 @@ describe("Mutation.addEventToCrisis", () => {
       events: { findUnique: vi.fn().mockResolvedValue(null) },
     });
     await expect(
-      addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx),
+      addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx),
     ).rejects.toThrow(/Event not found/);
   });
 
@@ -502,7 +467,7 @@ describe("Mutation.addEventToCrisis", () => {
         create,
       },
     });
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(existing);
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(existing);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -510,7 +475,7 @@ describe("Mutation.addEventToCrisis", () => {
     const link = { id: "link1", crisisId: "c1", eventId: "e1" };
     const create = vi.fn().mockResolvedValue(link);
     const update = vi.fn().mockResolvedValue({ id: "c1" });
-    const ctx = buildContext(ADMIN, withTx({
+    const ctx = buildContext(ADMIN, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1" }), update },
       events: {
         findUnique: vi.fn().mockResolvedValue({ id: "e1" }),
@@ -526,8 +491,8 @@ describe("Mutation.addEventToCrisis", () => {
           Promise.resolve(select?.event ? [] : [{ eventId: "e1" }]),
         ),
       },
-    }).prisma);
-    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1", rationale: "Why" }, ctx)).toBe(link);
+    });
+    expect(await addEventToCrisis(null, { crisisId: "c1", eventId: "e1" }, ctx)).toBe(link);
     expect(create).toHaveBeenCalledOnce();
     // Event-set change re-queues the crisis for the Dagster drain via PENDING.
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { populationAffected: 5n, enrichmentStatus: "PENDING" } });
@@ -706,15 +671,9 @@ describe("Mutation.removeCrisisAttachment", () => {
     await removeCrisisAttachment(null, { id: "c1", key: "a" }, ctx);
     expect(update.mock.calls[0][0].data.attachments).toEqual(["b"]);
 
-    // A key that is not there changes nothing: no write, no decision.
     update.mockClear();
-    const findUniqueOrThrow = vi.fn().mockResolvedValue({ id: "c1", attachments: ["a", "b"] });
-    const unchanged = buildContext(MEMBER, {
-      crises: { findUnique: vi.fn().mockResolvedValue({ attachments: ["a", "b"] }), update, findUniqueOrThrow },
-    });
-    await removeCrisisAttachment(null, { id: "c1", key: "zzz" }, unchanged);
-    expect(update).not.toHaveBeenCalled();
-    expect(findUniqueOrThrow).toHaveBeenCalledOnce();
+    await removeCrisisAttachment(null, { id: "c1", key: "zzz" }, ctx);
+    expect(update.mock.calls[0][0].data.attachments).toEqual(["a", "b"]);
   });
 });
 
@@ -737,34 +696,30 @@ describe("Mutation.updateCrisisTitle", () => {
 
   it("updates the title and writes an audit feedback row with the old→new diff", async () => {
     const updated = { id: "c1", title: "New" };
-    const update = vi.fn().mockResolvedValue(updated);
-    const create = vi.fn().mockResolvedValue({ id: "fb1" });
-    const decisionCreate = vi.fn().mockResolvedValue({ id: "dr1" });
+    const updateCall = { kind: "update" };
+    const createCall = { kind: "create" };
+    const update = vi.fn().mockReturnValue(updateCall);
+    const create = vi.fn().mockReturnValue(createCall);
+    const $transaction = vi.fn().mockResolvedValue([updated, { id: "fb1" }]);
     const ctx = buildContext(MEMBER, {
       crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: "Old" }), update },
       userFeedbacks: { create },
-      decisionRecords: { create: decisionCreate },
+      $transaction,
     });
     expect(await updateCrisisTitle(null, { id: "c1", title: "New" }, ctx)).toBe(updated);
     expect(update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { title: "New" } });
     const fbData = create.mock.calls[0][0].data;
     expect(fbData).toMatchObject({ userId: "v1", crisisId: "c1", rating: 0 });
     expect(fbData.text).toBe("[title-edit] Old → New");
-    // The edit is also a decision, recorded in the same transaction.
-    expect(decisionCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        decisionType: "CRISIS_EDITED",
-        subjectId: "c1",
-        payload: { field: "title", previous: "Old", value: "New" },
-      }),
-    });
+    expect($transaction).toHaveBeenCalledWith([updateCall, createCall]);
   });
 
   it("renders (empty) sentinels for null old title / blank new title", async () => {
     const create = vi.fn().mockReturnValue({});
     const ctx = buildContext(MEMBER, {
-      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: null }), update: vi.fn().mockResolvedValue({ id: "c1" }) },
+      crises: { findUnique: vi.fn().mockResolvedValue({ id: "c1", title: null }), update: vi.fn().mockReturnValue({}) },
       userFeedbacks: { create },
+      $transaction: vi.fn().mockResolvedValue([{ id: "c1" }, {}]),
     });
     await updateCrisisTitle(null, { id: "c1", title: "" }, ctx);
     expect(create.mock.calls[0][0].data.text).toBe("[title-edit] (empty) → (empty)");

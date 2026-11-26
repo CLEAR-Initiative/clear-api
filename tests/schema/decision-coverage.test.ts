@@ -1,6 +1,7 @@
 /**
- * Every human judgement on an Event, Alert, Crisis, Signal, case or hotline
- * thread writes a DecisionRecord (ADR-0024, #1289).
+ * Every human judgement on an Event, Alert, Signal, case or hotline thread
+ * writes a DecisionRecord (ADR-0024, #1289). Crisis changes are listed as not
+ * decisions until the ontology owner settles how a Crisis is created.
  *
  * Each mutation whose name touches one of those is classified here: either it
  * records a decision, or it is not a decision and says why. A new mutation on
@@ -18,35 +19,37 @@ import { resolvers } from "../../src/resolvers/index.js";
 
 /** Mutations that record a person's decision, with the type they record. */
 const DECISIONS: Record<string, string> = {
-  addCrisisAttachments: "CRISIS_EDITED",
-  addEventToCrisis: "CRISIS_EVENT_ADDED",
   createAlert: "ALERT_RAISED / ALERT_UPDATED",
-  createCrisisFromEvents: "CRISIS_CREATED",
   createEvent: "EVENT_CREATED",
   createManualSignal: "SIGNAL_CREATED",
   decideCaseProposal: "CASE_PROPOSAL_DECIDED",
   decideSignalLocationChallenge: "SIGNAL_LOCATION_DECIDED",
   deleteAlert: "ALERT_DELETED",
-  deleteCrisis: "CRISIS_DELETED",
   deleteEvent: "EVENT_DELETED",
   deleteSignal: "SIGNAL_DELETED",
   escalateEvent: "EVENT_ESCALATED",
-  removeCrisisAttachment: "CRISIS_EDITED",
-  removeEventFromCrisis: "CRISIS_EVENT_REMOVED",
   reviewGroundThread: "GROUND_THREAD_REVIEWED",
   updateAlert: "ALERT_UPDATED",
-  updateCrisisDescription: "CRISIS_EDITED",
-  updateCrisisTitle: "CRISIS_EDITED",
   updateEvent: "EVENT_UPDATED",
   updateSignalSeverity: "SIGNAL_SEVERITY_SET",
 };
 
 const PIPELINE = "a pipeline write: reproducible from bronze plus versions";
+const CRISIS_PENDING =
+  "a Crisis change: not recorded until the ontology owner settles how a Crisis is created";
 const DELIVERY = "notification or delivery configuration, not a judgement on content";
 const SOURCE_CONFIG = "source registry configuration, not a judgement on content";
 
 /** Mutations on those entities that are not a decision, and why. */
 const NOT_DECISIONS: Record<string, string> = {
+  addCrisisAttachments: CRISIS_PENDING,
+  addEventToCrisis: CRISIS_PENDING,
+  createCrisisFromEvents: CRISIS_PENDING,
+  deleteCrisis: CRISIS_PENDING,
+  removeCrisisAttachment: CRISIS_PENDING,
+  removeEventFromCrisis: CRISIS_PENDING,
+  updateCrisisDescription: CRISIS_PENDING,
+  updateCrisisTitle: CRISIS_PENDING,
   archiveStaleAlerts: "a fixed age rule; recomputable",
   createAlertWebhook: DELIVERY,
   createGroundSource: SOURCE_CONFIG,
@@ -91,7 +94,7 @@ const NOT_DECISIONS: Record<string, string> = {
 };
 
 /** Names a resolver uses to record a decision. */
-const RECORDERS = ["recordDecision", "recordDecisionIfPerson", "recordCrisisEdit", "writeSignalSeverity"];
+const RECORDERS = ["recordDecision", "recordDecisionIfPerson", "writeSignalSeverity"];
 
 const DOMAIN = /crisis|crises|alert|event|signal|case|ground/i;
 

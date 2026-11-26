@@ -25,17 +25,14 @@ type Tx = Prisma.TransactionClient;
 export const DECISION_DEFINITION_VERSION = "decision-records-v1";
 
 /**
- * Types whose record must carry a rationale: the ones the Domain Ontology
- * names. A Crisis cannot exist, or gain an Event, without a reason. Escalate,
- * merge and reject join when the ontology owner settles what "escalate" means
- * and the Event lifecycle mutations exist (#1280). Corrections stay optional.
+ * Types whose record must carry a rationale. Empty: Crisis decisions, the
+ * first candidates, are out until the ontology owner settles how a Crisis is
+ * created (bottom-up from Events, top-down from an analysis frame, or by the
+ * system). Corrections stay optional.
  */
-export const RATIONALE_REQUIRED_TYPES: ReadonlySet<DecisionType> = new Set<DecisionType>([
-  "CRISIS_CREATED",
-  "CRISIS_EVENT_ADDED",
-]);
+export const RATIONALE_REQUIRED_TYPES: ReadonlySet<DecisionType> = new Set<DecisionType>();
 
-export type DecisionSubjectType = "signal" | "case_proposal" | "crisis" | "alert" | "event" | "ground_thread";
+export type DecisionSubjectType = "signal" | "case_proposal" | "alert" | "event" | "ground_thread";
 
 /** Who decided: a person from a request, or a named person behind an offline
  *  script's override. */

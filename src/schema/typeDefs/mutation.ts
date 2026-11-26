@@ -598,11 +598,8 @@ export const mutationTypeDef = gql`
     this once narrative/scenarios/needs-analysis are current. Idempotent. Admin/pipeline only."""
     markCrisisEnriched(id: String!): Crisis!
 
-    """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists.
-    \`rationale\` is required (at most 4000 characters): an Event joins a Crisis
-    only with a recorded decision and its reason. The decision log keeps it with
-    who decided and when. A repeat call on an existing link records nothing."""
-    addEventToCrisis(crisisId: String!, eventId: String!, rationale: String): EventCrisis!
+    """Add an existing event to an existing crisis. Idempotent - returns the existing link if one already exists."""
+    addEventToCrisis(crisisId: String!, eventId: String!): EventCrisis!
 
     """Remove an event from a crisis. Recomputes populationAffected from the
     remaining events and dispatches the enrichment task so title/summary get

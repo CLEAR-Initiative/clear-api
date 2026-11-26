@@ -1,8 +1,8 @@
 /**
  * Decision records V2 (ADR-0024, #1289) against the real schema: every
- * remaining human judgement on a Crisis, Alert, Event, Signal or hotline thread
- * writes one `decision_records` row in its transaction, and a Crisis cannot be
- * created, or gain an Event, without a rationale.
+ * remaining human judgement on an Alert, Event, Signal or hotline thread writes
+ * one `decision_records` row in its transaction. Crisis changes record nothing
+ * until the ontology owner settles how a Crisis is created.
  *
  * Self-seeding; runs against an empty scratch database:
  * `bun run test:db tests/resolvers/decisionRecordsV2.db.test.ts`.
@@ -17,10 +17,7 @@ import { signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 import { describeIfDb } from "../helpers/db.js";
 
-const {
-  createCrisisFromEvents, addEventToCrisis, removeEventFromCrisis, updateCrisisTitle, updateCrisisDescription,
-  addCrisisAttachments, removeCrisisAttachment, deleteCrisis,
-} = crisisResolvers.Mutation;
+const { createCrisisFromEvents, addEventToCrisis, removeEventFromCrisis } = crisisResolvers.Mutation;
 const { createAlert, updateAlert, deleteAlert } = alertResolvers.Mutation;
 const { escalateEvent, createEvent, updateEvent, deleteEvent } = eventResolvers.Mutation;
 const { createManualSignal, deleteSignal } = signalResolvers.Mutation;
@@ -52,9 +49,6 @@ async function newEvent() {
 const recordsFor = (subjectType: string, subjectId: string) =>
   prisma.decisionRecords.findMany({ where: { subjectType, subjectId }, orderBy: { sequence: "asc" } });
 
-const crisisInput = (ids: string[], extra: Record<string, unknown> = {}) => ({
-  input: { severity: 3, needs: {}, eventIds: ids, ...extra },
-});
 
 describeIfDb("Decision records V2 against the real schema", () => {
   beforeAll(async () => {
@@ -72,77 +66,6 @@ describeIfDb("Decision records V2 against the real schema", () => {
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.signals.deleteMany({ where: { id: { in: signalIds } } });
     await prisma.user.deleteMany({ where: { id: ADMIN_ID } });
-  });
-
-  it("refuses to create a Crisis without a rationale, and creates nothing", async () => {
-    const e = await newEvent();
-    for (const rationale of [undefined, null, "", "   "]) {
-      await expect(createCrisisFromEvents(null, crisisInput([e], { rationale }), admin)).rejects.toMatchObject({
-        extensions: { code: "BAD_USER_INPUT", field: "rationale" },
-      });
-    }
-    expect(await prisma.eventCrises.count({ where: { eventId: e } })).toBe(0);
-  });
-
-  it("creates a Crisis with one record holding the person and the reason", async () => {
-    const e = await newEvent();
-    const crisis = await createCrisisFromEvents(
-      null,
-      crisisInput([e], { rationale: "  Displacement across two districts.  ", title: "Floods" }),
-      admin,
-    );
-    crisisIds.push(crisis.id);
-    const records = await recordsFor("crisis", crisis.id);
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      decisionType: "CRISIS_CREATED",
-      decidedById: ADMIN_ID,
-      rationale: "Displacement across two districts.",
-      payload: { eventIds: [e], title: "Floods", severity: 3 },
-    });
-  });
-
-  it("refuses a pipeline caller: a Crisis is a person's decision", async () => {
-    const e = await newEvent();
-    await expect(
-      createCrisisFromEvents(null, crisisInput([e], { rationale: "Because" }), pipeline),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
-    expect(await prisma.eventCrises.count({ where: { eventId: e } })).toBe(0);
-  });
-
-  it("creates no Crisis when the record cannot be written", async () => {
-    const e = await newEvent();
-    const ghost = ctx(`${RUN}-no-such-user`, "admin");
-    await expect(createCrisisFromEvents(null, crisisInput([e], { rationale: "Because" }), ghost)).rejects.toThrow();
-    expect(await prisma.eventCrises.count({ where: { eventId: e } })).toBe(0);
-  });
-
-  it("adds an Event to a Crisis only with a rationale, and records it once", async () => {
-    const [a, b] = [await newEvent(), await newEvent()];
-    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
-    crisisIds.push(crisis.id);
-
-    await expect(addEventToCrisis(null, { crisisId: crisis.id, eventId: b }, admin)).rejects.toMatchObject({
-      extensions: { code: "BAD_USER_INPUT", field: "rationale" },
-    });
-    expect(await prisma.eventCrises.count({ where: { crisisId: crisis.id, eventId: b } })).toBe(0);
-
-    await addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Same river basin" }, admin);
-    // A repeat call on the existing link changes nothing and records nothing.
-    await addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Again" }, admin);
-
-    const added = (await recordsFor("crisis", crisis.id)).filter((r) => r.decisionType === "CRISIS_EVENT_ADDED");
-    expect(added).toHaveLength(1);
-    expect(added[0]).toMatchObject({ decidedById: ADMIN_ID, rationale: "Same river basin", payload: { eventId: b } });
-  });
-
-  it("adds no Event when the record cannot be written", async () => {
-    const [a, b] = [await newEvent(), await newEvent()];
-    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
-    crisisIds.push(crisis.id);
-    const ghost = ctx(`${RUN}-no-such-user`, "admin");
-    await expect(addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Why" }, ghost)).rejects.toThrow();
-    expect(await prisma.eventCrises.count({ where: { crisisId: crisis.id, eventId: b } })).toBe(0);
   });
 
   it("records a person raising, changing and deleting an Alert; the pipeline's Alert has no record", async () => {
@@ -237,46 +160,6 @@ describeIfDb("Decision records V2 against the real schema", () => {
     expect(records[0]).toMatchObject({ decisionType: "SIGNAL_DELETED", decidedById: ADMIN_ID, payload: { title: "Gone" } });
   });
 
-  it("records each edit of a Crisis, the removal of its Events and its deletion", async () => {
-    const [a, b] = [await newEvent(), await newEvent()];
-    const crisis = await createCrisisFromEvents(null, crisisInput([a, b], { rationale: "Floods" }), admin);
-    crisisIds.push(crisis.id);
-
-    await updateCrisisTitle(null, { id: crisis.id, title: "Nile floods" }, admin);
-    await updateCrisisDescription(null, { id: crisis.id, description: "Rising water" }, admin);
-    await addCrisisAttachments(null, { id: crisis.id, keys: ["k1", "k2"] }, admin);
-    await addCrisisAttachments(null, { id: crisis.id, keys: ["k1"] }, admin); // nothing new: no record
-    await removeCrisisAttachment(null, { id: crisis.id, key: "k2" }, admin);
-    await removeCrisisAttachment(null, { id: crisis.id, key: "absent" }, admin); // nothing removed: no record
-    await removeEventFromCrisis(null, { crisisId: crisis.id, eventId: b }, admin);
-
-    const records = await recordsFor("crisis", crisis.id);
-    expect(records.map((r) => [r.decisionType, (r.payload as { field?: string }).field ?? null])).toEqual([
-      ["CRISIS_CREATED", null],
-      ["CRISIS_EDITED", "title"],
-      ["CRISIS_EDITED", "description"],
-      ["CRISIS_EDITED", "attachments"],
-      ["CRISIS_EDITED", "attachments"],
-      ["CRISIS_EVENT_REMOVED", null],
-    ]);
-    expect(records.at(-1)!.payload).toMatchObject({ eventId: b, crisisDeleted: false });
-    // The description record keeps the text the person chose.
-    expect(records[2]!.payload).toEqual({ field: "description", value: "Rising water" });
-
-    await deleteCrisis(null, { id: crisis.id }, admin);
-    expect((await recordsFor("crisis", crisis.id)).at(-1)).toMatchObject({ decisionType: "CRISIS_DELETED", decidedById: ADMIN_ID });
-  });
-
-  it("removing a Crisis's last Event deletes it and records that", async () => {
-    const a = await newEvent();
-    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
-    expect(await removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin)).toBeNull();
-    expect((await recordsFor("crisis", crisis.id)).at(-1)).toMatchObject({
-      decisionType: "CRISIS_EVENT_REMOVED",
-      payload: { eventId: a, crisisDeleted: true },
-    });
-  });
-
   it("an Event edit whose record fails leaves no new Signal link", async () => {
     const e = await newEvent();
     const source = await prisma.dataSources.findFirstOrThrow({ where: { name: "field_officer" } });
@@ -292,6 +175,13 @@ describeIfDb("Decision records V2 against the real schema", () => {
     await prisma.signalEvents.deleteMany({ where: { eventId: e } });
   });
 
+  it("creates a Crisis with no rationale and records no decision (Crisis rules wait for the ontology)", async () => {
+    const e = await newEvent();
+    const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [e] } }, admin);
+    crisisIds.push(crisis.id);
+    expect(await recordsFor("crisis", crisis.id)).toHaveLength(0);
+  });
+
   it("two Events added to a Crisis at once both count in its population", async () => {
     const now = new Date();
     const withPop = async (n: bigint) => {
@@ -302,19 +192,18 @@ describeIfDb("Decision records V2 against the real schema", () => {
       return row.id;
     };
     const [a, b, c] = [await withPop(100n), await withPop(20n), await withPop(3n)];
-    const crisis = await createCrisisFromEvents(null, crisisInput([a], { rationale: "Floods" }), admin);
+    const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [a] } }, admin);
     crisisIds.push(crisis.id);
     await Promise.all([
-      addEventToCrisis(null, { crisisId: crisis.id, eventId: b, rationale: "Same basin" }, admin),
-      addEventToCrisis(null, { crisisId: crisis.id, eventId: c, rationale: "Same basin" }, admin),
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: b }, admin),
+      addEventToCrisis(null, { crisisId: crisis.id, eventId: c }, admin),
     ]);
-    const after = await prisma.crises.findUniqueOrThrow({ where: { id: crisis.id } });
-    expect(after.populationAffected).toBe(123n);
+    expect((await prisma.crises.findUniqueOrThrow({ where: { id: crisis.id } })).populationAffected).toBe(123n);
   });
 
   it("two overlapping removals of the same Event remove it once and keep the Crisis", async () => {
     const [a, b] = [await newEvent(), await newEvent()];
-    const crisis = await createCrisisFromEvents(null, crisisInput([a, b], { rationale: "Floods" }), admin);
+    const crisis = await createCrisisFromEvents(null, { input: { severity: 3, needs: {}, eventIds: [a, b] } }, admin);
     crisisIds.push(crisis.id);
     const results = await Promise.allSettled([
       removeEventFromCrisis(null, { crisisId: crisis.id, eventId: a }, admin),
