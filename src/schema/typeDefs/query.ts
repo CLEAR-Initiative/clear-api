@@ -126,8 +126,25 @@ export const queryTypeDef = gql`
     unless \`first\` is given. Admin/pipeline only."""
     eventMembers(eventId: String!, first: Int): [Signal!]!
 
-    """List events. Requires authentication. includeDummy defaults to false."""
-    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
+    """The decisions feed (ADR-0024): DecisionRecords with a sequence greater
+    than \`sinceSequence\`, in sequence order, one page at a time. Start at 0;
+    pass each page's \`lastSequence\` back as \`sinceSequence\`. Ordered by
+    \`sequence\` only, never by \`decidedAt\`. A rolled-back transaction uses a
+    sequence number, so gaps are normal: keep reading after the last row
+    returned. Records commit in sequence order, so the feed never passes a
+    record whose transaction is still open. \`types\` keeps only those decision types (all when omitted or
+    empty). \`first\` is the page size: 500 by default, at most 1000 (a larger
+    value is cut to 1000). Admin and pipeline only."""
+    decisions(sinceSequence: Int!, types: [DecisionType!], first: Int = 500): DecisionPage!
+
+    """List events. Requires authentication. includeDummy defaults to false.
+    Paged mode (the pipeline): pass \`first\` (at most 1000; a larger value is
+    cut to 1000), and \`after\` with the last id of the previous page. Rows
+    come in id order, and the next page starts after \`after\`. Keep reading
+    until a page comes back empty. \`limit\` (newest by lastSignalCreatedAt, at
+    most 5000) applies only outside paged mode; with \`first\` or \`after\` it
+    is ignored."""
+    events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int, first: Int, after: String): [Event!]!
 
     """Look up an event by ID. Requires authentication. Non-admins can only access events within their team scope."""
     event(id: String!): Event

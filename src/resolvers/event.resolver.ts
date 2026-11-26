@@ -199,14 +199,33 @@ async function assertCountryLocations(
   }
 }
 
+/** Rows per page of `events` in paged mode when the caller gives only `after`. */
+export const EVENTS_PAGE_SIZE = 500;
+/** The most rows one page of `events` returns, whatever the caller asks for. */
+export const EVENTS_MAX_PAGE_SIZE = 1000;
+
 export const eventResolvers = {
   Query: {
     events: async (
       _parent: unknown,
-      args: { teamId?: string; includeDummy?: boolean; lastSignalSince?: string; limit?: number },
+      args: {
+        teamId?: string;
+        includeDummy?: boolean;
+        lastSignalSince?: string;
+        limit?: number;
+        first?: number | null;
+        after?: string | null;
+      },
       context: Context,
     ) => {
       requireContentReader(context);
+      // Paged mode wins over `limit`, which it ignores.
+      const paged = args.first != null || args.after != null;
+      if (args.first != null && (!Number.isInteger(args.first) || args.first < 1)) {
+        throw new GraphQLError("first must be a whole number, 1 or more", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
       const dummyFilter = args.includeDummy ? {} : { isDummy: false };
       // Optional SERVER-SIDE bounding so a caller (e.g. the pipeline's grouping
       // drain) can fetch only the recent window instead of the WHOLE events
@@ -219,15 +238,22 @@ export const eventResolvers = {
           ? { lastSignalCreatedAt: { gte: new Date(args.lastSignalSince) } }
           : {};
       // When a limit is given, take the NEWEST rows (bounded fetch must order).
-      const bound: { orderBy?: { lastSignalCreatedAt: "desc" }; take?: number } =
-        args.limit != null
+      // Paged mode is keyset by id: stable while the drain moves
+      // lastSignalCreatedAt, and complete across pages.
+      const bound: {
+        orderBy?: { lastSignalCreatedAt: "desc" } | { id: "asc" };
+        take?: number;
+      } = paged
+        ? { orderBy: { id: "asc" }, take: Math.min(args.first ?? EVENTS_PAGE_SIZE, EVENTS_MAX_PAGE_SIZE) }
+        : args.limit != null
           ? { orderBy: { lastSignalCreatedAt: "desc" }, take: Math.min(Math.max(args.limit, 1), 5000) }
           : {};
+      const afterFilter = args.after != null ? { id: { gt: args.after } } : {};
       const include = eventTranslationsInclude(context.locale);
       // No teamId: any authenticated user gets the global feed.
       if (!args.teamId) {
         return context.prisma.events.findMany({
-          where: { ...dummyFilter, ...recentFilter },
+          where: { ...dummyFilter, ...recentFilter, ...afterFilter },
           ...(include ? { include } : {}),
           ...bound,
         });
@@ -236,7 +262,7 @@ export const eventResolvers = {
       // (no membership check -  see signals resolver for rationale).
       const filter = await buildEventLocationFilterForTeam(context.prisma, args.teamId);
       return context.prisma.events.findMany({
-        where: { ...filter, ...dummyFilter, ...recentFilter },
+        where: { ...filter, ...dummyFilter, ...recentFilter, ...afterFilter },
         ...(include ? { include } : {}),
         ...bound,
       });
