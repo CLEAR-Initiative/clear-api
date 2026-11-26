@@ -23,10 +23,10 @@ const ctx = (role: string, authMethod = "api-key"): Context =>
 const ids: string[] = [];
 
 /** A record written straight to the table: this suite tests the reader. */
-async function record(subjectId: string) {
+async function record(subjectId: string, decisionType: "SIGNAL_SEVERITY_SET" | "SIGNAL_LOCATION_DECIDED" = "SIGNAL_SEVERITY_SET") {
   const row = await prisma.decisionRecords.create({
     data: {
-      decisionType: "SIGNAL_SEVERITY_SET",
+      decisionType,
       subjectType: "signal",
       subjectId,
       decidedById: PERSON_ID,
@@ -88,6 +88,38 @@ describeIfDb("the decisions feed against the real schema", () => {
       });
     }
     await expect(decisions(null, { sinceSequence: -1 }, ctx("admin"))).rejects.toMatchObject({
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  });
+
+  it("keeps only the asked-for types, and an empty list means all", async () => {
+    const start = await record(`${RUN}-types-start`);
+    const sev = await record(`${RUN}-types-sev`);
+    const loc = await record(`${RUN}-types-loc`, "SIGNAL_LOCATION_DECIDED");
+    const since = Number(start.sequence);
+
+    const onlyLoc = await decisions(null, { sinceSequence: since, types: ["SIGNAL_LOCATION_DECIDED"] }, ctx("pipeline"));
+    expect(onlyLoc.items.map((r) => r.id)).toEqual([loc.id]);
+    // The cursor is the last row returned, so the reader never re-reads one.
+    expect(onlyLoc.lastSequence).toBe(Number(loc.sequence));
+
+    const all = await decisions(null, { sinceSequence: since, types: [] }, ctx("pipeline"));
+    expect(all.items.map((r) => r.id)).toEqual([sev.id, loc.id]);
+  });
+
+  it("pages by first and never returns more than the hard maximum", async () => {
+    const start = await record(`${RUN}-page-start`);
+    const rows = [await record(`${RUN}-p1`), await record(`${RUN}-p2`), await record(`${RUN}-p3`)];
+    const since = Number(start.sequence);
+
+    const one = await decisions(null, { sinceSequence: since, first: 2 }, ctx("pipeline"));
+    expect(one.items.map((r) => r.id)).toEqual([rows[0]!.id, rows[1]!.id]);
+    const two = await decisions(null, { sinceSequence: one.lastSequence, first: 2 }, ctx("pipeline"));
+    expect(two.items.map((r) => r.id)).toEqual([rows[2]!.id]);
+
+    const huge = await decisions(null, { sinceSequence: 0, first: 1_000_000 }, ctx("pipeline"));
+    expect(huge.items.length).toBeLessThanOrEqual(1000);
+    await expect(decisions(null, { sinceSequence: 0, first: 0 }, ctx("pipeline"))).rejects.toMatchObject({
       extensions: { code: "BAD_USER_INPUT" },
     });
   });

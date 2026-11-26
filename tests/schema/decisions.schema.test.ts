@@ -13,8 +13,8 @@ import { resolvers } from "../../src/resolvers/index.js";
 import type { Context } from "../../src/context.js";
 
 const DECISIONS = `
-  query Decisions($sinceSequence: Int!) {
-    decisions(sinceSequence: $sinceSequence) {
+  query Decisions($sinceSequence: Int!, $types: [DecisionType!], $first: Int) {
+    decisions(sinceSequence: $sinceSequence, types: $types, first: $first) {
       lastSequence
       items {
         id
@@ -52,12 +52,12 @@ const ROW = {
   definitionVersion: "decision-records-v1",
 };
 
-async function run(user: { id: string; role: string }, sinceSequence: number) {
+async function run(user: { id: string; role: string }, sinceSequence: number, extra: Record<string, unknown> = {}) {
   const prisma = { decisionRecords: { findMany: vi.fn().mockResolvedValue([ROW]) } };
   const server = new ApolloServer<Context>({ typeDefs, resolvers });
   await server.start();
   const response = await server.executeOperation(
-    { query: DECISIONS, variables: { sinceSequence } },
+    { query: DECISIONS, variables: { sinceSequence, ...extra } },
     { contextValue: { prisma, user, session: null, authMethod: "api-key", locale: "en" } as unknown as Context },
   );
   await server.stop();
@@ -81,7 +81,21 @@ describe("decisions schema contract", () => {
       ],
     });
     expect(prisma.decisionRecords.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { sequence: { gt: 41n } }, orderBy: { sequence: "asc" } }),
+      expect.objectContaining({ where: { sequence: { gt: 41n } }, orderBy: { sequence: "asc" }, take: 500 }),
+    );
+  });
+
+  it("filters by type and cuts a page size over the hard maximum to 1000", async () => {
+    const { result, prisma } = await run({ id: "p-1", role: "pipeline" }, 0, {
+      types: ["SIGNAL_SEVERITY_SET"],
+      first: 5000,
+    });
+    expect(result.errors).toBeUndefined();
+    expect(prisma.decisionRecords.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { sequence: { gt: 0n }, decisionType: { in: ["SIGNAL_SEVERITY_SET"] } },
+        take: 1000,
+      }),
     );
   });
 

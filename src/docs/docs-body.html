@@ -333,7 +333,9 @@ than `sinceSequence`, in sequence order, one page at a time. Start at 0;
 pass each page's `lastSequence` back as `sinceSequence`. Ordered by
 `sequence` only, never by `decidedAt`. A rolled-back transaction uses a
 sequence number, so gaps are normal: keep reading after the last row
-returned. Admin and pipeline only.<div class="field-args"><span class="arg"><code>sinceSequence: Int!</code></span></div></td>
+returned. `types` keeps only those decision types (all when omitted or
+empty). `first` is the page size: 500 by default, at most 1000 (a larger
+value is cut to 1000). Admin and pipeline only.<div class="field-args"><span class="arg"><code>sinceSequence: Int!</code></span><span class="arg"><code>types: [DecisionType!]</code></span><span class="arg"><code>first: Int</code></span></div></td>
   </tr><tr>
     <td><code>events</code></td>
     <td><code>[Event!]!</code></td>

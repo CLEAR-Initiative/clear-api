@@ -131,8 +131,10 @@ export const queryTypeDef = gql`
     pass each page's \`lastSequence\` back as \`sinceSequence\`. Ordered by
     \`sequence\` only, never by \`decidedAt\`. A rolled-back transaction uses a
     sequence number, so gaps are normal: keep reading after the last row
-    returned. Admin and pipeline only."""
-    decisions(sinceSequence: Int!): DecisionPage!
+    returned. \`types\` keeps only those decision types (all when omitted or
+    empty). \`first\` is the page size: 500 by default, at most 1000 (a larger
+    value is cut to 1000). Admin and pipeline only."""
+    decisions(sinceSequence: Int!, types: [DecisionType!], first: Int = 500): DecisionPage!
 
     """List events. Requires authentication. includeDummy defaults to false."""
     events(teamId: String, includeDummy: Boolean, lastSignalSince: DateTime, limit: Int): [Event!]!
