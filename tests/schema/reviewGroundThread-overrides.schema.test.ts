@@ -47,8 +47,10 @@ function buildContext(reviewState: string) {
       },
     ],
   };
-  const context = {
-    prisma: {
+  const prisma: Record<string, unknown> = {
+      // The review and its DecisionRecord run in one transaction (ADR-0024).
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+      decisionRecords: { create: vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "dr1", ...args.data })) },
       locations: { findUnique: vi.fn(async () => ({ id: "loc_1" })) },
       groundThreads: {
         findUnique: vi.fn(async () => thread),
@@ -65,7 +67,9 @@ function buildContext(reviewState: string) {
           return { id: "sig_1", ...args.data };
         }),
       },
-    },
+  };
+  const context = {
+    prisma,
     user: { id: "u1", role: "admin" },
     session: null,
     authMethod: "session",

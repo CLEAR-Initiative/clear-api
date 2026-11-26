@@ -74,5 +74,9 @@ export const crisisTypeDef = gql`
     is derived from location scope.
     Ignored for platform-level callers."""
     teamId: String
+    """Why these Events are a Crisis. Required (at most 4000 characters): a
+    Crisis cannot exist without a recorded decision and its reason. Kept in
+    the decision log with who decided and when."""
+    rationale: String
   }
 `;

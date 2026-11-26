@@ -50,6 +50,7 @@ import {
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
+import { recordDecisionIfPerson } from "../services/decision-records.js";
 
 type DateAccuracy = "DAY" | "WEEK" | "MONTH" | "YEAR";
 
@@ -530,6 +531,18 @@ export const eventResolvers = {
           if (byPipeline) await writeGroupingLinks(tx, event.id, uniqueSignalIds, input);
         }
         if (byPipeline) await writeEventFacts(tx, event.id, input);
+        // A person's Event is their decision (ADR-0024); the pipeline's is not.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_CREATED",
+          subjectType: "event",
+          subjectId: event.id,
+          payload: {
+            signalIds: uniqueSignalIds,
+            types: input.types,
+            severity: input.severity ?? null,
+            locationId: locationId ?? null,
+          },
+        });
         return event;
       });
 
@@ -685,26 +698,7 @@ export const eventResolvers = {
           select: { signalId: true },
         });
         const linkedSet = new Set(alreadyLinked.map((r) => r.signalId));
-        const toLink = input.signalIds.filter((sid) => !linkedSet.has(sid));
-        newlyLinked = toLink;
-        if (toLink.length > 0) {
-          // The new Links and their grouping log rows are one transaction
-          // (ADR-0021). A Link that a person makes (a session, not an API
-          // key) writes no row.
-          const linkedAt = new Date();
-          const uniqueToLink = [...new Set(toLink)];
-          await context.prisma.$transaction(async (tx) => {
-            await tx.signalEvents.createMany({
-              data: uniqueToLink.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
-            });
-            if (byPipeline) {
-              await writeGroupingLinks(tx, id, uniqueToLink, input);
-              // An Event with a Link in the grouping log always has a row in
-              // the Event facts log: the history readers join the two.
-              await writeEventFacts(tx, id, input, {});
-            }
-          });
-        }
+        newlyLinked = [...new Set(input.signalIds.filter((sid) => !linkedSet.has(sid)))];
       }
 
       // The signal-time bounds only ever widen. Signals arrive out of order
@@ -717,6 +711,22 @@ export const eventResolvers = {
       // returns carries the result, and in one transaction with it so a
       // failed update (bad locationId, say) leaves the bounds untouched.
       const updated = await context.prisma.$transaction(async (tx) => {
+        // The new Links, their grouping log rows (ADR-0021) and, for a person,
+        // the decision (ADR-0024) commit with the update: a failed update or
+        // record leaves no Link behind. A Link a person makes writes no
+        // grouping row.
+        if (newlyLinked.length > 0) {
+          const linkedAt = new Date();
+          await tx.signalEvents.createMany({
+            data: newlyLinked.map((signalId) => ({ signalId, eventId: id, collectedAt: linkedAt })),
+          });
+          if (byPipeline) {
+            await writeGroupingLinks(tx, id, newlyLinked, input);
+            // An Event with a Link in the grouping log always has a row in
+            // the Event facts log: the history readers join the two.
+            await writeEventFacts(tx, id, input, {});
+          }
+        }
         if (input.lastSignalCreatedAt) {
           const last = new Date(input.lastSignalCreatedAt);
           await tx.events.updateMany({
@@ -781,9 +791,32 @@ export const eventResolvers = {
             destinationId: input.destinationId !== undefined,
           });
         }
+        // A person's edit is their decision (ADR-0024): which fields they sent
+        // and which Signals they linked.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_UPDATED",
+          subjectType: "event",
+          subjectId: id,
+          payload: {
+            // What the person chose, field by field, and what it replaced.
+            changes: Object.fromEntries(
+              Object.entries(input).filter(([k, v]) => v !== undefined && k !== "signalIds"),
+            ) as InputJsonValue,
+            linkedSignalIds: newlyLinked,
+            previous: {
+              title: existing.title,
+              description: existing.description,
+              severity: existing.severity,
+              types: existing.types,
+              locationId: existing.locationId,
+              originId: existing.originId,
+              destinationId: existing.destinationId,
+            },
+          },
+        });
         return row;
       });
-      logEventChange("updated", updated, [...new Set(newlyLinked)]);
+      logEventChange("updated", updated, newlyLinked);
       return updated;
     },
 
@@ -803,7 +836,16 @@ export const eventResolvers = {
         });
       }
 
-      await context.prisma.events.delete({ where: { id: args.id } });
+      await context.prisma.$transaction(async (tx) => {
+        await tx.events.delete({ where: { id: args.id } });
+        // The record outlives the Event: the only trace of who removed it.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "EVENT_DELETED",
+          subjectType: "event",
+          subjectId: args.id,
+          payload: { title: existing.title, types: existing.types, severity: existing.severity },
+        });
+      });
       return true;
     },
 
@@ -845,12 +887,27 @@ export const eventResolvers = {
         where: { eventId: args.eventId, status: "published" },
       });
 
+      // The escalation is a person's decision (ADR-0024). When it raises the
+      // Alert, the record commits with the Alert; when it joins one, with the
+      // escalation row below. The decider is the session's user, never args.userId.
+      let recorded = false;
+
       // Create alert if none exists, and fan out notifications
       if (!existingAlert) {
         // A person raises this Alert: it holds the onset it was raised on
         // (ADR-0021) and no run kind.
-        const alert = await context.prisma.alerts.create({
-          data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
+        const alert = await context.prisma.$transaction(async (tx) => {
+          const created = await tx.alerts.create({
+            data: { eventId: args.eventId, status: "published", ...onsetAtRaise(event) },
+          });
+          recorded =
+            (await recordDecisionIfPerson(tx, context, {
+              decisionType: "EVENT_ESCALATED",
+              subjectType: "event",
+              subjectId: args.eventId,
+              payload: { alertId: created.id, raisedAlert: true },
+            })) != null;
+          return created;
         });
 
         // Fan out notifications to subscribers
@@ -1058,17 +1115,34 @@ export const eventResolvers = {
       }
 
       // Record user escalation (upsert to handle idempotency)
-      const escalation = await context.prisma.eventEscaladedByUsers.upsert({
-        where: {
-          userId_eventId: { userId: args.userId, eventId: args.eventId },
-        },
-        create: {
-          userId: args.userId,
-          eventId: args.eventId,
-          validFrom: new Date(),
-          validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-        },
-        update: {},
+      const escalation = await context.prisma.$transaction(async (tx) => {
+        // Insert-or-keep, and learn from the insert itself whether this call
+        // made the escalation: two overlapping calls cannot both count it.
+        const { count: inserted } = await tx.eventEscaladedByUsers.createMany({
+          data: [
+            {
+              userId: args.userId,
+              eventId: args.eventId,
+              validFrom: new Date(),
+              validTo: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+            },
+          ],
+          skipDuplicates: true,
+        });
+        const row = await tx.eventEscaladedByUsers.findUniqueOrThrow({
+          where: { userId_eventId: { userId: args.userId, eventId: args.eventId } },
+        });
+        // Joining an existing Alert: one record for a new escalation, none for
+        // a repeat.
+        if (!recorded && inserted === 1) {
+          await recordDecisionIfPerson(tx, context, {
+            decisionType: "EVENT_ESCALATED",
+            subjectType: "event",
+            subjectId: args.eventId,
+            payload: { alertId: existingAlert?.id ?? null, raisedAlert: false },
+          });
+        }
+        return row;
       });
 
       return escalation;

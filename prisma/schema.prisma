@@ -28,6 +28,36 @@ enum DecisionType {
   SIGNAL_LOCATION_DECIDED
   /// A person set a Signal's severity.
   SIGNAL_SEVERITY_SET
+  /// A person created a Crisis from Events. Needs a rationale.
+  CRISIS_CREATED
+  /// A person added an Event to a Crisis. Needs a rationale.
+  CRISIS_EVENT_ADDED
+  /// A person removed an Event from a Crisis.
+  CRISIS_EVENT_REMOVED
+  /// A person edited a Crisis: title, description or attachments.
+  CRISIS_EDITED
+  /// A person deleted a Crisis.
+  CRISIS_DELETED
+  /// A person raised an Alert on an Event.
+  ALERT_RAISED
+  /// A person changed an Alert.
+  ALERT_UPDATED
+  /// A person deleted an Alert.
+  ALERT_DELETED
+  /// A person created an Event.
+  EVENT_CREATED
+  /// A person changed an Event.
+  EVENT_UPDATED
+  /// A person escalated an Event (in code: raised or joined its Alert).
+  EVENT_ESCALATED
+  /// A person deleted an Event.
+  EVENT_DELETED
+  /// A person created a manual Signal.
+  SIGNAL_CREATED
+  /// A person deleted a Signal.
+  SIGNAL_DELETED
+  /// A person reviewed a hotline (ground) thread.
+  GROUND_THREAD_REVIEWED
 
   @@map("decision_type")
 }

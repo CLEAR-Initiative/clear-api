@@ -53,7 +53,11 @@ function makePrisma(opts: {
   memberships?: Array<{ teamId: string }>;
   teamLocations?: Array<{ locationId: string }>;
 } = {}) {
-  return {
+  const prisma: Record<string, unknown> = {
+    // createManualSignal writes the Signal and its DecisionRecord in one
+    // transaction (ADR-0024).
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    decisionRecords: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "dr1", ...data })) },
     dataSources: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => SOURCES[where.id] ?? null),
     },
@@ -73,6 +77,7 @@ function makePrisma(opts: {
       findUnique: vi.fn(async () => ({ level: 2 })),
     },
   };
+  return prisma;
 }
 
 function ctx(

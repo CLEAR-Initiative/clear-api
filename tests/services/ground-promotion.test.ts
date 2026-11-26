@@ -204,8 +204,17 @@ function makePromotionContext() {
 
   const createdSignals: Array<Record<string, unknown>> = [];
   const threadUpdates: Array<Record<string, unknown>> = [];
+  const decisions: Array<Record<string, unknown>> = [];
 
-  const prisma = {
+  const prisma: Record<string, unknown> = {
+    // The state change and its DecisionRecord run in one transaction.
+    $transaction: async (fn: (tx: unknown) => unknown) => fn(prisma),
+    decisionRecords: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        decisions.push(args.data);
+        return { id: "dr1", ...args.data };
+      },
+    },
     locations: {
       findUnique: async (args: { where: { id: string } }) =>
         args.where.id === "loc_nyala" ? { id: "loc_nyala" } : null,
@@ -240,18 +249,35 @@ function makePromotionContext() {
     locale: "en",
   } as unknown as Context;
 
-  return { context, createdSignals, threadUpdates };
+  return { context, createdSignals, threadUpdates, decisions };
 }
 
 describe("reviewGroundThread → approve_public promotes via createSignal", () => {
   it("creates the signal through the standard path and links it on the thread", async () => {
-    const { context, createdSignals, threadUpdates } = makePromotionContext();
+    const { context, createdSignals, threadUpdates, decisions } = makePromotionContext();
 
     const result = await groundResolvers.Mutation.reviewGroundThread(
       null,
-      { id: "t1", decision: "approve_public" },
+      { id: "t1", decision: "approve_public", note: "Two witnesses agree" },
       context,
     );
+
+    // One DecisionRecord, from the session's user, with the note as its reason.
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        decisionType: "GROUND_THREAD_REVIEWED",
+        subjectType: "ground_thread",
+        subjectId: "t1",
+        decidedById: "u1",
+        rationale: "Two witnesses agree",
+        payload: expect.objectContaining({
+          decision: "approve_public",
+          previousState: "approved_private",
+          state: "approved_public",
+          promotedSignalId: "sig_1",
+        }),
+      }),
+    ]);
 
     expect(createdSignals).toHaveLength(1);
     const signal = createdSignals[0]!;

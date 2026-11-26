@@ -69,6 +69,32 @@ Guarded pipeline writes: `updateSignalSeverity`, `updateSignalContent`
 refused `REPLAY` writes no Outcome), and the scripts `backfill-legacy-l4.ts`
 and `backfill-locations.ts`.
 
+## V2 coverage (#1289)
+
+Every remaining human mutation on a Crisis, Alert, Event, Signal or hotline
+thread records a decision in its transaction. A mutation both people and the
+pipeline call uses `recordDecisionIfPerson`: a pipeline caller writes no row.
+
+| Judgement | Type |
+|---|---|
+| Create a Crisis | `CRISIS_CREATED` (rationale required) |
+| Add an Event to a Crisis | `CRISIS_EVENT_ADDED` (rationale required) |
+| Remove an Event from a Crisis | `CRISIS_EVENT_REMOVED` |
+| Edit a Crisis title, description or attachments | `CRISIS_EDITED` |
+| Delete a Crisis | `CRISIS_DELETED` |
+| Raise an Alert, change its status, delete it | `ALERT_RAISED`, `ALERT_UPDATED`, `ALERT_DELETED` |
+| Create, edit, escalate, delete an Event | `EVENT_CREATED`, `EVENT_UPDATED`, `EVENT_ESCALATED`, `EVENT_DELETED` |
+| File a manual Signal, delete a Signal | `SIGNAL_CREATED`, `SIGNAL_DELETED` |
+| Review a hotline thread | `GROUND_THREAD_REVIEWED` (the note is the rationale) |
+
+- A Crisis is a person's decision: `createCrisisFromEvents` and
+  `addEventToCrisis` refuse a pipeline caller and a call with no rationale.
+- `tests/schema/decision-coverage.test.ts` classifies every mutation on these
+  entities as a decision or not, with the reason. A new mutation fails it until
+  someone classifies it.
+- A rationale on "escalate" waits for the ontology owner to choose its
+  meaning. Merge and reject wait for the Event lifecycle mutations (#1280).
+
 ## Not the Activity log
 
 The Activity log stays as product analytics. Its helper must never throw, it

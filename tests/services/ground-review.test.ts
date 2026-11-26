@@ -125,7 +125,10 @@ function buildContext(
   teamRole: string | null = null,
 ) {
   const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
-  const prisma = {
+  const prisma: Record<string, unknown> = {
+    // The review and its DecisionRecord run in one transaction (ADR-0024).
+    $transaction: async (fn: (tx: unknown) => unknown) => fn(prisma),
+    decisionRecords: { create: async (args: { data: Record<string, unknown> }) => ({ id: "dr1", ...args.data }) },
     locations: {
       findUnique: async (args: { where: { id: string } }) =>
         knownLocationIds.includes(args.where.id) ? { id: args.where.id } : null,
@@ -158,6 +161,17 @@ function buildContext(
 }
 
 const reviewGroundThread = groundResolvers.Mutation.reviewGroundThread;
+
+describe("reviewGroundThread: a person's decision", () => {
+  it("refuses an API-key caller before it writes anything", async () => {
+    const { context, updates } = buildContext({ id: "admin-key", role: "admin" }, { id: "t1", reviewState: "unverified", source: { reviewerRoles: ["admin"] } });
+    (context as unknown as { authMethod: string }).authMethod = "api-key";
+    await expect(reviewGroundThread(null, { id: "t1", decision: "approve_private" }, context)).rejects.toMatchObject({
+      extensions: { code: "FORBIDDEN" },
+    });
+    expect(updates).toHaveLength(0);
+  });
+});
 
 describe("reviewExtras", () => {
   it("accepts every known reject reason with reject, and nulls it otherwise", () => {

@@ -13,6 +13,8 @@
  */
 
 import { GraphQLError } from "graphql";
+import { recordDecision } from "../services/decision-records.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import type { Context } from "../context.js";
 import {
   assertGroundSourceInScope,
@@ -703,6 +705,15 @@ export const groundResolvers = {
         }
       }
 
+      // A review is a person's decision (ADR-0024): refuse the pipeline before
+      // anything is written, so promotion never runs for a call that cannot
+      // record its decision.
+      if (isPipelineCaller(context)) {
+        throw new GraphQLError("Only a person can review a hotline thread", {
+          extensions: { code: "FORBIDDEN" },
+        });
+      }
+
       // approve_public promotes BEFORE the state flips: if promotion
       // fails, the thread stays reviewable and the decision can be
       // retried. createSignal's (sourceId, externalId) dedupe makes the
@@ -714,16 +725,41 @@ export const groundResolvers = {
         promotedSignalId = await promoteThread(context, thread.id, extras.overrides);
       }
 
-      return context.prisma.groundThreads.update({
-        where: { id: thread.id },
-        data: {
-          reviewState: transition.next,
-          reviewedBy: user.id,
-          reviewedAt: new Date(),
-          reviewNote: args.note ?? null,
-          rejectReason: extras.rejectReason,
-          ...(promotedSignalId ? { promotedSignalId } : {}),
-        },
+      // The review is a person's decision (ADR-0024): recorded with the state
+      // change, the note as its rationale. Promotion stays outside this
+      // transaction: createSignal recovers from a unique clash by re-reading,
+      // which an aborted Postgres transaction cannot do. If the record fails,
+      // the thread stays reviewable and a retry reuses the promoted Signal
+      // through createSignal's (sourceId, externalId) dedupe.
+      const reviewedAt = new Date();
+      return context.prisma.$transaction(async (tx) => {
+        const reviewed = await tx.groundThreads.update({
+          where: { id: thread.id },
+          data: {
+            reviewState: transition.next,
+            reviewedBy: user.id,
+            reviewedAt,
+            reviewNote: args.note ?? null,
+            rejectReason: extras.rejectReason,
+            ...(promotedSignalId ? { promotedSignalId } : {}),
+          },
+        });
+        await recordDecision(tx, {
+          decider: { kind: "context", context },
+          decisionType: "GROUND_THREAD_REVIEWED",
+          subjectType: "ground_thread",
+          subjectId: thread.id,
+          decidedAt: reviewedAt,
+          rationale: args.note ?? null,
+          payload: {
+            decision: args.decision,
+            previousState: thread.reviewState,
+            state: transition.next,
+            rejectReason: extras.rejectReason ?? null,
+            promotedSignalId: promotedSignalId ?? thread.promotedSignalId ?? null,
+          },
+        });
+        return reviewed;
       });
     },
 

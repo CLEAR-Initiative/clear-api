@@ -20,6 +20,9 @@ let n = 0;
 // The gx pipeline authenticates as a system admin through an API key.
 const ctx = { prisma, user: { id: "pipeline", role: "admin" }, session: null, authMethod: "apiKey", locale: "en" } as unknown as Context;
 const { createSignal, createManualSignal } = signalResolvers.Mutation;
+const OFFICER_ID = `signal-id-db-${Date.now()}-officer`;
+/** A person filing a manual Signal in the app. */
+const officer = { prisma, user: { id: OFFICER_ID, role: "admin" }, session: null, authMethod: "session", locale: "en" } as unknown as Context;
 
 /** A fresh id shaped like a lowercase UUIDv5 (version nibble 5, RFC variant). */
 const newV5Id = () => randomUUID().replace(/^(.{14})./, "$15");
@@ -76,11 +79,16 @@ describeIfDb("pipeline-owned Signal ids", () => {
     otherSourceId = (await prisma.dataSources.create({ data: { name: `${RUN}-other`, type: "test" } })).id;
     // createManualSignal only files under a trusted source name.
     manualSourceId = (await prisma.dataSources.create({ data: { name: "field_officer", type: "test" } })).id;
+    // A manual Signal is a person's decision (ADR-0024): the record needs their row.
+    await prisma.user.create({ data: { id: OFFICER_ID, name: OFFICER_ID, email: `${OFFICER_ID}@example.test`, role: "admin" } });
   });
 
   afterAll(async () => {
     await prisma.signals.deleteMany({ where: { sourceId: { in: [sourceId, otherSourceId, manualSourceId] } } });
     await prisma.dataSources.deleteMany({ where: { id: { in: [sourceId, otherSourceId, manualSourceId] } } });
+    // Test cleanup only: no application path deletes a record.
+    await prisma.decisionRecords.deleteMany({ where: { decidedById: OFFICER_ID } });
+    await prisma.user.deleteMany({ where: { id: OFFICER_ID } });
   });
 
   it("stores a supplied lowercase UUIDv5 as the Signal id", async () => {
@@ -183,7 +191,7 @@ describeIfDb("pipeline-owned Signal ids", () => {
     const manual = await createManualSignal(
       {},
       { input: { sourceId: manualSourceId, title: "Flooding in Kassala", description: "Reported by a field officer" } },
-      ctx,
+      officer,
     );
     expect(manual.id).toMatch(/^c[a-z0-9]{24}$/);
     expect(manual.id).not.toBe(pipelineId);

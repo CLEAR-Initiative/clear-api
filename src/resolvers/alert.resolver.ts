@@ -30,6 +30,7 @@ import {
   pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
+import { recordDecisionIfPerson } from "../services/decision-records.js";
 
 interface CreateAlertInput {
   eventId: string;
@@ -145,24 +146,41 @@ export const alertResolvers = {
         where: { eventId: input.eventId },
         orderBy: { id: "asc" }, // deterministic: earliest wins
       });
-      const alert = existingAlert
-        ? (input.status && input.status !== existingAlert.status
-            ? await context.prisma.alerts.update({
-                where: { id: existingAlert.id },
-                data: { status: input.status },
-              })
-            : existingAlert)
-        : await context.prisma.alerts.create({
-            data: {
-              eventId: input.eventId,
-              status: input.status ?? "draft",
-              // The onset the Alert is raised on, and the kind of run that
-              // raises it (ADR-0021). Set once: a retry returns the Alert
-              // that exists and changes neither.
-              ...onsetAtRaise(event),
-              raisedByRunKind: isPipelineCaller(context) ? runKindOf(input) : null,
-            },
-          });
+      const statusChange = existingAlert != null && !!input.status && input.status !== existingAlert.status;
+      // A person raising an Alert, or changing its status, is a decision
+      // (ADR-0024), recorded with the write. The pipeline's alerts are not.
+      const alert =
+        existingAlert && !statusChange
+          ? existingAlert
+          : await context.prisma.$transaction(async (tx) => {
+              const row = existingAlert
+                ? await tx.alerts.update({
+                    where: { id: existingAlert.id },
+                    data: { status: input.status! },
+                  })
+                : await tx.alerts.create({
+                    data: {
+                      eventId: input.eventId,
+                      status: input.status ?? "draft",
+                      // The onset the Alert is raised on, and the kind of run that
+                      // raises it (ADR-0021). Set once: a retry returns the Alert
+                      // that exists and changes neither.
+                      ...onsetAtRaise(event),
+                      raisedByRunKind: isPipelineCaller(context) ? runKindOf(input) : null,
+                    },
+                  });
+              await recordDecisionIfPerson(tx, context, {
+                decisionType: existingAlert ? "ALERT_UPDATED" : "ALERT_RAISED",
+                subjectType: "alert",
+                subjectId: row.id,
+                payload: {
+                  eventId: input.eventId,
+                  status: row.status,
+                  previousStatus: existingAlert?.status ?? null,
+                },
+              });
+              return row;
+            });
 
       // Skip the notification fan-out when the alert already existed -
       // subscribers were notified on the original create, we don't want
@@ -452,11 +470,22 @@ export const alertResolvers = {
         alertEvent?.locationId,
       ]);
 
-      return context.prisma.alerts.update({
-        where: { id },
-        data: {
-          status: input.status ?? undefined,
-        },
+      return context.prisma.$transaction(async (tx) => {
+        const updated = await tx.alerts.update({
+          where: { id },
+          data: {
+            status: input.status ?? undefined,
+          },
+        });
+        if (updated.status !== existing.status) {
+          await recordDecisionIfPerson(tx, context, {
+            decisionType: "ALERT_UPDATED",
+            subjectType: "alert",
+            subjectId: id,
+            payload: { eventId: existing.eventId, status: updated.status, previousStatus: existing.status },
+          });
+        }
+        return updated;
       });
     },
 
@@ -476,7 +505,16 @@ export const alertResolvers = {
         });
       }
 
-      await context.prisma.alerts.delete({ where: { id: args.id } });
+      await context.prisma.$transaction(async (tx) => {
+        await tx.alerts.delete({ where: { id: args.id } });
+        // The record outlives the Alert: it is the only trace of who removed it.
+        await recordDecisionIfPerson(tx, context, {
+          decisionType: "ALERT_DELETED",
+          subjectType: "alert",
+          subjectId: args.id,
+          payload: { eventId: existing.eventId, status: existing.status },
+        });
+      });
       return true;
     },
 

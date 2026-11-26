@@ -12,7 +12,7 @@
  * `bun run test:db tests/resolvers/event.db.test.ts`.
  */
 
-import { it, expect, afterAll } from "vitest";
+import { it, expect, afterAll, beforeAll } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import { eventResolvers } from "../../src/resolvers/event.resolver.js";
 import type { Context } from "../../src/context.js";
@@ -24,9 +24,10 @@ const { updateEvent } = eventResolvers.Mutation;
 // global admin unconditionally; these tests exercise signal-time-bounds logic,
 // not the role gate, so the actor is an admin. (`analyst` is a team role now and
 // would need a location-scoped team membership — out of scope here.)
+const ANALYST_ID = `event-db-${Date.now()}-admin`;
 const analyst = {
   prisma,
-  user: { id: `event-db-${Date.now()}-admin`, role: "admin" },
+  user: { id: ANALYST_ID, role: "admin" },
   session: null,
   authMethod: "session",
 } as unknown as Context;
@@ -52,8 +53,16 @@ async function makeEvent(): Promise<string> {
 }
 
 describeIfDb("updateEvent signal-time bounds against the real schema", () => {
+  // A person's edit records a decision (ADR-0024), which needs the person's row.
+  beforeAll(async () => {
+    await prisma.user.create({ data: { id: ANALYST_ID, name: ANALYST_ID, email: `${ANALYST_ID}@example.test`, role: "admin" } });
+  });
+
   afterAll(async () => {
     await prisma.events.deleteMany({ where: { id: { in: eventIds } } });
+    // Test cleanup only: no application path deletes a record.
+    await prisma.decisionRecords.deleteMany({ where: { decidedById: ANALYST_ID } });
+    await prisma.user.deleteMany({ where: { id: ANALYST_ID } });
   });
 
   it("leaves lastSignalCreatedAt alone when an older Signal joins", async () => {
