@@ -1311,8 +1311,11 @@ with `pipelineVersion` (the clear-pipeline git SHA) and `runId`.<div class="fiel
     <td><code>setSignalOtherSites</code></td>
     <td><code>Signal!</code></td>
     <td>Store the other sites of a signal: the places its text names besides
-its primary location (ADR-0025). Does not change the primary location,
-the origin or the destination. Admin/pipeline only.<div class="field-args"><span class="arg"><code>signalId: String!</code></span><span class="arg"><code>sites: [SignalSiteInput!]!</code></span></div></td>
+its primary location (ADR-0025). Replaces the signal's whole set, so a
+replay gives the same set and an empty list clears it. A site equal to the
+primary location is dropped; a repeated location keeps its first name.
+Does not change the primary location, the origin or the destination.
+Admin/pipeline only.<div class="field-args"><span class="arg"><code>signalId: String!</code></span><span class="arg"><code>sites: [SignalSiteInput!]!</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
     <td><code>updateSignalContent</code></td>
     <td><code>Signal!</code></td>

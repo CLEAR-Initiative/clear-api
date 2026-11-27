@@ -120,6 +120,33 @@ describeIfDb("Other sites of a Signal against the real schema", () => {
     expect(await read(signalId)).toEqual([]);
   });
 
+  it("replaces the whole set when the sites are set again", async () => {
+    const signalId = await signalAt(AIRPORT_ID);
+    await set(signalId, [{ locationId: CAMP_ID, name: "Dumayyah camp" }, { locationId: MARKET_ID, name: "Nyala market" }]);
+    await set(signalId, [{ locationId: MARKET_ID, name: "the market" }]);
+    expect(await read(signalId)).toEqual([{ locationId: MARKET_ID, name: "the market", kind: "NAMED_SITE" }]);
+    await set(signalId, []);
+    expect(await read(signalId)).toEqual([]);
+  });
+
+  it("gives the same set when the same call is replayed", async () => {
+    const signalId = await signalAt(AIRPORT_ID);
+    const sites = [{ locationId: CAMP_ID, name: "Dumayyah camp" }];
+    await set(signalId, sites);
+    await set(signalId, sites);
+    expect(await read(signalId)).toEqual([{ locationId: CAMP_ID, name: "Dumayyah camp", kind: "NAMED_SITE" }]);
+  });
+
+  it("drops a site that is the primary location, and keeps the first name of a repeated location", async () => {
+    const signalId = await signalAt(AIRPORT_ID);
+    await set(signalId, [
+      { locationId: AIRPORT_ID, name: "Nyala Airport" },
+      { locationId: CAMP_ID, name: "Dumayyah camp" },
+      { locationId: CAMP_ID, name: "Dumayah" },
+    ]);
+    expect(await read(signalId)).toEqual([{ locationId: CAMP_ID, name: "Dumayyah camp", kind: "NAMED_SITE" }]);
+  });
+
   it("drops the sites with the Signal", async () => {
     const signalId = await signalAt(AIRPORT_ID);
     await set(signalId, [{ locationId: MARKET_ID, name: "Nyala market" }]);

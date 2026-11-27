@@ -907,7 +907,7 @@ export const signalResolvers = {
 
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.signalId },
-        select: { id: true },
+        select: { id: true, locationId: true },
       });
       if (!existing) {
         throw new GraphQLError("Signal not found", {
@@ -915,7 +915,11 @@ export const signalResolvers = {
         });
       }
 
-      const locationIds = [...new Set(args.sites.map((site) => site.locationId))];
+      // One row for one location (the first name wins), and never the primary
+      // location: it is already the Signal's location.
+      const firstName = new Map<string, SignalSiteInput>();
+      for (const site of args.sites) if (!firstName.has(site.locationId)) firstName.set(site.locationId, site);
+      const locationIds = [...firstName.keys()];
       const found = await context.prisma.locations.findMany({
         where: { id: { in: locationIds } },
         select: { id: true },
@@ -927,15 +931,21 @@ export const signalResolvers = {
         });
       }
 
-      await context.prisma.signalSites.createMany({
-        data: args.sites.map((site) => ({
+      // The call replaces the whole set: a replay of the same call leaves the
+      // same set, and a later run with fewer names drops the stale ones.
+      const rows = locationIds
+        .filter((id) => id !== existing.locationId)
+        .map((id) => firstName.get(id)!)
+        .map((site) => ({
           signalId: args.signalId,
           locationId: site.locationId,
           name: site.name ?? null,
-          kind: site.kind ?? "NAMED_SITE",
-        })),
-        skipDuplicates: true,
-      });
+          kind: site.kind ?? ("NAMED_SITE" as const),
+        }));
+      await context.prisma.$transaction([
+        context.prisma.signalSites.deleteMany({ where: { signalId: args.signalId } }),
+        context.prisma.signalSites.createMany({ data: rows }),
+      ]);
       return context.prisma.signals.findUniqueOrThrow({ where: { id: args.signalId } });
     },
 
