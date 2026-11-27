@@ -118,7 +118,8 @@ export const signalTypeDef = gql`
     """General location (when no origin/destination)."""
     generalLocation: Location
     """The other places the signal's text names, beside its primary location
-    (ADR-0025). Empty when the text names one place or none. Grouping does not
+    (ADR-0025). Empty when the text names one place or none. Never one of the
+    signal's own general, origin or destination locations. Grouping does not
     read these."""
     otherSites: [SignalSite!]!
     """Events this signal is linked to."""
