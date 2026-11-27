@@ -22,6 +22,31 @@ export const signalTypeDef = gql`
     NEEDS_RECOMPUTE
   }
 
+  """What an other site of a Signal is (ADR-0025)."""
+  enum SignalSiteKind {
+    """A place the Signal's text names, that the pipeline resolved."""
+    NAMED_SITE
+  }
+
+  """An other site of a Signal: a place its text names, beside the primary
+  location (\`generalLocation\`). Grouping reads the primary location only."""
+  type SignalSite {
+    """The CLEAR location of the site (a level-4 point or an admin area)."""
+    location: Location!
+    """The name as the Signal's text gives it."""
+    name: String
+    kind: SignalSiteKind!
+  }
+
+  """One other site to store on a Signal (\`setSignalOtherSites\`)."""
+  input SignalSiteInput {
+    locationId: String!
+    """The name as the Signal's text gives it."""
+    name: String
+    """Defaults to NAMED_SITE."""
+    kind: SignalSiteKind
+  }
+
   """A source observation ingested from a data source or filed manually.
   Upstream source payloads are stored internally and are not returned on this type."""
   type Signal {
@@ -92,6 +117,10 @@ export const signalTypeDef = gql`
     destinationLocation: Location
     """General location (when no origin/destination)."""
     generalLocation: Location
+    """The other places the signal's text names, beside its primary location
+    (ADR-0025). Empty when the text names one place or none. Grouping does not
+    read these."""
+    otherSites: [SignalSite!]!
     """Events this signal is linked to."""
     events: [Event!]!
     """User feedback on this signal."""

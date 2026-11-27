@@ -14,6 +14,11 @@ import { recordDecisionIfPerson } from "../services/decision-records.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
+/** One other site to store on a Signal (`setSignalOtherSites`, ADR-0025). */
+type SignalSiteInput = { locationId: string; name?: string | null; kind?: "NAMED_SITE" | null };
+/** A `signal_sites` row with its location loaded. */
+type SiteRow = { location: unknown; name: string | null; kind: string };
+
 /** The only `data_sources` names `createManualSignal` accepts. Exported so the
  *  migration that creates those rows can be checked against this list rather
  *  than a second copy of it: adding a name here without adding it to
@@ -890,6 +895,50 @@ export const signalResolvers = {
       return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
+    setSignalOtherSites: async (
+      _parent: unknown,
+      args: { signalId: string; sites: SignalSiteInput[] },
+      context: Context,
+    ) => {
+      // Admin/pipeline only (ADR-0025): the drain stores the other places a
+      // Signal's text names. The primary location, origin and destination
+      // are not touched, and grouping never reads these rows.
+      requireRole(context, ["admin", PIPELINE_ROLE]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.signalId },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      const locationIds = [...new Set(args.sites.map((site) => site.locationId))];
+      const found = await context.prisma.locations.findMany({
+        where: { id: { in: locationIds } },
+        select: { id: true },
+      });
+      const missing = locationIds.filter((id) => !found.some((loc) => loc.id === id));
+      if (missing.length > 0) {
+        throw new GraphQLError(`Location not found: ${missing.join(", ")}`, {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      await context.prisma.signalSites.createMany({
+        data: args.sites.map((site) => ({
+          signalId: args.signalId,
+          locationId: site.locationId,
+          name: site.name ?? null,
+          kind: site.kind ?? "NAMED_SITE",
+        })),
+        skipDuplicates: true,
+      });
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.signalId } });
+    },
+
     updateSignalContent: async (
       _parent: unknown,
       args: { input: UpdateSignalContentInput },
@@ -1123,6 +1172,21 @@ export const signalResolvers = {
       if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
+    },
+    otherSites: async (
+      parent: { id: string; otherSites?: SiteRow[] },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path when preloaded via a deep include of `otherSites.location`.
+      const rows =
+        parent.otherSites ??
+        (await prisma.signalSites.findMany({
+          where: { signalId: parent.id },
+          include: { location: true },
+          orderBy: [{ createdAt: "asc" }, { locationId: "asc" }],
+        }));
+      return rows.map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
     },
     countries: (
       parent: { id: string; countries?: unknown },

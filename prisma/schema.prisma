@@ -601,6 +601,7 @@ model locations {
   unresolvedPlaceNameStates      unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameState")
   unresolvedPlaceNameCountries   unresolvedPlaceNames[]       @relation("UnresolvedPlaceNameCountry")
   unresolvedPlaceNameSignalAreas unresolvedPlaceNameSignals[] @relation("UnresolvedPlaceNameSignalArea")
+  signalSites                    signalSites[]
   placeAliasScopes               placeAliases[]               @relation("PlaceAliasScope")
   placeAliasLocations            placeAliases[]               @relation("PlaceAliasLocation")
 
@@ -851,6 +852,9 @@ model signals {
   unresolvedPlaceNames     unresolvedPlaceNameSignals[]
   estimates                estimate[]
   locationOutcomes         signalLocationOutcomes[]
+  /// The other places the Signal's text names (ADR-0025). The primary
+  /// location stays in `locationId`; grouping reads that column only.
+  otherSites               signalSites[]
 
   @@unique([sourceId, externalId])
   @@index([sourceId])
@@ -3547,4 +3551,33 @@ model decisionRecords {
 
   @@index([subjectType, subjectId, sequence])
   @@map("decision_records")
+}
+
+/// What an other site of a Signal is (ADR-0025). One value today; the role
+/// of a site (impact, origin, destination) is a later decision (#1657).
+enum SignalSiteKind {
+  /// A place the Signal's text names, that the pipeline resolved.
+  NAMED_SITE
+
+  @@map("signal_site_kind")
+}
+
+/// An other site of a Signal: a resolved place that its text names, beside
+/// the primary location (ADR-0025, D-0287). Written by the pipeline with
+/// `setSignalOtherSites`, which replaces a Signal's whole set. No service
+/// that groups or measures reads this table: grouping and location
+/// precision read the primary location only.
+model signalSites {
+  signalId   String         @map("signal_id")
+  signal     signals        @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  locationId String         @map("location_id")
+  location   locations      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  kind       SignalSiteKind @default(NAMED_SITE)
+  /// The name as the Signal's text gives it.
+  name       String?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  @@id([signalId, locationId])
+  @@index([locationId])
+  @@map("signal_sites")
 }
