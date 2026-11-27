@@ -259,10 +259,11 @@ export const mutationTypeDef = gql`
     challenge, if any. Never changes the Signal: a decision does."""
     submitSignalLocationChallenge(input: SubmitSignalLocationChallengeInput!): SignalLocationChallenge!
 
-    """File a Location challenge from the pipeline, with origin PIPELINE and
-    the point the source sent as the proposed point. It goes to the team
-    whose area holds the Signal's location (the most specific area wins), or
-    to no team when none does: a platform admin decides those. When the
+    """File a Location challenge from the pipeline, with origin PIPELINE. The
+    Signal stays at the point its source sent, and the proposed point is the
+    place its text names in another state (D-0283). It goes to the team whose
+    area holds the proposed point (the most specific area wins), or to no
+    team when none does: a platform admin decides those (D-0295). When the
     Signal already has an open challenge, that one is returned unchanged and
     nothing is filed. Never changes the Signal: a decision does. Auth: admin
     or pipeline."""
@@ -276,10 +277,12 @@ export const mutationTypeDef = gql`
     instead; DECLINE leaves the Signal as it is. A written point becomes the
     Signal's general location (a reused or new level-4 point under the admin
     area containing it; origin and destination are cleared, countries follow),
-    and later source revisions keep it. Writing needs the Signal still within
-    the team's area, and the point inside the areas CLEAR covers and, unless
-    a platform admin decides, within the team's area. CONFLICT when the
-    challenge is no longer open."""
+    and later source revisions keep it. Writing needs the point inside the
+    areas CLEAR covers and, unless a platform admin decides, within the team's
+    area. A challenge a person filed also needs the Signal still within the
+    team's area; a pipeline challenge does not, since it goes to the team of
+    the proposed place while the Signal sits at its source point in another
+    state (D-0283). CONFLICT when the challenge is no longer open."""
     decideSignalLocationChallenge(
       """The challenge to decide."""
       id: String!

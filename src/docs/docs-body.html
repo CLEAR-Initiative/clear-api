@@ -717,8 +717,10 @@ alias (ADR-0019) wins: the same normalised name and country, and a scope
 that is the whole country or holds `withinLocationId`. Its hit has
 `source: ALIAS` and a `locationId`, with the location's point as the
 coordinates. Then GeoNames (`source: GEONAMES`): an exact normalised-name
-match, then a `pg_trgm` fuzzy match, preferring populated places / admin
-areas (feature class P/A) and the more-populous tie-break. `countryCode`
+match, then a `pg_trgm` fuzzy match. On each tier a populated place
+(feature class P) comes before an admin area (class A), so a town wins
+against the district record of the same name; the more populous breaks a
+tie. `countryCode`
 (ISO-3166-1 alpha-2, e.g. &quot;SD&quot;) scopes the search; omit to search every
 loaded country. `minSimilarity` (default 0.4) floors the fuzzy match.
 Arabic names (GeoNames' Arabic alternate names) match exactly only: no
@@ -1342,10 +1344,11 @@ challenge, if any. Never changes the Signal: a decision does.<div class="field-a
   </tr><tr id="mutation-filesignallocationchallengefrompipeline">
     <td><code>fileSignalLocationChallengeFromPipeline</code></td>
     <td><code>SignalLocationChallenge!</code></td>
-    <td>File a Location challenge from the pipeline, with origin PIPELINE and
-the point the source sent as the proposed point. It goes to the team
-whose area holds the Signal's location (the most specific area wins), or
-to no team when none does: a platform admin decides those. When the
+    <td>File a Location challenge from the pipeline, with origin PIPELINE. The
+Signal stays at the point its source sent, and the proposed point is the
+place its text names in another state (D-0283). It goes to the team whose
+area holds the proposed point (the most specific area wins), or to no
+team when none does: a platform admin decides those (D-0295). When the
 Signal already has an open challenge, that one is returned unchanged and
 nothing is filed. Never changes the Signal: a decision does. Auth: admin
 or pipeline.<div class="field-args"><span class="arg"><code>input: FileSignalLocationChallengeFromPipelineInput!</code></span></div></td>
@@ -1358,10 +1361,12 @@ writes the proposed point onto the Signal; CORRECT writes `point`
 instead; DECLINE leaves the Signal as it is. A written point becomes the
 Signal's general location (a reused or new level-4 point under the admin
 area containing it; origin and destination are cleared, countries follow),
-and later source revisions keep it. Writing needs the Signal still within
-the team's area, and the point inside the areas CLEAR covers and, unless
-a platform admin decides, within the team's area. CONFLICT when the
-challenge is no longer open.<div class="field-args"><span class="arg"><code>id: String!</code> — The challenge to decide.</span><span class="arg"><code>decision: SignalLocationChallengeDecision!</code> — ACCEPT, CORRECT or DECLINE.</span><span class="arg"><code>point: LocationChallengePointInput</code> — The point to write: required with CORRECT, refused otherwise.</span></div></td>
+and later source revisions keep it. Writing needs the point inside the
+areas CLEAR covers and, unless a platform admin decides, within the team's
+area. A challenge a person filed also needs the Signal still within the
+team's area; a pipeline challenge does not, since it goes to the team of
+the proposed place while the Signal sits at its source point in another
+state (D-0283). CONFLICT when the challenge is no longer open.<div class="field-args"><span class="arg"><code>id: String!</code> — The challenge to decide.</span><span class="arg"><code>decision: SignalLocationChallengeDecision!</code> — ACCEPT, CORRECT or DECLINE.</span><span class="arg"><code>point: LocationChallengePointInput</code> — The point to write: required with CORRECT, refused otherwise.</span></div></td>
   </tr><tr id="mutation-recordunresolvedplacename">
     <td><code>recordUnresolvedPlaceName</code></td>
     <td><code>UnresolvedPlaceName!</code></td>

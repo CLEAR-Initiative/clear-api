@@ -86,8 +86,11 @@ export const gazetteerResolvers = {
             ST_SetSRID(ST_MakePoint(g.longitude, g.latitude), 4326))`
         : Prisma.empty;
 
-      // 1. Exact normalised-name hit. Prefer populated places / admin areas
-      //    over hydro/terrain/POI features, then the most-populous tie-break.
+      // 1. Exact normalised-name hit. A populated place (class P) first, then
+      //    an admin area (class A), then hydro/terrain/POI features; the most
+      //    populous breaks a tie. A town wins against the district record of
+      //    the same name: that record's point is the centre of the district,
+      //    not the town (D-0288).
       const exact = await context.prisma.$queryRaw<Row[]>`
         SELECT g.geonames_id AS "geonamesId", g.name, g.latitude, g.longitude,
                g.feature_class AS "featureClass", g.feature_code AS "featureCode",
@@ -97,7 +100,7 @@ export const gazetteerResolvers = {
         WHERE n.name_norm = ${q}
           AND (${cc}::text IS NULL OR n.country_code = ${cc})
           ${inArea}
-        ORDER BY (g.feature_class IN ('P', 'A')) DESC, g.population DESC
+        ORDER BY (g.feature_class = 'P') DESC, (g.feature_class = 'A') DESC, g.population DESC
         LIMIT 1
       `;
       if (exact.length > 0) return toHit(exact[0], 1.0, true);
@@ -107,7 +110,9 @@ export const gazetteerResolvers = {
       // to the Latin spelling, which has the fuzzy tier below.
       if (hasArabic(q)) return null;
 
-      // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator.
+      // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator. The
+      //    best similarity first; between equal ones the same order as the
+      //    exact tier (a town before a district record, D-0288).
       //    `%` prunes by pg_trgm's similarity-threshold GUC, NOT by any
       //    value in the query — its default is 0.3, so a caller passing
       //    minSimilarity < 0.3 would otherwise still be floored at 0.3 with
@@ -128,7 +133,7 @@ export const gazetteerResolvers = {
           WHERE (${cc}::text IS NULL OR n.country_code = ${cc})
             AND n.name_norm % ${q}
             ${inArea}
-          ORDER BY sim DESC, (g.feature_class IN ('P', 'A')) DESC, g.population DESC
+          ORDER BY sim DESC, (g.feature_class = 'P') DESC, (g.feature_class = 'A') DESC, g.population DESC
           LIMIT 1
         `;
       });

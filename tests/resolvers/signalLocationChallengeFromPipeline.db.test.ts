@@ -39,8 +39,12 @@ const pipeline = asUser(PIPELINE_ID, "pipeline");
 const platform = asUser(PLATFORM_ID, "admin");
 const member = asUser(MEMBER_ID, "member");
 
-/** The point Dataminr sent: inside district B1. */
+/** A point inside district B1 (state B). */
 const DATAMINR_POINT = { proposedLat: 51.5, proposedLng: 53.5 };
+/** The place a Signal's text names, inside district A1 (state A). */
+const TEXT_POINT_A1 = { proposedLat: 51, proposedLng: 51 };
+/** The place a Signal's text names, inside district A2 (state A). */
+const TEXT_POINT_A2 = { proposedLat: 53, proposedLng: 51 };
 
 let sourceId: string | undefined;
 
@@ -150,22 +154,26 @@ describeIfDb("Location challenges the pipeline files", () => {
     ).rejects.toMatchObject({ extensions: { code: "NOT_FOUND" } });
   });
 
-  it("goes to the team whose area holds the Signal's new place, the most specific first", async () => {
-    const teamOf = async (locationId: string) => {
-      const signalId = await signalAt(locationId);
-      const filed = await fileSignalLocationChallengeFromPipeline(
-        null,
-        { input: { signalId, ...DATAMINR_POINT } },
-        pipeline,
-      );
+  it("goes to the team whose area holds the proposed place, the most specific first (D-0295)", async () => {
+    // The Signal stays at its source point in B1, which no team's scope holds.
+    const teamOf = async (point: { proposedLat: number; proposedLng: number }) => {
+      const signalId = await signalAt(DISTRICT_B1_ID);
+      const filed = await fileSignalLocationChallengeFromPipeline(null, { input: { signalId, ...point } }, pipeline);
       return filed.teamId;
     };
     // A1 is in the district team's scope and in the state team's.
-    expect(await teamOf(DISTRICT_A1_ID)).toBe(DISTRICT_TEAM_ID);
+    expect(await teamOf(TEXT_POINT_A1)).toBe(DISTRICT_TEAM_ID);
     // A2 is only in the state team's.
-    expect(await teamOf(DISTRICT_A2_ID)).toBe(STATE_TEAM_ID);
+    expect(await teamOf(TEXT_POINT_A2)).toBe(STATE_TEAM_ID);
     // No team's scope holds B1: the team with no scope does not own it.
-    expect(await teamOf(DISTRICT_B1_ID)).toBeNull();
+    expect(await teamOf(DATAMINR_POINT)).toBeNull();
+  });
+
+  it("does not go to the team of the place where the Signal is", async () => {
+    // The Signal is in A1 (district team); the proposed place is in B1.
+    const signalId = await signalAt(DISTRICT_A1_ID);
+    const filed = await fileSignalLocationChallengeFromPipeline(null, { input: { signalId, ...DATAMINR_POINT } }, pipeline);
+    expect(filed).toMatchObject({ teamId: null, previousLocationId: DISTRICT_A1_ID });
   });
 
   it("a team's admin decides the pipeline challenge filed for their team", async () => {
@@ -173,34 +181,73 @@ describeIfDb("Location challenges the pipeline files", () => {
     const signalId = await signalAt(DISTRICT_A1_ID);
     const filed = await fileSignalLocationChallengeFromPipeline(
       null,
-      { input: { signalId, ...DATAMINR_POINT } },
+      { input: { signalId, ...TEXT_POINT_A1 } },
       pipeline,
     );
     const decided = await decideSignalLocationChallenge(null, { id: filed.id, decision: "DECLINE" }, member);
     expect(decided).toMatchObject({ status: "declined", decidedBy: MEMBER_ID, origin: "PIPELINE" });
   });
 
-  it("a point in another state than the team's area is for a platform admin to accept", async () => {
-    // The text placed the Signal in A1; Dataminr's point is in state B. The
-    // district team's admin may keep the new place (DECLINE) but not write a
-    // point outside the team's area: platform admins decide these for now.
-    const signalId = await signalAt(DISTRICT_A1_ID);
+  it("a platform admin accepts a challenge across states, which moves the Signal to the text place", async () => {
+    // The Signal stays at its source point in state B; its text names a place
+    // in A1, which is proposed and goes to the district team.
+    const signalId = await signalAt(DISTRICT_B1_ID);
     const filed = await fileSignalLocationChallengeFromPipeline(
       null,
-      { input: { signalId, ...DATAMINR_POINT } },
+      { input: { signalId, ...TEXT_POINT_A1 } },
       pipeline,
     );
     expect(filed.teamId).toBe(DISTRICT_TEAM_ID);
-    await expect(
-      decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, member),
-    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
     const accepted = await decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, platform);
     expect(accepted).toMatchObject({ status: "accepted", decidedBy: PLATFORM_ID });
     const signal = await prisma.signals.findUniqueOrThrow({
       where: { id: signalId },
       include: { generalLocation: { select: { ancestorIds: true } } },
     });
-    expect(signal.generalLocation?.ancestorIds).toContain(DISTRICT_B1_ID);
+    expect(signal.generalLocation?.ancestorIds).toContain(DISTRICT_A1_ID);
+  });
+
+  it("the team of the proposed place accepts a challenge across states (D-0283)", async () => {
+    // MEMBER is the district team's admin (from the test above). The Signal
+    // is in state B, outside the team's area; the proposed place is in A1.
+    const signalId = await signalAt(DISTRICT_B1_ID);
+    const filed = await fileSignalLocationChallengeFromPipeline(null, { input: { signalId, ...TEXT_POINT_A1 } }, pipeline);
+    expect(filed.teamId).toBe(DISTRICT_TEAM_ID);
+    const accepted = await decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, member);
+    expect(accepted).toMatchObject({ status: "accepted", decidedBy: MEMBER_ID, origin: "PIPELINE" });
+    const signal = await prisma.signals.findUniqueOrThrow({
+      where: { id: signalId },
+      include: { generalLocation: { select: { ancestorIds: true } } },
+    });
+    expect(signal.generalLocation?.ancestorIds).toContain(DISTRICT_A1_ID);
+  });
+
+  it("the team still cannot correct a pipeline challenge to a point outside its area", async () => {
+    const signalId = await signalAt(DISTRICT_B1_ID);
+    const filed = await fileSignalLocationChallengeFromPipeline(null, { input: { signalId, ...TEXT_POINT_A1 } }, pipeline);
+    await expect(
+      decideSignalLocationChallenge(
+        null,
+        { id: filed.id, decision: "CORRECT", point: { lat: DATAMINR_POINT.proposedLat, lng: DATAMINR_POINT.proposedLng } },
+        member,
+      ),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
+  });
+
+  it("a person's challenge is still refused once its Signal has left the team's area", async () => {
+    // Filed by a person (a platform admin, for the district team) while the
+    // Signal was in A1, then a source revision moved the Signal to state B:
+    // the team no longer covers it.
+    const signalId = await signalAt(DISTRICT_A1_ID);
+    const filed = await submitSignalLocationChallenge(
+      null,
+      { input: { signalId, teamId: DISTRICT_TEAM_ID, note: "Looks wrong", ...TEXT_POINT_A1 } },
+      platform,
+    );
+    await prisma.signals.update({ where: { id: signalId }, data: { locationId: DISTRICT_B1_ID } });
+    await expect(
+      decideSignalLocationChallenge(null, { id: filed.id, decision: "ACCEPT" }, member),
+    ).rejects.toMatchObject({ extensions: { code: "FORBIDDEN" } });
   });
 
   it("returns the open challenge instead of filing a second one", async () => {

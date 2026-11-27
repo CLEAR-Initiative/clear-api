@@ -487,8 +487,10 @@ export const queryTypeDef = gql`
     that is the whole country or holds \`withinLocationId\`. Its hit has
     \`source: ALIAS\` and a \`locationId\`, with the location's point as the
     coordinates. Then GeoNames (\`source: GEONAMES\`): an exact normalised-name
-    match, then a \`pg_trgm\` fuzzy match, preferring populated places / admin
-    areas (feature class P/A) and the more-populous tie-break. \`countryCode\`
+    match, then a \`pg_trgm\` fuzzy match. On each tier a populated place
+    (feature class P) comes before an admin area (class A), so a town wins
+    against the district record of the same name; the more populous breaks a
+    tie. \`countryCode\`
     (ISO-3166-1 alpha-2, e.g. \"SD\") scopes the search; omit to search every
     loaded country. \`minSimilarity\` (default 0.4) floors the fuzzy match.
     Arabic names (GeoNames' Arabic alternate names) match exactly only: no

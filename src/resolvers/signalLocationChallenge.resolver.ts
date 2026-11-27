@@ -433,9 +433,11 @@ export const signalLocationChallengeResolvers = {
       return challenge;
     },
 
-    // The pipeline files one after it places a Signal by its text in another
-    // state than the point its source sent (Exponential #1653). A mutation of
-    // its own: `submitSignalLocationChallenge` stays a person's, for a team.
+    // The pipeline files one when the place a Signal's text names is in
+    // another state than the point its source sent (Exponential #1653): the
+    // Signal stays at the source point and the text place is proposed
+    // (D-0283). A mutation of its own: `submitSignalLocationChallenge` stays a
+    // person's, for a team.
     fileSignalLocationChallengeFromPipeline: async (
       _parent: unknown,
       { input }: { input: PipelineFileInput },
@@ -473,16 +475,16 @@ export const signalLocationChallengeResolvers = {
           // Lock the Signal first, as filing by a person and deciding do.
           await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
           if (await openOne(tx)) return null;
-          // Read where the Signal is under the lock, so a move that lands
-          // just before this cannot send the challenge to the team of the
-          // place it left. The pipeline has already moved the Signal: where
-          // it is now is the new place, and the team that holds it decides.
+          // Read where the Signal is under the lock: it is the place a
+          // decision replaces. The pipeline keeps the Signal at its source
+          // point and proposes the place its text names (D-0283), so the team
+          // whose area holds the proposed place decides (D-0295).
           const current = await tx.signals.findUnique({
             where: { id: signal.id },
             select: { originId: true, destinationId: true, locationId: true },
           });
           if (!current) throw signalNotFound(signal.id);
-          const teamId = await teamHolding(tx, shownLocation(current));
+          const teamId = await teamHolding(tx, placement.id);
           return tx.signalLocationChallenges.create({
             data: {
               signalId: signal.id,
@@ -606,13 +608,18 @@ export const signalLocationChallengeResolvers = {
       if (!placement) throw placeOutsideCoverage();
       if (!isPlatformAdmin(user) && !inArea(placement.id)) throw placeOutsideTeamArea();
       // The team may have lost the Signal since it was filed (its scope
-      // changed, or a source revision moved it).
+      // changed, or a source revision moved it). Not for a pipeline
+      // challenge: it goes to the team of the proposed place, and the Signal
+      // sits in another state, at its source point, by design (D-0283,
+      // D-0295). For those the check on the proposed place above is the
+      // team's scope.
+      const signalScoped = challenge.origin !== "PIPELINE";
       const signal = await context.prisma.signals.findUnique({
         where: { id: challenge.signalId },
         select: { originId: true, destinationId: true, locationId: true },
       });
       if (!signal) throw signalNotFound(challenge.signalId);
-      if (!signalInArea(inArea, signal)) throw outsideTeamScope();
+      if (signalScoped && !signalInArea(inArea, signal)) throw outsideTeamScope();
 
       const pointId = await pointFor(context, place, placement.id);
       const countryId = await countryOfPointUnder(context, pointId, placement.id);
@@ -634,7 +641,7 @@ export const signalLocationChallengeResolvers = {
           },
         });
         if (!current) throw signalNotFound(challenge.signalId);
-        if (!signalInArea(inArea, current)) throw outsideTeamScope();
+        if (signalScoped && !signalInArea(inArea, current)) throw outsideTeamScope();
 
         // Conditional on still open. An open challenge is never rewritten (a
         // new one supersedes it), so this writes exactly the place read above.
