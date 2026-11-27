@@ -85,7 +85,7 @@ The one location a Signal is placed at: its general location (`location_id`), or
 _Avoid_: main pin, first site
 
 **Other site**:
-A place a Signal's text names besides its **Primary location**, stored in `signal_sites` (kind `NAMED_SITE`) by the pipeline with `setSignalOtherSites`, read as `Signal.otherSites`. A map shows a marker for each. No service that groups or measures reads it. See ADR-0025.
+A place a Signal's text names besides its **Primary location**, stored in `signal_sites` (kind `NAMED_SITE`) by the pipeline with `setSignalOtherSites`, read as `Signal.otherSites`. A map shows a marker for each. No service that groups or measures reads it. See ADR-0025 (`docs/adr/0025-other-sites-of-a-signal.md`).
 _Avoid_: secondary location, extra location, impact site (the role of a site is a later decision, #1657)
 
 **Location precision**:
