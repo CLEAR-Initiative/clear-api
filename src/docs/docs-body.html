@@ -1312,8 +1312,9 @@ with `pipelineVersion` (the clear-pipeline git SHA) and `runId`.<div class="fiel
     <td><code>Signal!</code></td>
     <td>Store the other sites of a signal: the places its text names besides
 its primary location (ADR-0025). Replaces the signal's whole set, so a
-replay gives the same set and an empty list clears it. A site equal to the
-primary location is dropped; a repeated location keeps its first name.
+replay gives the same set and an empty list clears it. A site equal to a
+location the signal shows (general, origin, destination) is dropped; a
+repeated location keeps its first name.
 Does not change the primary location, the origin or the destination.
 Admin/pipeline only.<div class="field-args"><span class="arg"><code>signalId: String!</code></span><span class="arg"><code>sites: [SignalSiteInput!]!</code></span></div></td>
   </tr><tr id="mutation-updatesignalcontent">
@@ -9706,7 +9707,8 @@ grouped before it was recorded, or never grouped.</td>
     <td><code>otherSites</code></td>
     <td><code>[SignalSite!]!</code></td>
     <td>The other places the signal's text names, beside its primary location
-(ADR-0025). Empty when the text names one place or none. Grouping does not
+(ADR-0025). Empty when the text names one place or none. Never one of the
+signal's own general, origin or destination locations. Grouping does not
 read these.</td>
   </tr><tr>
     <td><code>events</code></td>

@@ -32,14 +32,16 @@ created_at)` holds its other sites, with the primary key
 ## The rules
 
 - **No change to the primary location.** `setSignalOtherSites` does not write
-  `location_id`, `origin_id` or `destination_id`. A site equal to the primary
-  location is dropped.
+  `location_id`, `origin_id` or `destination_id`. A site equal to one of
+  these three is dropped on write, and filtered out on read when the Signal
+  is later moved onto it, so a map draws one marker for one place.
 - **Nothing that groups or measures reads the table.** Grouping keys on the
   district of the primary location. Location precision (ADR-0012), the
   location Outcomes (ADR-0020) and Location challenges read the primary
   location only. A site is for the map.
 - **Replace, not append.** A call replaces the Signal's whole set in one
-  transaction. A replay gives the same set, and a later run with fewer names
+  transaction that locks the Signal row first, so two overlapping calls leave
+  one caller's set, not the union. A replay gives the same set, and a later run with fewer names
   drops the stale ones. An empty list clears the set.
 - **Caller.** Admin or the pipeline role. A person does not edit sites in this
   scope.

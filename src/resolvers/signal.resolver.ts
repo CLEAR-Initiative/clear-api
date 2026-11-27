@@ -17,7 +17,12 @@ import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type Run
 /** One other site to store on a Signal (`setSignalOtherSites`, ADR-0025). */
 type SignalSiteInput = { locationId: string; name?: string | null; kind?: "NAMED_SITE" | null };
 /** A `signal_sites` row with its location loaded. */
-type SiteRow = { location: unknown; name: string | null; kind: string };
+type SiteRow = { locationId: string; location: unknown; name: string | null; kind: string };
+type SignalLocationIds = { locationId?: string | null; originId?: string | null; destinationId?: string | null };
+/** The locations a Signal shows on its own: general, origin, destination. */
+function signalLocationIds(signal: SignalLocationIds): Set<string> {
+  return new Set([signal.locationId, signal.originId, signal.destinationId].filter((x): x is string => Boolean(x)));
+}
 
 /** The only `data_sources` names `createManualSignal` accepts. Exported so the
  *  migration that creates those rows can be checked against this list rather
@@ -907,7 +912,7 @@ export const signalResolvers = {
 
       const existing = await context.prisma.signals.findUnique({
         where: { id: args.signalId },
-        select: { id: true, locationId: true },
+        select: { id: true, locationId: true, originId: true, destinationId: true },
       });
       if (!existing) {
         throw new GraphQLError("Signal not found", {
@@ -915,8 +920,9 @@ export const signalResolvers = {
         });
       }
 
-      // One row for one location (the first name wins), and never the primary
-      // location: it is already the Signal's location.
+      // One row for one location (the first name wins). Never a location the
+      // Signal already shows (general, origin, destination): the map draws
+      // those already.
       const firstName = new Map<string, SignalSiteInput>();
       for (const site of args.sites) if (!firstName.has(site.locationId)) firstName.set(site.locationId, site);
       const locationIds = [...firstName.keys()];
@@ -933,8 +939,9 @@ export const signalResolvers = {
 
       // The call replaces the whole set: a replay of the same call leaves the
       // same set, and a later run with fewer names drops the stale ones.
+      const shown = signalLocationIds(existing);
       const rows = locationIds
-        .filter((id) => id !== existing.locationId)
+        .filter((id) => !shown.has(id))
         .map((id) => firstName.get(id)!)
         .map((site) => ({
           signalId: args.signalId,
@@ -942,10 +949,13 @@ export const signalResolvers = {
           name: site.name ?? null,
           kind: site.kind ?? ("NAMED_SITE" as const),
         }));
-      await context.prisma.$transaction([
-        context.prisma.signalSites.deleteMany({ where: { signalId: args.signalId } }),
-        context.prisma.signalSites.createMany({ data: rows }),
-      ]);
+      // Lock the Signal row first: two overlapping calls would otherwise both
+      // delete an empty set and both insert, leaving the union of the two.
+      await context.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "signals" WHERE "id" = ${args.signalId} FOR UPDATE`;
+        await tx.signalSites.deleteMany({ where: { signalId: args.signalId } });
+        await tx.signalSites.createMany({ data: rows });
+      });
       return context.prisma.signals.findUniqueOrThrow({ where: { id: args.signalId } });
     },
 
@@ -1184,7 +1194,7 @@ export const signalResolvers = {
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
     },
     otherSites: async (
-      parent: { id: string; otherSites?: SiteRow[] },
+      parent: SignalLocationIds & { id: string; otherSites?: SiteRow[] },
       _args: unknown,
       { prisma }: Context,
     ) => {
@@ -1196,7 +1206,12 @@ export const signalResolvers = {
           include: { location: true },
           orderBy: [{ createdAt: "asc" }, { locationId: "asc" }],
         }));
-      return rows.map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
+      // A site that has since become a location the Signal shows (it was
+      // moved onto it) is not an other site any more.
+      const shown = signalLocationIds(parent);
+      return rows
+        .filter((row) => !shown.has(row.locationId))
+        .map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
     },
     countries: (
       parent: { id: string; countries?: unknown },

@@ -60,7 +60,9 @@ const set = (signalId: string, sites: Parameters<typeof setSignalOtherSites>[1][
   setSignalOtherSites(null, { signalId, sites }, context);
 
 const read = async (signalId: string) =>
-  (await otherSites({ id: signalId }, undefined, pipeline)).map((site) => ({
+  (
+    await otherSites(await prisma.signals.findUniqueOrThrow({ where: { id: signalId } }), undefined, pipeline)
+  ).map((site) => ({
     locationId: (site.location as { id: string }).id,
     name: site.name,
     kind: site.kind,
@@ -145,6 +147,35 @@ describeIfDb("Other sites of a Signal against the real schema", () => {
       { locationId: CAMP_ID, name: "Dumayah" },
     ]);
     expect(await read(signalId)).toEqual([{ locationId: CAMP_ID, name: "Dumayyah camp", kind: "NAMED_SITE" }]);
+  });
+
+  it("drops a site that is the origin or the destination of a displacement Signal", async () => {
+    const signal = await prisma.signals.create({
+      data: {
+        sourceId: sourceId!, rawData: {}, contentHash: `h${signalSeq++}`, title: "People fled from the camp to the market",
+        publishedAt: new Date("2026-11-20T00:00:00.000Z"), originId: CAMP_ID, destinationId: MARKET_ID,
+      },
+    });
+    await set(signal.id, [{ locationId: CAMP_ID }, { locationId: MARKET_ID }, { locationId: AIRPORT_ID, name: "airport" }]);
+    expect(await read(signal.id)).toEqual([{ locationId: AIRPORT_ID, name: "airport", kind: "NAMED_SITE" }]);
+  });
+
+  it("stops reading a site once the Signal is moved onto it", async () => {
+    const signalId = await signalAt(AIRPORT_ID);
+    await set(signalId, [{ locationId: CAMP_ID, name: "Dumayyah camp" }]);
+    await prisma.signals.update({ where: { id: signalId }, data: { locationId: CAMP_ID } });
+    expect(await read(signalId)).toEqual([]);
+  });
+
+  it("keeps one caller's set when two calls overlap", async () => {
+    const signalId = await signalAt(AIRPORT_ID);
+    const a = [{ locationId: CAMP_ID, name: "Dumayyah camp" }];
+    const b = [{ locationId: MARKET_ID, name: "Nyala market" }];
+    for (let round = 0; round < 5; round++) {
+      await Promise.all([set(signalId, a), set(signalId, b)]);
+      const ids = (await read(signalId)).map((site) => site.locationId);
+      expect([[CAMP_ID], [MARKET_ID]]).toContainEqual(ids);
+    }
   });
 
   it("drops the sites with the Signal", async () => {
