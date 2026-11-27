@@ -110,7 +110,9 @@ export const gazetteerResolvers = {
       // to the Latin spelling, which has the fuzzy tier below.
       if (hasArabic(q)) return null;
 
-      // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator.
+      // 2. Fuzzy trigram fallback, GIN-indexed via the `%` operator. The
+      //    best similarity first; between equal ones the same order as the
+      //    exact tier (a town before a district record, D-0288).
       //    `%` prunes by pg_trgm's similarity-threshold GUC, NOT by any
       //    value in the query — its default is 0.3, so a caller passing
       //    minSimilarity < 0.3 would otherwise still be floored at 0.3 with
@@ -131,7 +133,7 @@ export const gazetteerResolvers = {
           WHERE (${cc}::text IS NULL OR n.country_code = ${cc})
             AND n.name_norm % ${q}
             ${inArea}
-          ORDER BY sim DESC, (g.feature_class IN ('P', 'A')) DESC, g.population DESC
+          ORDER BY sim DESC, (g.feature_class = 'P') DESC, (g.feature_class = 'A') DESC, g.population DESC
           LIMIT 1
         `;
       });

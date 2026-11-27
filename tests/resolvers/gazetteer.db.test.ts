@@ -114,6 +114,11 @@ describeIfDb("resolveGazetteerLocation", () => {
       const hit = await resolve("Mellit");
       expect(hit).toMatchObject({ geonamesId: 990000007, featureClass: "P", exact: true });
     });
+
+    it("gives the town on a fuzzy match of the same spelling", async () => {
+      const hit = await resolve("Melit");
+      expect(hit).toMatchObject({ geonamesId: 990000007, featureClass: "P", exact: false });
+    });
   });
 
   describe("withinLocationId", () => {
