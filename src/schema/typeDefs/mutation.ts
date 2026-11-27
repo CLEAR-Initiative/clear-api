@@ -277,10 +277,12 @@ export const mutationTypeDef = gql`
     instead; DECLINE leaves the Signal as it is. A written point becomes the
     Signal's general location (a reused or new level-4 point under the admin
     area containing it; origin and destination are cleared, countries follow),
-    and later source revisions keep it. Writing needs the Signal still within
-    the team's area, and the point inside the areas CLEAR covers and, unless
-    a platform admin decides, within the team's area. CONFLICT when the
-    challenge is no longer open."""
+    and later source revisions keep it. Writing needs the point inside the
+    areas CLEAR covers and, unless a platform admin decides, within the team's
+    area. A challenge a person filed also needs the Signal still within the
+    team's area; a pipeline challenge does not, since it goes to the team of
+    the proposed place while the Signal sits at its source point in another
+    state (D-0283). CONFLICT when the challenge is no longer open."""
     decideSignalLocationChallenge(
       """The challenge to decide."""
       id: String!

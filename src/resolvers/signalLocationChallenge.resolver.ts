@@ -608,13 +608,18 @@ export const signalLocationChallengeResolvers = {
       if (!placement) throw placeOutsideCoverage();
       if (!isPlatformAdmin(user) && !inArea(placement.id)) throw placeOutsideTeamArea();
       // The team may have lost the Signal since it was filed (its scope
-      // changed, or a source revision moved it).
+      // changed, or a source revision moved it). Not for a pipeline
+      // challenge: it goes to the team of the proposed place, and the Signal
+      // sits in another state, at its source point, by design (D-0283,
+      // D-0295). For those the check on the proposed place above is the
+      // team's scope.
+      const signalScoped = challenge.origin !== "PIPELINE";
       const signal = await context.prisma.signals.findUnique({
         where: { id: challenge.signalId },
         select: { originId: true, destinationId: true, locationId: true },
       });
       if (!signal) throw signalNotFound(challenge.signalId);
-      if (!signalInArea(inArea, signal)) throw outsideTeamScope();
+      if (signalScoped && !signalInArea(inArea, signal)) throw outsideTeamScope();
 
       const pointId = await pointFor(context, place, placement.id);
       const countryId = await countryOfPointUnder(context, pointId, placement.id);
@@ -636,7 +641,7 @@ export const signalLocationChallengeResolvers = {
           },
         });
         if (!current) throw signalNotFound(challenge.signalId);
-        if (!signalInArea(inArea, current)) throw outsideTeamScope();
+        if (signalScoped && !signalInArea(inArea, current)) throw outsideTeamScope();
 
         // Conditional on still open. An open challenge is never rewritten (a
         // new one supersedes it), so this writes exactly the place read above.
