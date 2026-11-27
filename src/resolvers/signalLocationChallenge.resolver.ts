@@ -433,9 +433,11 @@ export const signalLocationChallengeResolvers = {
       return challenge;
     },
 
-    // The pipeline files one after it places a Signal by its text in another
-    // state than the point its source sent (Exponential #1653). A mutation of
-    // its own: `submitSignalLocationChallenge` stays a person's, for a team.
+    // The pipeline files one when the place a Signal's text names is in
+    // another state than the point its source sent (Exponential #1653): the
+    // Signal stays at the source point and the text place is proposed
+    // (D-0283). A mutation of its own: `submitSignalLocationChallenge` stays a
+    // person's, for a team.
     fileSignalLocationChallengeFromPipeline: async (
       _parent: unknown,
       { input }: { input: PipelineFileInput },
@@ -473,16 +475,16 @@ export const signalLocationChallengeResolvers = {
           // Lock the Signal first, as filing by a person and deciding do.
           await tx.$queryRaw`SELECT id FROM "signals" WHERE id = ${signal.id} FOR UPDATE`;
           if (await openOne(tx)) return null;
-          // Read where the Signal is under the lock, so a move that lands
-          // just before this cannot send the challenge to the team of the
-          // place it left. The pipeline has already moved the Signal: where
-          // it is now is the new place, and the team that holds it decides.
+          // Read where the Signal is under the lock: it is the place a
+          // decision replaces. The pipeline keeps the Signal at its source
+          // point and proposes the place its text names (D-0283), so the team
+          // whose area holds the proposed place decides (D-0295).
           const current = await tx.signals.findUnique({
             where: { id: signal.id },
             select: { originId: true, destinationId: true, locationId: true },
           });
           if (!current) throw signalNotFound(signal.id);
-          const teamId = await teamHolding(tx, shownLocation(current));
+          const teamId = await teamHolding(tx, placement.id);
           return tx.signalLocationChallenges.create({
             data: {
               signalId: signal.id,
