@@ -23,13 +23,17 @@ const PIPELINE: Context = {
 } as unknown as Context;
 
 // GeoNames rows as the importer would load them: every spelling normalised.
-const PLACES = [
+const PLACES: { geonamesId: number; name: string; lat: number; lng: number; pop: bigint; names: string[]; fc?: string; code?: string }[] = [
   { geonamesId: 990000001, name: "Kadugli", lat: 11.01, lng: 29.72, pop: 87666n, names: ["Kadugli", "Kaduqli", "كادقلي"] },
   { geonamesId: 990000002, name: "Tendalti", lat: 13.12, lng: 32.06, pop: 0n, names: ["Tendalti", "تندلتي"] },
   { geonamesId: 990000003, name: "Rabak", lat: 13.18, lng: 32.74, pop: 135281n, names: ["Rabak", "ربك", "ربک", "رباک"] },
   // Two places with one name: the more populous one lies outside AREA.
   { geonamesId: 990000004, name: "Al Abyad", lat: 13.5, lng: 27.5, pop: 9000n, names: ["Al Abyad", "الابيض"] },
   { geonamesId: 990000005, name: "Al Abyad", lat: 11.9, lng: 28.2, pop: 300n, names: ["Al Abyad", "الابيض"] },
+  // A district record (class A, its point the centre of the district) and a
+  // town of the same name with fewer people (D-0288).
+  { geonamesId: 990000006, name: "Mellit", lat: 15.2, lng: 25.1, pop: 80000n, names: ["Mellit"], fc: "A", code: "ADM2" },
+  { geonamesId: 990000007, name: "Mellit", lat: 14.13, lng: 25.55, pop: 40000n, names: ["Mellit"] },
 ];
 
 // A stand-in admin area (West Kordofan-ish) containing only the second Al Abyad.
@@ -50,8 +54,8 @@ describeIfDb("resolveGazetteerLocation", () => {
         name: p.name,
         latitude: p.lat,
         longitude: p.lng,
-        featureClass: "P",
-        featureCode: "PPL",
+        featureClass: p.fc ?? "P",
+        featureCode: p.code ?? "PPL",
         countryCode: CC,
         population: p.pop,
       })),
@@ -103,6 +107,13 @@ describeIfDb("resolveGazetteerLocation", () => {
   it("does not fuzzy-match Arabic", async () => {
     // One letter off كادقلي: Latin would fall through to the trigram tier.
     expect(await resolve("كادقلا", 0.1)).toBeNull();
+  });
+
+  describe("a town and a district record with one name (D-0288)", () => {
+    it("gives the town on an exact match, though the district has more people", async () => {
+      const hit = await resolve("Mellit");
+      expect(hit).toMatchObject({ geonamesId: 990000007, featureClass: "P", exact: true });
+    });
   });
 
   describe("withinLocationId", () => {

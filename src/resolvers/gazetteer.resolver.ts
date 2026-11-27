@@ -86,8 +86,11 @@ export const gazetteerResolvers = {
             ST_SetSRID(ST_MakePoint(g.longitude, g.latitude), 4326))`
         : Prisma.empty;
 
-      // 1. Exact normalised-name hit. Prefer populated places / admin areas
-      //    over hydro/terrain/POI features, then the most-populous tie-break.
+      // 1. Exact normalised-name hit. A populated place (class P) first, then
+      //    an admin area (class A), then hydro/terrain/POI features; the most
+      //    populous breaks a tie. A town wins against the district record of
+      //    the same name: that record's point is the centre of the district,
+      //    not the town (D-0288).
       const exact = await context.prisma.$queryRaw<Row[]>`
         SELECT g.geonames_id AS "geonamesId", g.name, g.latitude, g.longitude,
                g.feature_class AS "featureClass", g.feature_code AS "featureCode",
@@ -97,7 +100,7 @@ export const gazetteerResolvers = {
         WHERE n.name_norm = ${q}
           AND (${cc}::text IS NULL OR n.country_code = ${cc})
           ${inArea}
-        ORDER BY (g.feature_class IN ('P', 'A')) DESC, g.population DESC
+        ORDER BY (g.feature_class = 'P') DESC, (g.feature_class = 'A') DESC, g.population DESC
         LIMIT 1
       `;
       if (exact.length > 0) return toHit(exact[0], 1.0, true);
