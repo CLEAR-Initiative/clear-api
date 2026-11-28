@@ -19,9 +19,12 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { resolveContainingAdminArea } from "../utils/geo-resolve.js";
 import { PLACE_NAME_SUBJECT, PLACE_RESEARCH_KIND } from "../utils/task-kinds.js";
+import { utcMidnight } from "../utils/task-request-cap.js";
 import { RESOLVABLE_STATUSES, countryLocationIdForCode } from "./place-names.js";
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
+/** A Prisma client or an open transaction. */
+type Db = PrismaClient | Prisma.TransactionClient;
 
 export const PLACE_PROPOSAL_OUTCOMES = ["found", "not_found", "not_a_place"] as const;
 export type PlaceProposalOutcome = (typeof PLACE_PROPOSAL_OUTCOMES)[number];
@@ -67,7 +70,7 @@ export interface PlaceResearchPayload {
 }
 
 export async function buildPlaceResearchPayload(
-  prisma: PrismaClient,
+  prisma: Db,
   row: PlaceResearchRow,
 ): Promise<PlaceResearchPayload> {
   const [state, links] = await Promise.all([
@@ -113,11 +116,46 @@ export class PlaceResearchRowClosed extends Error {
 }
 
 /**
+ * In a transaction the caller holds: lock the row, read its status again,
+ * and create its place research Task. A decider who closes the row in
+ * between waits for this transaction or has finished before it, so a closed
+ * row never gets a new Task. Throws `PlaceResearchRowClosed` when the row
+ * is no longer open or ambiguous.
+ */
+async function createPlaceResearchTaskTx(
+  tx: Prisma.TransactionClient,
+  row: PlaceResearchRow,
+  payload: PlaceResearchPayload,
+  by: { origin: "user" | "api" | "rule"; requesterId: string | null },
+): Promise<TaskRow> {
+  const locked = await tx.$queryRaw<{ status: string }[]>`
+    SELECT "status" FROM "unresolved_place_names" WHERE "id" = ${row.id} FOR UPDATE`;
+  const status = locked[0]?.status;
+  const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+  if (!status || !resolvable.includes(status)) throw new PlaceResearchRowClosed(status ?? "gone");
+  return tx.task.create({
+    data: {
+      kind: PLACE_RESEARCH_KIND,
+      subjectType: PLACE_NAME_SUBJECT,
+      subjectId: row.id,
+      payload: payload as unknown as Prisma.InputJsonObject,
+      requestId: randomUUID(),
+      origin: by.origin,
+      // Null for origin `rule`: no person asked.
+      requesterId: by.requesterId,
+      // A queue row belongs to a state, not to a team.
+      teamId: null,
+      maxAttempts: env.TASK_MAX_ATTEMPTS,
+    },
+  });
+}
+
+/**
  * Create the place research Task of a row. The caller has checked the dedupe
  * and its cap. Throws `PlaceResearchRowClosed` when the row is no longer
- * open or ambiguous. A concurrent identical request can still
- * win the create: the partial unique index rejects this one, and the
- * winner's Task comes back with `created: false`.
+ * open or ambiguous. A concurrent identical request can still win the
+ * create: the partial unique index rejects this one, and the winner's Task
+ * comes back with `created: false`.
  */
 export async function createPlaceResearchTask(
   prisma: PrismaClient,
@@ -126,31 +164,7 @@ export async function createPlaceResearchTask(
 ): Promise<{ task: TaskRow; created: boolean }> {
   const payload = await buildPlaceResearchPayload(prisma, row);
   try {
-    // The row is locked and its status read again in the transaction that
-    // creates the Task. A decider who closes the row in between waits for
-    // this transaction or has finished before it, so a closed row never
-    // gets a new Task.
-    const task = await prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ status: string }[]>`
-        SELECT "status" FROM "unresolved_place_names" WHERE "id" = ${row.id} FOR UPDATE`;
-      const status = locked[0]?.status;
-      const resolvable: readonly string[] = RESOLVABLE_STATUSES;
-      if (!status || !resolvable.includes(status)) throw new PlaceResearchRowClosed(status ?? "gone");
-      return tx.task.create({
-        data: {
-          kind: PLACE_RESEARCH_KIND,
-          subjectType: PLACE_NAME_SUBJECT,
-          subjectId: row.id,
-          payload: payload as unknown as Prisma.InputJsonObject,
-          requestId: randomUUID(),
-          origin: by.origin,
-          requesterId: by.requesterId,
-          // A queue row belongs to a state, not to a team.
-          teamId: null,
-          maxAttempts: env.TASK_MAX_ATTEMPTS,
-        },
-      });
-    });
+    const task = await prisma.$transaction((tx) => createPlaceResearchTaskTx(tx, row, payload, by));
     return { task, created: true };
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
@@ -161,6 +175,98 @@ export async function createPlaceResearchTask(
     }
     throw e;
   }
+}
+
+// ─── Automatic research (the origin `rule`) ──────────────────────────────────
+
+/** One advisory lock for the top-up: two claims at once must not both
+ *  spend the day's cap. Any fixed number that no other lock uses. */
+const AUTO_RESEARCH_LOCK = 1726_0001;
+
+/**
+ * Request place research for the rows that are due, with no person asking
+ * (Exponential #1726). A row is due when it is `open`, has `minSignals`
+ * Signals or more, has no open place research Task, has no proposal, and
+ * never had an automatic Task: the rule asks once per row, and a person can
+ * ask again. At most `dailyCap` automatic Tasks are created per UTC day; a
+ * request by a person does not count. Rows over the cap wait: they get
+ * their Task on a later day with no new Signal, the row with the most
+ * Signals first.
+ *
+ * There is no scheduler. A Worker's claim calls this first, so the queue is
+ * topped up each time a Worker looks for work. Returns the Tasks it created.
+ */
+export async function topUpPlaceResearchTasks(
+  prisma: PrismaClient,
+  opts: { minSignals: number | undefined; dailyCap: number; now?: Date },
+): Promise<TaskRow[]> {
+  const { minSignals, dailyCap } = opts;
+  if (!minSignals || minSignals < 1) return [];
+  const now = opts.now ?? new Date();
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${AUTO_RESEARCH_LOCK})`;
+    const today = await tx.task.count({
+      where: { kind: PLACE_RESEARCH_KIND, origin: "rule", createdAt: { gte: utcMidnight(now) } },
+    });
+    const room = dailyCap - today;
+    if (room <= 0) return [];
+    // `SKIP LOCKED`: a row that a decider is closing, or that a person is
+    // requesting research for, is left for the next top-up. The lock holds
+    // until this transaction ends, so no row here can get a Task from a
+    // person's request in between (which would abort the transaction on the
+    // unique index).
+    const due = await tx.$queryRaw<PlaceResearchRow[]>`
+      SELECT u."id", u."name_as_written" AS "nameAsWritten", u."name_ar" AS "nameAr",
+             u."country_code" AS "countryCode", u."state_location_id" AS "stateLocationId",
+             u."country_location_id" AS "countryLocationId"
+      FROM "unresolved_place_names" u
+      WHERE u."status" = 'open'
+        AND u."signal_count" >= ${minSignals}
+        AND NOT EXISTS (
+          SELECT 1 FROM "place_name_proposals" p WHERE p."unresolved_place_name_id" = u."id")
+        AND NOT EXISTS (
+          SELECT 1 FROM "tasks" t
+          WHERE t."kind" = ${PLACE_RESEARCH_KIND} AND t."subject_type" = ${PLACE_NAME_SUBJECT}
+            AND t."subject_id" = u."id"
+            AND (t."origin" = 'rule' OR t."status" IN ('PENDING', 'LEASED')))
+      ORDER BY u."signal_count" DESC, u."last_seen_at" DESC, u."id" ASC
+      LIMIT ${room}
+      FOR UPDATE OF u SKIP LOCKED`;
+    const created: TaskRow[] = [];
+    for (const row of due) {
+      const payload = await buildPlaceResearchPayload(tx, row);
+      created.push(await createPlaceResearchTaskTx(tx, row, payload, { origin: "rule", requesterId: null }));
+    }
+    return created;
+  });
+}
+
+// ─── A closed row cancels its Task ───────────────────────────────────────────
+
+/**
+ * Cancel the open place research Task of a row that a decider closes
+ * (`resolved` or `not_a_place`), in the transaction that closes it. A
+ * PENDING Task ends now. A LEASED Task gets a cancel request: the Worker
+ * sees it at its next heartbeat, completion or failure, and its result is
+ * discarded. This holds for a Task that a person requested too. Returns the
+ * number of Tasks it touched.
+ */
+export async function cancelPlaceResearchTasksTx(
+  tx: Prisma.TransactionClient,
+  rowId: string,
+  cancelledById: string,
+  now: Date,
+): Promise<number> {
+  const subject = { kind: PLACE_RESEARCH_KIND, subjectType: PLACE_NAME_SUBJECT, subjectId: rowId };
+  const pending = await tx.task.updateMany({
+    where: { ...subject, status: "PENDING" },
+    data: { status: "CANCELLED", cancelRequestedAt: now, cancelledById },
+  });
+  const leased = await tx.task.updateMany({
+    where: { ...subject, status: "LEASED", cancelRequestedAt: null },
+    data: { cancelRequestedAt: now, cancelledById },
+  });
+  return pending.count + leased.count;
 }
 
 // ─── The proposal a Worker sends ─────────────────────────────────────────────

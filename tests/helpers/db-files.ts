@@ -5,7 +5,8 @@ import { join } from "node:path";
  * Finds the test files that open a real database, for vitest's `include`
  * when `SCRATCH_DB=1` (CI's db-tests job, `bun run test:db`).
  *
- * A file counts as DB-backed when it imports `describeIfDb` or
+ * A file counts as DB-backed when it imports `describeIfDb`,
+ * `describeIfScratchDb` or
  * `describeIfSeededDb` from `tests/helpers/db` — the gates every DB suite
  * goes through. Keying on the import rather than the call spelling means
  * `describeIfDb.only(` or `describeIfDb (` still match, and a file that
@@ -15,7 +16,7 @@ import { join } from "node:path";
  * would silently drift.
  */
 const DB_HELPER_IMPORT =
-  /import\s*(?:type\s*)?\{[^}]*\bdescribeIf(?:Seeded)?Db\b[^}]*\}\s*from\s*["'][^"']*helpers\/db(?:\.js|\.ts)?["']/;
+  /import\s*(?:type\s*)?\{[^}]*\bdescribeIf(?:Seeded|Scratch)?Db\b[^}]*\}\s*from\s*["'][^"']*helpers\/db(?:\.js|\.ts)?["']/;
 
 export function isDbBackedTestSource(source: string): boolean {
   return DB_HELPER_IMPORT.test(source);

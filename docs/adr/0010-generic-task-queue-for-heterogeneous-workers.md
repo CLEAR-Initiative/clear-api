@@ -312,3 +312,34 @@ and the completion. ADR-0019 has the place-name side.
 - **Release order.** GraphQL rejects a document that declares a variable of an unknown type.
   clear-api ships `PlaceProposalInput` first. clear-mcp then declares `$place` in its
   `completeTask` document and is released. clear-worker-routine then pins that release.
+
+## Amendment (2026-11-28): the origin `rule` is in use; a closed subject cancels its Task
+
+Exponential [#1726](https://www.exponential.im/w/clear/products/clear/tickets/1726). Decided with
+James on 28 Nov 2026: threshold 3 Signals, cap 10 per day, both configuration.
+
+- **The origin `rule` is now in use.** clear-api creates a `place_name.locate.web` Task with no
+  person asking. Such a Task has no requester and no team. Until now each Task had the origin
+  `user` or `api`.
+- **The rule.** A row of the Places queue is due when it is `open`, its signal count is at or
+  above `PLACE_RESEARCH_AUTO_MIN_SIGNALS`, it has no open Task of this kind, it has no place
+  proposal, and it never had an automatic Task. The rule asks once per row. A person can ask
+  again with `requestPlaceNameResearch`. With no value for the threshold, the rule is off.
+- **The cap.** At most `PLACE_RESEARCH_AUTO_DAILY_CAP` automatic Tasks (default 10) are created
+  per UTC day. A request by a person does not count, and the rule does not count against a
+  person's cap. Rows over the cap wait. They get their Task on a later day with no new Signal,
+  the row with the most Signals first.
+- **There is no scheduler.** `claimTasks` for this kind tops the queue up first, from the rows
+  that are due, and then leases. A rule that ran only in `recordUnresolvedPlaceName` could not
+  serve the rows that waited over the cap. An advisory lock makes two claims at once spend the
+  cap once. A failure of the top-up is logged and does not fail the claim.
+- **No activity-log row for an automatic Task.** That log records what a person did. The Task
+  itself is the record.
+- **A closed subject cancels its Task.** When a decider closes a queue row (`resolved` or
+  `not_a_place`), the transaction that closes it also cancels the row's open Task: PENDING goes
+  to CANCELLED, and LEASED gets a cancel request that the Worker sees at its next heartbeat,
+  completion or failure. This holds for a resolve, for a new alias that closes the row, and for
+  a Task that a person requested. An `ambiguous` row stays resolvable and keeps its Task.
+- **A completion for a closed row is cancelled** and stores no proposal, also when the Task has
+  no cancel request.
+

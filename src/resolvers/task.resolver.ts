@@ -61,11 +61,13 @@ import {
 } from "../utils/task-kinds.js";
 import {
   assertPointInRowCountry,
+  topUpPlaceResearchTasks,
   validateMethodVersion,
   validatePlaceProposal,
   type PlaceProposalInput,
 } from "../services/place-research.js";
 import { assertUnderDailyRequestCap } from "../utils/task-request-cap.js";
+import { RESOLVABLE_STATUSES } from "../services/place-names.js";
 import { placeNameInScope, requirePlaceNameDecider } from "../utils/place-name-access.js";
 import {
   validateCases,
@@ -1035,6 +1037,26 @@ export const taskResolvers = {
       const limit = Math.min(Math.max(args.limit ?? 1, 1), env.TASK_CLAIM_MAX);
       const leaseMinutes = env.TASK_LEASE_MINUTES;
 
+      // Automatic place research (#1726). There is no scheduler: a Worker
+      // that looks for work first tops the queue up from the rows that are
+      // due. A failure here never costs the Worker its claim; the next claim
+      // tries again.
+      if (isPlaceResearchKind(args.kind)) {
+        try {
+          const created = await topUpPlaceResearchTasks(context.prisma, {
+            minSignals: env.PLACE_RESEARCH_AUTO_MIN_SIGNALS,
+            dailyCap: env.PLACE_RESEARCH_AUTO_DAILY_CAP,
+          });
+          // No activity-log row: that log records what a person did. The
+          // Task itself (origin `rule`, no requester) is the record.
+          if (created.length > 0) {
+            console.info(`[claimTasks] automatic place research: ${created.length} Task(s) created`);
+          }
+        } catch (err) {
+          console.error("[claimTasks] could not top up the place research queue:", err);
+        }
+      }
+
       const sweptToFailed: string[] = [];
       const claimedIds = await context.prisma.$transaction(async (tx) => {
         // Lazy sweeps, since there is no sweeper process: the next claim is
@@ -1193,6 +1215,20 @@ export const taskResolvers = {
       }
       if (isPlaceTask && !args.place) {
         throw badInput(`A "${PLACE_RESEARCH_KIND}" Task completes with place; to give it up, fail the Task`);
+      }
+      // A completion for a row that is closed already (resolved, or not a
+      // place) is cancelled and stores nothing. A close cancels the row's
+      // open Task in its own transaction, so this is the fence behind it:
+      // a Task of a row that was closed before that rule existed.
+      if (isPlaceTask) {
+        const subject = await context.prisma.unresolvedPlaceNames.findUnique({
+          where: { id: task.subjectId },
+          select: { status: true },
+        });
+        const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+        if (subject && !resolvable.includes(subject.status)) {
+          return cancelLeasedTask(context.prisma, task.id, user.id, args.leaseToken);
+        }
       }
       const place = args.place ? validatePlaceProposal(args.place) : null;
       const placeMethodVersion = place ? validateMethodVersion(args.methodVersion) : "";

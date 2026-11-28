@@ -252,6 +252,17 @@ ADR-0010 has the Task side.
 46. **A proposal goes away with its queue row** (`ON DELETE CASCADE`). A
     Task that has a proposal cannot be deleted (`ON DELETE RESTRICT`).
 
+48. **clear-api requests research by itself for a row with many Signals**
+    ([#1726](https://www.exponential.im/w/clear/products/clear/tickets/1726)).
+    The threshold is `PLACE_RESEARCH_AUTO_MIN_SIGNALS` (3 on dev) and the
+    cap is `PLACE_RESEARCH_AUTO_DAILY_CAP` (10 per day). ADR-0010 has the
+    rule. The order of the queue does not change.
+49. **A row that closes cancels its open research Task.** `resolved` and
+    `not_a_place` cancel it in the transaction that closes the row (points
+    16 and 31). `ambiguous` keeps it, because the row stays resolvable
+    (point 21). A completion that arrives for a closed row stores no
+    proposal.
+
 ## Not in these slices
 
 - Re-grouping a Signal that moved: [#1316](https://www.exponential.im/w/clear/products/clear/tickets/1316).

@@ -2,6 +2,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import { hasArabic, normalizeGazetteerName } from "../utils/geonames-normalize.js";
 import { pipelineCountryNameByPcode } from "../resolvers/pipelineCountry.resolver.js";
+import { cancelPlaceResearchTasksTx } from "./place-research.js";
 
 /**
  * Place aliases and the unresolved place-name queue (ADR-0019): the lookup
@@ -279,7 +280,8 @@ export interface ResolveIntoAliasArgs {
  * In ONE transaction: close the queue row as resolved, write the alias (and
  * a second alias for the row's Arabic spelling), and move the waiting
  * Signals to the alias location. With `proposalId`, the place proposal
- * also records who used it.
+ * also records who used it. The row's open place research Task, if there
+ * is one, is cancelled.
  *
  * A Signal moves when the alias location is inside the Signal's current
  * location (so its country and state stay as they are) and no person has
@@ -317,6 +319,8 @@ export async function resolveIntoAliasTx(
       data: { status: "resolved", resolvedById: userId, resolvedAt: now, resolutionNote: note },
     });
     if (count === 0) throw new PlaceNameConflict("ROW_CLOSED");
+    // A resolved row needs no research: its open Task is cancelled with it.
+    await cancelPlaceResearchTasksTx(tx, row.id, userId, now);
 
     let aliasId = args.aliasId;
     if (!aliasId) {
