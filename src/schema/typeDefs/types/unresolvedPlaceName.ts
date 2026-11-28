@@ -142,6 +142,10 @@ export const unresolvedPlaceNameTypeDef = gql`
     """The status of that Task: PENDING (waits for a Worker) or LEASED (a
     Worker has it). Null when no Task is open."""
     taskStatus: TaskStatus
+    """The newest place research Task of the row in any status, or null when
+    none was requested. FAILED with no newer proposal means the last research
+    failed; \`lastError\` is the requester's and platform admins' to read."""
+    latestTask: Task
     """The newest place proposal of the row, or null. An older proposal
     stays in the database as history."""
     proposal: PlaceNameProposal

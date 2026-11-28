@@ -9145,6 +9145,12 @@ and `proposalId`.</p><table class="ref-table"><thead><tr><th>Field</th><th>Type<
     <td>The status of that Task: PENDING (waits for a Worker) or LEASED (a
 Worker has it). Null when no Task is open.</td>
   </tr><tr>
+    <td><code>latestTask</code></td>
+    <td><code>Task</code></td>
+    <td>The newest place research Task of the row in any status, or null when
+none was requested. FAILED with no newer proposal means the last research
+failed; `lastError` is the requester's and platform admins' to read.</td>
+  </tr><tr>
     <td><code>proposal</code></td>
     <td><code>PlaceNameProposal</code></td>
     <td>The newest place proposal of the row, or null. An older proposal

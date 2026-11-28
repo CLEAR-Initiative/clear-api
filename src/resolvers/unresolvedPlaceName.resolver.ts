@@ -625,14 +625,22 @@ export const unresolvedPlaceNameResolvers = {
     // back to the pipeline from recordUnresolvedPlaceName.
     research: async (parent: { id: string }, _args: unknown, context: Context) => {
       const { user } = await deciderOnce(context);
-      const [task, proposal] = await Promise.all([
-        findOpenPlaceResearchTask(context.prisma, parent.id),
+      // The newest Task of the row, in any status: the open one when there
+      // is one (the index allows a single open Task, and it is the newest),
+      // else the last one, so a client can tell that research failed.
+      const [latest, proposal] = await Promise.all([
+        context.prisma.task.findFirst({
+          where: { kind: PLACE_RESEARCH_KIND, subjectType: PLACE_NAME_SUBJECT, subjectId: parent.id },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        }),
         context.prisma.placeNameProposals.findFirst({
           where: { unresolvedPlaceNameId: parent.id },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         }),
       ]);
-      return { task: task ? redactTask(task, user) : null, proposal };
+      const latestTask = latest ? redactTask(latest, user) : null;
+      const open = latestTask && (latestTask.status === "PENDING" || latestTask.status === "LEASED");
+      return { task: open ? latestTask : null, latestTask, proposal };
     },
     stateLocation: (parent: { stateLocationId: string | null }, _args: unknown, { prisma }: Context) =>
       parent.stateLocationId ? prisma.locations.findUnique({ where: { id: parent.stateLocationId } }) : null,

@@ -399,6 +399,21 @@ describeIfDb("Place research against the real schema", () => {
       status: "PENDING",
       lastError: "no point inside the country",
     });
+    // A Task out of attempts is FAILED: the row shows it as its latest Task,
+    // with no open Task, beside the proposal of the earlier run.
+    await prisma.task.update({ where: { id: again.id }, data: { attempts: 3, maxAttempts: 3 } });
+    const last = await claimOwn(again.id, workerA).catch(() => null);
+    expect(last).toBeNull();
+    await prisma.task.update({ where: { id: again.id }, data: { attempts: 2 } });
+    const final = await claimOwn(again.id, workerA);
+    await failTask(null, { id: final.id, leaseToken: final.leaseToken!, error: "gave up" }, workerA);
+    expect(await research(row, null, platform)).toMatchObject({
+      task: null,
+      latestTask: { id: again.id, status: "FAILED", lastError: "gave up" },
+      proposal: { outcome: "found" },
+    });
+    // The error is the requester's and platform admins' to read.
+    expect((await research(row, null, stateAdmin)).latestTask).toMatchObject({ status: "FAILED", lastError: null });
   });
 
   it("the shape of a proposal is checked, and place is for this kind only", async () => {

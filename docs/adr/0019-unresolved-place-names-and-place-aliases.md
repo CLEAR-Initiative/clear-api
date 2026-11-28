@@ -233,8 +233,10 @@ ADR-0010 has the Task side.
     stale that way, so it is stored.
 43. **A newer proposal replaces the older one in the read.**
     `UnresolvedPlaceName.research` returns the open Task of the row, if there
-    is one, and the newest proposal. The older rows stay as history. Deciders
-    only: all other roles get FORBIDDEN.
+    is one, and the newest proposal. The older rows stay as history. It
+    also returns the newest Task in any status (`latestTask`), so a client
+    can show that the last research failed. Deciders only: all other roles
+    get FORBIDDEN.
 44. **The Worker writes proposals only.** It never resolves a name, never
     writes an alias and never moves a Signal. A decider uses a proposal
     through `resolveUnresolvedPlaceName` with the answer `POINT` and the
