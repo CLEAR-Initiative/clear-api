@@ -489,6 +489,29 @@ export const mutationTypeDef = gql`
     """Send a digest notification for multiple alerts to subscribers of the given frequency (daily/weekly/monthly)."""
     notifyAlertDigest(input: AlertDigestInput!): Int!
 
+    """Send the alert emails \`createAlert\` queued, deciding per recipient whether
+    they go out individually or as one digest. Admin or pipeline only.
+
+    \`createAlert\` queues an email per matching subscriber rather than sending it,
+    so that this call — driven by a Dagster schedule — can see a recipient's whole
+    load for the window and roll it up. A recipient with more than
+    \`ALERT_EMAIL_DIGEST_THRESHOLD\` alerts raised inside
+    \`ALERT_EMAIL_WINDOW_MINUTES\` gets one digest covering everything still
+    pending for them; at or below it, one email per alert as before.
+
+    Idempotent: a queued alert is marked sent only once the provider accepts the
+    message that covers it, so a crashed run leaves its alerts queued and the
+    next run retries them rather than dropping or double-sending.
+
+    \`digestThreshold\`, \`windowMinutes\` and \`maxRecipients\` override the
+    environment defaults — intended for testing and for throttling an incident,
+    not for routine use."""
+    flushAlertEmails(
+      digestThreshold: Int
+      windowMinutes: Int
+      maxRecipients: Int
+    ): FlushAlertEmailsResult!
+
     """Delete a notification."""
     deleteNotification(id: String!): Boolean!
 

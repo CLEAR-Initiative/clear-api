@@ -62,12 +62,11 @@ describe("alert digest titles", () => {
   it("gives each title its own direction", () => {
     const { htmlBody } = alertDigest(
       "Ana",
-      "daily",
       [
         { title: MIXED, description: null, url: "https://app.test/alert/1" },
         { title: ARABIC, description: null, url: "https://app.test/alert/2" },
       ],
-      "https://app.test",
+      { dashboardUrl: "https://app.test" },
     );
     expect(htmlBody).toMatch(new RegExp(`<p dir="ltr"[^>]*>${MIXED.replace(/[()]/g, "\\$&")}</p>`));
     expect(htmlBody).toMatch(new RegExp(`<p dir="rtl"[^>]*>${ARABIC}</p>`));

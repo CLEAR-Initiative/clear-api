@@ -118,6 +118,32 @@ const envSchema = z.object({
   POSTMARK_SERVER_TOKEN: z.string().optional(),
   POSTMARK_SENDER_EMAIL: z.string().optional(),
 
+  // Alert-email batching (clear #1731). Alerts are queued by `createAlert` and
+  // flushed by a Dagster schedule, which decides per recipient whether their
+  // pending alerts go out individually or as one digest.
+  /**
+   * More than this many alerts for one recipient inside the window ⇒ send one
+   * digest instead of one email each. 10 is the agreed ceiling on how much
+   * individual mail a burst may produce for one person.
+   */
+  ALERT_EMAIL_DIGEST_THRESHOLD: z.coerce.number().int().positive().default(10),
+  /**
+   * Length of the rolling window the threshold is counted over, in minutes.
+   * Measured on when the alerts were raised, not on when they were sent.
+   */
+  ALERT_EMAIL_WINDOW_MINUTES: z.coerce.number().int().positive().default(60),
+  /**
+   * Most alerts a digest body lists before it says "+N more". Caps the email's
+   * size when a recipient is owed hundreds.
+   */
+  ALERT_EMAIL_MAX_DIGEST_ITEMS: z.coerce.number().int().positive().default(25),
+  /**
+   * Recipients one flush handles; the rest wait for the next tick. The burst
+   * ceiling — it bounds how much mail a single flush can emit even if the
+   * queue is pathologically long.
+   */
+  ALERT_EMAIL_MAX_RECIPIENTS_PER_FLUSH: z.coerce.number().int().positive().default(500),
+
   // SMS provider: "twilio" | "46elks"
   SMS_PROVIDER: z.string().default("twilio"),
   TWILIO_ACCOUNT_SID: z.string().optional(),

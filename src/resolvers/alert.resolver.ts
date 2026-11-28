@@ -15,21 +15,13 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
-import { getEmailProvider } from "../services/messaging/registry.js";
-import { alertNotification } from "../services/messaging/templates.js";
+import { enqueueAlertEmails, flushAlertEmailQueue } from "../services/alert-email.js";
 import { fanOutAlertWebhooks } from "../services/webhook/alert-fanout.js";
 import { onsetAtRaise, runKindOf } from "../services/event-facts-log.js";
 import type { RunKind } from "../services/signal-location-outcomes.js";
 import {
-  severityToLabel,
-  formatCount,
-  resolveEmailLocation,
-  resolveEventTypeLabel,
-  fetchEventSignalLocations,
   fetchEventLocalizedText,
   normaliseUserLocale,
-  localizeLocationNames,
-  pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { recordDecisionIfPerson } from "../services/decision-records.js";
@@ -265,7 +257,6 @@ export const alertResolvers = {
 
         if (uniqueUserIds.length > 0) {
           const fallbackTitle = event.types[0] ?? "Alert";
-          const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
 
           // 1. Populate userAlerts join table
           await context.prisma.userAlerts.createMany({
@@ -277,9 +268,9 @@ export const alertResolvers = {
           });
           console.log(`[createAlert] Created ${uniqueUserIds.length} userAlert records`);
 
-          // Pull every recipient's language up front — drives both the
-          // in-app notification message text below and the per-recipient
-          // email body further down. One Prisma query covers both.
+          // Pull every recipient's language up front: the in-app notification
+          // message is written in each recipient's own language, and
+          // `emailNotification` decides who gets queued for email below.
           const recipients = await context.prisma.user.findMany({
             where: { id: { in: uniqueUserIds } },
             select: { id: true, name: true, email: true, language: true, emailNotification: true },
@@ -296,8 +287,6 @@ export const alertResolvers = {
           );
           const titleFor = (locale: string) =>
             localizedText.get(normaliseUserLocale(locale))?.title ?? fallbackTitle;
-          const descriptionFor = (locale: string) =>
-            localizedText.get(normaliseUserLocale(locale))?.description ?? event.description;
 
           // 2. Create in-app notifications (per-recipient so each user
           // sees the title in their own language).
@@ -312,115 +301,28 @@ export const alertResolvers = {
           });
           console.log(`[createAlert] Created ${recipients.length} in-app notifications`);
 
-          // 3. Send email notifications (fire-and-forget)
-          const emailUsers = recipients.filter((r) => r.emailNotification);
-
-          console.log(`[createAlert] ${emailUsers.length}/${uniqueUserIds.length} users have email notifications enabled`);
-
+          // 3. Queue the alert emails — do NOT send them here.
+          //
+          // This used to call the provider inline, one message per alert per
+          // recipient, so a burst of alerts was a burst of mail: 48 alerts in
+          // 3.7s once put 48 emails in every matching inbox (clear #1731).
+          // Queueing instead lets the flush see a recipient's whole load for
+          // the window and roll it into one digest when it is large.
+          //
+          // Steps 1 and 2 above (userAlerts, in-app notifications) stay
+          // immediate on purpose — the inbox should be live. Only email waits.
+          const emailUsers = recipients.filter((r) => r.emailNotification && r.email);
           if (emailUsers.length > 0) {
-            const emailList = emailUsers.map((u) => u.email).join(", ");
-            console.log(`[createAlert] Sending emails to: ${emailList}`);
-            const primaryLoc =
-              locations.find((l) => l.id === event.locationId) ??
-              locations.find((l) => l.id === event.originId) ??
-              locations.find((l) => l.id === event.destinationId) ??
-              null;
-            const [emailLoc, eventTypeLabel, signalLocs] = await Promise.all([
-              resolveEmailLocation(context.prisma, primaryLoc),
-              resolveEventTypeLabel(context.prisma, event.types),
-              fetchEventSignalLocations(context.prisma, event.id),
-            ]);
-
-            // Every location id that will appear in any per-recipient
-            // email — used as the input set for the one-shot batched
-            // localized-name lookup below.
-            const locIdsForLocalization = [
-              ...(primaryLoc?.id ? [primaryLoc.id] : []),
-              ...(emailLoc?.id ? [emailLoc.id] : []),
-              ...signalLocs.ids,
-            ];
-            const localizedNames = await localizeLocationNames(
+            const queued = await enqueueAlertEmails(
               context.prisma,
-              locIdsForLocalization,
-              uniqueLocales,
+              alert.id,
+              emailUsers.map((u) => u.id),
             );
-
-            const severityLabel = severityToLabel(event.severity);
-            const populationStr = emailLoc?.population
-              ? formatCount(emailLoc.population)
-              : null;
-            const affectedPeopleStr =
-              event.populationAffected != null
-                ? formatCount(event.populationAffected)
-                : null;
-
-            void (async () => {
-              try {
-                const emailProvider = await getEmailProvider();
-                await emailProvider.sendBulk(
-                  emailUsers
-                    .filter((u) => u.email)
-                    .map((u) => {
-                      // Per-recipient locale: title, description, AND
-                      // every location name swap to the user's
-                      // language when a translation row exists,
-                      // otherwise canonical English.
-                      const recipientLocale = normaliseUserLocale(u.language);
-                      const localizedSignalNames = signalLocs.ids.map(
-                        (id, idx) =>
-                          pickLocalizedName(
-                            localizedNames,
-                            id,
-                            recipientLocale,
-                            signalLocs.names[idx] ?? null,
-                          ) ?? signalLocs.names[idx],
-                      ).filter((n): n is string => !!n);
-                      const emailExtras = {
-                        severity: severityLabel,
-                        eventType: eventTypeLabel,
-                        locationName: pickLocalizedName(
-                          localizedNames,
-                          emailLoc?.id,
-                          recipientLocale,
-                          emailLoc?.name ?? null,
-                        ),
-                        population: populationStr,
-                        affectedPeople: affectedPeopleStr,
-                        // Event's primary location is already an A2 district.
-                        districtName: pickLocalizedName(
-                          localizedNames,
-                          primaryLoc?.id,
-                          recipientLocale,
-                          primaryLoc?.name ?? null,
-                        ),
-                        signalLocations: localizedSignalNames,
-                        signalLocationsOverflow: signalLocs.overflow,
-                        // Drives the template's chrome (greeting, labels,
-                        // CTA, subject, html dir/lang).
-                        locale: recipientLocale,
-                      };
-                      const content = alertNotification(
-                        u.name,
-                        titleFor(u.language),
-                        descriptionFor(u.language),
-                        alertUrl,
-                        emailExtras,
-                      );
-                      return {
-                        to: u.email!,
-                        subject: content.subject,
-                        textBody: content.textBody,
-                        htmlBody: content.htmlBody,
-                      };
-                    }),
-                );
-                console.log(`[createAlert] Email sent successfully to ${emailUsers.length} users`);
-              } catch (err) {
-                console.error("[createAlert] Failed to send alert emails:", err);
-              }
-            })();
+            console.log(
+              `[createAlert] queued ${queued} alert email(s) for ${emailUsers.length} recipient(s)`,
+            );
           } else {
-            console.log("[createAlert] No users with email notifications enabled - skipping emails");
+            console.log("[createAlert] No users with email notifications enabled - nothing queued");
           }
         }
       }
@@ -526,6 +428,28 @@ export const alertResolvers = {
      * `olderThanDays` (default 14). One SQL UPDATE via Prisma updateMany.
      * Only targets non-archived alerts so repeat runs are idempotent.
      */
+    flushAlertEmails: async (
+      _parent: unknown,
+      args: { digestThreshold?: number; windowMinutes?: number; maxRecipients?: number },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", PIPELINE_ROLE]);
+
+      for (const [name, value] of Object.entries(args)) {
+        if (value == null) continue;
+        if (!Number.isInteger(value) || value < 1) {
+          throw new GraphQLError(`${name} must be a positive integer`, {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      return flushAlertEmailQueue(context.prisma, {
+        digestThreshold: args.digestThreshold ?? undefined,
+        windowMinutes: args.windowMinutes ?? undefined,
+        maxRecipients: args.maxRecipients ?? undefined,
+      });
+    },
     archiveStaleAlerts: async (
       _parent: unknown,
       args: { olderThanDays?: number },

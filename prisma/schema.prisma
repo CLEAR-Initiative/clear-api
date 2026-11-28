@@ -101,6 +101,17 @@ enum Frequency {
   monthly
 }
 
+/// How an alert email was actually delivered to one recipient. `individual`
+/// = its own email, one per alert. `digest` = rolled up with the recipient's
+/// other alerts from the same window into a single email, which is what keeps
+/// an ingestion burst from becoming a mail flood (clear #1731).
+enum AlertEmailDelivery {
+  individual
+  digest
+
+  @@map("alert_email_delivery")
+}
+
 /// Signal processing status — the durable drain marker for the Celery→Dagster
 /// migration. NEW = ingested, awaiting downstream processing; PROCESSED =
 /// classify→group→alert done; FAILED = terminal failure. Replaces the old
@@ -170,6 +181,7 @@ model user {
   defaultTeam   teams?  @relation("DefaultTeam", fields: [defaultTeamId], references: [id], onDelete: SetNull)
 
   alerts                 userAlerts[]
+  alertEmails            alertEmailQueue[]
   apiKeys                apiKeys[]
   notifications          notifications[]
   organisations          organisationUsers[]
@@ -1194,8 +1206,9 @@ model alerts {
   /// history series.
   raisedByRunKind      LocationRunKind? @map("raised_by_run_kind")
 
-  event      events       @relation(fields: [eventId], references: [id])
-  userAlerts userAlerts[]
+  event       events            @relation(fields: [eventId], references: [id])
+  userAlerts  userAlerts[]
+  emailQueue  alertEmailQueue[]
 
   /// One alert per event. Status transitions (draft → published → archived)
   /// update this row in place; they do not create new ones.
@@ -1295,6 +1308,53 @@ model userAlerts {
   @@index([alertId])
   @@index([userId, viewedAt])
   @@map("user_alerts")
+}
+
+/// One pending-or-sent alert EMAIL for one recipient — the durable queue that
+/// lets alert email be decided in batches instead of one-at-a-time.
+///
+/// `createAlert` used to call the email provider inline, so a burst of alerts
+/// became a burst of email: 48 alerts in 3.7s once put 48 messages in every
+/// matching subscriber's inbox (clear #1731). It now writes a row here instead
+/// and a Dagster schedule flushes the queue, which is the only place that knows
+/// how much mail a recipient is about to receive and can roll it into one
+/// digest.
+///
+/// Deliberately NOT folded into `userAlerts`. That row is the in-app inbox
+/// entry, written for every matched user including those with
+/// `emailNotification: false` — a larger audience than email has. More
+/// decisively, it is written from four call sites (`createAlert`,
+/// `notifyAlertSubscribers`, `notifyAlertDigest`, `event.resolver`), so an
+/// `emailedAt` column there would make all four implicitly enqueue email —
+/// including `notifyAlertSubscribers`, which already sends its own. That is a
+/// double send, not a naming quibble.
+model alertEmailQueue {
+  id      String @id @default(cuid())
+  userId  String @map("user_id")
+  alertId String @map("alert_id")
+
+  /// When the alert was raised and the email became due. The rolling window
+  /// that decides individual-vs-digest is measured on this, not on `sentAt` —
+  /// a recipient's load is what the alerts did, not when we got round to them.
+  queuedAt DateTime @default(now()) @map("queued_at")
+  /// Null while the row is pending. Set when the email that covers it is
+  /// handed to the provider, which is what makes a flush idempotent and stops
+  /// a crashed flush from re-sending.
+  sentAt   DateTime? @map("sent_at")
+  /// How it went out, once it has. Null while pending.
+  delivery AlertEmailDelivery? @map("delivery")
+
+  user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  /// One queue row per (recipient, alert): a retried createAlert must not
+  /// queue a second email for an alert the recipient already has one for.
+  @@unique([userId, alertId])
+  /// The flush's own read: pending rows, oldest first.
+  @@index([sentAt, queuedAt])
+  /// The rolling-window count for one recipient.
+  @@index([userId, queuedAt])
+  @@map("alert_email_queue")
 }
 
 // Map the events escaladed by users as alerts which can be further escaladed as crisis
