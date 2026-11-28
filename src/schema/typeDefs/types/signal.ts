@@ -76,6 +76,12 @@ export const signalTypeDef = gql`
     """Stable upstream identifier (e.g. "acled:{event_id_cnty}"). Used to
     deduplicate ingestion — (source, externalId) is unique."""
     externalId: String
+    """How exactly the source placed its own coordinates, read from the stored
+    source payload. ACLED only (its \`geo_precision\`): 1 = the exact place,
+    2 = the centroid of a town or area near it, 3 = the centroid of a district
+    or wider region. Null for other sources, or when the payload has no valid
+    value."""
+    sourcePrecision: Int
     publishedAt: DateTime!
     collectedAt: DateTime!
     url: String
