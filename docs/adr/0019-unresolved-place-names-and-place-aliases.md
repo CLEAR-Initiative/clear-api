@@ -251,6 +251,16 @@ ADR-0010 has the Task side.
     proposals is therefore the count of right ones.
 46. **A proposal goes away with its queue row** (`ON DELETE CASCADE`). A
     Task that has a proposal cannot be deleted (`ON DELETE RESTRICT`).
+47. **The queue list filters by research and does not change its order.**
+    `unresolvedPlaceNames(research:)` keeps the rows with a proposal of any
+    outcome, with one outcome, or with none
+    ([#1727](https://www.exponential.im/w/clear/products/clear/tickets/1727)).
+    Only the newest proposal of a row counts. Each row returns
+    `researchOutcome`, `researchConfidence` and `researchOpen`, which the
+    list reads in its own statement (a lateral join), with no query per
+    row. The order stays: open rows, then signal count, then the newest
+    sighting. There is no sort by confidence, because the Worker's
+    confidence is not measured yet (James, 28 Nov 2026).
 
 48. **clear-api requests research by itself for a row with many Signals**
     ([#1726](https://www.exponential.im/w/clear/products/clear/tickets/1726)).
