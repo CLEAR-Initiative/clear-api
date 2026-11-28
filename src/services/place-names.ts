@@ -269,13 +269,17 @@ export interface ResolveIntoAliasArgs {
   source: "review" | "manual";
   /** An alias that exists already (the alias API). Omitted: one is created. */
   aliasId?: string;
+  /** The place proposal whose point is the answer (D-0296). It records the
+   *  decider and the time in the same transaction. */
+  proposalId?: string;
   now?: Date;
 }
 
 /**
  * In ONE transaction: close the queue row as resolved, write the alias (and
  * a second alias for the row's Arabic spelling), and move the waiting
- * Signals to the alias location.
+ * Signals to the alias location. With `proposalId`, the place proposal
+ * also records who used it.
  *
  * A Signal moves when the alias location is inside the Signal's current
  * location (so its country and state stay as they are) and no person has
@@ -361,6 +365,13 @@ export async function resolveIntoAliasTx(
       }
     }
     await tx.unresolvedPlaceNames.update({ where: { id: row.id }, data: { placeAliasId: aliasId } });
+
+    if (args.proposalId) {
+      await tx.placeNameProposals.update({
+        where: { id: args.proposalId },
+        data: { usedById: userId, usedAt: now },
+      });
+    }
 
     const signalsMoved = await moveWaitingSignals(tx, row.id, locationId, now);
     return { aliasId, signalsMoved };

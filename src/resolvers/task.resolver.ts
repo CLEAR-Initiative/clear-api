@@ -16,6 +16,11 @@
  * (`TASK_IMPACT_PRIOR_KINDS`). Each Worker claims by exact kind; the
  * retired kinds (`RETIRED_KINDS`) are refused. Nothing marks an Event done.
  *
+ * The second kind is `place_name.locate.web` (place research, D-0296): its
+ * subject is a row of the Places queue, it is requested with
+ * `requestPlaceNameResearch` (unresolvedPlaceName.resolver.ts), and its
+ * typed result is one place proposal per completed Task.
+ *
  * Guards: a requester needs the same rights as `escalateEvent`
  * (`requireTeamContentWriter`); claim / heartbeat / complete / fail need the
  * narrow `worker` role and, after claim, the lease on that Task. Reads use
@@ -45,7 +50,22 @@ import { notifyTaskOutcome } from "../services/task-notifications.js";
 import { acceptCase } from "../services/case-acceptance.js";
 import { resolveEventCountryId } from "../utils/event-country.js";
 import { computeImpactPriors } from "../services/computed-impact-prior.js";
-import { IMPACT_PRIOR_KIND, impactPriorSource, isImpactPriorKind, isRetiredKind } from "../utils/task-kinds.js";
+import {
+  IMPACT_PRIOR_KIND,
+  PLACE_NAME_SUBJECT,
+  PLACE_RESEARCH_KIND,
+  impactPriorSource,
+  isImpactPriorKind,
+  isPlaceResearchKind,
+  isRetiredKind,
+} from "../utils/task-kinds.js";
+import {
+  assertPointInRowCountry,
+  validateMethodVersion,
+  validatePlaceProposal,
+  type PlaceProposalInput,
+} from "../services/place-research.js";
+import { assertUnderDailyRequestCap } from "../utils/task-request-cap.js";
 import {
   validateCases,
   type CaseProposalInput,
@@ -69,12 +89,6 @@ interface TaskUsageInput {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
-}
-
-/** Start of the current UTC day — the window the per-requester cap counts
- *  over (same anchor as the daily Agent budget). */
-function utcMidnight(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 /** Usage as a Worker reports it, validated like recordConversationTurnUsage:
@@ -751,17 +765,7 @@ export const taskResolvers = {
         // requester made since UTC midnight — the Tasks of one request
         // share a requestId — whatever became of them. Checked after the
         // dedupe: handing back already-open Tasks costs nothing.
-        const cap = env.TASK_REQUEST_DAILY_CAP;
-        const today = await context.prisma.task.groupBy({
-          by: ["requestId"],
-          where: { requesterId: user.id, createdAt: { gte: utcMidnight(new Date()) } },
-        });
-        if (today.length >= cap) {
-          throw forbidden(
-            `Daily enrichment request cap reached: ${cap} requests per day. Try again after 00:00 UTC.`,
-            "DAILY_CAP",
-          );
-        }
+        await assertUnderDailyRequestCap(context.prisma, user.id);
 
         // One requestId for the whole fan-out, created atomically: either
         // every missing kind lands or none does, so a failure midway never
@@ -1140,6 +1144,11 @@ export const taskResolvers = {
     // CaseProposals in the same transaction; the outcome is `produced`. The
     // whole-prior `impactPrior` input is retired (2026-10-08): the
     // ImpactPrior is computed from history, never proposed.
+    //
+    // A `place_name.locate.web` Task completes with `place` (D-0296): one
+    // row in `place_name_proposals`, written in the same transaction; the
+    // Task's outcome is the proposal's. A point outside the row's country is
+    // refused before anything is written, and the Task stays leased.
     completeTask: async (
       _parent: unknown,
       args: {
@@ -1148,6 +1157,7 @@ export const taskResolvers = {
         result: Prisma.InputJsonValue;
         usage?: TaskUsageInput | null;
         cases?: CaseProposalInput[] | null;
+        place?: PlaceProposalInput | null;
         methodVersion?: string | null;
       },
       context: Context,
@@ -1164,6 +1174,23 @@ export const taskResolvers = {
       if (args.cases && !isWebCaseTask) {
         throw badInput(`Cases can only complete an "${IMPACT_PRIOR_KIND}.web" Task, not "${task.kind}"`);
       }
+      const isPlaceTask = isPlaceResearchKind(task.kind) && task.subjectType === PLACE_NAME_SUBJECT;
+      if (args.place && !isPlaceTask) {
+        throw badInput(`A place can only complete a "${PLACE_RESEARCH_KIND}" Task, not "${task.kind}"`);
+      }
+      if (isPlaceTask && !args.place) {
+        throw badInput(`A "${PLACE_RESEARCH_KIND}" Task completes with place; to give it up, fail the Task`);
+      }
+      const place = args.place ? validatePlaceProposal(args.place) : null;
+      const placeMethodVersion = place ? validateMethodVersion(args.methodVersion) : "";
+      if (place?.outcome === "found") {
+        const row = await context.prisma.unresolvedPlaceNames.findUnique({
+          where: { id: task.subjectId },
+          select: { countryCode: true, countryLocationId: true },
+        });
+        if (!row) throw notFound("Unresolved place name");
+        await assertPointInRowCountry(context.prisma, row, place.latitude!, place.longitude!);
+      }
       const caseMethodVersion = args.methodVersion?.trim() ?? "";
       if (args.cases && args.cases.length > 0 && !caseMethodVersion) {
         throw badInput("methodVersion is required with cases");
@@ -1176,7 +1203,13 @@ export const taskResolvers = {
       // the Worker looked and found nothing: the Task records it, no row is
       // written. An empty `cases` list is the same "looked and found nothing".
       const produced = cases.length > 0;
-      const outcome = !isImpactPriorTask ? null : produced ? "produced" : "no_prior_found";
+      const outcome = place
+        ? place.outcome
+        : !isImpactPriorTask
+          ? null
+          : produced
+            ? "produced"
+            : "no_prior_found";
 
       // How many proposed signals this completion wrote, for the notification.
       let proposedSignals = 0;
@@ -1194,6 +1227,23 @@ export const taskResolvers = {
         });
         // A cancel that landed mid-write won: nothing is produced.
         if (completed.status === "CANCELLED") return completed;
+        if (place) {
+          await tx.placeNameProposals.create({
+            data: {
+              unresolvedPlaceNameId: task.subjectId,
+              taskId: task.id,
+              outcome: place.outcome,
+              latitude: place.latitude,
+              longitude: place.longitude,
+              nameFound: place.nameFound,
+              confidence: place.confidence,
+              reason: place.reason,
+              sources: place.sources as unknown as Prisma.InputJsonArray,
+              methodVersion: placeMethodVersion,
+            },
+          });
+          return completed;
+        }
         const inserted = await writeCases(tx, task, cases, caseMethodVersion);
         proposedSignals += inserted;
         // Every case was a URL already proposed for this Event: the Worker
@@ -1206,7 +1256,8 @@ export const taskResolvers = {
       });
       // The fan-out (V2): requester, team analysts and platform admins hear
       // the outcome once the row is committed, never inside the transaction.
-      if (completed.status === "COMPLETED") {
+      // A place proposal is read in the Places pane: nobody is notified.
+      if (completed.status === "COMPLETED" && !isPlaceTask) {
         void notifyTaskOutcome(context.prisma, { ...completed, proposedSignals }, "completed");
       }
       return completed;

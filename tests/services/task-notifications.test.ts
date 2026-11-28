@@ -102,6 +102,16 @@ describe("taskOutcomeMessage", () => {
 });
 
 describe("notifyTaskOutcome", () => {
+  it("tells nobody about a place research Task, completed or failed, and reads nothing", async () => {
+    const { prisma, findMany, createMany } = makePrisma({ requester: [user("u-req")], admins: [user("u-admin")] });
+    const place = { ...TASK, kind: "place_name.locate.web", subjectType: "unresolved_place_name", teamId: null, outcome: "found" };
+    await expect(notifyTaskOutcome(prisma, place, "completed")).resolves.toBeUndefined();
+    await expect(notifyTaskOutcome(prisma, { ...place, outcome: null, lastError: "x" }, "failed")).resolves.toBeUndefined();
+    expect(findMany).not.toHaveBeenCalled();
+    expect(createMany).not.toHaveBeenCalled();
+    expect(sendBulk).not.toHaveBeenCalled();
+  });
+
   it("writes one in-app row per recipient, typed task, linking the Event page", async () => {
     const { prisma, createMany } = makePrisma({ requester: [user("u-req")], admins: [user("u-admin")] });
     await notifyTaskOutcome(prisma, TASK, "completed");

@@ -38,6 +38,20 @@ export function impactPriorSource(kind: string): string | null {
   return kind.slice(IMPACT_PRIOR_KIND.length + 1) || null;
 }
 
+/**
+ * Place research (ADR-0010 amendment, decision D-0296): a Worker researches
+ * one unresolved place name on the web and proposes a point with sources.
+ * Outside the impact-prior family: one Task per queue row, no fan-out.
+ */
+export const PLACE_RESEARCH_KIND = "place_name.locate.web";
+
+/** `tasks.subject_type` of a place research Task: a Places queue row. */
+export const PLACE_NAME_SUBJECT = "unresolved_place_name";
+
+export function isPlaceResearchKind(kind: string): boolean {
+  return kind === PLACE_RESEARCH_KIND;
+}
+
 const SOURCE_NAMES: Record<string, string> = {
   clear: "CLEAR data",
 };
@@ -48,9 +62,11 @@ const SOURCE_NAMES: Record<string, string> = {
  * (the ImpactPrior is computed from history), so its wire name
  * `event.impact_prior.web` is historical and never shown. The legacy kinds
  * that did propose a whole prior keep their names: "Impact prior from CLEAR
- * data", "Impact prior" for the bare kind. Any other kind as itself.
+ * data", "Impact prior" for the bare kind. `place_name.locate.web` is
+ * "Place research". Any other kind as itself.
  */
 export function taskKindLabel(kind: string): string {
+  if (isPlaceResearchKind(kind)) return "Place research";
   if (!isImpactPriorKind(kind)) return kind;
   const source = impactPriorSource(kind);
   if (source === "web") return "Web search";

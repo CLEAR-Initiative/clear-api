@@ -6,9 +6,12 @@
 import { describe, expect, it } from "vitest";
 import {
   IMPACT_PRIOR_KIND,
+  PLACE_NAME_SUBJECT,
+  PLACE_RESEARCH_KIND,
   RETIRED_KINDS,
   impactPriorSource,
   isImpactPriorKind,
+  isPlaceResearchKind,
   isRetiredKind,
   taskKindLabel,
 } from "../../src/utils/task-kinds.js";
@@ -37,6 +40,16 @@ describe("task kinds", () => {
     expect(taskKindLabel("event.impact_prior.web")).toBe("Web search");
     expect(taskKindLabel("event.impact_prior.satellite")).toBe("Impact prior from satellite");
     expect(taskKindLabel("event.other")).toBe("event.other");
+  });
+
+  it("place research is a kind of its own, outside the impact-prior family", () => {
+    expect(PLACE_RESEARCH_KIND).toBe("place_name.locate.web");
+    expect(PLACE_NAME_SUBJECT).toBe("unresolved_place_name");
+    expect(isPlaceResearchKind(PLACE_RESEARCH_KIND)).toBe(true);
+    expect(isPlaceResearchKind("place_name.locate")).toBe(false);
+    expect(isImpactPriorKind(PLACE_RESEARCH_KIND)).toBe(false);
+    expect(isRetiredKind(PLACE_RESEARCH_KIND)).toBe(false);
+    expect(taskKindLabel(PLACE_RESEARCH_KIND)).toBe("Place research");
   });
 
   it("retires exactly the whole-prior kinds — the bare one and .clear", () => {

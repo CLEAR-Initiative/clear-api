@@ -15,6 +15,14 @@ import {
   resolveIntoAlias,
   suggestPlaces,
 } from "../services/place-names.js";
+import {
+  SAME_POINT_DEGREES,
+  createPlaceResearchTask,
+  findOpenPlaceResearchTask,
+} from "../services/place-research.js";
+import { isPipelineCaller } from "../utils/pipeline-caller.js";
+import { PLACE_NAME_SUBJECT, PLACE_RESEARCH_KIND } from "../utils/task-kinds.js";
+import { assertUnderDailyRequestCap } from "../utils/task-request-cap.js";
 
 // ─── Unresolved place names (ADR-0019, Exponential #1307, #1309) ─────────────
 // The pipeline records each place name that geocoding could not place inside
@@ -77,6 +85,28 @@ interface QueueRow {
   resolvedAt: Date | null;
   resolutionNote: string | null;
   placeAliasId: string | null;
+}
+
+/**
+ * The caller as a decider, looked up once per request: `research` is a field
+ * of each row of a queue page, and every row asks the same question.
+ */
+const deciders = new WeakMap<Context, ReturnType<typeof requirePlaceNameDecider>>();
+function deciderOnce(context: Context): ReturnType<typeof requirePlaceNameDecider> {
+  let decider = deciders.get(context);
+  if (!decider) {
+    decider = requirePlaceNameDecider(context);
+    deciders.set(context, decider);
+  }
+  return decider;
+}
+
+/** `lastError` is the requester's and platform admins' to see (ADR-0010). */
+function redactTask<T extends { requesterId: string | null; lastError: string | null }>(
+  task: T,
+  user: { id: string; role?: string | null },
+): T {
+  return isPlatformAdmin(user) || task.requesterId === user.id ? task : { ...task, lastError: null };
 }
 
 export function badInput(message: string): GraphQLError {
@@ -377,15 +407,79 @@ export const unresolvedPlaceNameResolvers = {
       return context.prisma.unresolvedPlaceNames.findUnique({ where: { id } });
     },
 
+    // The trigger of place research for one row (D-0296). The Places queue's
+    // decider rule: a platform admin for any row, a team admin for a row
+    // inside the team's area. One open Task per row: a second request hands
+    // the open one back.
+    requestPlaceNameResearch: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const { user, scope } = await requirePlaceNameDecider(context);
+      const row = await context.prisma.unresolvedPlaceNames.findUnique({ where: { id: args.id } });
+      if (!row) throw notFound("Unresolved place name not found.");
+      if (!placeNameInScope(scope, row)) throw forbidden("This place name is outside your team's area");
+      const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+      if (!resolvable.includes(row.status)) {
+        throw conflict(`This place name is already ${row.status.replaceAll("_", " ")}`);
+      }
+
+      const open = await findOpenPlaceResearchTask(context.prisma, row.id);
+      if (open) return redactTask(open, user);
+      // After the dedupe: handing back the open Task costs nothing.
+      await assertUnderDailyRequestCap(context.prisma, user.id, "request");
+
+      const { task, created } = await createPlaceResearchTask(context.prisma, row, {
+        origin: isPipelineCaller(context) ? "api" : "user",
+        requesterId: user.id,
+      });
+      if (created) {
+        void logActivity(context.prisma, {
+          userId: user.id,
+          action: "task.requested",
+          resourceType: "task",
+          resourceId: task.id,
+          metadata: {
+            kind: PLACE_RESEARCH_KIND,
+            requestId: task.requestId,
+            subjectType: PLACE_NAME_SUBJECT,
+            subjectId: row.id,
+          },
+        });
+      }
+      return redactTask(task, user);
+    },
+
     resolveUnresolvedPlaceName: async (
       _parent: unknown,
-      args: { id: string; resolution: ResolutionInput; note?: string | null },
+      args: { id: string; resolution: ResolutionInput; note?: string | null; proposalId?: string | null },
       context: Context,
     ) => {
       const { user, scope } = await requirePlaceNameDecider(context);
       const row = await context.prisma.unresolvedPlaceNames.findUnique({ where: { id: args.id } });
       if (!row) throw notFound("Unresolved place name not found.");
       if (!placeNameInScope(scope, row)) throw forbidden("This place name is outside your team's area");
+
+      // A place proposal the decider uses (D-0296): the answer must be the
+      // proposal's own point, so the count of used proposals stays a count
+      // of right ones. A corrected point is a POINT answer with no proposal.
+      let proposalId: string | null = null;
+      if (args.proposalId != null) {
+        if (args.resolution.kind !== "POINT") throw badInput("proposalId goes with a POINT answer only.");
+        const proposal = await context.prisma.placeNameProposals.findUnique({ where: { id: args.proposalId } });
+        if (!proposal || proposal.unresolvedPlaceNameId !== row.id) {
+          throw badInput("proposalId is not a place proposal of this place name.");
+        }
+        if (proposal.outcome !== "found" || proposal.latitude == null || proposal.longitude == null) {
+          throw badInput("This place proposal has no point to use.");
+        }
+        const point = args.resolution.point;
+        if (
+          !point ||
+          Math.abs(point.lat - proposal.latitude) > SAME_POINT_DEGREES ||
+          Math.abs(point.lng - proposal.longitude) > SAME_POINT_DEGREES
+        ) {
+          throw badInput("The point is not the proposal's point. Send a corrected point without proposalId.");
+        }
+        proposalId = proposal.id;
+      }
 
       const resolvable: readonly string[] = RESOLVABLE_STATUSES;
       const closed = () => conflict(`This place name is already ${row.status.replaceAll("_", " ")}`);
@@ -485,12 +579,15 @@ export const unresolvedPlaceNameResolvers = {
 
       let result: { aliasId: string; signalsMoved: number };
       try {
+        // One transaction: the alias, the row, the Signals that move, and
+        // the proposal's record of who used it.
         result = await resolveIntoAlias(context.prisma, {
           row,
           locationId,
           userId: user.id,
           note,
           source: "review",
+          ...(proposalId ? { proposalId } : {}),
         });
       } catch (err) {
         if (err instanceof PlaceNameConflict) {
@@ -515,6 +612,7 @@ export const unresolvedPlaceNameResolvers = {
           locationId,
           placeAliasId: result.aliasId,
           signalsMoved: result.signalsMoved,
+          ...(proposalId ? { placeNameProposalId: proposalId } : {}),
         },
       });
       return context.prisma.unresolvedPlaceNames.findUnique({ where: { id: row.id } });
@@ -522,6 +620,20 @@ export const unresolvedPlaceNameResolvers = {
   },
 
   UnresolvedPlaceName: {
+    // Place research on the row (D-0296): the open Task, if one waits or
+    // runs, and the newest proposal. Deciders only: the row type also goes
+    // back to the pipeline from recordUnresolvedPlaceName.
+    research: async (parent: { id: string }, _args: unknown, context: Context) => {
+      const { user } = await deciderOnce(context);
+      const [task, proposal] = await Promise.all([
+        findOpenPlaceResearchTask(context.prisma, parent.id),
+        context.prisma.placeNameProposals.findFirst({
+          where: { unresolvedPlaceNameId: parent.id },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        }),
+      ]);
+      return { task: task ? redactTask(task, user) : null, proposal };
+    },
     stateLocation: (parent: { stateLocationId: string | null }, _args: unknown, { prisma }: Context) =>
       parent.stateLocationId ? prisma.locations.findUnique({ where: { id: parent.stateLocationId } }) : null,
     placeAlias: (parent: { placeAliasId: string | null }, _args: unknown, { prisma }: Context) =>
@@ -545,6 +657,18 @@ export const unresolvedPlaceNameResolvers = {
         orderBy: [{ seenAt: "desc" }, { signalId: "asc" }],
         take,
       });
+    },
+  },
+
+  PlaceNameResearch: {
+    taskStatus: (parent: { task: { status: string } | null }) => parent.task?.status ?? null,
+  },
+
+  PlaceNameProposal: {
+    usedByName: async (parent: { usedById: string | null }, _args: unknown, { prisma }: Context) => {
+      if (!parent.usedById) return null;
+      const u = await prisma.user.findUnique({ where: { id: parent.usedById }, select: { name: true } });
+      return u?.name ?? null;
     },
   },
 
