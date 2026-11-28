@@ -606,6 +606,13 @@ describeIfDb("Place research against the real schema", () => {
     expect(await researchOpen(row, null, platform)).toBe(false);
     expect(await researchOpen({ id: waiting.id }, null, platform)).toBe(true);
     expect(code(await rejection(researchOutcome(row, null, analyst)))).toBe("FORBIDDEN");
+    // One request reads the proposal once: a proposal that lands between the
+    // two fields does not split them.
+    const once = as(PLATFORM_ID, "admin");
+    expect(await researchOutcome({ id: notFound.id }, null, once)).toBe("not_found");
+    await propose(notFound.id, "found", "2026-11-23T00:00:00Z");
+    expect(await researchConfidence({ id: notFound.id }, null, once)).toBeNull();
+    expect(await researchConfidence({ id: notFound.id }, null, as(PLATFORM_ID, "admin"))).toBe("high");
   });
 
   it("a cancel that landed while the Worker researched wins: no proposal", async () => {

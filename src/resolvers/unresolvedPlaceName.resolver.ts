@@ -123,14 +123,30 @@ function redactTask<T extends { requesterId: string | null; lastError: string | 
   return isPlatformAdmin(user) || task.requesterId === user.id ? task : { ...task, lastError: null };
 }
 
-/** The newest place proposal of a row that did not come from the list. Deciders only. */
+/**
+ * The newest place proposal of a row that did not come from the list.
+ * Deciders only. One read per row and request: `researchOutcome` and
+ * `researchConfidence` then describe the same proposal, also when a Worker
+ * completes research while the response is built.
+ */
+const newestProposals = new WeakMap<Context, Map<string, Promise<{ outcome: string; confidence: string | null } | null>>>();
 async function newestProposal(context: Context, rowId: string) {
   await deciderOnce(context);
-  return context.prisma.placeNameProposals.findFirst({
-    where: { unresolvedPlaceNameId: rowId },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: { outcome: true, confidence: true },
-  });
+  let byRow = newestProposals.get(context);
+  if (!byRow) {
+    byRow = new Map();
+    newestProposals.set(context, byRow);
+  }
+  let read = byRow.get(rowId);
+  if (!read) {
+    read = context.prisma.placeNameProposals.findFirst({
+      where: { unresolvedPlaceNameId: rowId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { outcome: true, confidence: true },
+    });
+    byRow.set(rowId, read);
+  }
+  return read;
 }
 
 export function badInput(message: string): GraphQLError {
