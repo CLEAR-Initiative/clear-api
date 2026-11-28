@@ -197,6 +197,61 @@ Slice [#1310](https://www.exponential.im/w/clear/products/clear/tickets/1310) ad
 36. **Each write is logged:** `place_alias.create`, `place_alias.update`,
     `place_alias.delete`.
 
+## Place research and place proposals
+
+Decision D-0296 (accepted on 28 Nov 2026), Exponential
+[#1717](https://www.exponential.im/w/clear/products/clear/tickets/1717). Slice
+[#1722](https://www.exponential.im/w/clear/products/clear/tickets/1722) adds
+`requestPlaceNameResearch`, the `place` input of `completeTask`,
+`UnresolvedPlaceName.research` and `proposalId` on `resolveUnresolvedPlaceName`.
+ADR-0010 has the Task side.
+
+| Term | Meaning |
+| --- | --- |
+| Place research | The work of one Task: find where an unresolved place name is. |
+| Place proposal | The typed result of one place research Task. |
+
+37. **A place proposal is a row in `place_name_proposals`.** One row per
+    completed place research Task. The row points at the queue row and at
+    the Task, and it keeps the method version of the skill that made it.
+38. **A proposal has one of three outcomes:** `found`, `not_found` or
+    `not_a_place`. The database checks the value set.
+39. **A `found` proposal carries** a latitude, a longitude, the name found, a
+    confidence (`high`, `medium`, `low`), a reason and one or more sources. A
+    source is an absolute http(s) URL and a verbatim quote.
+40. **`not_found` and `not_a_place` carry a reason and no point.** They stay
+    visible, so a decider does not request the same research again. The
+    database checks that only a `found` row has a point.
+41. **The point must be inside the row's country.** The test is the one of
+    point 15 for a `POINT` answer: the admin area that contains the point is
+    the country or lies inside it. A proposal that passes can therefore
+    resolve the row. clear-api refuses a point outside the country and stores
+    nothing.
+42. **Suggestions are computed. Proposals are stored.** Point 25 stays: a
+    gazetteer suggestion is computed on each call, because it goes stale when
+    the gazetteer changes. A proposal costs a Worker run and does not go
+    stale that way, so it is stored.
+43. **A newer proposal replaces the older one in the read.**
+    `UnresolvedPlaceName.research` returns the open Task of the row, if there
+    is one, and the newest proposal. The older rows stay as history. It
+    also returns the newest Task in any status (`latestTask`), so a client
+    can show that the last research failed. Deciders only: all other roles
+    get FORBIDDEN. `unresolvedPlaceName(id)` reads one row under the rule
+    of point 11, so a client can follow the research of one row without
+    reading the list again.
+44. **The Worker writes proposals only.** It never resolves a name, never
+    writes an alias and never moves a Signal. A decider uses a proposal
+    through `resolveUnresolvedPlaceName` with the answer `POINT` and the
+    `proposalId`, as for a point placed by hand. The rules of points 15 to 20
+    apply.
+45. **The proposal records its use.** A resolution with `proposalId` writes
+    the decider and the time on the proposal, in the transaction of point 16.
+    The point of the answer must be the proposal's own point. A corrected
+    point is a `POINT` answer with no `proposalId`. The count of used
+    proposals is therefore the count of right ones.
+46. **A proposal goes away with its queue row** (`ON DELETE CASCADE`). A
+    Task that has a proposal cannot be deleted (`ON DELETE RESTRICT`).
+
 ## Not in these slices
 
 - Re-grouping a Signal that moved: [#1316](https://www.exponential.im/w/clear/products/clear/tickets/1316).
@@ -213,7 +268,15 @@ Slice [#1310](https://www.exponential.im/w/clear/products/clear/tickets/1310) ad
 - **A partial unique index for the null case.** It needs two indexes per key
   and an upsert that picks between them. `NULLS NOT DISTINCT` needs one.
 - **Store the suggestions on the row.** They go stale when the gazetteer
-  changes. #1309 computes them on demand.
+  changes. #1309 computes them on demand. A place proposal is not a
+  suggestion (point 42), so this option stays rejected.
+- **Keep a place proposal in the Task's raw output** (`tasks.result`). It is
+  free JSON: nothing validates it, the country check cannot run before it is
+  stored, the newest result of a row needs a scan of the row's Tasks, and a
+  Task has no column for "which proposal did a person use". ADR-0010 already
+  puts a typed result beside the object it enriches (D-0296).
+- **Columns for the proposal on the queue row.** A row can be researched more
+  than once, and the sources are a list.
 
 ## Consequences
 

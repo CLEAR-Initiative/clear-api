@@ -66,6 +66,13 @@ export const queryTypeDef = gql`
       offset: Int
     ): UnresolvedPlaceNamesPage!
 
+    """One row of the unresolved place-name queue, or null when there is
+    none. For a client that follows one row, for example its place research
+    (\`research\`), without reading the list again. Auth: a platform admin,
+    or a team admin when the row is inside their team's area (FORBIDDEN
+    otherwise)."""
+    unresolvedPlaceName(id: String!): UnresolvedPlaceName
+
     """Places a queued name can mean, for a decider: up to 5 GeoNames
     candidates and up to 5 CLEAR districts or landmarks with a similar name,
     in one country. Candidates inside \`withinLocationId\` come first, then the

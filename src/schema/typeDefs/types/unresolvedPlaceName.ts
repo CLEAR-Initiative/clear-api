@@ -75,6 +75,108 @@ export const unresolvedPlaceNameTypeDef = gql`
       """Max rows to return (1 to 50, default 5)."""
       first: Int
     ): [UnresolvedPlaceNameSignal!]!
+    """Place research on the row: the open Task, if one waits or runs, and
+    the newest place proposal. Deciders only (FORBIDDEN for other roles)."""
+    research: PlaceNameResearch!
+  }
+
+  """What a place research Task found."""
+  enum PlaceProposalOutcome {
+    """The Worker found the place. The proposal has a point."""
+    found
+    """The Worker did not find the place."""
+    not_found
+    """The spelling does not name a place."""
+    not_a_place
+  }
+
+  """How sure the Worker is of a \`found\` proposal."""
+  enum PlaceProposalConfidence {
+    high
+    medium
+    low
+  }
+
+  """One source of a place proposal."""
+  type PlaceProposalSource {
+    """Absolute http(s) URL."""
+    url: String!
+    """The source's own words, verbatim."""
+    quote: String!
+  }
+
+  """The typed result of one place research Task (kind
+  \`place_name.locate.web\`): where a Worker says an unresolved place name
+  is, with its sources. A Worker writes it and never resolves the name. A
+  decider uses it through \`resolveUnresolvedPlaceName\` with a POINT answer
+  and \`proposalId\`."""
+  type PlaceNameProposal {
+    id: ID!
+    unresolvedPlaceNameId: String!
+    """The Task that produced it."""
+    taskId: String!
+    outcome: PlaceProposalOutcome!
+    """The point. Null unless the outcome is \`found\`. Inside the row's country."""
+    latitude: Float
+    longitude: Float
+    """The name of the place as the Worker found it. Null unless \`found\`."""
+    nameFound: String
+    """Null unless \`found\`."""
+    confidence: PlaceProposalConfidence
+    """Why the Worker gives this result."""
+    reason: String!
+    sources: [PlaceProposalSource!]!
+    """Version string of the skill that produced it."""
+    methodVersion: String!
+    """Auth user id of the decider who resolved the row with this point."""
+    usedById: String
+    usedByName: String
+    usedAt: DateTime
+    createdAt: DateTime!
+  }
+
+  """Place research on one row of the Places queue."""
+  type PlaceNameResearch {
+    """The open (PENDING or LEASED) place research Task of the row, or null."""
+    task: Task
+    """The status of that Task: PENDING (waits for a Worker) or LEASED (a
+    Worker has it). Null when no Task is open."""
+    taskStatus: TaskStatus
+    """The newest place research Task of the row in any status, or null when
+    none was requested. FAILED with no newer proposal means the last research
+    failed; \`lastError\` is the requester's and platform admins' to read."""
+    latestTask: Task
+    """The newest place proposal of the row, or null. An older proposal
+    stays in the database as history."""
+    proposal: PlaceNameProposal
+  }
+
+  """One source a Worker cites for a place proposal."""
+  input PlaceProposalSourceInput {
+    """Absolute http(s) URL."""
+    url: String!
+    """The source's own words, verbatim."""
+    quote: String!
+  }
+
+  """The place proposal a Worker sends when it completes a
+  \`place_name.locate.web\` Task. \`found\` needs \`latitude\`,
+  \`longitude\`, \`nameFound\`, \`confidence\` and one or more
+  \`sources\`. \`not_found\` and \`not_a_place\` need the \`reason\` and
+  take no point, no name and no confidence."""
+  input PlaceProposalInput {
+    outcome: PlaceProposalOutcome!
+    """With \`found\`: must be inside the country of the place name."""
+    latitude: Float
+    longitude: Float
+    """With \`found\`: the name of the place as the sources give it."""
+    nameFound: String
+    """With \`found\`."""
+    confidence: PlaceProposalConfidence
+    """Why this result. At most 2000 characters."""
+    reason: String!
+    """At most 20. Required with \`found\`."""
+    sources: [PlaceProposalSourceInput!]
   }
 
   """One Signal that named an unresolved place name."""

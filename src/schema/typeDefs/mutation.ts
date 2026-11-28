@@ -324,7 +324,27 @@ export const mutationTypeDef = gql`
       resolution: UnresolvedPlaceNameResolutionInput!
       """Why, at most 2000 characters. Kept on the row and on the alias."""
       note: String
+      """With a POINT answer only: the place proposal whose point this is
+      (\`UnresolvedPlaceName.research.proposal\`). The proposal then records
+      the decider and the time. The point must be the proposal's own; send a
+      corrected point without it."""
+      proposalId: String
     ): UnresolvedPlaceName!
+
+    """Request place research for one row of the unresolved place-name queue
+    (ADR-0010, ADR-0019): a Task of kind \`place_name.locate.web\` whose
+    subject is the row. A Worker researches the name and completes the Task
+    with a place proposal, which \`UnresolvedPlaceName.research\` returns.
+    The Worker never resolves the name. The row must be OPEN or AMBIGUOUS
+    (CONFLICT otherwise). A row has one open Task: a request while one is
+    PENDING or LEASED returns it and creates nothing. The per-requester daily
+    cap of \`requestEventEnrichment\` counts these requests too (FORBIDDEN
+    \`DAILY_CAP\`). Auth: a platform admin, or a team admin when the row is
+    inside their team's area."""
+    requestPlaceNameResearch(
+      """The queue row."""
+      id: String!
+    ): Task!
 
     """Add a place alias by hand (source MANUAL), to an existing location or
     to a new point. It also resolves the open queue rows with the same
@@ -1595,7 +1615,13 @@ export const mutationTypeDef = gql`
     and \`methodVersion\` (V4): one CaseProposal per case, each decided on
     its own (outcome \`produced\`); a URL already proposed for the Event is
     skipped (\`no_new_cases\` when all were); an empty list or none records
-    \`no_prior_found\`. Any other kind completes with \`result\` only. The
+    \`no_prior_found\`. For a \`place_name.locate.web\` Task, pass
+    \`place\` and \`methodVersion\`: one place proposal is stored beside
+    the queue row and the Task's outcome is the proposal's (\`found\`,
+    \`not_found\`, \`not_a_place\`). A point outside the country of the
+    place name is refused (BAD_USER_INPUT \`POINT_OUTSIDE_COUNTRY\`):
+    nothing is stored and the Task stays LEASED, so correct the point or fail
+    the Task. Any other kind completes with \`result\` only. The
     whole-prior \`impactPrior\` input was removed (2026-10-08): the
     ImpactPrior is computed from history. Only the lease owner,
     only while LEASED (CONFLICT
@@ -1608,7 +1634,11 @@ export const mutationTypeDef = gql`
       result: JSON!
       usage: TaskUsageInput
       cases: [CaseProposalInput!]
-      """Skill or handler version that produced \`cases\`; required with them."""
+      """The place proposal of a \`place_name.locate.web\` Task; required
+      for that kind and refused for every other."""
+      place: PlaceProposalInput
+      """Skill or handler version that produced \`cases\` or \`place\`;
+      required with either."""
       methodVersion: String
     ): Task!
   }

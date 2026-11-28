@@ -5,7 +5,8 @@
  * view-scope team) and every platform admin get an in-app notification
  * with a link to the Event page, and an email when they opted in — the
  * `escalateEvent` fan-out shape. Best-effort: a failure here is logged and
- * never surfaces to the Worker whose write triggered it.
+ * never surfaces to the Worker whose write triggered it. A place research
+ * Task (`place_name.locate.web`) sends nothing.
  */
 
 import { eventLink } from "../utils/event-link.js";
@@ -13,7 +14,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { getEmailProvider } from "../services/messaging/registry.js";
 import { taskOutcome as taskOutcomeEmail } from "../services/messaging/templates.js";
-import { impactPriorSource, taskKindLabel } from "../utils/task-kinds.js";
+import { impactPriorSource, isPlaceResearchKind, taskKindLabel } from "../utils/task-kinds.js";
 
 export type TaskOutcomeKind = "completed" | "failed";
 
@@ -104,6 +105,10 @@ export async function notifyTaskOutcome(
   task: TaskForNotification,
   outcomeKind: TaskOutcomeKind,
 ): Promise<void> {
+  // Place research tells nobody: a decider reads the result, or its absence,
+  // on the queue row (D-0296). Most of these Tasks have no requester (origin
+  // `rule`), so a fan-out would reach every platform admin for each name.
+  if (isPlaceResearchKind(task.kind)) return;
   try {
     const recipients = await taskRecipients(prisma, task);
     if (recipients.length === 0) return;

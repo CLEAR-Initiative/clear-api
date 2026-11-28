@@ -57,17 +57,22 @@ export const taskTypeDef = gql`
   """One unit of Worker-performed work (ADR-0010)."""
   type Task {
     id: String!
-    """The kind of work, e.g. \`event.impact_prior.web\` (the web search
-    that proposes signals; the name is historical). A Worker claims by exact
+    """The kind of work: \`event.impact_prior.web\` (the web search that
+    proposes signals; the name is historical) or \`place_name.locate.web\`
+    (place research for one unresolved place name). A Worker claims by exact
     kind. One request fans out into one Task per enabled source kind. Older
     Tasks may carry the retired whole-prior kinds \`event.impact_prior\`
     and \`event.impact_prior.clear\`."""
     kind: String!
-    """The subject's type, e.g. \`event\`."""
+    """The subject's type: \`event\`, or \`unresolved_place_name\` (a row
+    of the Places queue)."""
     subjectType: String!
     """The subject's id, e.g. an Event id."""
     subjectId: String!
-    """Per-kind inputs, e.g. \`{ "horizonYears": 10 }\`."""
+    """Per-kind inputs, e.g. \`{ "horizonYears": 10 }\`. A place research
+    Task carries what the Worker cannot read from the queue:
+    \`{ name, nameAr, countryCode, stateLocationId, stateName, signalIds }\`,
+    with the ids of up to 10 of the newest Signals that name the place."""
     payload: JSON!
     status: TaskStatus!
     origin: TaskOrigin!
@@ -105,7 +110,9 @@ export const taskTypeDef = gql`
     cancelledById: String
     """Kind-specific result vocabulary. For \`event.impact_prior.*\`:
     \`produced\` or \`no_prior_found\`; for the web kind also
-    \`no_new_cases\` (every case found was already proposed for the Event)."""
+    \`no_new_cases\` (every case found was already proposed for the Event).
+    For \`place_name.locate.web\`: \`found\`, \`not_found\` or
+    \`not_a_place\`."""
     outcome: String
     """Raw Worker output, kept for audit. The typed result lives beside the
     subject (see \`Event.caseProposals\`)."""

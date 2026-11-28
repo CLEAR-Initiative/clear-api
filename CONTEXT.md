@@ -144,6 +144,14 @@ _Avoid_: failed geocode, unknown location (the Signal still has a location: its 
 A spelling that CLEAR maps to a CLEAR `locations` row: a district, a state or a level-4 landmark. CLEAR owns it, in `place_aliases`, with no foreign key to the GeoNames tables, so a GeoNames re-import never touches it. Its source is `review` (a decider resolved an unresolved place name), `seed` (a loaded list) or `manual`. Two lists are seeded for Sudan: the Arabic names of states and districts (#1417), and the towns of districts whose town GeoNames lacks or spells differently (#1709, `scripts/seed-sudan-district-town-aliases.ts`): each town is a level-4 location with `point_type = 'seed'` and its spellings are aliases scoped to its state. `resolveGazetteerLocation` checks aliases before GeoNames and answers with `source: ALIAS` and the `locationId`. Resolving a queue row (`resolveUnresolvedPlaceName`) writes the alias, a second alias for the row's Arabic spelling, and moves the waiting Signals: those whose current location holds the alias location and that no person corrected. See ADR-0019.
 _Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNames' own data)
 
+**Place research**:
+The work of one **Task** of kind `place_name.locate.web`: find where an **unresolved place name** is. A decider requests it for one row of the queue (`requestPlaceNameResearch`). A **Worker** researches the name and completes the Task with a **place proposal**. One row has at most one open Task. The Worker never resolves a name. See ADR-0010 and ADR-0019.
+_Avoid_: geocoding (that is the pipeline's step), enrichment (that is for an Event)
+
+**Place proposal**:
+The typed result of one **place research** Task: a row in `place_name_proposals`. Its outcome is `found`, `not_found` or `not_a_place`. A `found` proposal has a point inside the row's country, the name found, a confidence, a reason and one or more sources (URL and quote). The newest proposal of a row is the one deciders read (`UnresolvedPlaceName.research`). A decider uses it through `resolveUnresolvedPlaceName` with a `POINT` answer and the `proposalId`; the proposal then records the decider and the time.
+_Avoid_: suggestion (a gazetteer suggestion is computed on each call and is never stored), CaseProposal (that is a past incident for an Event)
+
 **Alias scope**:
 The area where a place alias applies: one state by default, or the whole country (a null scope, used for facilities). The same spelling can have one alias per scope. A team admin adds, changes and deletes the aliases scoped inside their team's area; a country-wide alias needs a platform admin. Every decider reads the whole list (`placeAliases`).
 
@@ -177,7 +185,8 @@ _Avoid_: figure (in code), population number, casualty count, datapoint (that is
 
 **Task**:
 One unit of work of a named kind, about one subject such as an Event, waiting for or held by a
-**Worker**. **Event enrichment** is the first kind of work.
+**Worker**. **Event enrichment** is the first kind of work; **place research** is the second,
+and its subject is a row of the unresolved place-name queue.
 _Avoid_: job, ticket, queue item, request (that is the act of asking)
 
 **Worker**:

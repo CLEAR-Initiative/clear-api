@@ -265,3 +265,50 @@ clear-api `dev`, so clear-mvp must stop calling the removed fields first.
 5. clear-mcp refreshes its `schema.graphql` snapshot once that reaches staging.
 6. Later, and only on an explicit decision since it deletes who-decided-what history: drop
    `impact_priors` with `Event.impactPriors` and `eventImpactPriors`.
+
+## Amendment (2026-11-28): a second kind, place research
+
+Decision D-0296 (accepted on 28 Nov 2026), Exponential
+[#1717](https://www.exponential.im/w/clear/products/clear/tickets/1717). Slice
+[#1722](https://www.exponential.im/w/clear/products/clear/tickets/1722) adds the kind, the request
+and the completion. ADR-0019 has the place-name side.
+
+- **The second kind is `place_name.locate.web`.** A Worker researches one unresolved place name
+  on the web and in open datasets, and proposes a point with sources. The kind is outside the
+  impact-prior family: one Task per subject, no fan-out, no entry in `TASK_IMPACT_PRIOR_KINDS`.
+- **A new subject type: `unresolved_place_name`.** The subject is a row of the Places queue
+  (ADR-0019). `tasks_open_subject_uk` already allows one PENDING or LEASED Task per kind and
+  subject, so one row has at most one open Task. No new index.
+- **`requestPlaceNameResearch(id)` is the trigger.** It follows the queue's decider rule: a
+  platform admin for any row, a team admin for a row inside the team's area. The row must be
+  `open` or `ambiguous`. A request while a Task is open returns that Task. The per-requester
+  daily cap (`TASK_REQUEST_DAILY_CAP`) counts these requests with the enrichment requests.
+- **The payload carries what the Worker cannot read.** The `worker` role cannot read the Places
+  queue. The payload has the name, the Arabic name, the country code, the state's id and name,
+  and the ids of up to 10 of the newest Signals of the row.
+- **The typed result is a place proposal** (`place_name_proposals`), one row per completed Task.
+  This is the rule above: a typed result lives beside the object it enriches, and the Task keeps
+  the raw output for audit. `completeTask` takes a `place` input for this kind only, as it takes
+  `cases` for `event.impact_prior.web` only. `Task.outcome` is the proposal's outcome: `found`,
+  `not_found` or `not_a_place`.
+- **clear-api refuses a point outside the row's country.** The completion fails with
+  BAD_USER_INPUT (`POINT_OUTSIDE_COUNTRY`). Nothing is stored and the Task stays LEASED. The
+  Worker corrects the point or fails the Task.
+- **The `worker` role's write scope grows by one thing:** a place proposal on a Task that it
+  holds. It writes this through `completeTask`, so the set of mutations it can call does not
+  change. `tests/schema/worker-write-scope.test.ts` stays the guard. The Worker never resolves a
+  name, never writes an alias and never moves a Signal.
+- **The origin `rule` comes into use.** A Task that a rule creates has no requester. The slice
+  that adds the automatic rule is
+  [#1726](https://www.exponential.im/w/clear/products/clear/tickets/1726).
+- **A place research Task notifies nobody.** A decider reads the result on the queue row. Most
+  of these Tasks will have no requester, so the fan-out would reach every platform admin for
+  each name.
+- **`task(id)` follows the queue's rule for this kind.** The payload holds queue data, and the
+  Places queue is for deciders only. A place research Task is read by the Workers, by its
+  requester and by the deciders of its row. All other readers get FORBIDDEN.
+- **The request locks the row.** The Task is created in a transaction that locks the queue row
+  and reads its status again. A row that a decider closes in between gets no Task.
+- **Release order.** GraphQL rejects a document that declares a variable of an unknown type.
+  clear-api ships `PlaceProposalInput` first. clear-mcp then declares `$place` in its
+  `completeTask` document and is released. clear-worker-routine then pins that release.

@@ -2628,7 +2628,8 @@ model unresolvedPlaceNames {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
-  signals unresolvedPlaceNameSignals[]
+  signals   unresolvedPlaceNameSignals[]
+  proposals placeNameProposals[]
 
   @@index([status, signalCount(sort: Desc)])
   @@index([stateLocationId])
@@ -2663,6 +2664,46 @@ model unresolvedPlaceNameSignals {
   @@index([signalId])
   @@index([areaLocationId])
   @@map("unresolved_place_name_signals")
+}
+
+/// A place proposal (ADR-0019, decision D-0296): the typed result of one
+/// place research Task (`place_name.locate.web`, ADR-0010). One row per
+/// completed Task. A Worker writes it; a decider reads it in the Places pane
+/// and may resolve the queue row with its point. A newer proposal replaces
+/// the older one in the pane; the older row stays as history.
+model placeNameProposals {
+  id String @id @default(cuid())
+
+  unresolvedPlaceNameId String               @map("unresolved_place_name_id")
+  unresolvedPlaceName   unresolvedPlaceNames @relation(fields: [unresolvedPlaceNameId], references: [id], onDelete: Cascade)
+  /// The Task that produced it. One proposal per Task.
+  taskId                String               @unique @map("task_id")
+  task                  task                 @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  /// "found", "not_found" or "not_a_place" (DB CHECK).
+  outcome       String
+  /// The point, for "found" only (DB CHECK). Inside the row's country.
+  latitude      Float?
+  longitude     Float?
+  /// The name of the place as the Worker found it. "found" only.
+  nameFound     String? @map("name_found")
+  /// "high", "medium" or "low" (DB CHECK). "found" only.
+  confidence    String?
+  /// Why the Worker gives this result.
+  reason        String
+  /// `[{ url, quote }]`: an absolute http(s) URL and the source's own words.
+  sources       Json    @default("[]")
+  /// Skill or handler version string that produced the proposal.
+  methodVersion String  @map("method_version")
+
+  /// The decider who resolved the row with this proposal's point, and when.
+  usedById String?   @map("used_by_id")
+  usedAt   DateTime? @map("used_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([unresolvedPlaceNameId, createdAt(sort: Desc)])
+  @@map("place_name_proposals")
 }
 
 /// A spelling that CLEAR maps to a CLEAR location. Unique on
@@ -3224,8 +3265,9 @@ model task {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  impactPriors  impactPrior[]
-  caseProposals caseProposal[]
+  impactPriors       impactPrior[]
+  caseProposals      caseProposal[]
+  placeNameProposals placeNameProposals[]
 
   /// (status, kind, created_at) serves the oldest-first claim; the partial
   /// unique `tasks_open_subject_uk` — one PENDING/LEASED Task per (kind,
