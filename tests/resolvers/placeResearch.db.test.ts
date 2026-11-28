@@ -26,7 +26,9 @@ const { research } = unresolvedPlaceNameResolvers.UnresolvedPlaceName;
 const { claimTasks, completeTask, failTask } = taskResolvers.Mutation;
 
 const RUN = `pr-db-${Date.now()}`;
-const CC = "ZW";
+// Not an assigned ISO code (ZW is Zimbabwe), so the cleanup by country code
+// can only reach this suite's rows.
+const CC = "ZY";
 const COUNTRY_ID = `${RUN}-country`;
 const COUNTRY_B_ID = `${RUN}-country-b`;
 const STATE_A_ID = `${RUN}-state-a`;
