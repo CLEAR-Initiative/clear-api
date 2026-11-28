@@ -168,9 +168,15 @@ describe("resolveUnresolvedPlaceName", () => {
     });
     expect(logActivity).toHaveBeenCalledWith(prisma, expect.objectContaining({ action: "place_name.not_a_place", resourceId: ROW.id }));
     expect(resolveSpy).not.toHaveBeenCalled();
+    // Not a place cancels the row's open place research Task, in one statement.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(String((prisma.$executeRaw.mock.calls[0] as [string[]])[0].join("?"))).toMatch(/UPDATE "tasks"[\s\S]*CANCELLED/);
 
-    await run(PLATFORM, { kind: "AMBIGUOUS" });
+    // An ambiguous row stays resolvable and keeps its Task.
+    const ambiguous = fakePrisma();
+    await run(PLATFORM, { kind: "AMBIGUOUS" }, ambiguous);
     expect(logActivity).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ action: "place_name.ambiguous" }));
+    expect(ambiguous.$executeRaw).not.toHaveBeenCalled();
 
     const lost = fakePrisma();
     lost.unresolvedPlaceNames.updateMany.mockResolvedValue({ count: 0 });

@@ -13,6 +13,7 @@ describe("isDbBackedTestSource", () => {
     expect(isDbBackedTestSource(imp("describeIfDb") + "describeIfDb.only(\"x\", () => {});")).toBe(true);
     expect(isDbBackedTestSource(imp("describeIfDb") + "describeIfDb (\"x\", () => {});")).toBe(true);
     expect(isDbBackedTestSource(imp("describeIfSeededDb"))).toBe(true);
+    expect(isDbBackedTestSource(imp("describeIfScratchDb"))).toBe(true);
     expect(isDbBackedTestSource(imp("dbTestsEnabled, describeIfDb"))).toBe(true);
     expect(isDbBackedTestSource(imp("describeIfDb", `../../${helper}`))).toBe(true);
   });

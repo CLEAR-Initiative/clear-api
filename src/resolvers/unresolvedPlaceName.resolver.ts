@@ -18,6 +18,7 @@ import {
 import {
   PlaceResearchRowClosed,
   SAME_POINT_DEGREES,
+  cancelPlaceResearchTasksTx,
   createPlaceResearchTask,
   findOpenPlaceResearchTask,
 } from "../services/place-research.js";
@@ -580,9 +581,19 @@ export const unresolvedPlaceNameResolvers = {
         if (row.status === status) throw closed();
         // Conditional on the status read above, so a concurrent decision wins
         // once: another decider's answer is never overwritten.
-        const { count } = await context.prisma.unresolvedPlaceNames.updateMany({
-          where: { id: row.id, status: row.status },
-          data: { status, resolvedById: user.id, resolvedAt: new Date(), resolutionNote: note },
+        const now = new Date();
+        const count = await context.prisma.$transaction(async (tx) => {
+          const written = await tx.unresolvedPlaceNames.updateMany({
+            where: { id: row.id, status: row.status },
+            data: { status, resolvedById: user.id, resolvedAt: now, resolutionNote: note },
+          });
+          // A name that is not a place needs no research: its open Task is
+          // cancelled with it. An ambiguous row stays resolvable, so it
+          // keeps its Task.
+          if (written.count > 0 && kind === "NOT_A_PLACE") {
+            await cancelPlaceResearchTasksTx(tx, row.id, user.id, now);
+          }
+          return written.count;
         });
         if (count === 0) throw conflict("This place name was resolved in the meantime");
         void logActivity(context.prisma, {

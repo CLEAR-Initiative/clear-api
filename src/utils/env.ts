@@ -281,6 +281,19 @@ const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.coerce.number().int().positive().default(20),
   ),
+  /** Automatic place research (ADR-0010, ADR-0019): clear-api requests
+   *  research by itself for an open row of the Places queue with this many
+   *  Signals or more. No value: automatic research is off. */
+  PLACE_RESEARCH_AUTO_MIN_SIGNALS: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  /** Automatic place research Tasks created per UTC day, at most. A request
+   *  by a person does not count. */
+  PLACE_RESEARCH_AUTO_DAILY_CAP: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.coerce.number().int().positive().default(10),
+  ),
   /** The source kinds one enrichment request fans out into — one Task per
    *  kind, each drained by its own Worker. Comma-separated; each must be
    *  `event.impact_prior.<source>`. Dropping a kind here stops new Tasks of

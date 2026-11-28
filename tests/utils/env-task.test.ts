@@ -23,7 +23,12 @@ const TASK_VARS = [
   "TASK_CLAIM_MAX",
   "TASK_REQUEST_DAILY_CAP",
 ] as const;
-const ALL_VARS = [...TASK_VARS, "TASK_IMPACT_PRIOR_KINDS"] as const;
+const ALL_VARS = [
+  ...TASK_VARS,
+  "TASK_IMPACT_PRIOR_KINDS",
+  "PLACE_RESEARCH_AUTO_MIN_SIGNALS",
+  "PLACE_RESEARCH_AUTO_DAILY_CAP",
+] as const;
 
 async function loadEnv(values: Partial<Record<(typeof ALL_VARS)[number], string | undefined>>) {
   for (const [key, value] of Object.entries(REQUIRED)) vi.stubEnv(key, value);
@@ -151,5 +156,22 @@ describe("TASK_IMPACT_PRIOR_KINDS — the source kinds one request fans out into
     ["a list that is all separators", ", ,"],
   ])("rejects %s", async (_name, value) => {
     await expect(loadEnv({ TASK_IMPACT_PRIOR_KINDS: value })).rejects.toThrow();
+  });
+
+  it("automatic place research is off with no threshold, and its cap defaults to 10", async () => {
+    const off = await loadEnv({});
+    expect(off.PLACE_RESEARCH_AUTO_MIN_SIGNALS).toBeUndefined();
+    expect(off.PLACE_RESEARCH_AUTO_DAILY_CAP).toBe(10);
+    // An empty value is unset, as for the other Task settings.
+    const empty = await loadEnv({ PLACE_RESEARCH_AUTO_MIN_SIGNALS: "", PLACE_RESEARCH_AUTO_DAILY_CAP: "" });
+    expect(empty.PLACE_RESEARCH_AUTO_MIN_SIGNALS).toBeUndefined();
+    expect(empty.PLACE_RESEARCH_AUTO_DAILY_CAP).toBe(10);
+    const on = await loadEnv({ PLACE_RESEARCH_AUTO_MIN_SIGNALS: "3", PLACE_RESEARCH_AUTO_DAILY_CAP: "25" });
+    expect(on.PLACE_RESEARCH_AUTO_MIN_SIGNALS).toBe(3);
+    expect(on.PLACE_RESEARCH_AUTO_DAILY_CAP).toBe(25);
+    for (const bad of ["0", "-1", "2.5", "three"]) {
+      await expect(loadEnv({ PLACE_RESEARCH_AUTO_MIN_SIGNALS: bad })).rejects.toThrow();
+      await expect(loadEnv({ PLACE_RESEARCH_AUTO_DAILY_CAP: bad })).rejects.toThrow();
+    }
   });
 });

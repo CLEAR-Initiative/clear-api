@@ -148,6 +148,10 @@ _Avoid_: synonym (in code and API names), GeoNames alternate name (that is GeoNa
 The work of one **Task** of kind `place_name.locate.web`: find where an **unresolved place name** is. A decider requests it for one row of the queue (`requestPlaceNameResearch`). A **Worker** researches the name and completes the Task with a **place proposal**. One row has at most one open Task. The Worker never resolves a name. See ADR-0010 and ADR-0019.
 _Avoid_: geocoding (that is the pipeline's step), enrichment (that is for an Event)
 
+**Automatic place research**:
+**Place research** that clear-api requests with no person asking, for an open row of the queue with `PLACE_RESEARCH_AUTO_MIN_SIGNALS` Signals or more (no value: off). The Task has the origin `rule` and no requester. At most `PLACE_RESEARCH_AUTO_DAILY_CAP` such Tasks are created per UTC day; rows over the cap wait, the row with the most Signals first. The rule asks once per row. It runs at the start of `claimTasks` for the kind: there is no scheduler. A row that a decider closes (`resolved`, `not_a_place`) cancels its open Task.
+_Avoid_: auto-resolve (a person always decides), scheduled research
+
 **Place proposal**:
 The typed result of one **place research** Task: a row in `place_name_proposals`. Its outcome is `found`, `not_found` or `not_a_place`. A `found` proposal has a point inside the row's country, the name found, a confidence, a reason and one or more sources (URL and quote). The newest proposal of a row is the one deciders read (`UnresolvedPlaceName.research`). A decider uses it through `resolveUnresolvedPlaceName` with a `POINT` answer and the `proposalId`; the proposal then records the decider and the time.
 _Avoid_: suggestion (a gazetteer suggestion is computed on each call and is never stored), CaseProposal (that is a past incident for an Event)
