@@ -271,7 +271,10 @@ function signalKeyWhere(input: UpdateSignalContentInput) {
  * or value. Only this one number leaves `rawData`, never the payload. */
 export function acledGeoPrecision(externalId: string | null | undefined, rawData: unknown): number | null {
   if (!externalId?.startsWith("acled:")) return null;
-  const value = Number((rawData as { geo_precision?: unknown } | null)?.geo_precision);
+  // ACLED sends a number or a numeric string. Anything else (true, [1]) is
+  // unknown, not "exact": Number() would turn those into 1.
+  const raw = (rawData as { geo_precision?: unknown } | null)?.geo_precision;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" && /^[123]$/.test(raw.trim()) ? Number(raw) : NaN;
   return value === 1 || value === 2 || value === 3 ? value : null;
 }
 

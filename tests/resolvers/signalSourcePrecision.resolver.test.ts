@@ -24,6 +24,9 @@ describe("acledGeoPrecision", () => {
     expect(acledGeoPrecision("acled:SDN1", null)).toBeNull();
     expect(acledGeoPrecision("acled:SDN1", { geo_precision: 4 })).toBeNull();
     expect(acledGeoPrecision("acled:SDN1", { geo_precision: "" })).toBeNull();
+    expect(acledGeoPrecision("acled:SDN1", { geo_precision: true })).toBeNull();
+    expect(acledGeoPrecision("acled:SDN1", { geo_precision: [1] })).toBeNull();
+    expect(acledGeoPrecision("acled:SDN1", { geo_precision: "1.0" })).toBeNull();
   });
 });
 
