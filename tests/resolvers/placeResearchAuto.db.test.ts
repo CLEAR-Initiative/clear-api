@@ -203,10 +203,34 @@ describeIfScratchDb("Automatic place research and the cancel on close", () => {
     // The same day: the cap is spent, and nothing more is created.
     expect(await topUp(3, 2)).toEqual([]);
     expect(await prisma.task.count({ where: { kind: PLACE_RESEARCH_KIND, origin: "rule" } })).toBe(2);
-    // A later day, with no new Signal: the rows that waited, most Signals first.
-    expect((await topUp(3, 2, 1)).map((t) => t.subjectId)).toEqual([bySignals(7), bySignals(6)]);
-    expect((await topUp(3, 2, 2)).map((t) => t.subjectId)).toEqual([bySignals(5)]);
-    expect(await topUp(3, 2, 3)).toEqual([]);
+
+    // A day passes: every automatic Task so far is a day older.
+    const aDayPasses = () =>
+      prisma.$executeRaw`UPDATE "tasks" SET "created_at" = "created_at" - interval '1 day'
+        WHERE "kind" = ${PLACE_RESEARCH_KIND} AND "origin" = 'rule'`;
+    // The next day, with no new Signal: the rows that waited, most Signals
+    // first. The cap holds on that day too.
+    await aDayPasses();
+    expect((await topUp(3, 2)).map((t) => t.subjectId)).toEqual([bySignals(7), bySignals(6)]);
+    expect(await topUp(3, 2)).toEqual([]);
+    await aDayPasses();
+    expect((await topUp(3, 2)).map((t) => t.subjectId)).toEqual([bySignals(5)]);
+    expect(await topUp(3, 2)).toEqual([]);
+    await aDayPasses();
+    expect(await topUp(3, 2)).toEqual([]);
+  });
+
+  it("a Task that a Worker gives back while its row closes is cancelled all the same", async () => {
+    // LEASED when the close starts, PENDING when it writes: one statement
+    // covers both, so no claimable Task is left on a closed row.
+    const row = await queued("Given back", 9);
+    await topUp(3, 10);
+    const task = await claim();
+    await taskResolvers.Mutation.failTask(null, { id: task.id, leaseToken: task.leaseToken!, error: "try later" }, worker);
+    expect((await tasksOf(row.id))[0]).toMatchObject({ status: "PENDING" });
+    await resolveUnresolvedPlaceName(null, { id: row.id, resolution: { kind: "NOT_A_PLACE" } }, platform);
+    expect((await tasksOf(row.id))[0]).toMatchObject({ status: "CANCELLED", cancelledById: PLATFORM_ID });
+    expect(await claimTasks(null, { kind: PLACE_RESEARCH_KIND, limit: 5 }, worker)).toEqual([]);
   });
 
   it("two top-ups at once do not spend the cap twice", async () => {

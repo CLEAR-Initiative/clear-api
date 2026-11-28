@@ -257,16 +257,20 @@ export async function cancelPlaceResearchTasksTx(
   cancelledById: string,
   now: Date,
 ): Promise<number> {
-  const subject = { kind: PLACE_RESEARCH_KIND, subjectType: PLACE_NAME_SUBJECT, subjectId: rowId };
-  const pending = await tx.task.updateMany({
-    where: { ...subject, status: "PENDING" },
-    data: { status: "CANCELLED", cancelRequestedAt: now, cancelledById },
-  });
-  const leased = await tx.task.updateMany({
-    where: { ...subject, status: "LEASED", cancelRequestedAt: null },
-    data: { cancelRequestedAt: now, cancelledById },
-  });
-  return pending.count + leased.count;
+  // One statement for both statuses. Two statements could miss a Task that
+  // a Worker's `failTask` moves from LEASED back to PENDING between them:
+  // the row would close with a claimable Task. Here the Task's row is locked
+  // once, and a status that changed under the lock is read again.
+  return tx.$executeRaw`
+    UPDATE "tasks"
+    SET "status" = CASE WHEN "status" = 'PENDING' THEN 'CANCELLED'::"TaskStatus" ELSE "status" END,
+        "cancel_requested_at" = COALESCE("cancel_requested_at", ${now}),
+        "cancelled_by_id" = COALESCE("cancelled_by_id", ${cancelledById}),
+        "updated_at" = now()
+    WHERE "kind" = ${PLACE_RESEARCH_KIND}
+      AND "subject_type" = ${PLACE_NAME_SUBJECT}
+      AND "subject_id" = ${rowId}
+      AND ("status" = 'PENDING' OR ("status" = 'LEASED' AND "cancel_requested_at" IS NULL))`;
 }
 
 // ─── The proposal a Worker sends ─────────────────────────────────────────────

@@ -67,7 +67,6 @@ interface Fake {
   locations: { findUnique: Fn; findFirst: Fn; findMany: Fn };
   geonames: { findUnique: Fn };
   teamMembers: { findMany: Fn };
-  task: { updateMany: Fn };
   $queryRaw: Fn;
   $executeRaw: Fn;
   $transaction: Fn;
@@ -98,8 +97,6 @@ function fakePrisma(row: Record<string, unknown> | null = ROW): Fake {
       findUnique: vi.fn().mockResolvedValue({ geonamesId: 7, name: "Um Dabakir", latitude: 12.1, longitude: 30.2, countryCode: "SD" }),
     },
     teamMembers: { findMany: vi.fn().mockResolvedValue([{ teamId: "t1" }]) },
-    // The cancel of the row's open place research Task (#1726).
-    task: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
     $queryRaw: vi.fn().mockResolvedValue([]),
     $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(),
@@ -171,20 +168,15 @@ describe("resolveUnresolvedPlaceName", () => {
     });
     expect(logActivity).toHaveBeenCalledWith(prisma, expect.objectContaining({ action: "place_name.not_a_place", resourceId: ROW.id }));
     expect(resolveSpy).not.toHaveBeenCalled();
-    // Not a place cancels the row's open place research Task: PENDING ends, LEASED is flagged.
-    expect(prisma.task.updateMany).toHaveBeenCalledTimes(2);
-    expect(prisma.task.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ kind: "place_name.locate.web", subjectId: ROW.id, status: "PENDING" }),
-        data: expect.objectContaining({ status: "CANCELLED", cancelledById: TEAM_ADMIN.id }),
-      }),
-    );
+    // Not a place cancels the row's open place research Task, in one statement.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(String((prisma.$executeRaw.mock.calls[0] as [string[]])[0].join("?"))).toMatch(/UPDATE "tasks"[\s\S]*CANCELLED/);
 
     // An ambiguous row stays resolvable and keeps its Task.
     const ambiguous = fakePrisma();
     await run(PLATFORM, { kind: "AMBIGUOUS" }, ambiguous);
     expect(logActivity).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ action: "place_name.ambiguous" }));
-    expect(ambiguous.task.updateMany).not.toHaveBeenCalled();
+    expect(ambiguous.$executeRaw).not.toHaveBeenCalled();
 
     const lost = fakePrisma();
     lost.unresolvedPlaceNames.updateMany.mockResolvedValue({ count: 0 });
