@@ -14,6 +14,16 @@ import { recordDecisionIfPerson } from "../services/decision-records.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { arrivalOutcome, writeProcessedOutcomes, writeRelocatedOutcome, type RunKind } from "../services/signal-location-outcomes.js";
 
+/** One other site to store on a Signal (`setSignalOtherSites`, ADR-0025). */
+type SignalSiteInput = { locationId: string; name?: string | null; kind?: "NAMED_SITE" | null };
+/** A `signal_sites` row with its location loaded. */
+type SiteRow = { locationId: string; location: unknown; name: string | null; kind: string };
+type SignalLocationIds = { locationId?: string | null; originId?: string | null; destinationId?: string | null };
+/** The locations a Signal shows on its own: general, origin, destination. */
+function signalLocationIds(signal: SignalLocationIds): Set<string> {
+  return new Set([signal.locationId, signal.originId, signal.destinationId].filter((x): x is string => Boolean(x)));
+}
+
 /** The only `data_sources` names `createManualSignal` accepts. Exported so the
  *  migration that creates those rows can be checked against this list rather
  *  than a second copy of it: adding a name here without adding it to
@@ -890,6 +900,65 @@ export const signalResolvers = {
       return context.prisma.signals.findUniqueOrThrow({ where: { id: args.id } });
     },
 
+    setSignalOtherSites: async (
+      _parent: unknown,
+      args: { signalId: string; sites: SignalSiteInput[] },
+      context: Context,
+    ) => {
+      // Admin/pipeline only (ADR-0025): the drain stores the other places a
+      // Signal's text names. The primary location, origin and destination
+      // are not touched, and grouping never reads these rows.
+      requireRole(context, ["admin", PIPELINE_ROLE]);
+
+      const existing = await context.prisma.signals.findUnique({
+        where: { id: args.signalId },
+        select: { id: true, locationId: true, originId: true, destinationId: true },
+      });
+      if (!existing) {
+        throw new GraphQLError("Signal not found", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // One row for one location (the first name wins). Never a location the
+      // Signal already shows (general, origin, destination): the map draws
+      // those already.
+      const firstName = new Map<string, SignalSiteInput>();
+      for (const site of args.sites) if (!firstName.has(site.locationId)) firstName.set(site.locationId, site);
+      const locationIds = [...firstName.keys()];
+      const found = await context.prisma.locations.findMany({
+        where: { id: { in: locationIds } },
+        select: { id: true },
+      });
+      const missing = locationIds.filter((id) => !found.some((loc) => loc.id === id));
+      if (missing.length > 0) {
+        throw new GraphQLError(`Location not found: ${missing.join(", ")}`, {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // The call replaces the whole set: a replay of the same call leaves the
+      // same set, and a later run with fewer names drops the stale ones.
+      const shown = signalLocationIds(existing);
+      const rows = locationIds
+        .filter((id) => !shown.has(id))
+        .map((id) => firstName.get(id)!)
+        .map((site) => ({
+          signalId: args.signalId,
+          locationId: site.locationId,
+          name: site.name ?? null,
+          kind: site.kind ?? ("NAMED_SITE" as const),
+        }));
+      // Lock the Signal row first: two overlapping calls would otherwise both
+      // delete an empty set and both insert, leaving the union of the two.
+      await context.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "signals" WHERE "id" = ${args.signalId} FOR UPDATE`;
+        await tx.signalSites.deleteMany({ where: { signalId: args.signalId } });
+        await tx.signalSites.createMany({ data: rows });
+      });
+      return context.prisma.signals.findUniqueOrThrow({ where: { id: args.signalId } });
+    },
+
     updateSignalContent: async (
       _parent: unknown,
       args: { input: UpdateSignalContentInput },
@@ -1123,6 +1192,26 @@ export const signalResolvers = {
       if (parent.generalLocation !== undefined) return parent.generalLocation;
       if (!parent.locationId) return null;
       return prisma.locations.findUnique({ where: { id: parent.locationId } });
+    },
+    otherSites: async (
+      parent: SignalLocationIds & { id: string; otherSites?: SiteRow[] },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      // Fast path when preloaded via a deep include of `otherSites.location`.
+      const rows =
+        parent.otherSites ??
+        (await prisma.signalSites.findMany({
+          where: { signalId: parent.id },
+          include: { location: true },
+          orderBy: [{ createdAt: "asc" }, { locationId: "asc" }],
+        }));
+      // A site that has since become a location the Signal shows (it was
+      // moved onto it) is not an other site any more.
+      const shown = signalLocationIds(parent);
+      return rows
+        .filter((row) => !shown.has(row.locationId))
+        .map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
     },
     countries: (
       parent: { id: string; countries?: unknown },

@@ -75,6 +75,7 @@ const NOT_DECISIONS: Record<string, string> = {
   setEventAggregates: PIPELINE,
   setGroundSourceActive: SOURCE_CONFIG,
   setSignalGlideCode: PIPELINE,
+  setSignalOtherSites: `${PIPELINE}; the primary location does not change`,
   submitSignalLocationChallenge: "a proposal that never changes the Signal; the decision records",
   subscribeToAlerts: DELIVERY,
   subscribeToAlertsBatch: DELIVERY,

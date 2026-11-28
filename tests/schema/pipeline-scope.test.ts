@@ -26,14 +26,15 @@ import { typeDefs } from "../../src/schema/index.js";
 import { resolvers } from "../../src/resolvers/index.js";
 import type { Context } from "../../src/context.js";
 
-/** Every mutation and query clear-pipeline sends with CLEAR_API_KEY (sweep, 26 Nov 2026). */
+/** Every mutation and query clear-pipeline sends with CLEAR_API_KEY (sweep, 26 Nov 2026;
+ * `setSignalOtherSites` added for the one geocoding flow, Exponential #1690/#1691). */
 const PIPELINE_MUTATIONS = [
   "archiveStaleAlerts", "createAlert", "createEvent", "createLocation", "createSignal", "enqueueTranslation",
   "escalateEvent", "findOrCreateLandmarkL4", "markAnalysisAutomationsRan", "markAnalysisRequestFailed",
   "markAnalysisRequestGenerated", "markCrisisEnriched", "markGroundMessagesFailed", "markSignalsProcessed",
   "markTranslated", "notifyAlertDigest", "notifyAlertSubscribers", "recordUnresolvedPlaceName",
   "refreshAggregatedDatapoints", "resolveDataSource", "setCrisisNeedsAnalysis", "setEventAggregates",
-  "setSignalGlideCode", "syncEventCards", "touchAnalysisSynced", "updateCrisisPopulation", "updateEvent",
+  "setSignalGlideCode", "setSignalOtherSites", "syncEventCards", "touchAnalysisSynced", "updateCrisisPopulation", "updateEvent",
   "updateLocation", "updateLocationGeometry", "updateLocationPopulation", "updateSignalContent",
   "updateSignalGeoparsedData", "updateSignalLocation", "updateSignalSeverity", "upsertAnalysis",
   "upsertAnalysisDatapoints", "upsertGroundMessageClassifications", "upsertGroundMessageTranscripts",

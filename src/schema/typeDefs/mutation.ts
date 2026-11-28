@@ -224,6 +224,15 @@ export const mutationTypeDef = gql`
       runId: String
     ): Signal!
 
+    """Store the other sites of a signal: the places its text names besides
+    its primary location (ADR-0025). Replaces the signal's whole set, so a
+    replay gives the same set and an empty list clears it. A site equal to a
+    location the signal shows (general, origin, destination) is dropped; a
+    repeated location keeps its first name.
+    Does not change the primary location, the origin or the destination.
+    Admin/pipeline only."""
+    setSignalOtherSites(signalId: String!, sites: [SignalSiteInput!]!): Signal!
+
     """Apply an in-place change to a signal, identified by \`id\` or by
     (\`sourceId\`, \`externalId\`). Content is written when contentHash differs,
     \`retracted\` when the flag differs; either bumps \`revision\`, stamps
