@@ -286,6 +286,14 @@ they administer (a row with no state needs a team that covers the whole
 country). Other roles get FORBIDDEN.<div class="field-args"><span class="arg"><code>status: UnresolvedPlaceNameStatus</code> — Only rows in this state. Omit for every state, open rows first.</span><span class="arg"><code>countryCode: String</code> — Only rows of this country (ISO-3166-1 alpha-2).</span><span class="arg"><code>areaLocationId: String</code> — Only rows of this area. A country keeps all its rows. A state, or a
 place under a state, keeps the rows of that state.</span><span class="arg"><code>first: Int</code> — Max rows to return (1 to 200, default 50).</span><span class="arg"><code>offset: Int</code> — Rows to skip (default 0).</span></div></td>
   </tr><tr>
+    <td><code>unresolvedPlaceName</code></td>
+    <td><code>UnresolvedPlaceName</code></td>
+    <td>One row of the unresolved place-name queue, or null when there is
+none. For a client that follows one row, for example its place research
+(`research`), without reading the list again. Auth: a platform admin,
+or a team admin when the row is inside their team's area (FORBIDDEN
+otherwise).<div class="field-args"><span class="arg"><code>id: String!</code></span></div></td>
+  </tr><tr>
     <td><code>placeNameSuggestions</code></td>
     <td><code>[PlaceNameSuggestion!]!</code></td>
     <td>Places a queued name can mean, for a decider: up to 5 GeoNames

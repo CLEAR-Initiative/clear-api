@@ -297,6 +297,14 @@ export const unresolvedPlaceNameResolvers = {
       return { items, totalCount, hasMore: offset + items.length < totalCount };
     },
 
+    unresolvedPlaceName: async (_parent: unknown, args: { id: string }, context: Context) => {
+      const { scope } = await deciderOnce(context);
+      const row = await context.prisma.unresolvedPlaceNames.findUnique({ where: { id: args.id } });
+      if (!row) return null;
+      if (!placeNameInScope(scope, row)) throw forbidden("This place name is outside your team's area");
+      return row;
+    },
+
     placeNameSuggestions: async (
       _parent: unknown,
       args: { name: string; nameAr?: string | null; countryCode: string; withinLocationId?: string | null },

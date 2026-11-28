@@ -228,6 +228,14 @@ describeIfDb("Place research against the real schema", () => {
 
     expect(await requestPlaceNameResearch(null, { id: inside.id }, stateAdmin)).toMatchObject({ requesterId: STATE_ADMIN_ID });
     expect(await requestPlaceNameResearch(null, { id: outside.id }, platform)).toMatchObject({ requesterId: PLATFORM_ID });
+    // One row by id, under the same rule.
+    const { unresolvedPlaceName } = unresolvedPlaceNameResolvers.Query;
+    expect(await unresolvedPlaceName(null, { id: inside.id }, stateAdmin)).toMatchObject({ id: inside.id, status: "open" });
+    expect(await unresolvedPlaceName(null, { id: outside.id }, platform)).toMatchObject({ id: outside.id });
+    expect(await unresolvedPlaceName(null, { id: "no-such-row" }, platform)).toBeNull();
+    expect(code(await rejection(unresolvedPlaceName(null, { id: outside.id }, stateAdmin)))).toBe("FORBIDDEN");
+    expect(code(await rejection(unresolvedPlaceName(null, { id: inside.id }, analyst)))).toBe("FORBIDDEN");
+    expect(code(await rejection(unresolvedPlaceName(null, { id: inside.id }, workerA)))).toBe("FORBIDDEN");
     // The row's research is a decider's to read.
     expect(code(await rejection(research(inside, null, analyst)))).toBe("FORBIDDEN");
     expect(code(await rejection(research(inside, null, workerA)))).toBe("FORBIDDEN");
