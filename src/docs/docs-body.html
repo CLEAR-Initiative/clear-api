@@ -9621,6 +9621,14 @@ token for markSignalsProcessed(items:).</td>
     <td>Stable upstream identifier (e.g. &quot;acled:{event_id_cnty}&quot;). Used to
 deduplicate ingestion — (source, externalId) is unique.</td>
   </tr><tr>
+    <td><code>sourcePrecision</code></td>
+    <td><code>Int</code></td>
+    <td>How exactly the source placed its own coordinates, read from the stored
+source payload. ACLED only (its `geo_precision`): 1 = the exact place,
+2 = the centroid of a town or area near it, 3 = the centroid of a district
+or wider region. Null for other sources, or when the payload has no valid
+value.</td>
+  </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>

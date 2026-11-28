@@ -266,6 +266,15 @@ function signalKeyWhere(input: UpdateSignalContentInput) {
   );
 }
 
+/** ACLED's `geo_precision` (1 exact place, 2 town/area centroid, 3 district
+ * or region centroid) from a stored ACLED payload; null for any other source
+ * or value. Only this one number leaves `rawData`, never the payload. */
+export function acledGeoPrecision(externalId: string | null | undefined, rawData: unknown): number | null {
+  if (!externalId?.startsWith("acled:")) return null;
+  const value = Number((rawData as { geo_precision?: unknown } | null)?.geo_precision);
+  return value === 1 || value === 2 || value === 3 ? value : null;
+}
+
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
@@ -1212,6 +1221,23 @@ export const signalResolvers = {
       return rows
         .filter((row) => !shown.has(row.locationId))
         .map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
+    },
+    sourcePrecision: async (
+      parent: { id: string; externalId?: string | null; rawData?: unknown },
+      _args: unknown,
+      { prisma }: Context,
+    ) => {
+      if (parent.externalId !== undefined && !parent.externalId?.startsWith("acled:")) return null;
+      // A findMany without `select` already carries rawData; a narrower
+      // parent reads only the two columns this needs.
+      if (parent.rawData === undefined || parent.externalId === undefined) {
+        const row = await prisma.signals.findUnique({
+          where: { id: parent.id },
+          select: { externalId: true, rawData: true },
+        });
+        return row ? acledGeoPrecision(row.externalId, row.rawData) : null;
+      }
+      return acledGeoPrecision(parent.externalId, parent.rawData);
     },
     countries: (
       parent: { id: string; countries?: unknown },
