@@ -75,9 +75,31 @@ export const unresolvedPlaceNameTypeDef = gql`
       """Max rows to return (1 to 50, default 5)."""
       first: Int
     ): [UnresolvedPlaceNameSignal!]!
+    """The outcome of the row's newest place proposal. Null when the row has
+    none. The queue list reads it with no query per row. Deciders only."""
+    researchOutcome: PlaceProposalOutcome
+    """The confidence of the row's newest place proposal. Null unless its
+    outcome is \`found\`."""
+    researchConfidence: PlaceProposalConfidence
+    """Whether a place research Task of the row is PENDING or LEASED."""
+    researchOpen: Boolean!
     """Place research on the row: the open Task, if one waits or runs, and
     the newest place proposal. Deciders only (FORBIDDEN for other roles)."""
     research: PlaceNameResearch!
+  }
+
+  """Which rows of the queue to list, by their place research."""
+  enum UnresolvedPlaceNameResearchFilter {
+    """Rows with a place proposal, of any outcome."""
+    ANY
+    """Rows whose newest place proposal is \`found\`."""
+    FOUND
+    """Rows whose newest place proposal is \`not_found\`."""
+    NOT_FOUND
+    """Rows whose newest place proposal is \`not_a_place\`."""
+    NOT_A_PLACE
+    """Rows with no place proposal."""
+    NONE
   }
 
   """What a place research Task found."""

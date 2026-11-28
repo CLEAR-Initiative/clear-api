@@ -60,6 +60,10 @@ export const queryTypeDef = gql`
       """Only rows of this area. A country keeps all its rows. A state, or a
       place under a state, keeps the rows of that state."""
       areaLocationId: String
+      """Only rows by their place research: a result of any outcome, one
+      outcome, or no result. The newest place proposal of a row counts; an
+      older one is history. The order of the list does not change."""
+      research: UnresolvedPlaceNameResearchFilter
       """Max rows to return (1 to 200, default 50)."""
       first: Int
       """Rows to skip (default 0)."""

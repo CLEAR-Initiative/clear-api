@@ -515,6 +515,99 @@ describeIfDb("Place research against the real schema", () => {
     expect(await prisma.placeNameProposals.count({ where: { unresolvedPlaceNameId: row.id } })).toBe(1);
   });
 
+  it("the queue list filters by the newest proposal and returns it on each row, in the same order", async () => {
+    // A state of its own, so the rows of the other tests stay out.
+    const STATE_C_ID = `${RUN}-state-c`;
+    await insertArea(STATE_C_ID, "State C", 1, COUNTRY_ID, "MULTIPOLYGON(((70 64, 74 64, 74 65, 70 65, 70 64)))");
+    const { unresolvedPlaceNames } = unresolvedPlaceNameResolvers.Query;
+    let seq = 0;
+    const propose = async (rowId: string, outcome: "found" | "not_found" | "not_a_place", at: string) => {
+      const task = await prisma.task.create({
+        data: {
+          kind: PLACE_RESEARCH_KIND,
+          subjectType: PLACE_NAME_SUBJECT,
+          subjectId: rowId,
+          payload: {},
+          requestId: `${RUN}-filter-${seq++}`,
+          status: "COMPLETED",
+          outcome,
+        },
+      });
+      await prisma.placeNameProposals.create({
+        data: {
+          unresolvedPlaceNameId: rowId,
+          taskId: task.id,
+          outcome,
+          ...(outcome === "found" ? { latitude: 61, longitude: 70.5, nameFound: "X", confidence: "high" } : {}),
+          reason: "r",
+          methodVersion: "test",
+          createdAt: new Date(at),
+        },
+      });
+    };
+    const found = (await queued("Filter found", STATE_C_ID, 5)).row;
+    const notFound = (await queued("Filter not found", STATE_C_ID, 4)).row;
+    const notAPlace = (await queued("Filter not a place", STATE_C_ID, 3)).row;
+    const waiting = (await queued("Filter waiting", STATE_C_ID, 2)).row;
+    const untouched = (await queued("Filter untouched", STATE_C_ID, 1)).row;
+    await propose(found.id, "found", "2026-11-21T00:00:00Z");
+    // The newest proposal counts: an older `found` is history.
+    await propose(notFound.id, "found", "2026-11-21T00:00:00Z");
+    await propose(notFound.id, "not_found", "2026-11-22T00:00:00Z");
+    await propose(notAPlace.id, "not_a_place", "2026-11-21T00:00:00Z");
+    await requestPlaceNameResearch(null, { id: waiting.id }, platform);
+
+    const list = (research?: "any" | "found" | "not_found" | "not_a_place" | "none", page: { first?: number; offset?: number } = {}) =>
+      unresolvedPlaceNames(null, { areaLocationId: STATE_C_ID, research, ...page }, platform);
+    const ids = (page: Awaited<ReturnType<typeof list>>) => page.items.map((r) => r.id);
+
+    // No filter: every row, most Signals first, with the research columns.
+    const all = await list();
+    expect(ids(all)).toEqual([found.id, notFound.id, notAPlace.id, waiting.id, untouched.id]);
+    expect(all.totalCount).toBe(5);
+    expect(all.items.map((r) => [r.researchOutcome, r.researchConfidence, r.researchOpen])).toEqual([
+      ["found", "high", false],
+      ["not_found", null, false],
+      ["not_a_place", null, false],
+      [null, null, true],
+      [null, null, false],
+    ]);
+
+    // Each filter value keeps the order, and the count follows the filter.
+    expect(await list("any")).toMatchObject({ totalCount: 3, hasMore: false });
+    expect(ids(await list("any"))).toEqual([found.id, notFound.id, notAPlace.id]);
+    expect(ids(await list("found"))).toEqual([found.id]);
+    expect(ids(await list("not_found"))).toEqual([notFound.id]);
+    expect(ids(await list("not_a_place"))).toEqual([notAPlace.id]);
+    expect(await list("none")).toMatchObject({ totalCount: 2, hasMore: false });
+    expect(ids(await list("none"))).toEqual([waiting.id, untouched.id]);
+
+    // Pages of a filtered list.
+    const first = await list("any", { first: 2 });
+    expect(first).toMatchObject({ totalCount: 3, hasMore: true });
+    expect(ids(first)).toEqual([found.id, notFound.id]);
+    const second = await list("any", { first: 2, offset: 2 });
+    expect(second).toMatchObject({ totalCount: 3, hasMore: false });
+    expect(ids(second)).toEqual([notAPlace.id]);
+
+    // The area scope and the decider rule do not change: State C is outside
+    // the team admin's area, and an analyst is no decider.
+    expect(await unresolvedPlaceNames(null, { areaLocationId: STATE_C_ID, research: "any" }, stateAdmin)).toMatchObject({
+      items: [],
+      totalCount: 0,
+    });
+    expect(code(await rejection(unresolvedPlaceNames(null, { research: "any" }, analyst)))).toBe("FORBIDDEN");
+
+    // A row read another way gives the same three fields.
+    const { researchOutcome, researchConfidence, researchOpen } = unresolvedPlaceNameResolvers.UnresolvedPlaceName;
+    const row = (await prisma.unresolvedPlaceNames.findUniqueOrThrow({ where: { id: found.id } }));
+    expect(await researchOutcome(row, null, platform)).toBe("found");
+    expect(await researchConfidence(row, null, platform)).toBe("high");
+    expect(await researchOpen(row, null, platform)).toBe(false);
+    expect(await researchOpen({ id: waiting.id }, null, platform)).toBe(true);
+    expect(code(await rejection(researchOutcome(row, null, analyst)))).toBe("FORBIDDEN");
+  });
+
   it("a cancel that landed while the Worker researched wins: no proposal", async () => {
     const { row } = await queued("Cancelled", STATE_A_ID);
     const requested = await requestPlaceNameResearch(null, { id: row.id }, platform);

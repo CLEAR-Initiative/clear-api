@@ -65,11 +65,17 @@ interface QueueArgs {
   status?: UnresolvedPlaceNameStatus | null;
   countryCode?: string | null;
   areaLocationId?: string | null;
+  research?: ResearchFilter | null;
   first?: number | null;
   offset?: number | null;
 }
 
-/** A queue row as the raw queue query returns it (the Prisma model's shape). */
+/** Rows by the outcome of their newest place proposal: any, one outcome, or none. */
+export const RESEARCH_FILTERS = ["any", "found", "not_found", "not_a_place", "none"] as const;
+export type ResearchFilter = (typeof RESEARCH_FILTERS)[number];
+
+/** A queue row as the raw queue query returns it (the Prisma model's shape),
+ *  with the research columns the list joins in. */
 interface QueueRow {
   id: string;
   nameNorm: string;
@@ -86,7 +92,14 @@ interface QueueRow {
   resolvedAt: Date | null;
   resolutionNote: string | null;
   placeAliasId: string | null;
+  /** Outcome and confidence of the newest place proposal; null with none. */
+  researchOutcome: string | null;
+  researchConfidence: string | null;
+  /** Whether a place research Task is PENDING or LEASED. */
+  researchOpen: boolean;
 }
+
+type ResearchParent = { id: string } & Partial<Pick<QueueRow, "researchOutcome" | "researchConfidence" | "researchOpen">>;
 
 /**
  * The caller as a decider, looked up once per request: `research` is a field
@@ -108,6 +121,16 @@ function redactTask<T extends { requesterId: string | null; lastError: string | 
   user: { id: string; role?: string | null },
 ): T {
   return isPlatformAdmin(user) || task.requesterId === user.id ? task : { ...task, lastError: null };
+}
+
+/** The newest place proposal of a row that did not come from the list. Deciders only. */
+async function newestProposal(context: Context, rowId: string) {
+  await deciderOnce(context);
+  return context.prisma.placeNameProposals.findFirst({
+    where: { unresolvedPlaceNameId: rowId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { outcome: true, confidence: true },
+  });
 }
 
 export function badInput(message: string): GraphQLError {
@@ -225,7 +248,24 @@ const QUEUE_COLUMNS = Prisma.sql`
   u."signal_count" AS "signalCount", u."first_seen_at" AS "firstSeenAt",
   u."last_seen_at" AS "lastSeenAt", u."resolved_by_id" AS "resolvedById",
   u."resolved_at" AS "resolvedAt", u."resolution_note" AS "resolutionNote",
-  u."place_alias_id" AS "placeAliasId"`;
+  u."place_alias_id" AS "placeAliasId",
+  rp."outcome" AS "researchOutcome", rp."confidence" AS "researchConfidence",
+  EXISTS (
+    SELECT 1 FROM "tasks" t
+    WHERE t."subject_type" = ${PLACE_NAME_SUBJECT} AND t."subject_id" = u."id"
+      AND t."kind" = ${PLACE_RESEARCH_KIND} AND t."status" IN ('PENDING', 'LEASED')
+  ) AS "researchOpen"`;
+
+/** The newest place proposal of each row (D-0296): one index read per row,
+ *  in the list's own statement, so the list makes no query per row. */
+const NEWEST_PROPOSAL_JOIN = Prisma.sql`
+  LEFT JOIN LATERAL (
+    SELECT p."outcome", p."confidence"
+    FROM "place_name_proposals" p
+    WHERE p."unresolved_place_name_id" = u."id"
+    ORDER BY p."created_at" DESC, p."id" DESC
+    LIMIT 1
+  ) rp ON TRUE`;
 
 export const unresolvedPlaceNameResolvers = {
   // Stored lower case (DB CHECK); upper case on the API.
@@ -234,6 +274,13 @@ export const unresolvedPlaceNameResolvers = {
     RESOLVED: "resolved",
     NOT_A_PLACE: "not_a_place",
     AMBIGUOUS: "ambiguous",
+  },
+  UnresolvedPlaceNameResearchFilter: {
+    ANY: "any",
+    FOUND: "found",
+    NOT_FOUND: "not_found",
+    NOT_A_PLACE: "not_a_place",
+    NONE: "none",
   },
   UnresolvedPlaceNameReason: {
     NO_MATCH: "no_match",
@@ -274,6 +321,10 @@ export const unresolvedPlaceNameResolvers = {
           where.push(Prisma.sql`FALSE`);
         }
       }
+      // By the newest proposal only: an older one is history.
+      if (args.research === "any") where.push(Prisma.sql`rp."outcome" IS NOT NULL`);
+      else if (args.research === "none") where.push(Prisma.sql`rp."outcome" IS NULL`);
+      else if (args.research) where.push(Prisma.sql`rp."outcome" = ${args.research}`);
       if (scope.kind === "area") {
         // A row with a state is in the area when the state is. A row with no
         // state belongs to its country, so the team must cover the country.
@@ -288,11 +339,12 @@ export const unresolvedPlaceNameResolvers = {
         context.prisma.$queryRaw<QueueRow[]>`
           SELECT ${QUEUE_COLUMNS}
           FROM "unresolved_place_names" u
+          ${NEWEST_PROPOSAL_JOIN}
           ${filter}
           ORDER BY (u."status" = 'open') DESC, u."signal_count" DESC, u."last_seen_at" DESC, u."id" ASC
           LIMIT ${first} OFFSET ${offset}`,
         context.prisma.$queryRaw<{ count: bigint }[]>`
-          SELECT COUNT(*) AS "count" FROM "unresolved_place_names" u ${filter}`,
+          SELECT COUNT(*) AS "count" FROM "unresolved_place_names" u ${NEWEST_PROPOSAL_JOIN} ${filter}`,
       ]);
       const totalCount = Number(counted[0]?.count ?? 0);
       return { items, totalCount, hasMore: offset + items.length < totalCount };
@@ -659,6 +711,22 @@ export const unresolvedPlaceNameResolvers = {
       const latestTask = latest ? redactTask(latest, user) : null;
       const open = latestTask && (latestTask.status === "PENDING" || latestTask.status === "LEASED");
       return { task: open ? latestTask : null, latestTask, proposal };
+    },
+    // The list reads these three in its own statement. A row that came
+    // another way (one row by id, a mutation's result) reads them here, for
+    // deciders only.
+    researchOutcome: async (parent: ResearchParent, _args: unknown, context: Context) =>
+      parent.researchOutcome !== undefined
+        ? parent.researchOutcome
+        : ((await newestProposal(context, parent.id))?.outcome ?? null),
+    researchConfidence: async (parent: ResearchParent, _args: unknown, context: Context) =>
+      parent.researchConfidence !== undefined
+        ? parent.researchConfidence
+        : ((await newestProposal(context, parent.id))?.confidence ?? null),
+    researchOpen: async (parent: ResearchParent, _args: unknown, context: Context) => {
+      if (parent.researchOpen !== undefined) return parent.researchOpen;
+      await deciderOnce(context);
+      return (await findOpenPlaceResearchTask(context.prisma, parent.id)) !== null;
     },
     stateLocation: (parent: { stateLocationId: string | null }, _args: unknown, { prisma }: Context) =>
       parent.stateLocationId ? prisma.locations.findUnique({ where: { id: parent.stateLocationId } }) : null,
