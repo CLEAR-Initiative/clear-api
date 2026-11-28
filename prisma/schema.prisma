@@ -1337,9 +1337,21 @@ model alertEmailQueue {
   /// that decides individual-vs-digest is measured on this, not on `sentAt` —
   /// a recipient's load is what the alerts did, not when we got round to them.
   queuedAt DateTime @default(now()) @map("queued_at")
-  /// Null while the row is pending. Set when the email that covers it is
-  /// handed to the provider, which is what makes a flush idempotent and stops
-  /// a crashed flush from re-sending.
+  /// A flush has taken this row and is building/sending its message. Null =
+  /// available. Claiming before sending is what stops two overlapping flushes
+  /// (the sensor deliberately allows a run alongside a STARTED one, and an
+  /// admin can call the mutation by hand) from both reading the same pending
+  /// row and sending the same email twice.
+  ///
+  /// A claim is a lease, not a lock: a flush that dies mid-send leaves the row
+  /// claimed, so a claim older than `ALERT_EMAIL_CLAIM_TTL_MINUTES` is treated
+  /// as abandoned and may be claimed again. That bounds the damage of a crash
+  /// to one duplicate rather than a permanently stuck email.
+  claimedAt DateTime? @map("claimed_at")
+  /// Null while the row is pending. Set only once the provider ACCEPTED the
+  /// message covering it — `sendBulk` returns a boolean per message and does
+  /// not throw on a refusal, so a refused row is released back to pending
+  /// rather than marked sent.
   sentAt   DateTime? @map("sent_at")
   /// How it went out, once it has. Null while pending.
   delivery AlertEmailDelivery? @map("delivery")
@@ -1350,8 +1362,10 @@ model alertEmailQueue {
   /// One queue row per (recipient, alert): a retried createAlert must not
   /// queue a second email for an alert the recipient already has one for.
   @@unique([userId, alertId])
-  /// The flush's own read: pending rows, oldest first.
+  /// The flush's own read: unsent rows, oldest first.
   @@index([sentAt, queuedAt])
+  /// Finding an abandoned claim to reclaim.
+  @@index([claimedAt])
   /// The rolling-window count for one recipient.
   @@index([userId, queuedAt])
   @@map("alert_email_queue")

@@ -15,7 +15,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const sendBulk = vi.fn().mockResolvedValue(undefined);
+// sendBulk returns one boolean PER MESSAGE and does not throw on a refusal,
+// so the default here mirrors the real contract: all accepted.
+const sendBulk = vi.fn(async (messages: unknown[]) => messages.map(() => true));
 
 vi.mock("../../src/services/messaging/registry.js", () => ({
   getEmailProvider: vi.fn(async () => ({ sendBulk })),
@@ -63,8 +65,12 @@ function fakePrisma(opts: {
   users: FakeUser[];
   /** Rolling-window count per user; defaults to their pending row count. */
   windowCount?: Record<string, number>;
+  /** Rows another flush already claimed — excluded from what we can claim. */
+  claimedElsewhere?: string[];
 }) {
   const marked: Array<{ ids: string[]; delivery: string | null }> = [];
+  const released: string[][] = [];
+  const claimedBy: string[][] = [];
   const event = {
     id: "evt-1",
     title: "Battles in Blue Nile",
@@ -78,7 +84,19 @@ function fakePrisma(opts: {
   };
   const prisma = {
     alertEmailQueue: {
-      findMany: vi.fn(async () => opts.pending),
+      findMany: vi.fn(async () => opts.pending.map((r) => ({ userId: r.userId }))),
+      // The claim: only rows this flush wins come back, as the real
+      // updateManyAndReturn does under the `sentAt: null, unclaimed` filter.
+      updateManyAndReturn: vi.fn(
+        async ({ where }: { where: { userId: string } }) => {
+          const mine = opts.pending.filter(
+            (r) =>
+              r.userId === where.userId && !(opts.claimedElsewhere ?? []).includes(r.id),
+          );
+          claimedBy.push(mine.map((r) => r.id));
+          return mine.map((r) => ({ id: r.id, alertId: r.alertId }));
+        },
+      ),
       count: vi.fn(async ({ where }: { where: { userId: string } }) => {
         const fallback = opts.pending.filter((r) => r.userId === where.userId).length;
         return opts.windowCount?.[where.userId] ?? fallback;
@@ -89,9 +107,15 @@ function fakePrisma(opts: {
           data,
         }: {
           where: { id: { in: string[] } };
-          data: { delivery: string | null };
+          data: { delivery?: string | null; claimedAt?: Date | null; sentAt?: Date };
         }) => {
-          marked.push({ ids: where.id.in, delivery: data.delivery });
+          // A release sets claimedAt back to null and nothing else; a mark
+          // sets sentAt. Keeping them apart is what the tests assert on.
+          if (data.sentAt === undefined && data.claimedAt === null) {
+            released.push(where.id.in);
+          } else {
+            marked.push({ ids: where.id.in, delivery: data.delivery ?? null });
+          }
           return { count: where.id.in.length };
         },
       ),
@@ -110,7 +134,13 @@ function fakePrisma(opts: {
     },
     locations: { findMany: vi.fn(async () => []) },
   };
-  return { prisma: prisma as unknown as PrismaClient, marked, raw: prisma };
+  return {
+    prisma: prisma as unknown as PrismaClient,
+    marked,
+    released,
+    claimedBy,
+    raw: prisma,
+  };
 }
 
 function rows(userId: string, n: number, from = 0): QueueRow[] {
@@ -283,5 +313,100 @@ describe("flushAlertEmailQueue — caps and failure handling", () => {
       failed: 0,
     });
     expect(sendBulk).not.toHaveBeenCalled();
+  });
+});
+
+describe("flushAlertEmailQueue — the Greptile P1s", () => {
+  it("digests a burst that has aged out of the window (delayed recovery)", async () => {
+    // 48 alerts queued, then the flush is unavailable for longer than the
+    // window. Every row ages out, so the window count reads zero — and judging
+    // on that alone would send 48 individual emails, recreating the flood in
+    // exactly the scenario the mechanism exists for.
+    const { prisma } = fakePrisma({
+      pending: rows("u-ana", 48),
+      users: [ana],
+      windowCount: { "u-ana": 0 },
+    });
+
+    const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    expect(result).toMatchObject({ digests: 1, emails: 1, digested: 48, individual: 0 });
+  });
+
+  it("releases only the rows whose message the provider refused", async () => {
+    // sendBulk returns a boolean per message and does NOT throw on a refusal.
+    // Marking everything sent would lose the refused emails permanently.
+    const { prisma, marked, released } = fakePrisma({
+      pending: rows("u-ana", 3),
+      users: [ana],
+    });
+    sendBulk.mockResolvedValueOnce([true, false, true]);
+
+    const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    expect(marked).toEqual([
+      { ids: ["q-u-ana-0", "q-u-ana-2"], delivery: "individual" },
+    ]);
+    expect(released).toEqual([["q-u-ana-1"]]);
+    expect(result).toMatchObject({ emails: 2, individual: 2, failed: 1 });
+  });
+
+  it("releases every row a refused digest covered", async () => {
+    const { prisma, marked, released } = fakePrisma({
+      pending: rows("u-ana", 48),
+      users: [ana],
+    });
+    sendBulk.mockResolvedValueOnce([false]);
+
+    const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    expect(marked).toEqual([]);
+    expect(released[0]).toHaveLength(48);
+    expect(result).toMatchObject({ failed: 1, digests: 0, emails: 0 });
+  });
+
+  it("claims rows before sending, so an overlapping flush cannot duplicate", async () => {
+    // A concurrent flush already holds two of the three rows. The claim returns
+    // only what this flush won, so only that row is sent.
+    const { prisma, marked, claimedBy } = fakePrisma({
+      pending: rows("u-ana", 3),
+      users: [ana],
+      claimedElsewhere: ["q-u-ana-0", "q-u-ana-1"],
+    });
+
+    const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    expect(claimedBy).toEqual([["q-u-ana-2"]]);
+    expect(sendBulk.mock.calls[0]![0]).toHaveLength(1);
+    expect(marked).toEqual([{ ids: ["q-u-ana-2"], delivery: "individual" }]);
+    expect(result).toMatchObject({ individual: 1, emails: 1 });
+  });
+
+  it("sends nothing for a recipient whose rows another flush claimed entirely", async () => {
+    const { prisma, marked } = fakePrisma({
+      pending: rows("u-ana", 2),
+      users: [ana],
+      claimedElsewhere: ["q-u-ana-0", "q-u-ana-1"],
+    });
+
+    const result = await flushAlertEmailQueue(prisma);
+
+    expect(sendBulk).not.toHaveBeenCalled();
+    expect(marked).toEqual([]);
+    expect(result.recipients).toBe(0);
+  });
+
+  it("releases the rows when a send throws, not just when it refuses", async () => {
+    const { prisma, marked, released } = fakePrisma({
+      pending: rows("u-ana", 2),
+      users: [ana],
+    });
+    sendBulk.mockRejectedValueOnce(new Error("provider down"));
+
+    const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    expect(marked).toEqual([]);
+    expect(released).toEqual([["q-u-ana-0", "q-u-ana-1"]]);
+    expect(result).toMatchObject({ failed: 1, emails: 0 });
   });
 });

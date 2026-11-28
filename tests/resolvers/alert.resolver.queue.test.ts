@@ -86,7 +86,11 @@ function contextWith(
     userAlertSubscriptions: {
       findMany: vi.fn().mockResolvedValue(subscriberIds.map((userId) => ({ userId }))),
     },
-    userAlerts: { createMany: vi.fn(async () => ({ count: subscriberIds.length })) },
+    userAlerts: {
+      createMany: vi.fn(async () => ({ count: subscriberIds.length })),
+      // No inbox rows yet ⇒ nobody has been notified about this alert.
+      count: vi.fn(async () => 0),
+    },
     notifications: { createMany: vi.fn(async () => ({ count: subscriberIds.length })) },
     user: { findMany: vi.fn(async () => users) },
     alertEmailQueue: { createMany: queueCreateMany },
@@ -149,6 +153,46 @@ describe("createAlert — alert email is queued, never sent", () => {
       ["u-1"],
       [{ id: "u-1", name: "Ana", email: null, language: "en", emailNotification: true }],
     );
+
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+
+    expect(queueCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets a retry repair a fan-out that never happened", async () => {
+    // The alert committed but its fan-out failed, so there are no inbox rows
+    // and no queued email. Keyed on the alert row alone the retry returned
+    // early and that email was lost for good; keyed on the inbox rows it
+    // finishes the job.
+    const { ctx, queueCreateMany, client } = contextWith(
+      ["u-1"],
+      [{ id: "u-1", name: "Ana", email: "ana@example.test", language: "en", emailNotification: true }],
+    );
+    (client.alerts as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+      id: "al-1",
+      status: "published",
+      createdAt: new Date(),
+    });
+
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+
+    expect(queueCreateMany).toHaveBeenCalledWith({
+      data: [{ userId: "u-1", alertId: "al-1" }],
+      skipDuplicates: true,
+    });
+  });
+
+  it("does NOT re-fan-out a retry whose original create already notified people", async () => {
+    const { ctx, queueCreateMany, client } = contextWith(
+      ["u-1"],
+      [{ id: "u-1", name: "Ana", email: "ana@example.test", language: "en", emailNotification: true }],
+    );
+    (client.alerts as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+      id: "al-1",
+      status: "published",
+      createdAt: new Date(),
+    });
+    (client.userAlerts as { count: ReturnType<typeof vi.fn> }).count.mockResolvedValue(1);
 
     await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
 

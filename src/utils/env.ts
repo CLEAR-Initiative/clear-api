@@ -143,6 +143,14 @@ const envSchema = z.object({
    * queue is pathologically long.
    */
   ALERT_EMAIL_MAX_RECIPIENTS_PER_FLUSH: z.coerce.number().int().positive().default(500),
+  /**
+   * How long a flush's claim on a queued email is honoured. A flush claims
+   * rows before sending so two overlapping flushes cannot send the same email
+   * twice; a flush that dies mid-send leaves them claimed, so a claim older
+   * than this is treated as abandoned and may be retaken. Must comfortably
+   * exceed one flush's runtime — 15 is 3x the default 5-minute cadence.
+   */
+  ALERT_EMAIL_CLAIM_TTL_MINUTES: z.coerce.number().int().positive().default(15),
 
   // SMS provider: "twilio" | "46elks"
   SMS_PROVIDER: z.string().default("twilio"),

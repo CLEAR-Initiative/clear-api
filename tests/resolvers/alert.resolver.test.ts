@@ -442,6 +442,9 @@ describe("Mutation.createAlert", () => {
       },
       // present so an accidental fan-out would be observable
       userAlertSubscriptions: { findMany: subFind },
+      // The original create already fanned out (inbox rows exist), which is
+      // what makes this retry a no-op rather than a repair.
+      userAlerts: { count: vi.fn().mockResolvedValue(3) },
       ...wideOpenAnalystScope(),
     });
 
@@ -467,6 +470,8 @@ describe("Mutation.createAlert", () => {
         update,
       },
       userAlertSubscriptions: { findMany: subFind },
+      // Already fanned out on the original create.
+      userAlerts: { count: vi.fn().mockResolvedValue(3) },
       ...wideOpenAnalystScope(),
     });
 

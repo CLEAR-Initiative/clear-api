@@ -177,10 +177,30 @@ export const alertResolvers = {
               return row;
             });
 
-      // Skip the notification fan-out when the alert already existed -
-      // subscribers were notified on the original create, we don't want
-      // to spam them on every retry.
-      if (existingAlert) return alert;
+      // Skip the notification fan-out when the alert already existed —
+      // subscribers were notified on the original create and must not be
+      // spammed on every retry.
+      //
+      // "Already notified" is the presence of inbox rows, not the presence of
+      // the alert. The fan-out (inbox row + notification + queued email) is one
+      // transaction, so either a recipient got all three or none of them; an
+      // alert with no inbox rows notified nobody, and a retry must be allowed
+      // to finish the job. Keyed on the alert row instead, a fan-out that
+      // failed after the alert committed was unrepairable — the retry returned
+      // here and that alert's email was lost for good.
+      //
+      // An alert with genuinely no matching subscribers also has no inbox
+      // rows, so a retry re-runs a read-only fan-out and finds nobody again.
+      // A few wasted queries, and nothing is sent twice.
+      if (existingAlert) {
+        const alreadyFannedOut = await context.prisma.userAlerts.count({
+          where: { alertId: alert.id },
+        });
+        if (alreadyFannedOut > 0) return alert;
+        console.log(
+          `[createAlert] Alert ${alert.id} exists with no inbox rows — retrying its fan-out`,
+        );
+      }
 
       // First-time creation only — record one activity entry per alert,
       // not one per retry/escalation.
@@ -258,16 +278,6 @@ export const alertResolvers = {
         if (uniqueUserIds.length > 0) {
           const fallbackTitle = event.types[0] ?? "Alert";
 
-          // 1. Populate userAlerts join table
-          await context.prisma.userAlerts.createMany({
-            data: uniqueUserIds.map((userId) => ({
-              userId,
-              alertId: alert.id,
-            })),
-            skipDuplicates: true,
-          });
-          console.log(`[createAlert] Created ${uniqueUserIds.length} userAlert records`);
-
           // Pull every recipient's language up front: the in-app notification
           // message is written in each recipient's own language, and
           // `emailNotification` decides who gets queued for email below.
@@ -288,42 +298,43 @@ export const alertResolvers = {
           const titleFor = (locale: string) =>
             localizedText.get(normaliseUserLocale(locale))?.title ?? fallbackTitle;
 
-          // 2. Create in-app notifications (per-recipient so each user
-          // sees the title in their own language).
-          await context.prisma.notifications.createMany({
-            data: recipients.map((r) => ({
-              userId: r.id,
-              message: `New alert: ${titleFor(r.language)}`,
-              notificationType: "alert",
-              actionUrl: eventLink(event.id, "inbox"),
-              actionText: "View Alert",
-            })),
-          });
-          console.log(`[createAlert] Created ${recipients.length} in-app notifications`);
-
-          // 3. Queue the alert emails — do NOT send them here.
+          // The inbox row, the in-app notification and the queued email go in
+          // ONE transaction. Email is queued rather than sent — sending inline
+          // made a burst of alerts a burst of mail (48 alerts in 3.7s put 48
+          // messages in every matching inbox, clear #1731), and the flush is
+          // the only place that can see a recipient's whole load for the
+          // window and roll it into a digest.
           //
-          // This used to call the provider inline, one message per alert per
-          // recipient, so a burst of alerts was a burst of mail: 48 alerts in
-          // 3.7s once put 48 emails in every matching inbox (clear #1731).
-          // Queueing instead lets the flush see a recipient's whole load for
-          // the window and roll it into one digest when it is large.
+          // Atomic because a partial fan-out is the worst outcome: an alert
+          // with an inbox row but no queued email is an alert whose email is
+          // silently lost, and a retry returns early at `if (existingAlert)`
+          // without repairing it. All-or-nothing makes that unreachable.
           //
-          // Steps 1 and 2 above (userAlerts, in-app notifications) stay
-          // immediate on purpose — the inbox should be live. Only email waits.
+          // The inbox half is still immediate; only the email waits for the
+          // flush.
           const emailUsers = recipients.filter((r) => r.emailNotification && r.email);
-          if (emailUsers.length > 0) {
-            const queued = await enqueueAlertEmails(
-              context.prisma,
-              alert.id,
-              emailUsers.map((u) => u.id),
-            );
-            console.log(
-              `[createAlert] queued ${queued} alert email(s) for ${emailUsers.length} recipient(s)`,
-            );
-          } else {
-            console.log("[createAlert] No users with email notifications enabled - nothing queued");
-          }
+          await context.prisma.$transaction(async (tx) => {
+            await tx.userAlerts.createMany({
+              data: uniqueUserIds.map((userId) => ({ userId, alertId: alert.id })),
+              skipDuplicates: true,
+            });
+            await tx.notifications.createMany({
+              data: recipients.map((r) => ({
+                userId: r.id,
+                message: `New alert: ${titleFor(r.language)}`,
+                notificationType: "alert",
+                actionUrl: eventLink(event.id, "inbox"),
+                actionText: "View Alert",
+              })),
+            });
+            if (emailUsers.length > 0) {
+              await enqueueAlertEmails(tx, alert.id, emailUsers.map((u) => u.id));
+            }
+          });
+          console.log(
+            `[createAlert] fan-out: ${uniqueUserIds.length} userAlert row(s), ` +
+              `${recipients.length} notification(s), ${emailUsers.length} email(s) queued`,
+          );
         }
       }
 

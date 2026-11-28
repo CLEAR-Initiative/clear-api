@@ -7,6 +7,7 @@ CREATE TABLE "alert_email_queue" (
     "user_id" TEXT NOT NULL,
     "alert_id" TEXT NOT NULL,
     "queued_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "claimed_at" TIMESTAMP(3),
     "sent_at" TIMESTAMP(3),
     "delivery" "alert_email_delivery",
 
@@ -15,6 +16,9 @@ CREATE TABLE "alert_email_queue" (
 
 -- CreateIndex
 CREATE INDEX "alert_email_queue_sent_at_queued_at_idx" ON "alert_email_queue"("sent_at", "queued_at");
+
+-- CreateIndex
+CREATE INDEX "alert_email_queue_claimed_at_idx" ON "alert_email_queue"("claimed_at");
 
 -- CreateIndex
 CREATE INDEX "alert_email_queue_user_id_queued_at_idx" ON "alert_email_queue"("user_id", "queued_at");
