@@ -166,27 +166,6 @@
    ]
   },
   {
-   "pCode": "SD13030",
-   "district": "Ar Rahad",
-   "state": "Gedaref",
-   "group": "A",
-   "town": {
-    "name": "Ar Rahad",
-    "lat": 12.730056408,
-    "lon": 30.653211758,
-    "source": "ocha",
-    "ref": "SD13030010",
-    "place": "city",
-    "nameAr": "الرهد"
-   },
-   "spellings": [
-    "Ar Rahad",
-    "Al Rahad",
-    "El Rahad",
-    "الرهد"
-   ]
-  },
-  {
    "pCode": "SD12079",
    "district": "Gala'a Al Nahal",
    "state": "Gedaref",
@@ -1465,6 +1444,11 @@
   {
    "pCode": "SD06137",
    "district": "Wadi Salih",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD12084",
+   "district": "Ar Rahad",
    "why": "neither OSM nor OCHA has a town of this name in the district"
   },
   {

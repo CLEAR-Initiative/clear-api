@@ -169,7 +169,15 @@ def main() -> None:
     import openpyxl  # noqa: PLC0415 — only this script needs it
 
     gaps = list(csv.DictReader(a.districts.open(), delimiter="\t"))
-    pcodes = {r["name"]: r for r in csv.DictReader(a.pcodes.open(), delimiter="\t") if r.get("p_code")}
+    # By state and name: two districts can share a name (Ar Rahad in Gedaref and in North Kordofan).
+    pcodes: dict[tuple[str, str], dict] = {}
+    for r in csv.DictReader(a.pcodes.open(), delimiter="\t"):
+        if not r.get("p_code"):
+            continue
+        key = (r["state"], r["name"])
+        if key in pcodes:
+            raise SystemExit(f"two districts named {r['name']!r} in {r['state']!r}")
+        pcodes[key] = r
     arabic = {r["pCode"]: r["nameAr"] for r in json.loads(a.arabic.read_text())["rows"]}
     geonames = {r["geonames_id"]: r for r in csv.DictReader(a.geonames.open(), delimiter="\t")}
 
@@ -200,7 +208,7 @@ def main() -> None:
         name, group = g["district"], g["group"]
         if group == "C":
             continue
-        d = pcodes[name]
+        d = pcodes[(g["state"], name)]
         pc, d_ar = d["p_code"], arabic.get(d["p_code"])
         if name in EXCLUDE:
             left_out.append({"pCode": pc, "district": name, "why": EXCLUDE[name]})
