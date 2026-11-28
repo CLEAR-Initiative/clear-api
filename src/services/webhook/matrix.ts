@@ -235,16 +235,23 @@ export function rateLimitWaitMs(headers: Headers, bodyText: string): number | nu
 export async function postMatrixMessage(
   config: MatrixConfig,
   message: MatrixMessage,
-  deps: { fetch?: FetchLike; sleep?: (ms: number) => Promise<void> } = {},
+  deps: {
+    fetch?: FetchLike;
+    sleep?: (ms: number) => Promise<void>;
+    /** The transaction id to send with. The homeserver takes one message per
+     *  id from one access token, so replicas that pass the same id post once.
+     *  Default: a new id for each call. */
+    txnId?: string;
+  } = {},
 ): Promise<boolean> {
   const doFetch = deps.fetch ?? (fetch as FetchLike);
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
   // One txn id for every attempt: the homeserver dedupes a retried PUT.
-  const txnId = randomUUID();
+  const txnId = deps.txnId ?? randomUUID();
   const url = `${config.homeserverUrl.replace(/\/+$/, "")}/_matrix/client/v3/rooms/${encodeURIComponent(
     config.roomId,
-  )}/send/m.room.message/${txnId}`;
+  )}/send/m.room.message/${encodeURIComponent(txnId)}`;
   const body = JSON.stringify({
     msgtype: "m.notice",
     body: message.body,

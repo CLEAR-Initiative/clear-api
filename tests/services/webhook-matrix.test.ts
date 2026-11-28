@@ -185,6 +185,13 @@ describe("postMatrixMessage", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ msgtype: "m.notice", body: "b" });
   });
 
+  it("sends the caller's transaction id when one is given", async () => {
+    const fetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    await postMatrixMessage(config, msg, { fetch, sleep, txnId: "inbox-digest-2026-11-25" });
+    const [url] = fetch.mock.calls[0] as unknown as [string];
+    expect(url).toMatch(/\/send\/m\.room\.message\/inbox-digest-2026-11-25$/);
+  });
+
   it("retries 5xx with the same txn id, then succeeds", async () => {
     const fetch = vi
       .fn()

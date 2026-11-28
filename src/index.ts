@@ -36,6 +36,8 @@ import { briefsUnsubscribeRouter } from "./routes/briefs-unsubscribe.js";
 import { startWebhookRetryWorker } from "./services/webhook/worker.js";
 import { startActivityLogTrimWorker } from "./services/activity-log/trim-worker.js";
 import { startCrmSyncWorker } from "./services/crm-sync.js";
+import { startInboxDigestWorker } from "./services/inbox-digest/worker.js";
+import { matrixConfigFromEnv } from "./services/webhook/matrix.js";
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -150,6 +152,11 @@ httpServer.listen(env.PORT, () => {
   // CRM_SYNC_INTERVAL_HOURS; off by default.
   if (startCrmSyncWorker(prisma, env.CRM_SYNC_INTERVAL_HOURS)) {
     console.log(`[crm-sync] scheduled every ${env.CRM_SYNC_INTERVAL_HOURS}h`);
+  }
+  // Once a day, post the waiting Inbox counts to the Matrix room GlitchTip
+  // alerts use. Off when the Matrix env is not set.
+  if (startInboxDigestWorker(prisma, matrixConfigFromEnv(env), env.FRONTEND_URL)) {
+    console.log("[inbox-digest] scheduled daily at 07:00 UTC");
   }
 });
 
