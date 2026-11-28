@@ -1206,6 +1206,21 @@ model alerts {
   /// history series.
   raisedByRunKind      LocationRunKind? @map("raised_by_run_kind")
 
+  /// When this Alert's post-create fan-out COMPLETED: inbox rows, in-app
+  /// notifications, queued email and the webhook dispatch. Null = not done.
+  ///
+  /// `createAlert` is idempotent and the pipeline retries it, so it needs to
+  /// know whether the work after the Alert row has already happened. The alert
+  /// row itself cannot answer that — a fan-out that failed after the Alert
+  /// committed left it looking finished, and the email was lost. Nor can the
+  /// inbox rows: an Alert with webhook subscribers but no immediate inbox
+  /// subscribers legitimately has none, so keying on them re-dispatched the
+  /// webhooks on every retry.
+  ///
+  /// Written inside the same transaction as the fan-out, so it is set only if
+  /// that work committed, and a retry redoes a fan-out that did not.
+  fannedOutAt          DateTime?        @map("fanned_out_at")
+
   event       events            @relation(fields: [eventId], references: [id])
   userAlerts  userAlerts[]
   emailQueue  alertEmailQueue[]

@@ -499,9 +499,15 @@ export const mutationTypeDef = gql`
     \`ALERT_EMAIL_WINDOW_MINUTES\` gets one digest covering everything still
     pending for them; at or below it, one email per alert as before.
 
-    Idempotent: a queued alert is marked sent only once the provider accepts the
-    message that covers it, so a crashed run leaves its alerts queued and the
-    next run retries them rather than dropping or double-sending.
+    Delivery is AT-LEAST-ONCE, not exactly-once. A queued alert is marked sent
+    only once the provider accepts the message covering it, so a refused or
+    failed send is retried rather than dropped. But the send happens before the
+    mark: a run that stops after the provider accepted a message and before the
+    mark commits leaves that row queued, and a later run sends it again. No
+    provider here takes a deduplication key, so nothing suppresses that
+    duplicate. Overlapping runs do not duplicate — rows are claimed first — and
+    the residual window is a crash, which is traded deliberately against the
+    alternative of marking sent first and losing email silently.
 
     \`digestThreshold\`, \`windowMinutes\` and \`maxRecipients\` override the
     environment defaults — intended for testing and for throttling an incident,

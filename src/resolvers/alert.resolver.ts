@@ -181,24 +181,23 @@ export const alertResolvers = {
       // subscribers were notified on the original create and must not be
       // spammed on every retry.
       //
-      // "Already notified" is the presence of inbox rows, not the presence of
-      // the alert. The fan-out (inbox row + notification + queued email) is one
-      // transaction, so either a recipient got all three or none of them; an
-      // alert with no inbox rows notified nobody, and a retry must be allowed
-      // to finish the job. Keyed on the alert row instead, a fan-out that
-      // failed after the alert committed was unrepairable — the retry returned
-      // here and that alert's email was lost for good.
+      // "Already notified" is `alerts.fannedOutAt`, an explicit marker written
+      // in the same transaction as the fan-out. Neither of the obvious proxies
+      // works:
       //
-      // An alert with genuinely no matching subscribers also has no inbox
-      // rows, so a retry re-runs a read-only fan-out and finds nobody again.
-      // A few wasted queries, and nothing is sent twice.
+      //   * the alert row — a fan-out that failed after the alert committed
+      //     left it looking finished, and that alert's email was lost for good;
+      //   * the inbox rows — an alert with webhook subscribers but no immediate
+      //     inbox subscribers legitimately has none, so every retry re-ran the
+      //     fan-out and `fanOutAlertWebhooks` dispatched the same
+      //     `alert.created` message again.
+      //
+      // The marker answers exactly the question being asked, for every alert,
+      // including one that matched nobody.
+      if (existingAlert?.fannedOutAt) return alert;
       if (existingAlert) {
-        const alreadyFannedOut = await context.prisma.userAlerts.count({
-          where: { alertId: alert.id },
-        });
-        if (alreadyFannedOut > 0) return alert;
         console.log(
-          `[createAlert] Alert ${alert.id} exists with no inbox rows — retrying its fan-out`,
+          `[createAlert] Alert ${alert.id} exists but never completed its fan-out — retrying it`,
         );
       }
 
@@ -240,6 +239,11 @@ export const alertResolvers = {
       } else if (event.types.length === 0) {
         console.log("[createAlert] No types on event - skipping subscriber notifications");
       }
+
+      // Set by the fan-out transaction below. A path that has no fan-out work
+      // (no locations, no types, or no matching subscribers) still has to mark
+      // the alert done, or every retry would re-dispatch its webhooks.
+      let fannedOut = false;
 
       if (eventLocationIds.length > 0 && event.types.length > 0) {
         // Expand locations to include ancestors so country-level subscriptions
@@ -330,7 +334,14 @@ export const alertResolvers = {
             if (emailUsers.length > 0) {
               await enqueueAlertEmails(tx, alert.id, emailUsers.map((u) => u.id));
             }
+            // Last write of the transaction: the fan-out is complete only if
+            // everything above committed.
+            await tx.alerts.update({
+              where: { id: alert.id },
+              data: { fannedOutAt: new Date() },
+            });
           });
+          fannedOut = true;
           console.log(
             `[createAlert] fan-out: ${uniqueUserIds.length} userAlert row(s), ` +
               `${recipients.length} notification(s), ${emailUsers.length} email(s) queued`,
@@ -338,9 +349,26 @@ export const alertResolvers = {
         }
       }
 
+      // No subscriber fan-out happened (no locations, no types, or nobody
+      // matched), so nothing has marked the alert yet. Mark it before the
+      // webhook dispatch: an alert that matched no inbox subscriber may still
+      // have webhook subscribers, and without the marker every retry would
+      // dispatch to them again.
+      if (!fannedOut) {
+        await context.prisma.alerts.update({
+          where: { id: alert.id },
+          data: { fannedOutAt: new Date() },
+        });
+      }
+
       // Fan out to team-configured `clear_alert` webhooks alongside email.
       // Fire-and-forget: webhook delivery (async, retried) must never block or
       // fail alert creation. Matching + delivery live in the service.
+      //
+      // Reached once per alert: the `fannedOutAt` guard above returns early on
+      // a retry whose fan-out completed, so a subscriber gets one
+      // `alert.created` message rather than one per retry. Delivery itself is
+      // retried inside the service.
       try {
         const webhookCount = await fanOutAlertWebhooks(
           context.prisma,

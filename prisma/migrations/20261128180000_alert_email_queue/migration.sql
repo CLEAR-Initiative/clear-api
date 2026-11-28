@@ -1,6 +1,9 @@
 -- CreateEnum
 CREATE TYPE "alert_email_delivery" AS ENUM ('individual', 'digest');
 
+-- AlterTable
+ALTER TABLE "alerts" ADD COLUMN     "fanned_out_at" TIMESTAMP(3);
+
 -- CreateTable
 CREATE TABLE "alert_email_queue" (
     "id" TEXT NOT NULL,
@@ -31,3 +34,9 @@ ALTER TABLE "alert_email_queue" ADD CONSTRAINT "alert_email_queue_user_id_fkey" 
 
 -- AddForeignKey
 ALTER TABLE "alert_email_queue" ADD CONSTRAINT "alert_email_queue_alert_id_fkey" FOREIGN KEY ("alert_id") REFERENCES "alerts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Every alert that already exists has, by definition, already had whatever
+-- fan-out it was going to get. Without this backfill they would all look
+-- unfanned, so a re-raise would re-dispatch their webhooks and re-queue their
+-- email. `created_at` is the honest value: the fan-out ran at creation.
+UPDATE "alerts" SET "fanned_out_at" = "created_at" WHERE "fanned_out_at" IS NULL;

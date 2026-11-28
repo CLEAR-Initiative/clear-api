@@ -290,15 +290,21 @@ describe("flushAlertEmailQueue — caps and failure handling", () => {
     expect(marked).toEqual([{ ids: ["q-u-ana-0", "q-u-ana-1", "q-u-ana-2"], delivery: null }]);
   });
 
-  it("leaves a failed recipient's rows pending for the next flush", async () => {
-    const { prisma, marked } = fakePrisma({ pending: rows("u-ana", 2), users: [ana] });
+  it("leaves a failed recipient's rows for a later flush, keeping their claim", async () => {
+    const { prisma, marked, released } = fakePrisma({
+      pending: rows("u-ana", 2),
+      users: [ana],
+    });
     sendBulk.mockRejectedValueOnce(new Error("provider down"));
 
     const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
 
     expect(result).toMatchObject({ failed: 1, emails: 0, individual: 0 });
-    // Nothing marked ⇒ the rows are still pending ⇒ the next tick retries them.
+    // Nothing marked, and the claim is NOT cleared: the rows come back when
+    // the lease expires, behind other recipients, so a recipient whose
+    // provider keeps failing cannot hold every slot.
     expect(marked).toEqual([]);
+    expect(released).toEqual([]);
   });
 
   it("does nothing, and asks the provider for nothing, when the queue is empty", async () => {
@@ -347,7 +353,8 @@ describe("flushAlertEmailQueue — the Greptile P1s", () => {
     expect(marked).toEqual([
       { ids: ["q-u-ana-0", "q-u-ana-2"], delivery: "individual" },
     ]);
-    expect(released).toEqual([["q-u-ana-1"]]);
+    // The refused row is neither marked nor released — it keeps its claim.
+    expect(released).toEqual([]);
     expect(result).toMatchObject({ emails: 2, individual: 2, failed: 1 });
   });
 
@@ -361,7 +368,7 @@ describe("flushAlertEmailQueue — the Greptile P1s", () => {
     const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
 
     expect(marked).toEqual([]);
-    expect(released[0]).toHaveLength(48);
+    expect(released).toEqual([]);
     expect(result).toMatchObject({ failed: 1, digests: 0, emails: 0 });
   });
 
@@ -396,17 +403,33 @@ describe("flushAlertEmailQueue — the Greptile P1s", () => {
     expect(result.recipients).toBe(0);
   });
 
-  it("releases the rows when a send throws, not just when it refuses", async () => {
-    const { prisma, marked, released } = fakePrisma({
-      pending: rows("u-ana", 2),
-      users: [ana],
+  it("keeps going for later recipients when an earlier one's DB read throws", async () => {
+    // The window count used to sit outside the try, so a timeout on the first
+    // recipient abandoned every recipient after them.
+    const bruno: FakeUser = { ...ana, id: "u-bruno", email: "bruno@example.test", name: "Bruno" };
+    const { prisma, raw, marked } = fakePrisma({
+      pending: [...rows("u-ana", 1), ...rows("u-bruno", 1)],
+      users: [ana, bruno],
     });
-    sendBulk.mockRejectedValueOnce(new Error("provider down"));
+    vi.mocked(raw.alertEmailQueue.count).mockRejectedValueOnce(new Error("statement timeout"));
 
     const result = await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
 
-    expect(marked).toEqual([]);
-    expect(released).toEqual([["q-u-ana-0", "q-u-ana-1"]]);
-    expect(result).toMatchObject({ failed: 1, emails: 0 });
+    expect(result.failed).toBe(1);
+    // Bruno still got his email.
+    expect(marked).toEqual([{ ids: ["q-u-bruno-0"], delivery: "individual" }]);
+    expect(result.emails).toBe(1);
+  });
+
+  it("marks only rows it still holds, so an expired flush cannot overwrite", async () => {
+    const { prisma, raw } = fakePrisma({ pending: rows("u-ana", 1), users: [ana] });
+
+    await flushAlertEmailQueue(prisma, { digestThreshold: 10 });
+
+    // The ownership guard: the update is scoped to the claim this flush set.
+    const call = vi.mocked(raw.alertEmailQueue.updateMany).mock.calls[0]![0] as {
+      where: { claimedAt?: Date };
+    };
+    expect(call.where.claimedAt).toBeInstanceOf(Date);
   });
 });

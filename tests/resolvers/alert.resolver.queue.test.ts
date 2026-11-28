@@ -81,16 +81,13 @@ function contextWith(
     alerts: {
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "al-1", status: "published", createdAt: new Date() }),
+      update: vi.fn().mockResolvedValue({ id: "al-1" }),
     },
     locations: { findMany: vi.fn().mockResolvedValue([{ id: "l1", name: "Blue Nile", level: 1, population: null, ancestorIds: [] }]) },
     userAlertSubscriptions: {
       findMany: vi.fn().mockResolvedValue(subscriberIds.map((userId) => ({ userId }))),
     },
-    userAlerts: {
-      createMany: vi.fn(async () => ({ count: subscriberIds.length })),
-      // No inbox rows yet ⇒ nobody has been notified about this alert.
-      count: vi.fn(async () => 0),
-    },
+    userAlerts: { createMany: vi.fn(async () => ({ count: subscriberIds.length })) },
     notifications: { createMany: vi.fn(async () => ({ count: subscriberIds.length })) },
     user: { findMany: vi.fn(async () => users) },
     alertEmailQueue: { createMany: queueCreateMany },
@@ -160,10 +157,9 @@ describe("createAlert — alert email is queued, never sent", () => {
   });
 
   it("lets a retry repair a fan-out that never happened", async () => {
-    // The alert committed but its fan-out failed, so there are no inbox rows
-    // and no queued email. Keyed on the alert row alone the retry returned
-    // early and that email was lost for good; keyed on the inbox rows it
-    // finishes the job.
+    // The alert committed but its fan-out failed, so `fannedOutAt` is null and
+    // no email was queued. Keyed on the alert row alone the retry returned
+    // early and that email was lost for good.
     const { ctx, queueCreateMany, client } = contextWith(
       ["u-1"],
       [{ id: "u-1", name: "Ana", email: "ana@example.test", language: "en", emailNotification: true }],
@@ -182,7 +178,7 @@ describe("createAlert — alert email is queued, never sent", () => {
     });
   });
 
-  it("does NOT re-fan-out a retry whose original create already notified people", async () => {
+  it("does NOT re-fan-out a retry whose original create already completed", async () => {
     const { ctx, queueCreateMany, client } = contextWith(
       ["u-1"],
       [{ id: "u-1", name: "Ana", email: "ana@example.test", language: "en", emailNotification: true }],
@@ -192,11 +188,54 @@ describe("createAlert — alert email is queued, never sent", () => {
       status: "published",
       createdAt: new Date(),
     });
-    (client.userAlerts as { count: ReturnType<typeof vi.fn> }).count.mockResolvedValue(1);
+    (client.alerts as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+      id: "al-1",
+      status: "published",
+      createdAt: new Date(),
+      fannedOutAt: new Date(),
+    });
 
     await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
 
     expect(queueCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not re-dispatch webhooks for an alert that matched no inbox subscriber", async () => {
+    // The regression this marker exists for: an alert with webhook subscribers
+    // but no immediate inbox subscribers legitimately has no inbox rows, so a
+    // gate keyed on those rows let every retry run the fan-out again and
+    // dispatch the same `alert.created` message. Keyed on `fannedOutAt` the
+    // retry returns early.
+    const { ctx, client } = contextWith([], []);
+    (client.alerts as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+      id: "al-1",
+      status: "published",
+      createdAt: new Date(),
+      fannedOutAt: new Date(),
+    });
+
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+
+    // Early return ⇒ the webhook subscription lookup is never reached.
+    expect(
+      (client.webhookSubscription as { findMany: ReturnType<typeof vi.fn> }).findMany,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("marks an alert fanned out even when nobody matched, so retries stop", async () => {
+    // No subscribers at all: there is no fan-out transaction to carry the
+    // marker, so the resolver has to write it on its own or the alert stays
+    // forever "unfanned" and every retry re-dispatches its webhooks.
+    const { ctx, client } = contextWith([], []);
+
+    await createAlert(null, { input: { eventId: "e1", status: "published" as never } }, ctx);
+
+    expect((client.alerts as { update: ReturnType<typeof vi.fn> }).update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "al-1" },
+        data: expect.objectContaining({ fannedOutAt: expect.any(Date) }),
+      }),
+    );
   });
 
   it("still writes the in-app inbox rows, which stay immediate", async () => {

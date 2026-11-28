@@ -295,8 +295,14 @@ async function buildDigestEmail(
  *
  * `sendBulk` returns one boolean per message and does **not** throw when a
  * provider refuses one, so only the rows covered by an accepted message are
- * marked sent. A refused or thrown message releases its rows back to pending
- * for the next flush.
+ * marked sent. A refused or failed row keeps its claim and returns once the
+ * lease expires — behind other recipients' work rather than ahead of it, so a
+ * recipient whose provider keeps refusing cannot starve everyone else.
+ *
+ * Delivery is **at-least-once**. The send precedes the mark, so a crash in
+ * between leaves the row queued and a later flush sends it again; no provider
+ * here takes a deduplication key. That is the deliberate side of the trade —
+ * marking sent first would close the window and lose email silently instead.
  *
  * The burst size is `max(window count, rows claimed now)`. The window alone is
  * not enough: if the flush is down for longer than the window after 48 alerts
@@ -374,45 +380,48 @@ export async function flushAlertEmailQueue(
   const emailProvider = await getEmailProvider();
 
   for (const userId of userIds) {
-    // Claim this recipient's available rows. Only what comes back is ours —
-    // a concurrent flush that claimed some of them first gets those, and we
-    // simply do not see them.
-    const claimed = await prisma.alertEmailQueue.updateManyAndReturn({
-      where: { userId, ...available },
-      data: { claimedAt: now },
-      select: { id: true, alertId: true },
-    });
-    if (claimed.length === 0) continue; // another flush owns them
-
-    const rowIds = claimed.map((r) => r.id);
-    const user = userById.get(userId);
-
-    if (!user || !user.emailNotification || !user.email) {
-      // Resolved without sending: `sentAt` set so the row stops being re-read,
-      // `delivery` left null because no email carried it. Claiming
-      // "individual" here would misreport the flush in the only durable record
-      // of what each recipient was actually sent.
-      await markSent(prisma, rowIds, null, now);
-      continue;
-    }
-
-    // Everything raised for this recipient inside the window, sent or not, so
-    // a burst split across two flush ticks is judged as one burst — floored at
-    // what we just claimed, so a burst that has aged out of the window still
-    // counts as one (see the doc comment).
-    const windowCount = await prisma.alertEmailQueue.count({
-      where: { userId, queuedAt: { gte: windowStart } },
-    });
-    const burstCount = Math.max(windowCount, claimed.length);
-
-    const recipient: Recipient = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      language: user.language,
-    };
-
+    // The ENTIRE per-recipient body is inside the failure boundary, database
+    // reads included. A `count` that times out on the first recipient used to
+    // escape and abandon every later one.
     try {
+      // Claim this recipient's available rows. Only what comes back is ours —
+      // a concurrent flush that claimed some of them first gets those, and we
+      // simply do not see them.
+      const claimed = await prisma.alertEmailQueue.updateManyAndReturn({
+        where: { userId, ...available },
+        data: { claimedAt: now },
+        select: { id: true, alertId: true },
+      });
+      if (claimed.length === 0) continue; // another flush owns them
+
+      const rowIds = claimed.map((r) => r.id);
+      const user = userById.get(userId);
+
+      if (!user || !user.emailNotification || !user.email) {
+        // Resolved without sending: `sentAt` set so the row stops being
+        // re-read, `delivery` left null because no email carried it. Claiming
+        // "individual" here would misreport the flush in the only durable
+        // record of what each recipient was actually sent.
+        await markSent(prisma, rowIds, null, now, now);
+        continue;
+      }
+
+      // Everything raised for this recipient inside the window, sent or not,
+      // so a burst split across two flush ticks is judged as one burst —
+      // floored at what we just claimed, so a burst that has aged out of the
+      // window still counts as one (see the doc comment).
+      const windowCount = await prisma.alertEmailQueue.count({
+        where: { userId, queuedAt: { gte: windowStart } },
+      });
+      const burstCount = Math.max(windowCount, claimed.length);
+
+      const recipient: Recipient = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        language: user.language,
+      };
+
       if (burstCount > digestThreshold) {
         const digest = await buildDigestEmail(
           prisma,
@@ -421,17 +430,18 @@ export async function flushAlertEmailQueue(
           maxDigestItems,
         );
         if (!digest) {
-          await markSent(prisma, rowIds, "digest", now);
+          await markSent(prisma, rowIds, "digest", now, now);
           continue;
         }
         const [accepted] = await emailProvider.sendBulk([digest]);
         if (accepted === false) {
-          // Refused, not thrown: release every row the digest covered.
-          await release(prisma, rowIds);
+          // Refused rather than thrown. The rows keep their claim, so they
+          // come back after the lease expires instead of being retried
+          // immediately ahead of everyone else (see `markSent`'s sibling note).
           result.failed += 1;
           continue;
         }
-        await markSent(prisma, rowIds, "digest", now);
+        await markSent(prisma, rowIds, "digest", now, now);
         result.digests += 1;
         result.emails += 1;
         result.digested += rowIds.length;
@@ -440,8 +450,9 @@ export async function flushAlertEmailQueue(
       }
 
       // Under the threshold: one email per alert, exactly as before. Each
-      // message is tracked against the row it covers, so a provider that
-      // refuses message 3 of 5 releases only that row.
+      // message is tracked against the row it covers — `buildIndividualEmails`
+      // can return zero or several messages for one alert, so array positions
+      // alone cannot identify the row.
       const tracked: Array<{ rowId: string; message: OutboundEmail }> = [];
       for (const row of claimed) {
         for (const message of await buildIndividualEmails(prisma, row.alertId, [recipient])) {
@@ -450,40 +461,36 @@ export async function flushAlertEmailQueue(
       }
       if (tracked.length === 0) {
         // Nothing to send for these (e.g. the alert or its event is gone).
-        await markSent(prisma, rowIds, null, now);
+        await markSent(prisma, rowIds, null, now, now);
         continue;
       }
 
       const results = await emailProvider.sendBulk(tracked.map((t) => t.message));
       const sentIds: string[] = [];
-      const refusedIds: string[] = [];
+      let refused = 0;
       tracked.forEach((t, i) => {
-        (results[i] === false ? refusedIds : sentIds).push(t.rowId);
+        if (results[i] === false) refused += 1;
+        else sentIds.push(t.rowId);
       });
-      // A row whose message was never built (no message for that alert) is
-      // closed, not left to be re-read forever.
+      // A row whose message was never built is closed, not left to be re-read
+      // forever. A refused row simply keeps its claim and returns later.
       const builtIds = new Set(tracked.map((t) => t.rowId));
       const unbuilt = rowIds.filter((id) => !builtIds.has(id));
 
       if (sentIds.length > 0 || unbuilt.length > 0) {
-        await markSent(prisma, [...sentIds, ...unbuilt], "individual", now);
+        await markSent(prisma, [...sentIds, ...unbuilt], "individual", now, now);
         result.individual += sentIds.length + unbuilt.length;
       }
-      if (refusedIds.length > 0) {
-        await release(prisma, refusedIds);
-        result.failed += 1;
-      }
+      if (refused > 0) result.failed += 1;
       if (sentIds.length > 0) {
         result.emails += sentIds.length;
         result.recipients += 1;
       }
     } catch (err) {
-      // One recipient's failure must not strand the others: release their rows
-      // so the next tick retries just them.
+      // One recipient's failure must not strand the others. Their rows keep
+      // the claim they were given, so they return after the lease expires —
+      // behind everyone else's work rather than ahead of it.
       console.error(`[alert-email] flush failed for user ${userId}:`, err);
-      await release(prisma, rowIds).catch((e) =>
-        console.error(`[alert-email] could not release rows for ${userId}:`, e),
-      );
       result.failed += 1;
     }
   }
@@ -496,25 +503,25 @@ export async function flushAlertEmailQueue(
   return result;
 }
 
+/**
+ * Mark rows sent — but only the ones this flush still holds.
+ *
+ * `claimedAt: claim` is the ownership check. Without it a flush whose lease had
+ * expired could still write: it would come back from a slow send and overwrite
+ * the result of the flush that legitimately re-claimed those rows, including
+ * stamping "sent" over another flush's pending row and losing that email.
+ */
 async function markSent(
   prisma: PrismaClient,
   rowIds: string[],
   /** Null = closed without an email (recipient has email off, or no address). */
   delivery: "individual" | "digest" | null,
+  claim: Date,
   now: Date,
 ): Promise<void> {
   if (rowIds.length === 0) return;
   await prisma.alertEmailQueue.updateMany({
-    where: { id: { in: rowIds } },
+    where: { id: { in: rowIds }, claimedAt: claim },
     data: { sentAt: now, delivery },
-  });
-}
-
-/** Hand rows back to the queue: still unsent, no longer claimed. */
-async function release(prisma: PrismaClient, rowIds: string[]): Promise<void> {
-  if (rowIds.length === 0) return;
-  await prisma.alertEmailQueue.updateMany({
-    where: { id: { in: rowIds } },
-    data: { claimedAt: null },
   });
 }
