@@ -278,6 +278,43 @@ export function acledGeoPrecision(externalId: string | null | undefined, rawData
   return value === 1 || value === 2 || value === 3 ? value : null;
 }
 
+const COORDINATE = /^-?\d{1,3}(\.\d+)?$/;
+
+/** ACLED's own `latitude` or `longitude` from a stored ACLED payload, in
+ * decimal degrees; null for any other source, a missing value or one out of
+ * range. Only this number leaves `rawData`. */
+export function acledCoordinate(
+  externalId: string | null | undefined,
+  rawData: unknown,
+  axis: "latitude" | "longitude",
+): number | null {
+  if (!externalId?.startsWith("acled:")) return null;
+  const raw = (rawData as Record<string, unknown> | null)?.[axis];
+  const value =
+    typeof raw === "number" ? raw : typeof raw === "string" && COORDINATE.test(raw.trim()) ? Number(raw) : NaN;
+  const limit = axis === "latitude" ? 90 : 180;
+  return Number.isFinite(value) && Math.abs(value) <= limit ? value : null;
+}
+
+type AcledParent = { id: string; externalId?: string | null; rawData?: unknown };
+
+/** The two columns the ACLED source fields read, or null when the parent is
+ * known not to be ACLED. A findMany without `select` already carries both; a
+ * narrower parent reads only these two. */
+async function acledPayload(
+  parent: AcledParent,
+  prisma: Context["prisma"],
+): Promise<{ externalId: string | null; rawData: unknown } | null> {
+  if (parent.externalId !== undefined && !parent.externalId?.startsWith("acled:")) return null;
+  if (parent.rawData !== undefined && parent.externalId !== undefined) {
+    return { externalId: parent.externalId, rawData: parent.rawData };
+  }
+  return prisma.signals.findUnique({
+    where: { id: parent.id },
+    select: { externalId: true, rawData: true },
+  });
+}
+
 export const signalResolvers = {
   Query: {
     signals: async (_parent: unknown, args: { teamId?: string; includeDummy?: boolean }, context: Context) => {
@@ -1225,22 +1262,17 @@ export const signalResolvers = {
         .filter((row) => !shown.has(row.locationId))
         .map((row) => ({ location: row.location, name: row.name, kind: row.kind }));
     },
-    sourcePrecision: async (
-      parent: { id: string; externalId?: string | null; rawData?: unknown },
-      _args: unknown,
-      { prisma }: Context,
-    ) => {
-      if (parent.externalId !== undefined && !parent.externalId?.startsWith("acled:")) return null;
-      // A findMany without `select` already carries rawData; a narrower
-      // parent reads only the two columns this needs.
-      if (parent.rawData === undefined || parent.externalId === undefined) {
-        const row = await prisma.signals.findUnique({
-          where: { id: parent.id },
-          select: { externalId: true, rawData: true },
-        });
-        return row ? acledGeoPrecision(row.externalId, row.rawData) : null;
-      }
-      return acledGeoPrecision(parent.externalId, parent.rawData);
+    sourcePrecision: async (parent: AcledParent, _args: unknown, { prisma }: Context) => {
+      const row = await acledPayload(parent, prisma);
+      return row ? acledGeoPrecision(row.externalId, row.rawData) : null;
+    },
+    sourceLatitude: async (parent: AcledParent, _args: unknown, { prisma }: Context) => {
+      const row = await acledPayload(parent, prisma);
+      return row ? acledCoordinate(row.externalId, row.rawData, "latitude") : null;
+    },
+    sourceLongitude: async (parent: AcledParent, _args: unknown, { prisma }: Context) => {
+      const row = await acledPayload(parent, prisma);
+      return row ? acledCoordinate(row.externalId, row.rawData, "longitude") : null;
     },
     countries: (
       parent: { id: string; countries?: unknown },

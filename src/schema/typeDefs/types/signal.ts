@@ -82,6 +82,13 @@ export const signalTypeDef = gql`
     or wider region. Null for other sources, or when the payload has no valid
     value."""
     sourcePrecision: Int
+    """The source's own latitude for the signal, in decimal degrees, read from
+    the stored source payload. ACLED only. This is where the source put the
+    event, which can differ from the signal's stored location (a place of the
+    same name). Read it with \`sourcePrecision\`. Null for other sources."""
+    sourceLatitude: Float
+    """The source's own longitude, as \`sourceLatitude\`."""
+    sourceLongitude: Float
     publishedAt: DateTime!
     collectedAt: DateTime!
     url: String

@@ -1,10 +1,10 @@
 /**
- * Unit tests (mocked Prisma) for Signal.sourcePrecision: ACLED's geo_precision
+ * Unit tests (mocked Prisma) for the ACLED source fields: geo_precision, latitude, longitude,
  * read from the stored payload, and nothing else of the payload.
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { acledGeoPrecision, signalResolvers } from "../../src/resolvers/signal.resolver.js";
+import { acledCoordinate, acledGeoPrecision, signalResolvers } from "../../src/resolvers/signal.resolver.js";
 import type { Context } from "../../src/context.js";
 
 const resolve = signalResolvers.Signal.sourcePrecision;
@@ -51,5 +51,41 @@ describe("Signal.sourcePrecision", () => {
       where: { id: "s1" },
       select: { externalId: true, rawData: true },
     });
+  });
+});
+
+describe("acledCoordinate", () => {
+  it("returns ACLED's latitude and longitude, number or decimal string", () => {
+    expect(acledCoordinate("acled:SDN1", { latitude: "12.0489", longitude: 24.88 }, "latitude")).toBe(12.0489);
+    expect(acledCoordinate("acled:SDN1", { latitude: "12.0489", longitude: 24.88 }, "longitude")).toBe(24.88);
+    expect(acledCoordinate("acled:SDN1", { longitude: "-3.5" }, "longitude")).toBe(-3.5);
+  });
+
+  it("returns null for another source, a missing, malformed or out-of-range value", () => {
+    expect(acledCoordinate("dataminr:1", { latitude: 12 }, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", {}, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", { latitude: "" }, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", { latitude: true }, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", { latitude: "12,5" }, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", { latitude: 91 }, "latitude")).toBeNull();
+    expect(acledCoordinate("acled:SDN1", { longitude: 181 }, "longitude")).toBeNull();
+  });
+});
+
+describe("Signal.sourceLatitude / sourceLongitude", () => {
+  it("read a loaded parent without a query", async () => {
+    const findUnique = vi.fn();
+    const parent = { id: "s1", externalId: "acled:SDN1", rawData: { latitude: "12.5", longitude: "24.9" } };
+    const c = ctx({ signals: { findUnique } });
+    expect(await signalResolvers.Signal.sourceLatitude(parent, {}, c)).toBe(12.5);
+    expect(await signalResolvers.Signal.sourceLongitude(parent, {}, c)).toBe(24.9);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("return null for a non-ACLED parent without a query", async () => {
+    const findUnique = vi.fn();
+    const parent = { id: "s1", externalId: "dataminr:1", rawData: { latitude: 12 } };
+    expect(await signalResolvers.Signal.sourceLatitude(parent, {}, ctx({ signals: { findUnique } }))).toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
   });
 });

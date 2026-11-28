@@ -9629,6 +9629,17 @@ source payload. ACLED only (its `geo_precision`): 1 = the exact place,
 or wider region. Null for other sources, or when the payload has no valid
 value.</td>
   </tr><tr>
+    <td><code>sourceLatitude</code></td>
+    <td><code>Float</code></td>
+    <td>The source's own latitude for the signal, in decimal degrees, read from
+the stored source payload. ACLED only. This is where the source put the
+event, which can differ from the signal's stored location (a place of the
+same name). Read it with `sourcePrecision`. Null for other sources.</td>
+  </tr><tr>
+    <td><code>sourceLongitude</code></td>
+    <td><code>Float</code></td>
+    <td>The source's own longitude, as `sourceLatitude`.</td>
+  </tr><tr>
     <td><code>publishedAt</code></td>
     <td><code>DateTime!</code></td>
     <td>—</td>
