@@ -564,6 +564,9 @@ model locations {
   ///   - 'source-centroid'    — source coordinate detected as a district
   ///                            centroid (fake precision); event attributed
   ///                            to the containing admin unit
+  ///   - 'seed'               — a town loaded from a list (OSM, OCHA,
+  ///                            GeoNames) for a district whose town GeoNames
+  ///                            lacks (scripts/seed-sudan-district-town-aliases.ts)
   /// Null for legacy rows created before this field existed.
   pointType String? @map("point_type")
 

@@ -1,0 +1,1555 @@
+{
+ "about": "Town points for Sudan districts whose town GeoNames lacks or spells differently (Exponential #1709)",
+ "built_by": "scripts/data/build-sudan-district-towns.py",
+ "sources": {
+  "osm": {
+   "name": "HOT export, Populated Places of Sudan (OpenStreetMap contributors)",
+   "license": "ODbL 1.0",
+   "snapshot": "2026-11-05",
+   "url": "https://data.humdata.org/dataset/hotosm_sdn_populated_places",
+   "file": "populated_places.geojson",
+   "sha256": "d32569e7307a486075a14214c58d6a219a66ecc3c997d8206dff8cfac20b55fd"
+  },
+  "ocha": {
+   "name": "OCHA Sudan: Settlements (26 July 2020)",
+   "license": "CC BY 4.0",
+   "url": "https://data.humdata.org/dataset/sudan-settlement-26-july-2020",
+   "file": "sudan_settlement_26july20.xlsx",
+   "sha256": "3663bd71f81e29ee0096256c881942e86c69725f46704c5f1c9b0653e1f5f391"
+  },
+  "geonames": {
+   "name": "GeoNames SD, as imported into clear-api",
+   "license": "CC BY 4.0"
+  }
+ },
+ "countryCode": "SD",
+ "towns": [
+  {
+   "pCode": "SD08109",
+   "district": "Geisan",
+   "state": "Blue Nile",
+   "group": "A",
+   "town": {
+    "name": "Geisan",
+    "lat": 10.78444,
+    "lon": 34.8125,
+    "source": "ocha",
+    "ref": "SD08109076",
+    "place": "city",
+    "nameAr": "قيسان"
+   },
+   "spellings": [
+    "Geisan",
+    "Qaysān",
+    "Qaysan",
+    "قيسان",
+    "جيسان"
+   ]
+  },
+  {
+   "pCode": "SD06112",
+   "district": "Bendasi",
+   "state": "Central Darfur",
+   "group": "A",
+   "town": {
+    "name": "Bendasi",
+    "lat": 11.9402667,
+    "lon": 23.10635,
+    "source": "ocha",
+    "ref": "SD06112024",
+    "place": "town",
+    "nameAr": "بندسي"
+   },
+   "spellings": [
+    "Bendasi",
+    "بندسي"
+   ]
+  },
+  {
+   "pCode": "SD06135",
+   "district": "Um Dukhun",
+   "state": "Central Darfur",
+   "group": "A",
+   "town": {
+    "name": "Umm Dukhun",
+    "lat": 11.139,
+    "lon": 22.966,
+    "source": "ocha",
+    "ref": "SD06135061",
+    "place": "town",
+    "nameAr": "أم دخن"
+   },
+   "spellings": [
+    "Um Dukhun",
+    "Umm Dukhun",
+    "Um Dukhan",
+    "أم دخن"
+   ]
+  },
+  {
+   "pCode": "SD05152",
+   "district": "Al Firdous",
+   "state": "East Darfur",
+   "group": "A",
+   "town": {
+    "name": "El Firdous",
+    "lat": 11.0860784,
+    "lon": 25.7947959,
+    "source": "osm",
+    "ref": "node/12779862395",
+    "place": "town",
+    "nameAr": "الفردوس"
+   },
+   "spellings": [
+    "Al Firdous",
+    "El Firdous",
+    "El Fardus",
+    "Al Fardus",
+    "الفردوس"
+   ]
+  },
+  {
+   "pCode": "SD05163",
+   "district": "Assalaya",
+   "state": "East Darfur",
+   "group": "A",
+   "town": {
+    "name": "Assalaya",
+    "lat": 11.3806969,
+    "lon": 25.7271061,
+    "source": "osm",
+    "ref": "node/9138161388",
+    "place": "town",
+    "nameAr": "عسلاية"
+   },
+   "spellings": [
+    "Assalaya",
+    "عسلاية"
+   ]
+  },
+  {
+   "pCode": "SD05148",
+   "district": "Shia'ria",
+   "state": "East Darfur",
+   "group": "A",
+   "town": {
+    "name": "Shia'ria",
+    "lat": 12.4385722,
+    "lon": 25.5816583,
+    "source": "ocha",
+    "ref": "SD05148075",
+    "place": "town",
+    "nameAr": "شعيرية"
+   },
+   "spellings": [
+    "Shia'ria",
+    "شعيرية"
+   ]
+  },
+  {
+   "pCode": "SD05165",
+   "district": "Yassin",
+   "state": "East Darfur",
+   "group": "A",
+   "town": {
+    "name": "Yassin",
+    "lat": 11.5371522,
+    "lon": 25.5513722,
+    "source": "osm",
+    "ref": "node/12779855572",
+    "place": "town",
+    "nameAr": "يس"
+   },
+   "spellings": [
+    "Yassin",
+    "ياسين"
+   ]
+  },
+  {
+   "pCode": "SD12079",
+   "district": "Gala'a Al Nahal",
+   "state": "Gedaref",
+   "group": "A",
+   "town": {
+    "name": "Qala El Nahl",
+    "lat": 13.6333333,
+    "lon": 34.95,
+    "source": "ocha",
+    "ref": "SD12079009",
+    "place": "city",
+    "nameAr": "قلع النحل"
+   },
+   "spellings": [
+    "Gala'a Al Nahal",
+    "Qala El Nahl",
+    "Qala` an Nahl",
+    "قلع النحل"
+   ]
+  },
+  {
+   "pCode": "SD15032",
+   "district": "Um Algura",
+   "state": "Gezira",
+   "group": "A",
+   "town": {
+    "name": "Um Algura",
+    "lat": 14.4371466,
+    "lon": 33.7773332,
+    "source": "osm",
+    "ref": "node/12390451764",
+    "place": "town",
+    "nameAr": "أم القري"
+   },
+   "spellings": [
+    "Um Algura",
+    "أم القري",
+    "ام القري"
+   ]
+  },
+  {
+   "pCode": "SD02169",
+   "district": "Al Lait",
+   "state": "North Darfur",
+   "group": "A",
+   "town": {
+    "name": "El Lait",
+    "lat": 11.9576333,
+    "lon": 27.0440556,
+    "source": "ocha",
+    "ref": "SD02169008",
+    "place": "city",
+    "nameAr": "اللعيت"
+   },
+   "spellings": [
+    "Al Lait",
+    "El Lait",
+    "اللعيت",
+    "الليت",
+    "Al La'it",
+    "El La'it",
+    "Al La'it Jar Al-Nabi",
+    "Al Lait Jar Al Nabi",
+    "اللعيت جار النبي",
+    "اللعيت جارالنبي"
+   ]
+  },
+  {
+   "pCode": "SD02171",
+   "district": "At Tina",
+   "state": "North Darfur",
+   "group": "A",
+   "town": {
+    "name": "Tina",
+    "lat": 15.00035,
+    "lon": 22.79972,
+    "source": "ocha",
+    "ref": "SD02171012",
+    "place": "city",
+    "nameAr": "الطينة"
+   },
+   "spellings": [
+    "At Tina",
+    "Al Tina",
+    "El Tina",
+    "Tina",
+    "الطينة",
+    "تينا"
+   ]
+  },
+  {
+   "pCode": "SD02113",
+   "district": "Dar As Salam",
+   "state": "North Darfur",
+   "group": "A",
+   "town": {
+    "name": "Dar As Salam",
+    "lat": 13.056533,
+    "lon": 25.522114,
+    "source": "ocha",
+    "ref": "SD02113010",
+    "place": "city",
+    "nameAr": "دار السلام"
+   },
+   "spellings": [
+    "Dar As Salam",
+    "دار السلام"
+   ]
+  },
+  {
+   "pCode": "SD13027",
+   "district": "Gebrat Al Sheikh",
+   "state": "North Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Gebrat Al Sheikh",
+    "lat": 14.5666667,
+    "lon": 30.7666667,
+    "source": "ocha",
+    "ref": "SD13027080",
+    "place": "city",
+    "nameAr": "جبرة الشيخ"
+   },
+   "spellings": [
+    "Gebrat Al Sheikh",
+    "جبرة الشيخ"
+   ]
+  },
+  {
+   "pCode": "SD13028",
+   "district": "Um Dam Haj Ahmed",
+   "state": "North Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Umm Kot",
+    "lat": 13.7700194,
+    "lon": 31.0053229,
+    "source": "osm",
+    "ref": "node/12194467239",
+    "place": "village",
+    "nameAr": "أم دم حاج أحمد"
+   },
+   "spellings": [
+    "Um Dam Haj Ahmed",
+    "أم دم حاج أحمد",
+    "امدم حاج احمد"
+   ]
+  },
+  {
+   "pCode": "SD17016",
+   "district": "Al Burgaig",
+   "state": "Northern",
+   "group": "A",
+   "town": {
+    "name": "El Borgeige",
+    "lat": 19.5841761,
+    "lon": 30.4138635,
+    "source": "osm",
+    "ref": "node/4197000415",
+    "place": "village",
+    "nameAr": "البرقيق"
+   },
+   "spellings": [
+    "Al Burgaig",
+    "El Burgaig",
+    "El Borgeige",
+    "Al Borgeige",
+    "البرقيق"
+   ]
+  },
+  {
+   "pCode": "SD17018",
+   "district": "Al Golid",
+   "state": "Northern",
+   "group": "A",
+   "town": {
+    "name": "Al Goled",
+    "lat": 18.5046499,
+    "lon": 30.6330833,
+    "source": "osm",
+    "ref": "node/4116845005",
+    "place": "city",
+    "nameAr": "القولد"
+   },
+   "spellings": [
+    "Al Golid",
+    "El Golid",
+    "Al Goled",
+    "El Goled",
+    "القولد"
+   ]
+  },
+  {
+   "pCode": "SD17020",
+   "district": "Merwoe",
+   "state": "Northern",
+   "group": "A",
+   "town": {
+    "name": "Merowe",
+    "lat": 18.4811972,
+    "lon": 31.8171688,
+    "source": "osm",
+    "ref": "node/1620604084",
+    "place": "city",
+    "nameAr": "مروي"
+   },
+   "spellings": [
+    "Merwoe",
+    "Merowe",
+    "مروي",
+    "مروى"
+   ]
+  },
+  {
+   "pCode": "SD10063",
+   "district": "Dordieb",
+   "state": "Red Sea",
+   "group": "A",
+   "town": {
+    "name": "Dordieb",
+    "lat": 17.5405137,
+    "lon": 36.0853791,
+    "source": "ocha",
+    "ref": "SD10063006",
+    "place": "town",
+    "nameAr": "درديب"
+   },
+   "spellings": [
+    "Dordieb",
+    "درديب"
+   ]
+  },
+  {
+   "pCode": "SD10066",
+   "district": "Hala'ib",
+   "state": "Red Sea",
+   "group": "A",
+   "town": {
+    "name": "Halaib",
+    "lat": 22.2204283,
+    "lon": 36.6412377,
+    "source": "ocha",
+    "ref": "SD10066108",
+    "place": "village",
+    "nameAr": "حلايب"
+   },
+   "spellings": [
+    "Hala'ib",
+    "Halaib",
+    "حلايب"
+   ]
+  },
+  {
+   "pCode": "SD16011",
+   "district": "Ad Damar",
+   "state": "River Nile",
+   "group": "A",
+   "town": {
+    "name": "Ad-Damir",
+    "lat": 17.583018,
+    "lon": 33.9687021,
+    "source": "osm",
+    "ref": "node/90135018",
+    "place": "city",
+    "nameAr": "الدامر"
+   },
+   "spellings": [
+    "Ad Damar",
+    "Al Damar",
+    "El Damar",
+    "Ad-Damir",
+    "Al Damir",
+    "El Damir",
+    "الدامر"
+   ]
+  },
+  {
+   "pCode": "SD05139",
+   "district": "Adila",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Adilla",
+    "lat": 11.33207,
+    "lon": 26.99384,
+    "source": "osm",
+    "ref": "node/13355453475",
+    "place": "town",
+    "nameAr": "عديلة"
+   },
+   "spellings": [
+    "Adila",
+    "Adilla",
+    "عديلة"
+   ]
+  },
+  {
+   "pCode": "SD03141",
+   "district": "Al Radoum",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Radoum",
+    "lat": 9.8253383,
+    "lon": 24.8469162,
+    "source": "osm",
+    "ref": "node/2600826445",
+    "place": "town",
+    "nameAr": "الردوم"
+   },
+   "spellings": [
+    "Al Radoum",
+    "El Radoum",
+    "Radoum",
+    "Radom",
+    "الردوم",
+    "رادوم"
+   ]
+  },
+  {
+   "pCode": "SD03162",
+   "district": "Beliel",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Bielel",
+    "lat": 11.9925556,
+    "lon": 25.0360306,
+    "source": "ocha",
+    "ref": "SD03162026",
+    "place": "village",
+    "nameAr": "بليل"
+   },
+   "spellings": [
+    "Beliel",
+    "Bielel",
+    "بليل"
+   ]
+  },
+  {
+   "pCode": "SD03172",
+   "district": "Damso",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Damso",
+    "lat": 10.9515678,
+    "lon": 24.5765343,
+    "source": "osm",
+    "ref": "node/13529604490",
+    "place": "town",
+    "nameAr": "دمسو"
+   },
+   "spellings": [
+    "Damso",
+    "دمسو"
+   ]
+  },
+  {
+   "pCode": "SD03143",
+   "district": "Ed Al Fursan",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Edd Al Fursan",
+    "lat": 11.5060139,
+    "lon": 24.3153306,
+    "source": "ocha",
+    "ref": "SD03143018",
+    "place": "city",
+    "nameAr": "عد الفرسان"
+   },
+   "spellings": [
+    "Ed Al Fursan",
+    "Edd Al Fursan",
+    "عد الفرسان"
+   ]
+  },
+  {
+   "pCode": "SD03159",
+   "district": "Kateila",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Kateila",
+    "lat": 11.1922222,
+    "lon": 24.3986111,
+    "source": "ocha",
+    "ref": "SD03159025",
+    "place": "town",
+    "nameAr": "كتيلا"
+   },
+   "spellings": [
+    "Kateila",
+    "Katayla",
+    "كتيلا",
+    "كتالية"
+   ]
+  },
+  {
+   "pCode": "SD03145",
+   "district": "Mershing",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Mershing",
+    "lat": 12.7236389,
+    "lon": 24.9028611,
+    "source": "ocha",
+    "ref": "SD03145009",
+    "place": "village",
+    "nameAr": "مرشنج"
+   },
+   "spellings": [
+    "Mershing",
+    "مرشنج"
+   ]
+  },
+  {
+   "pCode": "SD03158",
+   "district": "Rehaid Albirdi",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Rehaid Albirdi",
+    "lat": 11.2942302,
+    "lon": 23.8871669,
+    "source": "ocha",
+    "ref": "SD03158030",
+    "place": "town",
+    "nameAr": "رهيد البردي"
+   },
+   "spellings": [
+    "Rehaid Albirdi",
+    "رهيد البردي"
+   ]
+  },
+  {
+   "pCode": "SD03146",
+   "district": "Um Dafoug",
+   "state": "South Darfur",
+   "group": "A",
+   "town": {
+    "name": "Um Dafuq",
+    "lat": 10.4722578,
+    "lon": 23.3059605,
+    "source": "osm",
+    "ref": "node/4415168339",
+    "place": "town",
+    "nameAr": "أم دافوق"
+   },
+   "spellings": [
+    "Um Dafoug",
+    "Um Dafuq",
+    "Am Dafok",
+    "أم دافوق",
+    "Um Dafous",
+    "Umm Dafous"
+   ]
+  },
+  {
+   "pCode": "SD07105",
+   "district": "Al Leri",
+   "state": "South Kordofan",
+   "group": "A",
+   "town": {
+    "name": "El Leri",
+    "lat": 10.2333702,
+    "lon": 30.6920555,
+    "source": "osm",
+    "ref": "node/11363368563",
+    "place": "town",
+    "nameAr": "الليري"
+   },
+   "spellings": [
+    "Al Leri",
+    "El Leri",
+    "Liri",
+    "الليري"
+   ]
+  },
+  {
+   "pCode": "SD07108",
+   "district": "Ghadeer",
+   "state": "South Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Ghadeer",
+    "lat": 10.835900033,
+    "lon": 31.129489988,
+    "source": "ocha",
+    "ref": "SD07108021",
+    "place": "town",
+    "nameAr": "غدير"
+   },
+   "spellings": [
+    "Ghadeer",
+    "غدير"
+   ]
+  },
+  {
+   "pCode": "SD07091",
+   "district": "Um Durein",
+   "state": "South Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Um Durein",
+    "lat": 10.861400033,
+    "lon": 30.032799987,
+    "source": "ocha",
+    "ref": "SD07091058",
+    "place": "city",
+    "nameAr": "أم دورين"
+   },
+   "spellings": [
+    "Um Durein",
+    "Umm Durein",
+    "أم دورين"
+   ]
+  },
+  {
+   "pCode": "SD04121",
+   "district": "Foro Baranga",
+   "state": "West Darfur",
+   "group": "A",
+   "town": {
+    "name": "Foro Baranga",
+    "lat": 12.1251167,
+    "lon": 22.5896,
+    "source": "ocha",
+    "ref": "SD04121010",
+    "place": "town",
+    "nameAr": "فور برنقا"
+   },
+   "spellings": [
+    "Foro Baranga",
+    "فور برنقا"
+   ]
+  },
+  {
+   "pCode": "SD04125",
+   "district": "Kereneik",
+   "state": "West Darfur",
+   "group": "A",
+   "town": {
+    "name": "Kirendik",
+    "lat": 13.3674856,
+    "lon": 22.8916753,
+    "source": "osm",
+    "ref": "node/3276835447",
+    "place": "town",
+    "nameAr": "كرينك"
+   },
+   "spellings": [
+    "Kereneik",
+    "Kirendik",
+    "Al Kuraynik",
+    "El Kuraynik",
+    "Al Kereinik",
+    "El Kereinik",
+    "كرينك",
+    "الكرينك"
+   ]
+  },
+  {
+   "pCode": "SD04134",
+   "district": "Sirba",
+   "state": "West Darfur",
+   "group": "A",
+   "town": {
+    "name": "Sirba",
+    "lat": 13.8070239,
+    "lon": 22.5015178,
+    "source": "osm",
+    "ref": "node/9565993217",
+    "place": "town",
+    "nameAr": "سربا"
+   },
+   "spellings": [
+    "Sirba",
+    "سربا"
+   ]
+  },
+  {
+   "pCode": "SD18103",
+   "district": "Al Dibab",
+   "state": "West Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Al-Dubub",
+    "lat": 10.5807191,
+    "lon": 28.2181044,
+    "source": "osm",
+    "ref": "node/2589949845",
+    "place": "town",
+    "nameAr": "الدبب"
+   },
+   "spellings": [
+    "Al Dibab",
+    "El Dibab",
+    "Al-Dubub",
+    "Al Dubub",
+    "El Dubub",
+    "Debab",
+    "الدبب",
+    "الدبيب"
+   ]
+  },
+  {
+   "pCode": "SD18104",
+   "district": "Al Idia",
+   "state": "West Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Al Uḑayyah",
+    "lat": 12.0445538,
+    "lon": 28.216989,
+    "source": "osm",
+    "ref": "node/7730425231",
+    "place": "village",
+    "nameAr": "الأضية"
+   },
+   "spellings": [
+    "Al Idia",
+    "El Idia",
+    "Al Uḑayyah",
+    "El Uḑayyah",
+    "Al Udayyah",
+    "El Udayyah",
+    "الأضية",
+    "الأضيّة"
+   ]
+  },
+  {
+   "pCode": "SD18105",
+   "district": "Al Khiwai",
+   "state": "West Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Khuwayy",
+    "lat": 13.0843153,
+    "lon": 29.2167463,
+    "source": "osm",
+    "ref": "node/7730401014",
+    "place": "town",
+    "nameAr": "الخوي"
+   },
+   "spellings": [
+    "Al Khiwai",
+    "El Khiwai",
+    "Khuwayy",
+    "الخوي",
+    "الخوى"
+   ]
+  },
+  {
+   "pCode": "SD18106",
+   "district": "Al Meiram",
+   "state": "West Kordofan",
+   "group": "A",
+   "town": {
+    "name": "Meriam",
+    "lat": 10.1464796,
+    "lon": 27.689925,
+    "source": "osm",
+    "ref": "node/2090839794",
+    "place": "town",
+    "nameAr": "الميرم"
+   },
+   "spellings": [
+    "Al Meiram",
+    "El Meiram",
+    "Meriam",
+    "Meiram",
+    "الميرم",
+    "ميرام"
+   ]
+  },
+  {
+   "pCode": "SD18092",
+   "district": "As Sunut",
+   "state": "West Kordofan",
+   "group": "A",
+   "town": {
+    "name": "As Sunut",
+    "lat": 12.1614295,
+    "lon": 29.0090775,
+    "source": "osm",
+    "ref": "node/6477684549",
+    "place": "town",
+    "nameAr": "السنوط"
+   },
+   "spellings": [
+    "As Sunut",
+    "Al Sunut",
+    "El Sunut",
+    "السنوط"
+   ]
+  },
+  {
+   "pCode": "SD09044",
+   "district": "Ad Diwaim",
+   "state": "White Nile",
+   "group": "A",
+   "town": {
+    "name": "Ed Dueim",
+    "lat": 13.997187,
+    "lon": 32.30946,
+    "source": "osm",
+    "ref": "node/1977780575",
+    "place": "city",
+    "nameAr": "الدويم"
+   },
+   "spellings": [
+    "Ad Diwaim",
+    "Al Diwaim",
+    "El Diwaim",
+    "Ed Dueim",
+    "Al Dueim",
+    "El Dueim",
+    "الدويم"
+   ]
+  },
+  {
+   "pCode": "SD09050",
+   "district": "Al Gitaina",
+   "state": "White Nile",
+   "group": "A",
+   "town": {
+    "name": "Al Gitaina",
+    "lat": 14.8606704,
+    "lon": 32.357730767,
+    "source": "ocha",
+    "ref": "SD09050027",
+    "place": "city",
+    "nameAr": "القطينة"
+   },
+   "spellings": [
+    "Al Gitaina",
+    "El Gitaina",
+    "Al Qutaynah",
+    "El Qutaynah",
+    "القطينة"
+   ]
+  },
+  {
+   "pCode": "SD09052",
+   "district": "Guli",
+   "state": "White Nile",
+   "group": "A",
+   "town": {
+    "name": "Guli Town",
+    "lat": 13.5104833,
+    "lon": 32.5983024,
+    "source": "osm",
+    "ref": "node/5170992333",
+    "place": "town",
+    "nameAr": "قلي"
+   },
+   "spellings": [
+    "Guli",
+    "Guli Town",
+    "قلي",
+    "مدينة قلي"
+   ]
+  },
+  {
+   "pCode": "SD08106",
+   "district": "Al Kurmuk",
+   "state": "Blue Nile",
+   "group": "B",
+   "town": {
+    "name": "Kurmuk",
+    "lat": 10.557,
+    "lon": 34.287,
+    "source": "geonames",
+    "ref": 371827,
+    "place": "PPL",
+    "nameAr": "الكرمك"
+   },
+   "spellings": [
+    "Al Kurmuk",
+    "El Kurmuk",
+    "الكرمك"
+   ]
+  },
+  {
+   "pCode": "SD08105",
+   "district": "Ed Damazine",
+   "state": "Blue Nile",
+   "group": "B",
+   "town": {
+    "name": "Ad-Damazin",
+    "lat": 11.7891,
+    "lon": 34.3592,
+    "source": "geonames",
+    "ref": 380174,
+    "place": "PPLA",
+    "nameAr": "الدمازين"
+   },
+   "spellings": [
+    "Ed Damazine",
+    "Al Damazine",
+    "El Damazine",
+    "الدمازين"
+   ]
+  },
+  {
+   "pCode": "SD12076",
+   "district": "Al Qureisha",
+   "state": "Gedaref",
+   "group": "B",
+   "town": {
+    "name": "Qurayshah",
+    "lat": 13.71667,
+    "lon": 35.93333,
+    "source": "geonames",
+    "ref": 368322,
+    "place": "PPL",
+    "nameAr": "القريشة"
+   },
+   "spellings": [
+    "Al Qureisha",
+    "El Qureisha",
+    "القريشة",
+    "قريشة"
+   ]
+  },
+  {
+   "pCode": "SD12077",
+   "district": "Basundah",
+   "state": "Gedaref",
+   "group": "B",
+   "town": {
+    "name": "Basunda",
+    "lat": 12.96667,
+    "lon": 35.83333,
+    "source": "geonames",
+    "ref": 377582,
+    "place": "PPL",
+    "nameAr": "باسندة"
+   },
+   "spellings": [
+    "Basundah",
+    "باسندة",
+    "بسند"
+   ]
+  },
+  {
+   "pCode": "SD01001",
+   "district": "Jebel Awlia",
+   "state": "Khartoum",
+   "group": "B",
+   "town": {
+    "name": "Jabal Awlya",
+    "lat": 15.241,
+    "lon": 32.4963,
+    "source": "geonames",
+    "ref": 373468,
+    "place": "PPL",
+    "nameAr": "جبل أولياء"
+   },
+   "spellings": [
+    "Jebel Awlia",
+    "جبل أولياء"
+   ]
+  },
+  {
+   "pCode": "SD01006",
+   "district": "Um Durman",
+   "state": "Khartoum",
+   "group": "B",
+   "town": {
+    "name": "Omdurman",
+    "lat": 15.64453,
+    "lon": 32.47773,
+    "source": "geonames",
+    "ref": 365137,
+    "place": "PPL",
+    "nameAr": "أم درمان"
+   },
+   "spellings": [
+    "Um Durman",
+    "أم درمان"
+   ]
+  },
+  {
+   "pCode": "SD02114",
+   "district": "Al Fasher",
+   "state": "North Darfur",
+   "group": "B",
+   "town": {
+    "name": "El Fasher",
+    "lat": 13.62793,
+    "lon": 25.34936,
+    "source": "geonames",
+    "ref": 379555,
+    "place": "PPLA",
+    "nameAr": "الفاشر"
+   },
+   "spellings": [
+    "Al Fasher",
+    "El Fasher",
+    "الفاشر"
+   ]
+  },
+  {
+   "pCode": "SD02129",
+   "district": "Melit",
+   "state": "North Darfur",
+   "group": "B",
+   "town": {
+    "name": "Mellit",
+    "lat": 14.13333,
+    "lon": 25.55,
+    "source": "geonames",
+    "ref": 370181,
+    "place": "PPL",
+    "nameAr": "مليط"
+   },
+   "spellings": [
+    "Melit",
+    "مليط"
+   ]
+  },
+  {
+   "pCode": "SD02136",
+   "district": "Um Kadadah",
+   "state": "North Darfur",
+   "group": "B",
+   "town": {
+    "name": "Umm Kaddadah",
+    "lat": 13.60169,
+    "lon": 26.68759,
+    "source": "geonames",
+    "ref": 364933,
+    "place": "PPL",
+    "nameAr": "أم كدادة"
+   },
+   "spellings": [
+    "Um Kadadah",
+    "أم كدادة"
+   ]
+  },
+  {
+   "pCode": "SD16009",
+   "district": "Al Matama",
+   "state": "River Nile",
+   "group": "B",
+   "town": {
+    "name": "El Matama",
+    "lat": 16.7095,
+    "lon": 33.3565,
+    "source": "geonames",
+    "ref": 379127,
+    "place": "PPL",
+    "nameAr": "المتمة"
+   },
+   "spellings": [
+    "Al Matama",
+    "El Matama",
+    "المتمة"
+   ]
+  },
+  {
+   "pCode": "SD14040",
+   "district": "Ad Dinder",
+   "state": "Sennar",
+   "group": "B",
+   "town": {
+    "name": "Dinder",
+    "lat": 13.26589,
+    "lon": 34.14139,
+    "source": "geonames",
+    "ref": 11467834,
+    "place": "PPL",
+    "nameAr": "الدندر"
+   },
+   "spellings": [
+    "Ad Dinder",
+    "Al Dinder",
+    "El Dinder",
+    "الدندر"
+   ]
+  },
+  {
+   "pCode": "SD03154",
+   "district": "Shattaya",
+   "state": "South Darfur",
+   "group": "B",
+   "town": {
+    "name": "Shattāy",
+    "lat": 12.18333,
+    "lon": 23.91667,
+    "source": "geonames",
+    "ref": 367211,
+    "place": "PPL",
+    "nameAr": "شطاية"
+   },
+   "spellings": [
+    "Shattaya",
+    "شطاية"
+   ]
+  },
+  {
+   "pCode": "SD07090",
+   "district": "Abassiya",
+   "state": "South Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Al ‘Abbāsiyya",
+    "lat": 12.1648,
+    "lon": 31.303,
+    "source": "geonames",
+    "ref": 379758,
+    "place": "PPL",
+    "nameAr": "العباسية"
+   },
+   "spellings": [
+    "Abassiya",
+    "العباسية",
+    "عباسية"
+   ]
+  },
+  {
+   "pCode": "SD07093",
+   "district": "Ar Rashad",
+   "state": "South Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Rashād",
+    "lat": 11.8619,
+    "lon": 31.0498,
+    "source": "geonames",
+    "ref": 368159,
+    "place": "PPL",
+    "nameAr": "الرشاد"
+   },
+   "spellings": [
+    "Ar Rashad",
+    "Al Rashad",
+    "El Rashad",
+    "الرشاد",
+    "رشاد"
+   ]
+  },
+  {
+   "pCode": "SD07103",
+   "district": "Habila - SK",
+   "state": "South Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Habila",
+    "lat": 11.9403,
+    "lon": 30.0191,
+    "source": "geonames",
+    "ref": 434460,
+    "place": "PPL",
+    "nameAr": "هبيلة - ج ك"
+   },
+   "spellings": [
+    "Habila",
+    "هبيلة",
+    "هبيلا"
+   ]
+  },
+  {
+   "pCode": "SD04115",
+   "district": "Ag Geneina",
+   "state": "West Darfur",
+   "group": "B",
+   "town": {
+    "name": "Al-Junaynah",
+    "lat": 13.45262,
+    "lon": 22.44725,
+    "source": "geonames",
+    "ref": 379303,
+    "place": "PPLA",
+    "nameAr": "الجنينة"
+   },
+   "spellings": [
+    "Ag Geneina",
+    "Al Geneina",
+    "El Geneina",
+    "الجنينة"
+   ]
+  },
+  {
+   "pCode": "SD11052",
+   "district": "Halfa Aj Jadeedah",
+   "state": "Kassala",
+   "group": "B",
+   "town": {
+    "name": "New Halfa",
+    "lat": 15.33021,
+    "lon": 35.59854,
+    "source": "geonames",
+    "ref": 374272,
+    "place": "PPL",
+    "nameAr": "حلفا الجديدة"
+   },
+   "spellings": [
+    "Halfa Aj Jadeedah",
+    "حلفا الجديدة"
+   ]
+  },
+  {
+   "pCode": "SD01002",
+   "district": "Um Bada",
+   "state": "Khartoum",
+   "group": "B",
+   "town": {
+    "name": "Umm Badda",
+    "lat": 15.6599,
+    "lon": 32.441,
+    "source": "geonames",
+    "ref": 6992596,
+    "place": "PPL",
+    "nameAr": "أمبدة"
+   },
+   "spellings": [
+    "Um Bada",
+    "أمبدة"
+   ]
+  },
+  {
+   "pCode": "SD02117",
+   "district": "Al Malha",
+   "state": "North Darfur",
+   "group": "B",
+   "town": {
+    "name": "Al Māliḩah",
+    "lat": 15.09408,
+    "lon": 26.16118,
+    "source": "geonames",
+    "ref": 379152,
+    "place": "PPL",
+    "nameAr": "المالحة"
+   },
+   "spellings": [
+    "Al Malha",
+    "El Malha",
+    "المالحة"
+   ]
+  },
+  {
+   "pCode": "SD13025",
+   "district": "Soudari",
+   "state": "North Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Sawdirī",
+    "lat": 14.41667,
+    "lon": 29.08333,
+    "source": "geonames",
+    "ref": 367529,
+    "place": "PPL",
+    "nameAr": "سودري"
+   },
+   "spellings": [
+    "Soudari",
+    "سودري"
+   ]
+  },
+  {
+   "pCode": "SD13023",
+   "district": "Um Rawaba",
+   "state": "North Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Umm Ruwaba",
+    "lat": 12.9061,
+    "lon": 31.2158,
+    "source": "geonames",
+    "ref": 364706,
+    "place": "PPL",
+    "nameAr": "أم روابة"
+   },
+   "spellings": [
+    "Um Rawaba",
+    "أم روابة"
+   ]
+  },
+  {
+   "pCode": "SD17014",
+   "district": "Halfa",
+   "state": "Northern",
+   "group": "B",
+   "town": {
+    "name": "Wadi Halfa",
+    "lat": 21.79577,
+    "lon": 31.37129,
+    "source": "geonames",
+    "ref": 364132,
+    "place": "PPL",
+    "nameAr": "حلفا"
+   },
+   "spellings": [
+    "Halfa",
+    "حلفا",
+    "وادي حلفا"
+   ]
+  },
+  {
+   "pCode": "SD18021",
+   "district": "Ghubaish",
+   "state": "West Kordofan",
+   "group": "B",
+   "town": {
+    "name": "Ghabish",
+    "lat": 12.21667,
+    "lon": 27.75,
+    "source": "geonames",
+    "ref": 374924,
+    "place": "PPL",
+    "nameAr": "غبيش"
+   },
+   "spellings": [
+    "Ghubaish",
+    "غبيش",
+    "غبش"
+   ]
+  },
+  {
+   "pCode": "SD09051",
+   "district": "Aj Jabalain",
+   "state": "White Nile",
+   "group": "B",
+   "town": {
+    "name": "Aj Jabalen",
+    "lat": 12.5904,
+    "lon": 32.8008,
+    "source": "geonames",
+    "ref": 379343,
+    "place": "PPL",
+    "nameAr": "الجبلين"
+   },
+   "spellings": [
+    "Aj Jabalain",
+    "Al Jabalain",
+    "El Jabalain",
+    "الجبلين"
+   ]
+  },
+  {
+   "pCode": "SD09048",
+   "district": "Tendalti",
+   "state": "White Nile",
+   "group": "B",
+   "town": {
+    "name": "Tandaltī",
+    "lat": 13.01667,
+    "lon": 31.86667,
+    "source": "geonames",
+    "ref": 366426,
+    "place": "PPL",
+    "nameAr": "تندلتي"
+   },
+   "spellings": [
+    "Tendalti",
+    "تندلتي"
+   ]
+  }
+ ],
+ "leftOut": [
+  {
+   "pCode": "SD08110",
+   "district": "Wad Al Mahi",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD06110",
+   "district": "Azum",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD06137",
+   "district": "Wadi Salih",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD12084",
+   "district": "Ar Rahad",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD15037",
+   "district": "Al Qurashi",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD02116",
+   "district": "Al Koma",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD02118",
+   "district": "As Serief",
+   "why": "OSM and OCHA put the town 26 km apart; needs a person to pick"
+  },
+  {
+   "pCode": "SD02126",
+   "district": "Kelemando",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD02120",
+   "district": "Um Baru",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD13024",
+   "district": "Sheikan",
+   "why": "the seat is El Obeid; the village named Sheikan is a different place (OSM and OCHA put it 20 km apart)"
+  },
+  {
+   "pCode": "SD10069",
+   "district": "Al Ganab",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD10067",
+   "district": "Jubayt Elma'aadin",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD16014",
+   "district": "Al Buhaira",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD03156",
+   "district": "As Sunta",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD03151",
+   "district": "Nitega",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD07094",
+   "district": "Al Quoz",
+   "why": "neither OSM nor OCHA has a town of this name in the district"
+  },
+  {
+   "pCode": "SD18087",
+   "district": "Abyei",
+   "why": "Abyei town is in the Abyei PCA area; the West Kordofan match is a village"
+  },
+  {
+   "pCode": "SD01005",
+   "district": "Karrari",
+   "why": "Karari is a part of Omdurman, not a town of its own"
+  },
+  {
+   "pCode": "SD04122",
+   "district": "Habila - WD",
+   "why": "'Habila' already resolves to the GeoNames town; OSM's other name is a different place"
+  },
+  {
+   "pCode": "SD11053",
+   "district": "Madeinat Kassala",
+   "why": "'Kassala' already resolves to the GeoNames town"
+  },
+  {
+   "pCode": "SD11055",
+   "district": "Reifi Aroma",
+   "why": "a rural district; 'Aroma' already resolves to the GeoNames town"
+  },
+  {
+   "pCode": "SD11060",
+   "district": "Reifi Khashm Elgirba",
+   "why": "a rural district; 'Khashm el Girba' already resolves to the GeoNames town"
+  },
+  {
+   "pCode": "SD02119",
+   "district": "At Tawisha",
+   "why": "OSM and OCHA put the town 19 km apart; needs a person to pick"
+  },
+  {
+   "pCode": "SD03167",
+   "district": "Nyala Janoub",
+   "why": "'Nyala' already resolves to the GeoNames town"
+  }
+ ]
+}
