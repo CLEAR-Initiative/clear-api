@@ -66,6 +66,7 @@ import {
   type PlaceProposalInput,
 } from "../services/place-research.js";
 import { assertUnderDailyRequestCap } from "../utils/task-request-cap.js";
+import { placeNameInScope, requirePlaceNameDecider } from "../utils/place-name-access.js";
 import {
   validateCases,
   type CaseProposalInput,
@@ -651,7 +652,19 @@ export const taskResolvers = {
     task: async (_parent: unknown, args: { id: string }, context: Context) => {
       const user = requireContentReader(context);
       const task = await context.prisma.task.findUnique({ where: { id: args.id } });
-      return task ? redactForViewer(task, user) : null;
+      if (!task) return null;
+      // A place research Task carries queue data in its payload (the name,
+      // the state, Signal ids), and the Places queue is deciders' only. Its
+      // readers are the Workers, the requester, and the deciders of the row.
+      if (isPlaceResearchKind(task.kind) && user.role !== WORKER_ROLE && task.requesterId !== user.id) {
+        const { scope } = await requirePlaceNameDecider(context);
+        const row = await context.prisma.unresolvedPlaceNames.findUnique({
+          where: { id: task.subjectId },
+          select: { stateLocationId: true, countryLocationId: true },
+        });
+        if (!row || !placeNameInScope(scope, row)) throw forbidden("This place name is outside your team's area");
+      }
+      return redactForViewer(task, user);
     },
 
     eventTasks: async (_parent: unknown, args: { eventId: string }, context: Context) => {

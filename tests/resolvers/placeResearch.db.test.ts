@@ -236,6 +236,17 @@ describeIfDb("Place research against the real schema", () => {
     expect(code(await rejection(unresolvedPlaceName(null, { id: outside.id }, stateAdmin)))).toBe("FORBIDDEN");
     expect(code(await rejection(unresolvedPlaceName(null, { id: inside.id }, analyst)))).toBe("FORBIDDEN");
     expect(code(await rejection(unresolvedPlaceName(null, { id: inside.id }, workerA)))).toBe("FORBIDDEN");
+    // The Task carries queue data, so `task(id)` follows the queue's rule:
+    // the deciders of the row, the requester and the Workers read it.
+    const { task: readTask } = taskResolvers.Query;
+    const insideTask = await requestPlaceNameResearch(null, { id: inside.id }, stateAdmin);
+    const outsideTask = await requestPlaceNameResearch(null, { id: outside.id }, platform);
+    expect(await readTask(null, { id: insideTask.id }, stateAdmin)).toMatchObject({ id: insideTask.id });
+    expect(await readTask(null, { id: outsideTask.id }, platform)).toMatchObject({ id: outsideTask.id });
+    expect(await readTask(null, { id: outsideTask.id }, workerA)).toMatchObject({ id: outsideTask.id });
+    expect(code(await rejection(readTask(null, { id: insideTask.id }, analyst)))).toBe("FORBIDDEN");
+    expect(code(await rejection(readTask(null, { id: outsideTask.id }, stateAdmin)))).toBe("FORBIDDEN");
+
     // The row's research is a decider's to read.
     expect(code(await rejection(research(inside, null, analyst)))).toBe("FORBIDDEN");
     expect(code(await rejection(research(inside, null, workerA)))).toBe("FORBIDDEN");
@@ -266,6 +277,15 @@ describeIfDb("Place research against the real schema", () => {
     const { row } = await queued("Closed", STATE_A_ID);
     await resolveUnresolvedPlaceName(null, { id: row.id, resolution: { kind: "NOT_A_PLACE" } }, platform);
     expect(code(await rejection(requestPlaceNameResearch(null, { id: row.id }, platform)))).toBe("CONFLICT");
+
+    // A row that closes between the request's read and its write gets no Task.
+    const { row: racing } = await queued("Racing", STATE_A_ID);
+    const { createPlaceResearchTask, PlaceResearchRowClosed } = await import("../../src/services/place-research.js");
+    await resolveUnresolvedPlaceName(null, { id: racing.id, resolution: { kind: "NOT_A_PLACE" } }, platform);
+    await expect(
+      createPlaceResearchTask(prisma, racing, { origin: "user", requesterId: PLATFORM_ID }),
+    ).rejects.toBeInstanceOf(PlaceResearchRowClosed);
+    expect(await prisma.task.count({ where: { subjectId: racing.id } })).toBe(0);
 
     // An ambiguous row stays resolvable, so it can be researched.
     const { row: ambiguous } = await queued("Ambiguous", STATE_A_ID);

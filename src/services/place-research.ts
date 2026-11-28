@@ -19,7 +19,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import { env } from "../utils/env.js";
 import { resolveContainingAdminArea } from "../utils/geo-resolve.js";
 import { PLACE_NAME_SUBJECT, PLACE_RESEARCH_KIND } from "../utils/task-kinds.js";
-import { countryLocationIdForCode } from "./place-names.js";
+import { RESOLVABLE_STATUSES, countryLocationIdForCode } from "./place-names.js";
 
 type TaskRow = Prisma.taskGetPayload<Record<string, never>>;
 
@@ -104,9 +104,18 @@ export function findOpenPlaceResearchTask(prisma: PrismaClient, rowId: string): 
   return prisma.task.findFirst({ where: openWhere(rowId) });
 }
 
+/** The row was closed (resolved, not a place) or deleted before its Task
+ *  could be created. Nothing was written. */
+export class PlaceResearchRowClosed extends Error {
+  constructor(public readonly status: string) {
+    super(`The place name is ${status}`);
+  }
+}
+
 /**
- * Create the place research Task of a row. The caller has checked the row's
- * status, the dedupe and its cap. A concurrent identical request can still
+ * Create the place research Task of a row. The caller has checked the dedupe
+ * and its cap. Throws `PlaceResearchRowClosed` when the row is no longer
+ * open or ambiguous. A concurrent identical request can still
  * win the create: the partial unique index rejects this one, and the
  * winner's Task comes back with `created: false`.
  */
@@ -117,19 +126,30 @@ export async function createPlaceResearchTask(
 ): Promise<{ task: TaskRow; created: boolean }> {
   const payload = await buildPlaceResearchPayload(prisma, row);
   try {
-    const task = await prisma.task.create({
-      data: {
-        kind: PLACE_RESEARCH_KIND,
-        subjectType: PLACE_NAME_SUBJECT,
-        subjectId: row.id,
-        payload: payload as unknown as Prisma.InputJsonObject,
-        requestId: randomUUID(),
-        origin: by.origin,
-        requesterId: by.requesterId,
-        // A queue row belongs to a state, not to a team.
-        teamId: null,
-        maxAttempts: env.TASK_MAX_ATTEMPTS,
-      },
+    // The row is locked and its status read again in the transaction that
+    // creates the Task. A decider who closes the row in between waits for
+    // this transaction or has finished before it, so a closed row never
+    // gets a new Task.
+    const task = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ status: string }[]>`
+        SELECT "status" FROM "unresolved_place_names" WHERE "id" = ${row.id} FOR UPDATE`;
+      const status = locked[0]?.status;
+      const resolvable: readonly string[] = RESOLVABLE_STATUSES;
+      if (!status || !resolvable.includes(status)) throw new PlaceResearchRowClosed(status ?? "gone");
+      return tx.task.create({
+        data: {
+          kind: PLACE_RESEARCH_KIND,
+          subjectType: PLACE_NAME_SUBJECT,
+          subjectId: row.id,
+          payload: payload as unknown as Prisma.InputJsonObject,
+          requestId: randomUUID(),
+          origin: by.origin,
+          requesterId: by.requesterId,
+          // A queue row belongs to a state, not to a team.
+          teamId: null,
+          maxAttempts: env.TASK_MAX_ATTEMPTS,
+        },
+      });
     });
     return { task, created: true };
   } catch (e) {

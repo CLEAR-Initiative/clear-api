@@ -304,6 +304,11 @@ and the completion. ADR-0019 has the place-name side.
 - **A place research Task notifies nobody.** A decider reads the result on the queue row. Most
   of these Tasks will have no requester, so the fan-out would reach every platform admin for
   each name.
+- **`task(id)` follows the queue's rule for this kind.** The payload holds queue data, and the
+  Places queue is for deciders only. A place research Task is read by the Workers, by its
+  requester and by the deciders of its row. All other readers get FORBIDDEN.
+- **The request locks the row.** The Task is created in a transaction that locks the queue row
+  and reads its status again. A row that a decider closes in between gets no Task.
 - **Release order.** GraphQL rejects a document that declares a variable of an unknown type.
   clear-api ships `PlaceProposalInput` first. clear-mcp then declares `$place` in its
   `completeTask` document and is released. clear-worker-routine then pins that release.

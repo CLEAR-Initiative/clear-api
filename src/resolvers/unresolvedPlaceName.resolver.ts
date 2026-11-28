@@ -16,6 +16,7 @@ import {
   suggestPlaces,
 } from "../services/place-names.js";
 import {
+  PlaceResearchRowClosed,
   SAME_POINT_DEGREES,
   createPlaceResearchTask,
   findOpenPlaceResearchTask,
@@ -434,10 +435,19 @@ export const unresolvedPlaceNameResolvers = {
       // After the dedupe: handing back the open Task costs nothing.
       await assertUnderDailyRequestCap(context.prisma, user.id, "request");
 
-      const { task, created } = await createPlaceResearchTask(context.prisma, row, {
-        origin: isPipelineCaller(context) ? "api" : "user",
-        requesterId: user.id,
-      });
+      let task, created;
+      try {
+        ({ task, created } = await createPlaceResearchTask(context.prisma, row, {
+          origin: isPipelineCaller(context) ? "api" : "user",
+          requesterId: user.id,
+        }));
+      } catch (err) {
+        // Another decider closed the row after this request read it.
+        if (err instanceof PlaceResearchRowClosed) {
+          throw conflict(`This place name is already ${err.status.replaceAll("_", " ")}`);
+        }
+        throw err;
+      }
       if (created) {
         void logActivity(context.prisma, {
           userId: user.id,
