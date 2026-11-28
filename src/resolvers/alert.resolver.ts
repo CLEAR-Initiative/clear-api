@@ -15,21 +15,13 @@ import { buildEventLocationFilterForTeam } from "../utils/location-scope.js";
 import { env } from "../utils/env.js";
 import { minSeverityFilterFor } from "../utils/alert-severity.js";
 import { anyTypeNrcRelevant } from "../utils/nrc-relevance.js";
-import { getEmailProvider } from "../services/messaging/registry.js";
-import { alertNotification } from "../services/messaging/templates.js";
+import { enqueueAlertEmails, flushAlertEmailQueue } from "../services/alert-email.js";
 import { fanOutAlertWebhooks } from "../services/webhook/alert-fanout.js";
 import { onsetAtRaise, runKindOf } from "../services/event-facts-log.js";
 import type { RunKind } from "../services/signal-location-outcomes.js";
 import {
-  severityToLabel,
-  formatCount,
-  resolveEmailLocation,
-  resolveEventTypeLabel,
-  fetchEventSignalLocations,
   fetchEventLocalizedText,
   normaliseUserLocale,
-  localizeLocationNames,
-  pickLocalizedName,
 } from "../utils/alert-email-helpers.js";
 import { isPipelineCaller } from "../utils/pipeline-caller.js";
 import { recordDecisionIfPerson } from "../services/decision-records.js";
@@ -185,10 +177,29 @@ export const alertResolvers = {
               return row;
             });
 
-      // Skip the notification fan-out when the alert already existed -
-      // subscribers were notified on the original create, we don't want
-      // to spam them on every retry.
-      if (existingAlert) return alert;
+      // Skip the notification fan-out when the alert already existed —
+      // subscribers were notified on the original create and must not be
+      // spammed on every retry.
+      //
+      // "Already notified" is `alerts.fannedOutAt`, an explicit marker written
+      // in the same transaction as the fan-out. Neither of the obvious proxies
+      // works:
+      //
+      //   * the alert row — a fan-out that failed after the alert committed
+      //     left it looking finished, and that alert's email was lost for good;
+      //   * the inbox rows — an alert with webhook subscribers but no immediate
+      //     inbox subscribers legitimately has none, so every retry re-ran the
+      //     fan-out and `fanOutAlertWebhooks` dispatched the same
+      //     `alert.created` message again.
+      //
+      // The marker answers exactly the question being asked, for every alert,
+      // including one that matched nobody.
+      if (existingAlert?.fannedOutAt) return alert;
+      if (existingAlert) {
+        console.log(
+          `[createAlert] Alert ${alert.id} exists but never completed its fan-out — retrying it`,
+        );
+      }
 
       // First-time creation only — record one activity entry per alert,
       // not one per retry/escalation.
@@ -229,6 +240,11 @@ export const alertResolvers = {
         console.log("[createAlert] No types on event - skipping subscriber notifications");
       }
 
+      // Set by the fan-out transaction below. A path that has no fan-out work
+      // (no locations, no types, or no matching subscribers) still has to mark
+      // the alert done, or every retry would re-dispatch its webhooks.
+      let fannedOut = false;
+
       if (eventLocationIds.length > 0 && event.types.length > 0) {
         // Expand locations to include ancestors so country-level subscriptions
         // match district-level alerts
@@ -265,21 +281,10 @@ export const alertResolvers = {
 
         if (uniqueUserIds.length > 0) {
           const fallbackTitle = event.types[0] ?? "Alert";
-          const alertUrl = eventLink(event.id, "email", env.FRONTEND_URL);
 
-          // 1. Populate userAlerts join table
-          await context.prisma.userAlerts.createMany({
-            data: uniqueUserIds.map((userId) => ({
-              userId,
-              alertId: alert.id,
-            })),
-            skipDuplicates: true,
-          });
-          console.log(`[createAlert] Created ${uniqueUserIds.length} userAlert records`);
-
-          // Pull every recipient's language up front — drives both the
-          // in-app notification message text below and the per-recipient
-          // email body further down. One Prisma query covers both.
+          // Pull every recipient's language up front: the in-app notification
+          // message is written in each recipient's own language, and
+          // `emailNotification` decides who gets queued for email below.
           const recipients = await context.prisma.user.findMany({
             where: { id: { in: uniqueUserIds } },
             select: { id: true, name: true, email: true, language: true, emailNotification: true },
@@ -296,138 +301,74 @@ export const alertResolvers = {
           );
           const titleFor = (locale: string) =>
             localizedText.get(normaliseUserLocale(locale))?.title ?? fallbackTitle;
-          const descriptionFor = (locale: string) =>
-            localizedText.get(normaliseUserLocale(locale))?.description ?? event.description;
 
-          // 2. Create in-app notifications (per-recipient so each user
-          // sees the title in their own language).
-          await context.prisma.notifications.createMany({
-            data: recipients.map((r) => ({
-              userId: r.id,
-              message: `New alert: ${titleFor(r.language)}`,
-              notificationType: "alert",
-              actionUrl: eventLink(event.id, "inbox"),
-              actionText: "View Alert",
-            })),
+          // The inbox row, the in-app notification and the queued email go in
+          // ONE transaction. Email is queued rather than sent — sending inline
+          // made a burst of alerts a burst of mail (48 alerts in 3.7s put 48
+          // messages in every matching inbox, clear #1731), and the flush is
+          // the only place that can see a recipient's whole load for the
+          // window and roll it into a digest.
+          //
+          // Atomic because a partial fan-out is the worst outcome: an alert
+          // with an inbox row but no queued email is an alert whose email is
+          // silently lost, and a retry returns early at `if (existingAlert)`
+          // without repairing it. All-or-nothing makes that unreachable.
+          //
+          // The inbox half is still immediate; only the email waits for the
+          // flush.
+          const emailUsers = recipients.filter((r) => r.emailNotification && r.email);
+          await context.prisma.$transaction(async (tx) => {
+            await tx.userAlerts.createMany({
+              data: uniqueUserIds.map((userId) => ({ userId, alertId: alert.id })),
+              skipDuplicates: true,
+            });
+            await tx.notifications.createMany({
+              data: recipients.map((r) => ({
+                userId: r.id,
+                message: `New alert: ${titleFor(r.language)}`,
+                notificationType: "alert",
+                actionUrl: eventLink(event.id, "inbox"),
+                actionText: "View Alert",
+              })),
+            });
+            if (emailUsers.length > 0) {
+              await enqueueAlertEmails(tx, alert.id, emailUsers.map((u) => u.id));
+            }
+            // Last write of the transaction: the fan-out is complete only if
+            // everything above committed.
+            await tx.alerts.update({
+              where: { id: alert.id },
+              data: { fannedOutAt: new Date() },
+            });
           });
-          console.log(`[createAlert] Created ${recipients.length} in-app notifications`);
-
-          // 3. Send email notifications (fire-and-forget)
-          const emailUsers = recipients.filter((r) => r.emailNotification);
-
-          console.log(`[createAlert] ${emailUsers.length}/${uniqueUserIds.length} users have email notifications enabled`);
-
-          if (emailUsers.length > 0) {
-            const emailList = emailUsers.map((u) => u.email).join(", ");
-            console.log(`[createAlert] Sending emails to: ${emailList}`);
-            const primaryLoc =
-              locations.find((l) => l.id === event.locationId) ??
-              locations.find((l) => l.id === event.originId) ??
-              locations.find((l) => l.id === event.destinationId) ??
-              null;
-            const [emailLoc, eventTypeLabel, signalLocs] = await Promise.all([
-              resolveEmailLocation(context.prisma, primaryLoc),
-              resolveEventTypeLabel(context.prisma, event.types),
-              fetchEventSignalLocations(context.prisma, event.id),
-            ]);
-
-            // Every location id that will appear in any per-recipient
-            // email — used as the input set for the one-shot batched
-            // localized-name lookup below.
-            const locIdsForLocalization = [
-              ...(primaryLoc?.id ? [primaryLoc.id] : []),
-              ...(emailLoc?.id ? [emailLoc.id] : []),
-              ...signalLocs.ids,
-            ];
-            const localizedNames = await localizeLocationNames(
-              context.prisma,
-              locIdsForLocalization,
-              uniqueLocales,
-            );
-
-            const severityLabel = severityToLabel(event.severity);
-            const populationStr = emailLoc?.population
-              ? formatCount(emailLoc.population)
-              : null;
-            const affectedPeopleStr =
-              event.populationAffected != null
-                ? formatCount(event.populationAffected)
-                : null;
-
-            void (async () => {
-              try {
-                const emailProvider = await getEmailProvider();
-                await emailProvider.sendBulk(
-                  emailUsers
-                    .filter((u) => u.email)
-                    .map((u) => {
-                      // Per-recipient locale: title, description, AND
-                      // every location name swap to the user's
-                      // language when a translation row exists,
-                      // otherwise canonical English.
-                      const recipientLocale = normaliseUserLocale(u.language);
-                      const localizedSignalNames = signalLocs.ids.map(
-                        (id, idx) =>
-                          pickLocalizedName(
-                            localizedNames,
-                            id,
-                            recipientLocale,
-                            signalLocs.names[idx] ?? null,
-                          ) ?? signalLocs.names[idx],
-                      ).filter((n): n is string => !!n);
-                      const emailExtras = {
-                        severity: severityLabel,
-                        eventType: eventTypeLabel,
-                        locationName: pickLocalizedName(
-                          localizedNames,
-                          emailLoc?.id,
-                          recipientLocale,
-                          emailLoc?.name ?? null,
-                        ),
-                        population: populationStr,
-                        affectedPeople: affectedPeopleStr,
-                        // Event's primary location is already an A2 district.
-                        districtName: pickLocalizedName(
-                          localizedNames,
-                          primaryLoc?.id,
-                          recipientLocale,
-                          primaryLoc?.name ?? null,
-                        ),
-                        signalLocations: localizedSignalNames,
-                        signalLocationsOverflow: signalLocs.overflow,
-                        // Drives the template's chrome (greeting, labels,
-                        // CTA, subject, html dir/lang).
-                        locale: recipientLocale,
-                      };
-                      const content = alertNotification(
-                        u.name,
-                        titleFor(u.language),
-                        descriptionFor(u.language),
-                        alertUrl,
-                        emailExtras,
-                      );
-                      return {
-                        to: u.email!,
-                        subject: content.subject,
-                        textBody: content.textBody,
-                        htmlBody: content.htmlBody,
-                      };
-                    }),
-                );
-                console.log(`[createAlert] Email sent successfully to ${emailUsers.length} users`);
-              } catch (err) {
-                console.error("[createAlert] Failed to send alert emails:", err);
-              }
-            })();
-          } else {
-            console.log("[createAlert] No users with email notifications enabled - skipping emails");
-          }
+          fannedOut = true;
+          console.log(
+            `[createAlert] fan-out: ${uniqueUserIds.length} userAlert row(s), ` +
+              `${recipients.length} notification(s), ${emailUsers.length} email(s) queued`,
+          );
         }
+      }
+
+      // No subscriber fan-out happened (no locations, no types, or nobody
+      // matched), so nothing has marked the alert yet. Mark it before the
+      // webhook dispatch: an alert that matched no inbox subscriber may still
+      // have webhook subscribers, and without the marker every retry would
+      // dispatch to them again.
+      if (!fannedOut) {
+        await context.prisma.alerts.update({
+          where: { id: alert.id },
+          data: { fannedOutAt: new Date() },
+        });
       }
 
       // Fan out to team-configured `clear_alert` webhooks alongside email.
       // Fire-and-forget: webhook delivery (async, retried) must never block or
       // fail alert creation. Matching + delivery live in the service.
+      //
+      // Reached once per alert: the `fannedOutAt` guard above returns early on
+      // a retry whose fan-out completed, so a subscriber gets one
+      // `alert.created` message rather than one per retry. Delivery itself is
+      // retried inside the service.
       try {
         const webhookCount = await fanOutAlertWebhooks(
           context.prisma,
@@ -526,6 +467,28 @@ export const alertResolvers = {
      * `olderThanDays` (default 14). One SQL UPDATE via Prisma updateMany.
      * Only targets non-archived alerts so repeat runs are idempotent.
      */
+    flushAlertEmails: async (
+      _parent: unknown,
+      args: { digestThreshold?: number; windowMinutes?: number; maxRecipients?: number },
+      context: Context,
+    ) => {
+      requireRole(context, ["admin", PIPELINE_ROLE]);
+
+      for (const [name, value] of Object.entries(args)) {
+        if (value == null) continue;
+        if (!Number.isInteger(value) || value < 1) {
+          throw new GraphQLError(`${name} must be a positive integer`, {
+            extensions: { code: "BAD_USER_INPUT" },
+          });
+        }
+      }
+
+      return flushAlertEmailQueue(context.prisma, {
+        digestThreshold: args.digestThreshold ?? undefined,
+        windowMinutes: args.windowMinutes ?? undefined,
+        maxRecipients: args.maxRecipients ?? undefined,
+      });
+    },
     archiveStaleAlerts: async (
       _parent: unknown,
       args: { olderThanDays?: number },

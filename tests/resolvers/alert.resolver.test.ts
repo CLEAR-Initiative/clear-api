@@ -404,7 +404,7 @@ describe("Mutation.createAlert", () => {
     const subFindMany = vi.fn().mockResolvedValue([]); // no subscribers → short path after lookup
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue(event) },
-      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 3, status: "published" }) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 3, status: "published" }), update: vi.fn().mockResolvedValue({ id: 3 }) },
       locations: { findMany: vi.fn().mockResolvedValue([{ id: "l1", ancestorIds: [] }]) },
       userAlertSubscriptions: { findMany: subFindMany },
     });
@@ -419,7 +419,7 @@ describe("Mutation.createAlert", () => {
     const subFindMany = vi.fn().mockResolvedValue([]);
     const ctx = buildContext(ADMIN, {
       events: { findUnique: vi.fn().mockResolvedValue(event) },
-      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 4, status: "published" }) },
+      alerts: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 4, status: "published" }), update: vi.fn().mockResolvedValue({ id: 4 }) },
       locations: { findMany: vi.fn().mockResolvedValue([{ id: "l1", ancestorIds: [] }]) },
       userAlertSubscriptions: { findMany: subFindMany },
     });
@@ -429,7 +429,7 @@ describe("Mutation.createAlert", () => {
 
   it("is idempotent: returns the existing alert and skips fan-out + activity log when status matches", async () => {
     const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
-    const existing = { id: 7, status: "draft", eventId: "e1" };
+    const existing = { id: 7, status: "draft", eventId: "e1", fannedOutAt: new Date() };
     const create = vi.fn();
     const update = vi.fn();
     const subFind = vi.fn();
@@ -442,6 +442,7 @@ describe("Mutation.createAlert", () => {
       },
       // present so an accidental fan-out would be observable
       userAlertSubscriptions: { findMany: subFind },
+      // `fannedOutAt` on the existing alert is what makes this retry a no-op.
       ...wideOpenAnalystScope(),
     });
 
@@ -456,7 +457,7 @@ describe("Mutation.createAlert", () => {
 
   it("updates the existing alert's status when the caller requests a different one, then skips fan-out", async () => {
     const event = { id: "e1", types: ["displacement"], severity: 5, originId: "l1", destinationId: null, locationId: null };
-    const existing = { id: 7, status: "draft", eventId: "e1" };
+    const existing = { id: 7, status: "draft", eventId: "e1", fannedOutAt: new Date() };
     const updated = { id: 7, status: "active" };
     const update = vi.fn().mockResolvedValue(updated);
     const subFind = vi.fn();
@@ -467,6 +468,7 @@ describe("Mutation.createAlert", () => {
         update,
       },
       userAlertSubscriptions: { findMany: subFind },
+
       ...wideOpenAnalystScope(),
     });
 

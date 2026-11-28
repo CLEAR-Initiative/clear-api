@@ -489,6 +489,35 @@ export const mutationTypeDef = gql`
     """Send a digest notification for multiple alerts to subscribers of the given frequency (daily/weekly/monthly)."""
     notifyAlertDigest(input: AlertDigestInput!): Int!
 
+    """Send the alert emails \`createAlert\` queued, deciding per recipient whether
+    they go out individually or as one digest. Admin or pipeline only.
+
+    \`createAlert\` queues an email per matching subscriber rather than sending it,
+    so that this call — driven by a Dagster schedule — can see a recipient's whole
+    load for the window and roll it up. A recipient with more than
+    \`ALERT_EMAIL_DIGEST_THRESHOLD\` alerts raised inside
+    \`ALERT_EMAIL_WINDOW_MINUTES\` gets one digest covering everything still
+    pending for them; at or below it, one email per alert as before.
+
+    Delivery is AT-LEAST-ONCE, not exactly-once. A queued alert is marked sent
+    only once the provider accepts the message covering it, so a refused or
+    failed send is retried rather than dropped. But the send happens before the
+    mark: a run that stops after the provider accepted a message and before the
+    mark commits leaves that row queued, and a later run sends it again. No
+    provider here takes a deduplication key, so nothing suppresses that
+    duplicate. Overlapping runs do not duplicate — rows are claimed first — and
+    the residual window is a crash, which is traded deliberately against the
+    alternative of marking sent first and losing email silently.
+
+    \`digestThreshold\`, \`windowMinutes\` and \`maxRecipients\` override the
+    environment defaults — intended for testing and for throttling an incident,
+    not for routine use."""
+    flushAlertEmails(
+      digestThreshold: Int
+      windowMinutes: Int
+      maxRecipients: Int
+    ): FlushAlertEmailsResult!
+
     """Delete a notification."""
     deleteNotification(id: String!): Boolean!
 

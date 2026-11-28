@@ -264,11 +264,25 @@ each carries its own unsubscribe link.
 _Avoid_: subscribers (those are alert subscriptions), mailing list
 
 **Alert Digest**:
-The automatic `notifyAlertDigest` email of Alert titles to users with daily, weekly or monthly
-alert subscriptions. Nothing calls it today, so it has never gone out. Distinct from a **Brief**,
-which a person composes. An Alert goes in a user's digest when one of their active subscriptions
-at that frequency matches its Event's type, its location or an ancestor of it, and its severity
-floor (`matchDigestRecipients`, `src/services/alert-digest.ts`).
+One email listing several Alerts, instead of one email per Alert. Distinct from a **Brief**, which
+a person composes.
+
+Two paths produce one. The `immediately` path is live: `createAlert` writes an **Alert email
+queue** row per matching subscriber rather than sending, and `flushAlertEmails` sends — rolling a
+recipient's pending Alerts into a single digest when more than
+`ALERT_EMAIL_DIGEST_THRESHOLD` were raised for them inside `ALERT_EMAIL_WINDOW_MINUTES`,
+and sending one email each below that (clear #1731). The `notifyAlertDigest` path, for users with
+daily, weekly or monthly subscriptions, still has no caller and has never gone out; an Alert
+belongs in such a digest when one of their active subscriptions at that frequency matches its
+Event's type, its location or an ancestor of it, and its severity floor (`matchDigestRecipients`,
+`src/services/alert-digest.ts`).
+
+**Alert email queue**:
+The durable record that a recipient is owed an email about an Alert (`alert_email_queue`), the
+only thing standing between an ingestion burst and a subscriber's inbox. A row is pending until
+the message covering it is accepted, which is what makes a flush idempotent. Deliberately not
+`userAlerts`: that is the in-app inbox entry, written for every matched user including those with
+email off, so it describes a larger audience than email does.
 
 **Digest preview**:
 What the daily **Alert Digest** would send for a **Brief**'s area and **Brief window**: each

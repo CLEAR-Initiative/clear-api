@@ -51,6 +51,7 @@ const NOT_DECISIONS: Record<string, string> = {
   updateCrisisDescription: CRISIS_PENDING,
   updateCrisisTitle: CRISIS_PENDING,
   archiveStaleAlerts: "a fixed age rule; recomputable",
+  flushAlertEmails: "delivery mechanics for alerts already raised; no judgement",
   createAlertWebhook: DELIVERY,
   createGroundSource: SOURCE_CONFIG,
   createPublicEventLink: "sharing an Event; changes no content",

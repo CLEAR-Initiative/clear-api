@@ -412,7 +412,8 @@ export const notificationResolvers = {
       const allUserIds = [...userAlertMap.keys()];
       const emailUsers = await context.prisma.user.findMany({
         where: { id: { in: allUserIds }, emailNotification: true },
-        select: { id: true, name: true, email: true },
+        // `language` drives the digest's locale (chrome, dir, subject).
+        select: { id: true, name: true, email: true, language: true },
       });
 
       if (emailUsers.length > 0) {
@@ -427,7 +428,13 @@ export const notificationResolvers = {
               url: eventLink(a.event.id, "email", env.FRONTEND_URL),
             }));
 
-          const content = alertDigest(u.name, frequency, userAlerts, dashboardUrl);
+          // `frequency` still drives matching and the in-app message above, but
+          // the email template no longer carries a cadence adjective — see
+          // alertDigest's doc comment.
+          const content = alertDigest(u.name, userAlerts, {
+            dashboardUrl,
+            locale: normaliseUserLocale(u.language),
+          });
           return {
             to: u.email,
             subject: content.subject,

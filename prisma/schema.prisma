@@ -101,6 +101,17 @@ enum Frequency {
   monthly
 }
 
+/// How an alert email was actually delivered to one recipient. `individual`
+/// = its own email, one per alert. `digest` = rolled up with the recipient's
+/// other alerts from the same window into a single email, which is what keeps
+/// an ingestion burst from becoming a mail flood (clear #1731).
+enum AlertEmailDelivery {
+  individual
+  digest
+
+  @@map("alert_email_delivery")
+}
+
 /// Signal processing status — the durable drain marker for the Celery→Dagster
 /// migration. NEW = ingested, awaiting downstream processing; PROCESSED =
 /// classify→group→alert done; FAILED = terminal failure. Replaces the old
@@ -170,6 +181,7 @@ model user {
   defaultTeam   teams?  @relation("DefaultTeam", fields: [defaultTeamId], references: [id], onDelete: SetNull)
 
   alerts                 userAlerts[]
+  alertEmails            alertEmailQueue[]
   apiKeys                apiKeys[]
   notifications          notifications[]
   organisations          organisationUsers[]
@@ -1194,8 +1206,24 @@ model alerts {
   /// history series.
   raisedByRunKind      LocationRunKind? @map("raised_by_run_kind")
 
-  event      events       @relation(fields: [eventId], references: [id])
-  userAlerts userAlerts[]
+  /// When this Alert's post-create fan-out COMPLETED: inbox rows, in-app
+  /// notifications, queued email and the webhook dispatch. Null = not done.
+  ///
+  /// `createAlert` is idempotent and the pipeline retries it, so it needs to
+  /// know whether the work after the Alert row has already happened. The alert
+  /// row itself cannot answer that — a fan-out that failed after the Alert
+  /// committed left it looking finished, and the email was lost. Nor can the
+  /// inbox rows: an Alert with webhook subscribers but no immediate inbox
+  /// subscribers legitimately has none, so keying on them re-dispatched the
+  /// webhooks on every retry.
+  ///
+  /// Written inside the same transaction as the fan-out, so it is set only if
+  /// that work committed, and a retry redoes a fan-out that did not.
+  fannedOutAt          DateTime?        @map("fanned_out_at")
+
+  event       events            @relation(fields: [eventId], references: [id])
+  userAlerts  userAlerts[]
+  emailQueue  alertEmailQueue[]
 
   /// One alert per event. Status transitions (draft → published → archived)
   /// update this row in place; they do not create new ones.
@@ -1295,6 +1323,67 @@ model userAlerts {
   @@index([alertId])
   @@index([userId, viewedAt])
   @@map("user_alerts")
+}
+
+/// One pending-or-sent alert EMAIL for one recipient — the durable queue that
+/// lets alert email be decided in batches instead of one-at-a-time.
+///
+/// `createAlert` used to call the email provider inline, so a burst of alerts
+/// became a burst of email: 48 alerts in 3.7s once put 48 messages in every
+/// matching subscriber's inbox (clear #1731). It now writes a row here instead
+/// and a Dagster schedule flushes the queue, which is the only place that knows
+/// how much mail a recipient is about to receive and can roll it into one
+/// digest.
+///
+/// Deliberately NOT folded into `userAlerts`. That row is the in-app inbox
+/// entry, written for every matched user including those with
+/// `emailNotification: false` — a larger audience than email has. More
+/// decisively, it is written from four call sites (`createAlert`,
+/// `notifyAlertSubscribers`, `notifyAlertDigest`, `event.resolver`), so an
+/// `emailedAt` column there would make all four implicitly enqueue email —
+/// including `notifyAlertSubscribers`, which already sends its own. That is a
+/// double send, not a naming quibble.
+model alertEmailQueue {
+  id      String @id @default(cuid())
+  userId  String @map("user_id")
+  alertId String @map("alert_id")
+
+  /// When the alert was raised and the email became due. The rolling window
+  /// that decides individual-vs-digest is measured on this, not on `sentAt` —
+  /// a recipient's load is what the alerts did, not when we got round to them.
+  queuedAt DateTime @default(now()) @map("queued_at")
+  /// A flush has taken this row and is building/sending its message. Null =
+  /// available. Claiming before sending is what stops two overlapping flushes
+  /// (the sensor deliberately allows a run alongside a STARTED one, and an
+  /// admin can call the mutation by hand) from both reading the same pending
+  /// row and sending the same email twice.
+  ///
+  /// A claim is a lease, not a lock: a flush that dies mid-send leaves the row
+  /// claimed, so a claim older than `ALERT_EMAIL_CLAIM_TTL_MINUTES` is treated
+  /// as abandoned and may be claimed again. That bounds the damage of a crash
+  /// to one duplicate rather than a permanently stuck email.
+  claimedAt DateTime? @map("claimed_at")
+  /// Null while the row is pending. Set only once the provider ACCEPTED the
+  /// message covering it — `sendBulk` returns a boolean per message and does
+  /// not throw on a refusal, so a refused row is released back to pending
+  /// rather than marked sent.
+  sentAt   DateTime? @map("sent_at")
+  /// How it went out, once it has. Null while pending.
+  delivery AlertEmailDelivery? @map("delivery")
+
+  user  user   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert alerts @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  /// One queue row per (recipient, alert): a retried createAlert must not
+  /// queue a second email for an alert the recipient already has one for.
+  @@unique([userId, alertId])
+  /// The flush's own read: unsent rows, oldest first.
+  @@index([sentAt, queuedAt])
+  /// Finding an abandoned claim to reclaim.
+  @@index([claimedAt])
+  /// The rolling-window count for one recipient.
+  @@index([userId, queuedAt])
+  @@map("alert_email_queue")
 }
 
 // Map the events escaladed by users as alerts which can be further escaladed as crisis

@@ -13,6 +13,22 @@ export const alertTypeDef = gql`
     alertsArchived: Int!
   }
 
+  """What one \`flushAlertEmails\` run did."""
+  type FlushAlertEmailsResult {
+    """Recipients this flush sent at least one email to."""
+    recipients: Int!
+    """Queued alerts covered by their own individual email."""
+    individual: Int!
+    """Queued alerts rolled up into a digest instead."""
+    digested: Int!
+    """Digest emails sent — one per recipient over the threshold."""
+    digests: Int!
+    """Messages handed to the email provider in total."""
+    emails: Int!
+    """Recipients whose send failed; their alerts stay queued for the next run."""
+    failed: Int!
+  }
+
   """An alert created from an event, distributed to subscribed users."""
   type Alert {
     id: String!

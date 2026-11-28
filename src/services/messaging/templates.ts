@@ -42,6 +42,18 @@ interface AlertStrings {
   moreSuffix: (n: number) => string; // " +N more"
   footerCopy: string;                // copyright line
   /**
+   * Digest chrome — the roll-up one recipient gets instead of N separate
+   * alert emails when a burst crosses the threshold (clear #1731). No cadence
+   * word ("Daily", "Hourly"): the digest is defined by the window that
+   * produced it, and a cadence adjective is one more string to translate for
+   * no reader benefit.
+   */
+  digestSubject: (count: number) => string;
+  digestHeading: string;
+  digestIntro: (count: number) => string;
+  viewAllAlertsCta: string;
+  digestSubscriptionNote: string;
+  /**
    * Locale-specific render of each severity tier. Keys are the English
    * labels produced by `severityToLabel` (CRITICAL/HIGH/MEDIUM/LOW/MINIMAL);
    * values are the user-facing string shown in the email severity chip
@@ -69,6 +81,12 @@ const STRINGS: Record<Locale, AlertStrings> = {
     subject: (t) => `Alert: ${t} - CLEAR Platform`,
     moreSuffix: (n) => ` +${n} more`,
     footerCopy: "© CLEAR - Crisis Learning, Early-warning, Anticipation, and Response",
+    digestSubject: (c) => `Alert Digest (${c}) - CLEAR Platform`,
+    digestHeading: "Alert Digest",
+    digestIntro: (c) => `Here are the ${c} alerts matching your subscriptions:`,
+    viewAllAlertsCta: "View All Alerts",
+    digestSubscriptionNote:
+      "You received this because of your alert subscriptions. Manage your subscriptions in Settings.",
     severityLabels: {
       CRITICAL: "CRITICAL",
       HIGH: "HIGH",
@@ -90,6 +108,12 @@ const STRINGS: Record<Locale, AlertStrings> = {
     subject: (t) => `تنبيه: ${t} - منصة CLEAR`,
     moreSuffix: (n) => ` +${n} المزيد`,
     footerCopy: "© CLEAR - التعلم والإنذار المبكر والتوقع والاستجابة للأزمات",
+    digestSubject: (c) => `ملخص التنبيهات (${c}) - منصة CLEAR`,
+    digestHeading: "ملخص التنبيهات",
+    digestIntro: (c) => `إليك ${c} من التنبيهات المطابقة لاشتراكاتك:`,
+    viewAllAlertsCta: "عرض جميع التنبيهات",
+    digestSubscriptionNote:
+      "وصلتك هذه الرسالة بسبب اشتراكاتك في التنبيهات. يمكنك إدارة اشتراكاتك من الإعدادات.",
     severityLabels: {
       CRITICAL: "حرج",
       HIGH: "عالٍ",
@@ -111,6 +135,12 @@ const STRINGS: Record<Locale, AlertStrings> = {
     subject: (t) => `Alerte : ${t} - Plateforme CLEAR`,
     moreSuffix: (n) => ` +${n} de plus`,
     footerCopy: "© CLEAR - Apprentissage, alerte précoce, anticipation et réponse aux crises",
+    digestSubject: (c) => `Récapitulatif d'alertes (${c}) - Plateforme CLEAR`,
+    digestHeading: "Récapitulatif d'alertes",
+    digestIntro: (c) => `Voici les ${c} alertes correspondant à vos abonnements :`,
+    viewAllAlertsCta: "Voir toutes les alertes",
+    digestSubscriptionNote:
+      "Vous recevez ce message en raison de vos abonnements aux alertes. Gérez-les dans les Paramètres.",
     severityLabels: {
       CRITICAL: "CRITIQUE",
       HIGH: "ÉLEVÉ",
@@ -132,6 +162,12 @@ const STRINGS: Record<Locale, AlertStrings> = {
     subject: (t) => `Alerta: ${t} - Plataforma CLEAR`,
     moreSuffix: (n) => ` +${n} más`,
     footerCopy: "© CLEAR - Aprendizaje, alerta temprana, anticipación y respuesta ante crisis",
+    digestSubject: (c) => `Resumen de alertas (${c}) - Plataforma CLEAR`,
+    digestHeading: "Resumen de alertas",
+    digestIntro: (c) => `Estas son las ${c} alertas que coinciden con tus suscripciones:`,
+    viewAllAlertsCta: "Ver todas las alertas",
+    digestSubscriptionNote:
+      "Recibes este mensaje por tus suscripciones a alertas. Gestiónalas en Ajustes.",
     severityLabels: {
       CRITICAL: "CRÍTICO",
       HIGH: "ALTO",
@@ -162,9 +198,16 @@ function stringsFor(locale: Locale | undefined): AlertStrings {
 }
 
 /** Reusable HTML email wrapper */
-function wrapHtml(heading: string, body: string): string {
+function wrapHtml(
+  heading: string,
+  body: string,
+  opts?: { locale?: Locale; dir?: "ltr" | "rtl" },
+): string {
+  // Defaults keep every pre-existing caller rendering byte-identical English.
+  const lang = opts?.locale ?? "en";
+  const dir = opts?.dir ?? "ltr";
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${lang}" dir="${dir}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1043,59 +1086,94 @@ export function alertNotification(
 /**
  * Alert digest - personalized list of alerts for a subscriber.
  */
+export interface AlertDigestOptions {
+  /** Recipient locale; falls back to DEFAULT_LOCALE when unset. */
+  locale?: Locale;
+  /** Where "View All Alerts" points. */
+  dashboardUrl: string;
+  /**
+   * How many alerts the digest actually covers. May exceed `alertItems.length`
+   * when the caller capped the list — the count in the subject and intro then
+   * tells the truth and the body says how many were left out.
+   */
+  totalCount?: number;
+}
+
+/**
+ * One email covering several alerts for one recipient — what a subscriber gets
+ * instead of N separate alert emails once a burst crosses the threshold
+ * (clear #1731).
+ *
+ * `alertItems` must already be localized by the caller (titles and
+ * descriptions come from the event's translation rows); this function
+ * localizes only its own chrome and the HTML `lang`/`dir`.
+ */
 export function alertDigest(
   userName: string,
-  frequency: string,
   alertItems: Array<{ title: string; description: string | null; url: string }>,
-  dashboardUrl: string,
+  options: AlertDigestOptions,
 ): EmailContent {
   const displayName = userName || "there";
-  const freqLabel = frequency.charAt(0).toUpperCase() + frequency.slice(1);
-  const count = alertItems.length;
+  const { locale, dashboardUrl, totalCount } = options;
+  const effectiveLocale: Locale = locale ?? DEFAULT_LOCALE;
+  const dir = LOCALE_DIRECTION[effectiveLocale] ?? "ltr";
+  const s = stringsFor(effectiveLocale);
 
-  const alertListText = alertItems
-    .map((a, i) => `${i + 1}. ${a.title}${a.description ? ` - ${a.description}` : ""}`)
-    .join("\n");
+  // `count` is what the recipient is being told about; `alertItems` may be a
+  // capped slice of it.
+  const count = totalCount ?? alertItems.length;
+  const hidden = Math.max(count - alertItems.length, 0);
+  const overflow = hidden > 0 ? s.moreSuffix(hidden) : "";
 
-  const alertListHtml = alertItems
-    .map(
-      (a) =>
-        `<div style="margin: 8px 0; padding: 12px 16px; background: #F5F5F5; border-radius: 6px; border-left: 3px solid #E85D3D;">
+  const alertListText =
+    alertItems
+      .map((a, i) => `${i + 1}. ${a.title}${a.description ? ` - ${a.description}` : ""}`)
+      .join("\n") + (overflow ? `\n${overflow.trim()}` : "");
+
+  const alertListHtml =
+    alertItems
+      .map(
+        (a) =>
+          `<div style="margin: 8px 0; padding: 12px 16px; background: #F5F5F5; border-radius: 6px; border-${dir === "rtl" ? "right" : "left"}: 3px solid #E85D3D;">
           <a href="${a.url}" style="text-decoration: none;">
-            <p dir="${textDirection(a.title)}" style="margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #171717; text-align: left;">${a.title}</p>
-            ${a.description ? `<p style="margin: 0; font-size: 13px; color: #525252;">${a.description}</p>` : ""}
+            <p dir="${textDirection(a.title)}" style="margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #171717; text-align: ${dir === "rtl" ? "right" : "left"};">${a.title}</p>
+            ${a.description ? `<p dir="${textDirection(a.description)}" style="margin: 0; font-size: 13px; color: #525252; text-align: ${dir === "rtl" ? "right" : "left"};">${a.description}</p>` : ""}
           </a>
         </div>`,
-    )
-    .join("");
+      )
+      .join("") +
+    (overflow
+      ? `<p style="margin: 8px 0 0; font-size: 13px; color: #A3A3A3; text-align: ${dir === "rtl" ? "right" : "left"};">${overflow.trim()}</p>`
+      : "");
 
   return {
-    subject: `${freqLabel} Alert Digest (${count}) - CLEAR Platform`,
+    subject: s.digestSubject(count),
 
-    textBody: `Hi ${displayName},
+    textBody: `${s.greeting(displayName)}
 
-Here is your ${frequency} alert digest with ${count} alert${count > 1 ? "s" : ""}:
+${s.digestIntro(count)}
 
 ${alertListText}
 
-View all alerts: ${dashboardUrl}
+${s.viewAllAlertsCta}: ${dashboardUrl}
 
-- The CLEAR Platform Team`,
+${s.signoff}`,
 
     htmlBody: wrapHtml(
-      `${freqLabel} Alert Digest`,
-      `<p style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5;">
-        Hi ${displayName},
+      s.digestHeading,
+      `<p dir="${dir}" style="margin: 0 0 16px; font-size: 15px; color: #171717; line-height: 1.5; text-align: ${dir === "rtl" ? "right" : "left"};">
+        ${s.greeting(displayName)}
       </p>
-      <p style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5;">
-        Here is your ${frequency} alert digest with <strong>${count}</strong> alert${count > 1 ? "s" : ""} matching your subscriptions:
+      <p dir="${dir}" style="margin: 0 0 16px; font-size: 15px; color: #525252; line-height: 1.5; text-align: ${dir === "rtl" ? "right" : "left"};">
+        ${s.digestIntro(count)}
       </p>
       ${alertListHtml}
-      ${ctaButton("View All Alerts", dashboardUrl)}
+      ${ctaButton(s.viewAllAlertsCta, dashboardUrl)}
       <hr style="border: none; border-top: 1px solid #E5E5E5; margin: 24px 0;" />
-      <p style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5;">
-        You received this because of your alert subscriptions. Manage your subscriptions in Settings.
+      <p dir="${dir}" style="margin: 0; font-size: 12px; color: #A3A3A3; line-height: 1.5; text-align: ${dir === "rtl" ? "right" : "left"};">
+        ${s.digestSubscriptionNote}
       </p>`,
+      { locale: effectiveLocale, dir },
     ),
   };
 }
